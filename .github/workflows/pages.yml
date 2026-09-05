@@ -36,15 +36,16 @@ jobs:
           p = Path('_site/index.html')
           s = p.read_text(encoding='utf-8')
           replacements = [
-              ('v0.9.13 HTML', 'v0.9.15 HTML'),
-              ('HTML v0.9.12', 'HTML v0.9.15'),
+              ('v0.9.13 HTML', 'v0.9.16 HTML'),
+              ('HTML v0.9.12', 'HTML v0.9.16'),
               ("{id:'icon_global',name:'ICON',w:.05,provider:'openmeteo'},", "{id:'icon_global',name:'ICON',w:.05,provider:'openmeteo',surfaceExclude:['visibility']},"),
               ("const vars=prof?profileVarsFor(model):SURFACE;", "const vars=prof?profileVarsFor(model):SURFACE.filter(v=>!(model.surfaceExclude||[]).includes(v));"),
               ("const msg=j?.error||j?.reason||j?.message||('HTTP '+r.status);", "const msg=j?.reason||j?.message||(typeof j?.error==='string'?j.error:('HTTP '+r.status));"),
-              ('.canvas-viewport{position:relative;width:100%;overflow:hidden;background:var(--surface2);min-height:360px;touch-action:pan-y}', '.canvas-viewport{position:relative;width:100%;overflow:hidden;background:var(--surface2);min-height:360px;touch-action:none;overscroll-behavior:contain}'),
+              ('.canvas-viewport{position:relative;width:100%;overflow:hidden;background:var(--surface2);min-height:360px;touch-action:pan-y}', '.canvas-viewport{position:relative;width:100%;overflow:hidden;background:var(--surface2);min-height:360px;touch-action:none;overscroll-behavior:contain;contain:layout paint;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}'),
               ('.canvas-stage canvas{display:block;background:var(--surface2);touch-action:pan-y}', '.canvas-stage canvas{display:block;background:var(--surface2);touch-action:none}'),
-              ('<div class="gesture-hint"><b>Telefon:</b> dwa palce = zoom i przesuwanie. Jeden palec = przewijanie strony. <b>Krótkie dotknięcie punktu</b> wybiera godzinę i sekcję; parametry pojawią się pod meteogramem.</div>', '<div class="gesture-hint"><b>Telefon:</b> dwa palce przeciągaj = przesuwanie wykresu, rozsuwaj/zsuwaj = zoom. Jeden palec = przewijanie strony. <b>Krótkie dotknięcie punktu</b> wybiera godzinę i sekcję.</div>'),
+              ('<div class="gesture-hint"><b>Telefon:</b> dwa palce = zoom i przesuwanie. Jeden palec = przewijanie strony. <b>Krótkie dotknięcie punktu</b> wybiera godzinę i sekcję; parametry pojawią się pod meteogramem.</div>', '<div class="gesture-hint"><b>Telefon:</b> gesty 2 palcami działają tylko wewnątrz ramki wykresu: przeciąganie = przesuwanie wykresu, rozsuwanie/zsuwanie = zoom wykresu. Strona nie zmienia skali. Jeden palec = przewijanie strony. <b>Krótkie dotknięcie punktu</b> wybiera godzinę i sekcję.</div>'),
               ('let selection=null;', 'let selection=null, singleTouch=null, suppressClickUntil=0;'),
+              ("function setViewportHeight(){const s=stageSize(),mobile=window.innerWidth<=700,contentH=s.h*zoom,maxPhone=Math.max(430,Math.min(700,window.innerHeight-185)),desired=mobile?Math.max(380,Math.min(maxPhone,contentH)):Math.min(contentH,860);viewport.style.height=Math.round(desired)+'px'}", "function setViewportHeight(){const s=stageSize(),mobile=window.innerWidth<=700,maxPhone=Math.max(430,Math.min(700,window.innerHeight-185)),desired=mobile?maxPhone:Math.min(s.h,860);viewport.style.height=Math.round(desired)+'px'}"),
           ]
           for old, new in replacements:
               s = s.replace(old, new)
@@ -95,6 +96,8 @@ jobs:
             else if(e.touches.length===1&&!gesture)beginSingleTouch(e.touches[0])
           },{passive:true});
           viewport.addEventListener('touchcancel',()=>{gesture=null;singleTouch=null;lastGestureEnd=Date.now();suppressClickUntil=Date.now()+450;applyTransform()},{passive:true});
+          for(const ev of ['gesturestart','gesturechange','gestureend']){document.addEventListener(ev,e=>{if(viewport.contains(e.target))e.preventDefault()},{passive:false,capture:true})}
+          document.addEventListener('touchmove',e=>{if(e.touches&&e.touches.length>=2){const t=e.target;if(t===viewport||viewport.contains(t))e.preventDefault()}},{passive:false,capture:true});
           cv.addEventListener('click',e=>{if(Date.now()<suppressClickUntil)return;selectAt(e.clientX,e.clientY)});""")
 
           p.write_text(s, encoding='utf-8')
