@@ -3,7 +3,7 @@
   const canvas = document.getElementById('meteo');
   if (!canvas || typeof ctx === 'undefined' || typeof draw !== 'function') return;
 
-  const VERSION = 'v0.10.13 HTML';
+  const VERSION = 'v0.10.14 HTML';
   const RH_COLOR = '#bd4723';
   const RH_AXIS_X_OFFSET = 38; // legacy compatibility marker for deployment check
   const MM_AXIS_RIGHT_OFFSET = 8;
@@ -53,6 +53,67 @@
     }
 
     ctx.restore();
+  }
+
+  function lowestCloudInBand(profile,min,max) {
+    if (!Array.isArray(profile) || !profile.length || typeof interpCC !== 'function' || typeof toOkta !== 'function') return null;
+    for (let h=min;h<max;h+=50) {
+      const cc = interpCC(profile,h);
+      if (!finite(cc)) continue;
+      const okta = toOkta(cc);
+      if (finite(okta) && okta > 0) return {h,okta};
+    }
+    return null;
+  }
+
+  function cloudAmountText(okta,h) {
+    const amount = (okta??'—')+'/8 '+oktaName(okta);
+    return amount+(finite(h)?' · ~'+Math.round(h)+' m AGL':' · wys. —');
+  }
+
+  function detailedCloudLayerText(okta,mainH,profile,min,max) {
+    const main = cloudAmountText(okta,mainH);
+    const lowest = lowestCloudInBand(profile,min,max);
+    if (!lowest) return main;
+    if (finite(mainH) && Math.abs(lowest.h-mainH) < 25 && lowest.okta === okta) return main;
+    return main+' (najniższe: '+cloudAmountText(lowest.okta,lowest.h)+')';
+  }
+
+  // Extend cloud details with the first non-zero cloud occurrence in each altitude band.
+  if (typeof showSectionInfo === 'function') {
+    const previousShowSectionInfo = showSectionInfo;
+    showSectionInfo = function(z,panelId) {
+      if (panelId !== 'cloud' && panelId !== 'okta') return previousShowSectionInfo(z,panelId);
+
+      const box = $('sectionInfo');
+      box.classList.remove('empty');
+      const time = fmt(z.t,{weekday:'short',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+      let title,vals;
+
+      if (panelId === 'cloud') {
+        title = 'Profil chmur / widzialność';
+        vals = [
+          infoValue('Podstawa ≥5/8',finite(z.ceiling)?Math.round(z.ceiling)+' m AGL':'brak ≥5/8'),
+          infoValue('Podstawa',finite(z.ceiling)?Math.round(z.ceiling*3.28084)+' ft AGL':'—'),
+          infoValue('Widzialność',finite(z.VIS)?f(z.VIS/1000,1)+' km':'—'),
+          infoValue('Niskie',detailedCloudLayerText(z.oktaL,z.lowH,z.profile,0,2000)),
+          infoValue('Średnie',detailedCloudLayerText(z.oktaM,z.midH,z.profile,2000,5000)),
+          infoValue('Wysokie',detailedCloudLayerText(z.oktaH,z.highH,z.profile,5000,13001))
+        ];
+      } else {
+        title = 'Warstwy chmur w oktach';
+        vals = [
+          infoValue('Niskie 0–2 km',detailedCloudLayerText(z.oktaL,z.lowH,z.profile,0,2000)),
+          infoValue('Średnie 2–5 km',detailedCloudLayerText(z.oktaM,z.midH,z.profile,2000,5000)),
+          infoValue('Wysokie 5–13 km',detailedCloudLayerText(z.oktaH,z.highH,z.profile,5000,13001)),
+          infoValue('Podstawa ≥5/8',finite(z.ceiling)?Math.round(z.ceiling)+' m AGL':'brak')
+        ];
+      }
+
+      box.innerHTML = '<div class="section-head"><b>'+title+'</b><span>'+time+'</span></div>'+
+        '<div class="section-values">'+vals.join('')+'</div>'+
+        '<div class="section-help">Wartość główna pokazuje maksymalne zachmurzenie w danym przedziale i najniższą wysokość, na której jest ono osiągane. W nawiasie podana jest najniższa wykryta chmura w tym samym przedziale wraz z jej zachmurzeniem.</div>';
+    };
   }
 
   // Narrower legend frame: its right border no longer crosses vertical section labels.
