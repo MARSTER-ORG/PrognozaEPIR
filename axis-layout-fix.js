@@ -5,6 +5,7 @@
 
   const INNER_PAD = 10;
   const HOUR_MS = 3600e3;
+  const THREE_HOUR_MS = 3*HOUR_MS;
   const UTC_MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
 
   function panelRange(id, data) {
@@ -47,7 +48,6 @@
 
     ctx.save();
 
-    // Erase only the numeric-axis gutter. Vertical section names remain farther left.
     ctx.fillStyle = cp.bg;
     for (const p of m.panelYs) ctx.fillRect(gutterLeft,p.y,gutterWidth,p.h);
 
@@ -57,7 +57,6 @@
     ctx.fillStyle = cp.muted;
     ctx.globalAlpha = 0.95;
 
-    // Every panel uses exactly the same X coordinate for its numeric values.
     for (const p of m.panelYs) {
       const range = panelRange(p.id,m.data);
       if (!range) continue;
@@ -70,7 +69,6 @@
       }
     }
 
-    // Strong panel boundaries make it clear that values belong to the next section.
     ctx.strokeStyle = cp.border;
     ctx.globalAlpha = 0.62;
     ctx.lineWidth = 0.85;
@@ -104,7 +102,7 @@
     const yHour = bottom + Math.min(10,available*0.42);
     const yDate = bottom + Math.min(21,available-3);
     const xFor = t => m.x0 + (t-m.t0)/(m.t1-m.t0)*(m.x1-m.x0);
-    const firstHour = Math.ceil(m.t0/HOUR_MS)*HOUR_MS;
+    const firstLabel = Math.ceil(m.t0/THREE_HOUR_MS)*THREE_HOUR_MS;
 
     ctx.save();
     ctx.fillStyle = cp.bg;
@@ -127,15 +125,15 @@
 
     ctx.textAlign = 'center';
     ctx.font = '8px Arial';
-    for (let t=firstHour; t<=m.t1; t+=HOUR_MS) {
+    for (let t=firstLabel; t<=m.t1; t+=THREE_HOUR_MS) {
       const d = new Date(t);
       const hh = String(d.getUTCHours()).padStart(2,'0');
       const xx = xFor(t);
       const midnight = d.getUTCHours() === 0;
 
       ctx.strokeStyle = midnight ? cp.border : cp.grid2;
-      ctx.globalAlpha = midnight ? 0.78 : 0.52;
-      ctx.lineWidth = midnight ? 1 : 0.6;
+      ctx.globalAlpha = midnight ? 0.78 : 0.58;
+      ctx.lineWidth = midnight ? 1 : 0.7;
       ctx.beginPath();
       ctx.moveTo(xx,bottom);
       ctx.lineTo(xx,bottom+4);
@@ -170,7 +168,7 @@
   }
 
   const version = document.querySelector('.brand small');
-  if (version) version.textContent = 'v0.10.7 HTML';
+  if (version) version.textContent = 'v0.10.9 HTML';
 
   requestAnimationFrame(() => {
     if (typeof consensus !== 'undefined' && consensus.length) draw();
