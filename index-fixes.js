@@ -180,7 +180,11 @@
 
         ctx.globalAlpha = 0.92;
         ctx.fillStyle = cp.muted;
-        ctx.fillText(axisValue(value,p.id,min,max),m.x0-7,yy);
+        // At a shared panel boundary the lower panel's maximum (e.g. 100)
+        // is shifted farther left, leaving the upper panel's minimum (e.g. 0)
+        // clearly visible at its normal axis position.
+        const boundaryLabelX = m.x0 - (i===divisions ? 31 : 7);
+        ctx.fillText(axisValue(value,p.id,min,max),boundaryLabelX,yy);
       }
     }
 
@@ -206,7 +210,7 @@
   }
 
   const meteoVersion = document.querySelector('.brand small');
-  if (meteoVersion) meteoVersion.textContent = 'v0.10.3 HTML';
+  if (meteoVersion) meteoVersion.textContent = 'v0.10.4 HTML';
 
   requestAnimationFrame(() => {
     viewportBaseH = 0;
