@@ -30,9 +30,10 @@ jobs:
       - name: Prepare site
         run: |
           mkdir -p _site
-          cp index.html radar.html index-fixes.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-distance.js _site/
+          cp index.html radar.html index-fixes.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-distance.js lightning-layer.js _site/
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           # Main meteogram: keep source compact; fixes live in index-fixes.js.
           p = Path('_site/index.html')
@@ -61,8 +62,7 @@ jobs:
           # Radar/Satellite/AI module.
           p = Path('_site/radar.html')
           s = p.read_text(encoding='utf-8')
-          for old in ('RADAR / SAT / AI v0.10.0','RADAR / SAT / AI v0.10.1','RADAR / SAT / AI v0.10.2','RADAR / SAT / AI v0.10.3','RADAR / SAT / AI v0.10.4','RADAR / SAT / AI v0.11.0','RADAR / SAT / AI v0.11.1'):
-              s = s.replace(old, 'RADAR / SAT / AI v0.11.2')
+          s = re.sub(r'RADAR / SAT / AI v\d+\.\d+\.\d+', 'RADAR / SAT / AI v0.11.3', s)
 
           # The top-left PrognozaEPIR brand returns directly to the main meteogram.
           brand_old = '<div class="brand">PrognozaEPIR <small>'
@@ -75,18 +75,24 @@ jobs:
               '<script src="warnings-readable.js"></script>',
               '<script src="radar-intelligence.js"></script>',
               '<script src="echo-distance.js"></script>',
+              '<script src="lightning-layer.js"></script>',
           ]
           for addon in addons:
               if addon not in s:
                   s = s.replace('</body>', addon + '\n</body>')
           p.write_text(s, encoding='utf-8')
 
-          # Keep older extension's badge from overwriting the current module version.
+          # Keep extension version badges consistent in the deployed build.
+          for name in ('radar-enhance.js', 'radar-intelligence.js', 'echo-distance.js', 'lightning-layer.js'):
+              p = Path('_site') / name
+              s = p.read_text(encoding='utf-8')
+              s = re.sub(r'RADAR / SAT / AI v\d+\.\d+\.\d+', 'RADAR / SAT / AI v0.11.3', s)
+              p.write_text(s, encoding='utf-8')
+
           # Remove the redundant diagnostic IMGW/POLRAD products table from the
-          # deployed extension. The real POLRAD layers/animation/AI remain in
-          # radar-intelligence.js.
+          # deployed legacy extension. Real POLRAD layers remain in radar-intelligence.js.
           p = Path('_site/radar-enhance.js')
-          s = p.read_text(encoding='utf-8').replace('RADAR / SAT / AI v0.10.3', 'RADAR / SAT / AI v0.11.2')
+          s = p.read_text(encoding='utf-8')
           s = s.replace('    setTimeout(loadPolradProducts, 150);\n', '')
           start = s.find('  // --- Official IMGW / POLRAD product API ---')
           end = s.rfind("  const sources = document.querySelector('.sources');")
@@ -102,11 +108,13 @@ jobs:
           node --check warnings-readable.js
           node --check radar-intelligence.js
           node --check echo-distance.js
+          node --check lightning-layer.js
           node --check _site/index-fixes.js
           node --check _site/radar-enhance.js
           node --check _site/warnings-readable.js
           node --check _site/radar-intelligence.js
           node --check _site/echo-distance.js
+          node --check _site/lightning-layer.js
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
