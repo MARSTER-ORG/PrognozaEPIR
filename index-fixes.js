@@ -133,6 +133,49 @@
     return Math.abs(v-Math.round(v))<0.05 ? String(Math.round(v)) : v.toFixed(1);
   }
 
+  function innerPad(h) {
+    return Math.min(8, Math.max(5, h * 0.075));
+  }
+
+  function paddedScale(v,a,b,y0,h) {
+    if (!Number.isFinite(v) || !Number.isFinite(a) || !Number.isFinite(b) || a === b) return y0 + h/2;
+    const pad = innerPad(h);
+    const usable = Math.max(1,h-2*pad);
+    return y0 + h - pad - (v-a)/(b-a)*usable;
+  }
+
+  const SECTION_LABELS = {
+    temp:'Temperatura',
+    prec:'Opad / RH',
+    prob:'Szansa opadu',
+    storm:'Szansa burzy',
+    press:'Ciśnienie',
+    wind:'Wiatr',
+    dir:'Kierunek',
+    cloud:'Chmury / widzialność',
+    okta:'Warstwy chmur'
+  };
+
+  function drawSectionLabels(m,cp) {
+    ctx.save();
+    ctx.fillStyle = cp.muted;
+    ctx.font = '8px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const xx = m.x0 - 72;
+    for (const p of m.panelYs || []) {
+      const label = SECTION_LABELS[p.id];
+      if (!label) continue;
+      ctx.save();
+      ctx.translate(xx,p.y+p.h/2);
+      ctx.rotate(-Math.PI/2);
+      ctx.globalAlpha = 0.88;
+      ctx.fillText(label,0,0);
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
   function drawMeteogramGrid() {
     const m = canvas._meta;
     if (!m || !Array.isArray(m.data) || m.data.length < 2 || typeof ctx === 'undefined') return;
@@ -158,6 +201,8 @@
     }
 
     // Horizontal value grid and numeric labels in the reserved left axis area.
+    // Tick positions use the same inner Y padding as the plotted data, so values
+    // such as 0, 8, 15 or 100 stay visibly inside their own panel.
     ctx.setLineDash([]);
     ctx.font = '9px Arial';
     ctx.textAlign = 'right';
@@ -169,7 +214,7 @@
       const divisions = p.id === 'cloud' ? 3 : 4;
       for (let i=0;i<=divisions;i++) {
         const value = min + (max-min)*i/divisions;
-        const yy = p.y + p.h - (value-min)/(max-min)*p.h;
+        const yy = paddedScale(value,min,max,p.y,p.h);
         ctx.globalAlpha = (i===0 || i===divisions) ? 0.32 : 0.22;
         ctx.strokeStyle = cp.grid2;
         ctx.lineWidth = 0.65;
@@ -180,15 +225,11 @@
 
         ctx.globalAlpha = 0.92;
         ctx.fillStyle = cp.muted;
-        // At a shared panel boundary the lower panel's maximum (e.g. 100)
-        // is shifted farther left, leaving the upper panel's minimum (e.g. 0)
-        // clearly visible at its normal axis position.
         const boundaryLabelX = m.x0 - (i===divisions ? 31 : 7);
         ctx.fillText(axisValue(value,p.id,min,max),boundaryLabelX,yy);
       }
     }
 
-    // Clear visual separation between value axis and plot.
     ctx.globalAlpha = 0.55;
     ctx.strokeStyle = cp.border;
     ctx.lineWidth = 0.8;
@@ -197,20 +238,29 @@
     ctx.lineTo(m.x0,m.top+plotH);
     ctx.stroke();
     ctx.restore();
+
+    drawSectionLabels(m,cp);
   }
 
   if (typeof draw === 'function' && !window.__epirMeteogramGridWrapped) {
     window.__epirMeteogramGridWrapped = true;
     const baseDraw = draw;
+    const baseScale = typeof scale === 'function' ? scale : null;
     draw = function() {
-      const out = baseDraw.apply(this,arguments);
+      let out;
+      if (baseScale) scale = paddedScale;
+      try {
+        out = baseDraw.apply(this,arguments);
+      } finally {
+        if (baseScale) scale = baseScale;
+      }
       drawMeteogramGrid();
       return out;
     };
   }
 
   const meteoVersion = document.querySelector('.brand small');
-  if (meteoVersion) meteoVersion.textContent = 'v0.10.4 HTML';
+  if (meteoVersion) meteoVersion.textContent = 'v0.10.5 HTML';
 
   requestAnimationFrame(() => {
     viewportBaseH = 0;
