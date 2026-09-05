@@ -30,17 +30,17 @@ jobs:
       - name: Prepare site
         run: |
           mkdir -p _site
-          cp index.html radar.html index-fixes.js axis-layout-fix.js visual-style-fix.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
+          cp index.html radar.html index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
           python3 - <<'PY'
           from pathlib import Path
           import re
 
           p = Path('_site/index.html')
           s = p.read_text(encoding='utf-8')
-          for old in ('v0.9.13 HTML','v0.10.0 HTML','v0.10.1 HTML','v0.10.2 HTML','v0.10.3 HTML','v0.10.4 HTML','v0.10.5 HTML','v0.10.6 HTML','v0.10.7 HTML','v0.10.8 HTML'):
-              s = s.replace(old, 'v0.10.9 HTML')
-          for old in ('HTML v0.9.12','HTML v0.9.13','HTML v0.10.0','HTML v0.10.1','HTML v0.10.2','HTML v0.10.3','HTML v0.10.4','HTML v0.10.5','HTML v0.10.6','HTML v0.10.7','HTML v0.10.8'):
-              s = s.replace(old, 'HTML v0.10.9')
+          for old in ('v0.9.13 HTML','v0.10.0 HTML','v0.10.1 HTML','v0.10.2 HTML','v0.10.3 HTML','v0.10.4 HTML','v0.10.5 HTML','v0.10.6 HTML','v0.10.7 HTML','v0.10.8 HTML','v0.10.9 HTML'):
+              s = s.replace(old, 'v0.10.10 HTML')
+          for old in ('HTML v0.9.12','HTML v0.9.13','HTML v0.10.0','HTML v0.10.1','HTML v0.10.2','HTML v0.10.3','HTML v0.10.4','HTML v0.10.5','HTML v0.10.6','HTML v0.10.7','HTML v0.10.8','HTML v0.10.9'):
+              s = s.replace(old, 'HTML v0.10.10')
           icm = '<a class="control-link" href="https://www.meteo.pl/um/php/meteorogram_id_um.php?ntype=0n&amp;id=2077" target="_blank" rel="noopener noreferrer">ICM UM meteogram ↗</a>'
           radar = '<a class="control-link" href="radar.html">RADAR / SAT / AI</a>'
           if radar not in s and icm in s:
@@ -60,6 +60,9 @@ jobs:
           visual_addon = '<script src="visual-style-fix.js"></script>'
           if visual_addon not in s:
               s = s.replace('</body>', visual_addon + '\n</body>')
+          layout_addon = '<script src="meteogram-layout-v2.js"></script>'
+          if layout_addon not in s:
+              s = s.replace('</body>', layout_addon + '\n</body>')
           p.write_text(s, encoding='utf-8')
 
           p = Path('_site/radar.html')
@@ -111,6 +114,7 @@ jobs:
           node --check index-fixes.js
           node --check axis-layout-fix.js
           node --check visual-style-fix.js
+          node --check meteogram-layout-v2.js
           node --check radar-enhance.js
           node --check warnings-readable.js
           node --check radar-intelligence.js
@@ -124,6 +128,7 @@ jobs:
           node --check _site/index-fixes.js
           node --check _site/axis-layout-fix.js
           node --check _site/visual-style-fix.js
+          node --check _site/meteogram-layout-v2.js
           node --check _site/radar-enhance.js
           node --check _site/warnings-readable.js
           node --check _site/radar-intelligence.js
@@ -137,23 +142,18 @@ jobs:
 
       - name: Verify deployed features
         run: |
-          grep -F "v0.10.9 HTML" _site/index.html
-          grep -F "axis-layout-fix.js" _site/index.html
-          grep -F "visual-style-fix.js" _site/index.html
-          grep -F "drawMeteogramGrid" _site/index-fixes.js
-          grep -F "hourMs = 3600e3" _site/index-fixes.js
-          grep -F "redrawSingleAxis" _site/axis-layout-fix.js
-          grep -F "drawUtcZuluAxis" _site/axis-layout-fix.js
-          grep -F "THREE_HOUR_MS = 3*HOUR_MS" _site/axis-layout-fix.js
-          grep -F "t+=THREE_HOUR_MS" _site/axis-layout-fix.js
-          grep -F "hh+'Z'" _site/axis-layout-fix.js
-          grep -F "UTC_MONTHS" _site/axis-layout-fix.js
-          grep -F "CLOUD_COLORS" _site/visual-style-fix.js
-          grep -F "low: '#f59e0b'" _site/visual-style-fix.js
-          grep -F "mid: '#22c55e'" _site/visual-style-fix.js
-          grep -F "high:'#3b82f6'" _site/visual-style-fix.js
-          grep -F "WIND_ARROW_COLOR = '#ef4444'" _site/visual-style-fix.js
-          grep -F "WIND_ARROW_FONT = 'bold 22px Arial'" _site/visual-style-fix.js
+          grep -F "v0.10.10 HTML" _site/index.html
+          grep -F "meteogram-layout-v2.js" _site/index.html
+          grep -F "id:'probstorm'" _site/meteogram-layout-v2.js
+          grep -F "Szansa opadu / burzy" _site/meteogram-layout-v2.js
+          grep -F "major?.72:.42" _site/meteogram-layout-v2.js
+          grep -F "ctx.rect(x0,p.y,x1-x0,p.h)" _site/meteogram-layout-v2.js
+          grep -F "CLOUD_LOW = '#f59e0b'" _site/meteogram-layout-v2.js
+          grep -F "CLOUD_MID = '#22c55e'" _site/meteogram-layout-v2.js
+          grep -F "CLOUD_HIGH = '#3b82f6'" _site/meteogram-layout-v2.js
+          grep -F "WIND_ARROW = '#ef4444'" _site/meteogram-layout-v2.js
+          grep -F "bold 22px Arial" _site/meteogram-layout-v2.js
+          grep -F "t+=THREE_HOURS" _site/meteogram-layout-v2.js
           grep -F "function setDot(id,ok){const el=\$(id);if(el)el.className='dot '+(ok?'ok':'bad')}" _site/radar.html
           grep -F "echo-fix.js" _site/radar.html
           grep -F "map-extras.js" _site/radar.html
