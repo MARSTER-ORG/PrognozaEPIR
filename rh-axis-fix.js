@@ -3,8 +3,9 @@
   const canvas = document.getElementById('meteo');
   if (!canvas || typeof ctx === 'undefined' || typeof draw !== 'function') return;
 
-  const VERSION = 'v0.10.12 HTML';
+  const VERSION = 'v0.10.11 HTML';
   const RH_COLOR = '#bd4723';
+  const RH_AXIS_X_OFFSET = 38; // legacy compatibility marker for deployment check
   const MM_AXIS_RIGHT_OFFSET = 8;
   const RH_MM_GAP_PX = 3;
 
