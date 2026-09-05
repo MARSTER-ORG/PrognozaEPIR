@@ -6,6 +6,7 @@
   const version = document.querySelector('.brand small');
   if (version) version.textContent = 'RADAR / SAT / AI v0.10.2';
 
+  // --- Map point selection: 3 second hold ---
   const mapEl = byId('map');
   if (mapEl) {
     mapEl.style.position = 'relative';
@@ -30,7 +31,7 @@
   `;
   document.head.appendChild(style);
 
-  let holdTimer = null, holdTick = null, holdLatLng = null, holdStart = 0;
+  let holdTimer = null, holdTick = null, holdLatLng = null, holdStart = 0, holdPoint = null;
   const bubble = byId('holdProgress');
   const holdUi = (show, text, ll) => {
     if (!bubble) return;
@@ -47,11 +48,13 @@
     if (holdTick) clearInterval(holdTick);
     holdTimer = holdTick = null;
     holdLatLng = null;
+    holdPoint = null;
     holdUi(false);
   };
   const startHold = e => {
     cancelHold();
     holdLatLng = e.latlng;
+    holdPoint = map.latLngToContainerPoint(e.latlng);
     holdStart = Date.now();
     holdUi(true, 'Przytrzymaj… 0.0 s', holdLatLng);
     holdTick = setInterval(() => {
@@ -69,10 +72,17 @@
       loadPolradProducts();
     }, 3000);
   };
+  const cancelIfMoved = e => {
+    if (!holdPoint || !e.latlng) return;
+    const q = map.latLngToContainerPoint(e.latlng);
+    if (Math.hypot(q.x - holdPoint.x, q.y - holdPoint.y) > 14) cancelHold();
+  };
   map.on('mousedown touchstart', startHold);
-  map.on('mouseup touchend mousemove touchmove dragstart zoomstart', cancelHold);
+  map.on('mousemove touchmove', cancelIfMoved);
+  map.on('mouseup touchend dragstart zoomstart', cancelHold);
   map.getContainer().addEventListener('contextmenu', e => e.preventDefault());
 
+  // Replace old fixed rings with rings that follow the selected point.
   const stale = [];
   map.eachLayer(layer => {
     if (layer instanceof L.Circle && !(layer instanceof L.CircleMarker)) stale.push(layer);
@@ -87,6 +97,7 @@
     rings.forEach(r => r.setLatLng([point.lat,point.lon]));
   };
 
+  // --- Official EUMETSAT MTG layers ---
   const wms = 'https://view.eumetsat.int/geoserver/wms';
   const mtgLayers = {
     geo: L.tileLayer.wms(wms,{layers:'mtg_fd:rgb_geocolour',format:'image/png',transparent:true,opacity:.72,attribution:'EUMETSAT MTG/FCI'}),
@@ -109,6 +120,7 @@
   addLayerButton('mtgIrToggle','MTG IR10.5',mtgLayers.ir);
   addLayerButton('mtgLiToggle','MTG LI',mtgLayers.li);
 
+  // --- Official IMGW / POLRAD product API ---
   const warningCard = [...document.querySelectorAll('.card')].find(c => c.querySelector('h2')?.textContent.includes('Ostrzeżenia IMGW'));
   const polradCard = document.createElement('section');
   polradCard.className = 'card';
