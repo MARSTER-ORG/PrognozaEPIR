@@ -30,7 +30,7 @@ jobs:
       - name: Prepare site
         run: |
           mkdir -p _site
-          cp index.html radar.html index-fixes.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js _site/
+          cp index.html radar.html index-fixes.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
           python3 - <<'PY'
           from pathlib import Path
           import re
@@ -58,7 +58,7 @@ jobs:
 
           p = Path('_site/radar.html')
           s = p.read_text(encoding='utf-8')
-          s = re.sub(r'RADAR / SAT / AI v\d+\.\d+\.\d+', 'RADAR / SAT / AI v0.12.0', s)
+          s = re.sub(r'RADAR / SAT / AI v\d+\.\d+\.\d+', 'RADAR / SAT / AI v0.12.1', s)
           s = s.replace(
               "function setDot(id,ok){$(id).className='dot '+(ok?'ok':'bad')}",
               "function setDot(id,ok){const el=$(id);if(el)el.className='dot '+(ok?'ok':'bad')}"
@@ -77,16 +77,17 @@ jobs:
               '<script src="ui-cleanup.js"></script>',
               '<script src="map-extras.js"></script>',
               '<script src="analysis-plus.js"></script>',
+              '<script src="range-rings-reset.js"></script>',
           ]
           for addon in addons:
               if addon not in s:
                   s = s.replace('</body>', addon + '\n</body>')
           p.write_text(s, encoding='utf-8')
 
-          for name in ('radar-enhance.js', 'radar-intelligence.js', 'echo-analysis.js', 'echo-fix.js', 'lightning-layer.js', 'map-extras.js', 'analysis-plus.js'):
+          for name in ('radar-enhance.js', 'radar-intelligence.js', 'echo-analysis.js', 'echo-fix.js', 'lightning-layer.js', 'map-extras.js', 'analysis-plus.js', 'range-rings-reset.js'):
               p = Path('_site') / name
               s = p.read_text(encoding='utf-8')
-              s = re.sub(r'RADAR / SAT / AI v\d+\.\d+\.\d+', 'RADAR / SAT / AI v0.12.0', s)
+              s = re.sub(r'RADAR / SAT / AI v\d+\.\d+\.\d+', 'RADAR / SAT / AI v0.12.1', s)
               p.write_text(s, encoding='utf-8')
 
           p = Path('_site/radar-enhance.js')
@@ -111,6 +112,7 @@ jobs:
           node --check ui-cleanup.js
           node --check map-extras.js
           node --check analysis-plus.js
+          node --check range-rings-reset.js
           node --check _site/index-fixes.js
           node --check _site/radar-enhance.js
           node --check _site/warnings-readable.js
@@ -121,6 +123,7 @@ jobs:
           node --check _site/ui-cleanup.js
           node --check _site/map-extras.js
           node --check _site/analysis-plus.js
+          node --check _site/range-rings-reset.js
 
       - name: Verify deployed radar features
         run: |
@@ -128,11 +131,14 @@ jobs:
           grep -F "echo-fix.js" _site/radar.html
           grep -F "map-extras.js" _site/radar.html
           grep -F "analysis-plus.js" _site/radar.html
+          grep -F "range-rings-reset.js" _site/radar.html
           grep -F "maps.blitzortung.org" _site/map-extras.js
           grep -F "const RADII=[10,25,50,75,100]" _site/analysis-plus.js
           grep -F "getPointsAround" _site/lightning-layer.js
           grep -F "cmaxPhenomena" _site/analysis-plus.js
-          grep -F "RADAR / SAT / AI v0.12.0" _site/analysis-plus.js
+          grep -F "RADII_KM = [10,25,50,75,100]" _site/range-rings-reset.js
+          grep -F "clearOldPointGraphics" _site/range-rings-reset.js
+          grep -F "RADAR / SAT / AI v0.12.1" _site/range-rings-reset.js
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
