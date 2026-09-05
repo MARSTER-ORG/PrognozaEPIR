@@ -31,13 +31,16 @@ jobs:
         run: |
           mkdir -p _site
           cp index.html _site/index.html
+          cp radar.html _site/radar.html
           python3 - <<'PY'
           from pathlib import Path
           p = Path('_site/index.html')
           s = p.read_text(encoding='utf-8')
           replacements = [
-              ('v0.9.13 HTML', 'v0.9.16 HTML'),
-              ('HTML v0.9.12', 'HTML v0.9.16'),
+              ('v0.9.13 HTML', 'v0.10.0 HTML'),
+              ('HTML v0.9.12', 'HTML v0.10.0'),
+              ('HTML v0.9.13', 'HTML v0.10.0'),
+              ('<a class="control-link" href="https://www.meteo.pl/um/php/meteorogram_id_um.php?ntype=0n&amp;id=2077" target="_blank" rel="noopener noreferrer">ICM UM meteogram ↗</a>', '<a class="control-link" href="radar.html">RADAR / SAT / AI</a>\n    <a class="control-link" href="https://www.meteo.pl/um/php/meteorogram_id_um.php?ntype=0n&amp;id=2077" target="_blank" rel="noopener noreferrer">ICM UM meteogram ↗</a>'),
               ("{id:'icon_global',name:'ICON',w:.05,provider:'openmeteo'},", "{id:'icon_global',name:'ICON',w:.05,provider:'openmeteo',surfaceExclude:['visibility']},"),
               ("const vars=prof?profileVarsFor(model):SURFACE;", "const vars=prof?profileVarsFor(model):SURFACE.filter(v=>!(model.surfaceExclude||[]).includes(v));"),
               ("const msg=j?.error||j?.reason||j?.message||('HTTP '+r.status);", "const msg=j?.reason||j?.message||(typeof j?.error==='string'?j.error:('HTTP '+r.status));"),
