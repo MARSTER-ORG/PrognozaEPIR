@@ -30,7 +30,7 @@ jobs:
       - name: Prepare site
         run: |
           mkdir -p _site
-          cp index.html radar.html index-fixes.js radar-enhance.js warnings-readable.js _site/
+          cp index.html radar.html index-fixes.js radar-enhance.js warnings-readable.js radar-intelligence.js _site/
           python3 - <<'PY'
           from pathlib import Path
 
@@ -58,21 +58,24 @@ jobs:
               s = s.replace('</body>', addon + '\n</body>')
           p.write_text(s, encoding='utf-8')
 
-          # Radar/Satellite module.
+          # Radar/Satellite/AI module.
           p = Path('_site/radar.html')
           s = p.read_text(encoding='utf-8')
-          for old in ('RADAR / SAT / AI v0.10.0','RADAR / SAT / AI v0.10.1','RADAR / SAT / AI v0.10.2','RADAR / SAT / AI v0.10.3'):
-              s = s.replace(old, 'RADAR / SAT / AI v0.10.4')
-          addon = '<script src="radar-enhance.js"></script>'
-          if addon not in s:
-              s = s.replace('</body>', addon + '\n</body>')
-          warnings = '<script src="warnings-readable.js"></script>'
-          if warnings not in s:
-              s = s.replace('</body>', warnings + '\n</body>')
+          for old in ('RADAR / SAT / AI v0.10.0','RADAR / SAT / AI v0.10.1','RADAR / SAT / AI v0.10.2','RADAR / SAT / AI v0.10.3','RADAR / SAT / AI v0.10.4'):
+              s = s.replace(old, 'RADAR / SAT / AI v0.11.0')
+          addons = [
+              '<script src="radar-enhance.js"></script>',
+              '<script src="warnings-readable.js"></script>',
+              '<script src="radar-intelligence.js"></script>',
+          ]
+          for addon in addons:
+              if addon not in s:
+                  s = s.replace('</body>', addon + '\n</body>')
           p.write_text(s, encoding='utf-8')
 
+          # Keep older extension's badge from overwriting the new module version.
           p = Path('_site/radar-enhance.js')
-          s = p.read_text(encoding='utf-8').replace('RADAR / SAT / AI v0.10.3', 'RADAR / SAT / AI v0.10.4')
+          s = p.read_text(encoding='utf-8').replace('RADAR / SAT / AI v0.10.3', 'RADAR / SAT / AI v0.11.0')
           p.write_text(s, encoding='utf-8')
           PY
 
@@ -81,9 +84,11 @@ jobs:
           node --check index-fixes.js
           node --check radar-enhance.js
           node --check warnings-readable.js
+          node --check radar-intelligence.js
           node --check _site/index-fixes.js
           node --check _site/radar-enhance.js
           node --check _site/warnings-readable.js
+          node --check _site/radar-intelligence.js
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
