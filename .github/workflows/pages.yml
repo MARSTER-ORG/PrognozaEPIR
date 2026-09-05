@@ -37,10 +37,10 @@ jobs:
 
           p = Path('_site/index.html')
           s = p.read_text(encoding='utf-8')
-          for old in ('v0.9.13 HTML','v0.10.0 HTML','v0.10.1 HTML','v0.10.2 HTML','v0.10.3 HTML'):
-              s = s.replace(old, 'v0.10.4 HTML')
-          for old in ('HTML v0.9.12','HTML v0.9.13','HTML v0.10.0','HTML v0.10.1','HTML v0.10.2','HTML v0.10.3'):
-              s = s.replace(old, 'HTML v0.10.4')
+          for old in ('v0.9.13 HTML','v0.10.0 HTML','v0.10.1 HTML','v0.10.2 HTML','v0.10.3 HTML','v0.10.4 HTML'):
+              s = s.replace(old, 'v0.10.5 HTML')
+          for old in ('HTML v0.9.12','HTML v0.9.13','HTML v0.10.0','HTML v0.10.1','HTML v0.10.2','HTML v0.10.3','HTML v0.10.4'):
+              s = s.replace(old, 'HTML v0.10.5')
           icm = '<a class="control-link" href="https://www.meteo.pl/um/php/meteorogram_id_um.php?ntype=0n&amp;id=2077" target="_blank" rel="noopener noreferrer">ICM UM meteogram ↗</a>'
           radar = '<a class="control-link" href="radar.html">RADAR / SAT / AI</a>'
           if radar not in s and icm in s:
@@ -127,10 +127,13 @@ jobs:
 
       - name: Verify deployed features
         run: |
-          grep -F "v0.10.4 HTML" _site/index.html
+          grep -F "v0.10.5 HTML" _site/index.html
           grep -F "drawMeteogramGrid" _site/index-fixes.js
           grep -F "hourMs = 3600e3" _site/index-fixes.js
           grep -F "boundaryLabelX" _site/index-fixes.js
+          grep -F "paddedScale" _site/index-fixes.js
+          grep -F "drawSectionLabels" _site/index-fixes.js
+          grep -F "Chmury / widzialność" _site/index-fixes.js
           grep -F "function setDot(id,ok){const el=\$(id);if(el)el.className='dot '+(ok?'ok':'bad')}" _site/radar.html
           grep -F "echo-fix.js" _site/radar.html
           grep -F "map-extras.js" _site/radar.html
