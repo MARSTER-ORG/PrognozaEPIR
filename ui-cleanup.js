@@ -1,21 +1,31 @@
 'use strict';
 (() => {
-  const removeUi = () => {
-    // Remove the whole Sources/Status card, not only its rows.
+  const hideUi = () => {
+    // Do not remove these nodes: the legacy data loaders still update the
+    // hidden source indicators after asynchronous GFS/AIFS/IMGW requests.
     const sources = document.querySelector('.sources');
     if (sources) {
       const card = sources.closest('.card');
-      if (card) card.remove(); else sources.remove();
+      if (card) {
+        card.style.display = 'none';
+        card.setAttribute('aria-hidden', 'true');
+      } else {
+        sources.style.display = 'none';
+      }
     }
-    // Remove technical status strips under the map.
-    document.getElementById('polradStatus')?.remove();
-    document.getElementById('lightningStatus')?.remove();
+
+    // Technical strips stay in DOM for older modules, but are not shown.
+    for (const id of ['polradStatus','lightningStatus']) {
+      const el = document.getElementById(id);
+      if (el) {
+        el.style.display = 'none';
+        el.setAttribute('aria-hidden', 'true');
+      }
+    }
   };
 
-  removeUi();
-  // Some older modules create these elements after startup. Keep the UI clean
-  // without changing the data-loading logic behind them.
-  const observer = new MutationObserver(removeUi);
-  observer.observe(document.body,{childList:true,subtree:true});
-  setTimeout(()=>observer.disconnect(),5000);
+  hideUi();
+  const observer = new MutationObserver(hideUi);
+  observer.observe(document.body, {childList:true, subtree:true});
+  setTimeout(() => observer.disconnect(), 10000);
 })();
