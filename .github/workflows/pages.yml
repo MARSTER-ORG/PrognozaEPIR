@@ -31,6 +31,17 @@ jobs:
         run: |
           mkdir -p _site
           cp index.html _site/index.html
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('_site/index.html')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace('v0.9.13 HTML', 'v0.9.14 HTML')
+          s = s.replace('HTML v0.9.13', 'HTML v0.9.14')
+          s = s.replace("{id:'icon_global',name:'ICON',w:.05,provider:'openmeteo'},", "{id:'icon_global',name:'ICON',w:.05,provider:'openmeteo',surfaceExclude:['visibility']},")
+          s = s.replace("const vars=prof?profileVarsFor(model):SURFACE;", "const vars=prof?profileVarsFor(model):SURFACE.filter(v=>!(model.surfaceExclude||[]).includes(v));")
+          s = s.replace("const msg=j?.error||j?.reason||j?.message||('HTTP '+r.status);", "const msg=j?.reason||j?.message||(typeof j?.error==='string'?j.error:('HTTP '+r.status));")
+          p.write_text(s, encoding='utf-8')
+          PY
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
