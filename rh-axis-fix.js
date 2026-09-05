@@ -3,7 +3,7 @@
   const canvas = document.getElementById('meteo');
   if (!canvas || typeof ctx === 'undefined' || typeof draw !== 'function') return;
 
-  const VERSION = 'v0.10.12 HTML';
+  const VERSION = 'v0.10.13 HTML';
   const RH_COLOR = '#bd4723';
   const RH_AXIS_X_OFFSET = 38; // legacy compatibility marker for deployment check
   const MM_AXIS_RIGHT_OFFSET = 8;
@@ -37,14 +37,18 @@
     ctx.fillStyle = RH_COLOR;
     ctx.globalAlpha = 0.98;
 
+    // One fixed RH column: every percent sign ends at exactly the same X.
+    // Reserve space for the widest precipitation label so the two scales never overlap.
+    let widestMm = 0;
+    for (let i=0;i<=4;i++) {
+      const mm = maxRR*i/4;
+      widestMm = Math.max(widestMm,ctx.measureText(mmText(mm,maxRR)).width);
+    }
+    const rhRight = m.x0-MM_AXIS_RIGHT_OFFSET-widestMm-RH_MM_GAP_PX;
+
     for (let i=0;i<=4;i++) {
       const rh = i*25;
-      const mm = maxRR*i/4;
       const yy = yForRh(rh,p);
-      const mmLabel = mmText(mm,maxRR);
-      const mmWidth = ctx.measureText(mmLabel).width;
-      const mmLeft = m.x0-MM_AXIS_RIGHT_OFFSET-mmWidth;
-      const rhRight = mmLeft-RH_MM_GAP_PX;
       ctx.fillText(rh+'%',rhRight,yy);
     }
 
