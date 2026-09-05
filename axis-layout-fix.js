@@ -1,0 +1,113 @@
+'use strict';
+(() => {
+  const canvas = document.getElementById('meteo');
+  if (!canvas || typeof ctx === 'undefined' || typeof draw !== 'function') return;
+
+  const INNER_PAD = 10;
+
+  function panelRange(id, data) {
+    if (!Array.isArray(data) || !data.length) return null;
+    if (id === 'temp') return niceRange(data.flatMap(z => [z.T,z.Td]),1,5);
+    if (id === 'prec') return [0,Math.max(2,...data.map(z => Number(z.RR)||0))];
+    if (id === 'prob' || id === 'storm') return [0,100];
+    if (id === 'press') return niceRange(data.map(z => z.P),1,8);
+    if (id === 'wind') {
+      const maxW = Math.max(10,...data.flatMap(z => [Number(z.WS)||0,Number(z.G)||0]));
+      return [0,Math.ceil(maxW/5)*5];
+    }
+    if (id === 'cloud') return [0,15];
+    if (id === 'okta') return [0,8];
+    return null;
+  }
+
+  function axisValue(v,id,min,max) {
+    if (!Number.isFinite(v)) return '—';
+    const span = Math.abs(max-min);
+    if (id === 'press' || id === 'prob' || id === 'storm' || id === 'okta') return String(Math.round(v));
+    if (id === 'cloud') return (Math.abs(v-Math.round(v))<0.05 ? Math.round(v) : v.toFixed(1)).toString();
+    if (id === 'prec') return (v < 1 && span <= 5 ? v.toFixed(1) : (Math.abs(v-Math.round(v))<0.05 ? Math.round(v) : v.toFixed(1))).toString();
+    if (span <= 6) return v.toFixed(1);
+    return Math.abs(v-Math.round(v))<0.05 ? String(Math.round(v)) : v.toFixed(1);
+  }
+
+  function yFor(value,min,max,p) {
+    if (!Number.isFinite(value) || !Number.isFinite(min) || !Number.isFinite(max) || min === max) return p.y+p.h/2;
+    const pad = Math.min(INNER_PAD,Math.max(7,p.h*0.1));
+    return p.y+p.h-pad-(value-min)/(max-min)*Math.max(1,p.h-2*pad);
+  }
+
+  function redrawSingleAxis() {
+    const m = canvas._meta;
+    if (!m || !Array.isArray(m.data) || !Array.isArray(m.panelYs)) return;
+    const cp = canvasPalette();
+    const gutterLeft = m.x0-57;
+    const gutterWidth = 55;
+
+    ctx.save();
+
+    // Erase only the numeric-axis gutter. Vertical section names remain farther left.
+    ctx.fillStyle = cp.bg;
+    for (const p of m.panelYs) ctx.fillRect(gutterLeft,p.y,gutterWidth,p.h);
+
+    ctx.font = '9px Arial';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = cp.muted;
+    ctx.globalAlpha = 0.95;
+
+    // Every panel now uses exactly the same X coordinate for its numeric values.
+    // The extra Y inset separates shared boundary values without a second column.
+    for (const p of m.panelYs) {
+      const range = panelRange(p.id,m.data);
+      if (!range) continue;
+      const [min,max] = range;
+      const divisions = p.id === 'cloud' ? 3 : 4;
+      for (let i=0;i<=divisions;i++) {
+        const value = min+(max-min)*i/divisions;
+        const yy = yFor(value,min,max,p);
+        ctx.fillText(axisValue(value,p.id,min,max),m.x0-8,yy);
+      }
+    }
+
+    // Strong panel boundaries make it clear that values belong to the next section.
+    ctx.strokeStyle = cp.border;
+    ctx.globalAlpha = 0.62;
+    ctx.lineWidth = 0.85;
+    for (const p of m.panelYs) {
+      ctx.beginPath();
+      ctx.moveTo(m.x0-2,p.y);
+      ctx.lineTo(m.x1,p.y);
+      ctx.stroke();
+    }
+    const last = m.panelYs[m.panelYs.length-1];
+    if (last) {
+      ctx.beginPath();
+      ctx.moveTo(m.x0-2,last.y+last.h);
+      ctx.lineTo(m.x1,last.y+last.h);
+      ctx.stroke();
+    }
+
+    ctx.beginPath();
+    ctx.moveTo(m.x0,m.top);
+    ctx.lineTo(m.x0,m.top+m.totalPanelH);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  if (!window.__epirSingleAxisWrapped) {
+    window.__epirSingleAxisWrapped = true;
+    const previousDraw = draw;
+    draw = function() {
+      const out = previousDraw.apply(this,arguments);
+      redrawSingleAxis();
+      return out;
+    };
+  }
+
+  const version = document.querySelector('.brand small');
+  if (version) version.textContent = 'v0.10.6 HTML';
+
+  requestAnimationFrame(() => {
+    if (typeof consensus !== 'undefined' && consensus.length) draw();
+  });
+})();
