@@ -8,7 +8,7 @@
   let rebuildTimer = null;
 
   const version = document.querySelector('.brand small');
-  if (version) version.textContent = 'RADAR / SAT / AI v0.12.1';
+  if (version) version.textContent = 'RADAR / SAT / AI v0.12.2';
 
   function currentPoint(){
     if (typeof point !== 'undefined' && Number.isFinite(Number(point?.lat)) && Number.isFinite(Number(point?.lon))) {
@@ -63,34 +63,98 @@
     }
   }
 
-  function buildFiveRings(){
+  function ringStyle(radiusKm, activeRadiusKm=null){
+    const active = Number(radiusKm) === Number(activeRadiusKm);
+    return {
+      radius:radiusKm*1000,
+      color:active ? '#5268ff' : '#1f2a75',
+      weight:active ? 2.5 : 1,
+      opacity:active ? 1 : .9,
+      fill:false,
+      dashArray:active ? '7 4' : '4 4',
+      interactive:false,
+      className:'epir-range-ring' + (active ? ' epir-analysis-ring-active' : '')
+    };
+  }
+
+  function buildFiveRings(activeRadiusKm=null){
     const p = currentPoint();
     if (!p) return;
-    ownedRings = RADII_KM.map(radiusKm => L.circle([p.lat,p.lon],{
-      radius:radiusKm*1000,
-      color:'#1f2a75',
-      weight:1,
-      fill:false,
-      dashArray:'4 4',
-      interactive:false,
-      className:'epir-range-ring'
-    }).addTo(map));
+    ownedRings = RADII_KM.map(radiusKm => L.circle([p.lat,p.lon],ringStyle(radiusKm,activeRadiusKm)).addTo(map));
     window.PrognozaEPIRRangeRings = {
       center:{...p},
       radiiKm:RADII_KM.slice(),
+      activeRadiusKm:Number.isFinite(Number(activeRadiusKm)) ? Number(activeRadiusKm) : null,
       layers:ownedRings.slice()
     };
   }
 
-  function rebuild({resetResults=true}={}){
+  function rebuild({resetResults=true,activeRadiusKm=null}={}){
     clearOldPointGraphics();
-    buildFiveRings();
+    buildFiveRings(activeRadiusKm);
     if (resetResults) resetAnalysisReadout();
   }
 
   function scheduleRebuild(delay=80, resetResults=true){
     clearTimeout(rebuildTimer);
     rebuildTimer = setTimeout(() => rebuild({resetResults}), delay);
+  }
+
+  function selectedAnalysisRadius(){
+    const r = Number($('echoRadius')?.value);
+    return RADII_KM.includes(r) ? r : 100;
+  }
+
+  function highlightAnalysisRing(radiusKm){
+    ownedRings.forEach((ring,i) => {
+      const r = RADII_KM[i];
+      if (!ring) return;
+      const active = r === radiusKm;
+      ring.setStyle({
+        color:active ? '#5268ff' : '#1f2a75',
+        weight:active ? 2.5 : 1,
+        opacity:active ? 1 : .9,
+        dashArray:active ? '7 4' : '4 4'
+      });
+    });
+    if (window.PrognozaEPIRRangeRings) window.PrognozaEPIRRangeRings.activeRadiusKm = radiusKm;
+  }
+
+  function zoomToAnalysisRadius(radiusKm=selectedAnalysisRadius(), {scroll=true}={}){
+    const p = currentPoint();
+    if (!p) return;
+    const radius = RADII_KM.includes(Number(radiusKm)) ? Number(radiusKm) : 100;
+
+    // Reconcile rings if an older module has replaced/removed any of them.
+    const validOwned = ownedRings.length === RADII_KM.length && ownedRings.every(r => {
+      try { return map.hasLayer(r); } catch (_) { return false; }
+    });
+    if (!validOwned) {
+      rebuild({resetResults:false,activeRadiusKm:radius});
+    } else {
+      highlightAnalysisRing(radius);
+    }
+
+    const target = ownedRings[RADII_KM.indexOf(radius)] || L.circle([p.lat,p.lon],{radius:radius*1000});
+    try {
+      map.invalidateSize(false);
+      map.fitBounds(target.getBounds(),{
+        paddingTopLeft:[18,18],
+        paddingBottomRight:[18,18],
+        animate:true,
+        duration:.35,
+        maxZoom:13
+      });
+    } catch (_) {
+      map.setView([p.lat,p.lon], radius<=10?10:radius<=25?9:radius<=50?8:radius<=75?7:6);
+    }
+
+    if (scroll) {
+      const mapEl = $('map');
+      setTimeout(() => {
+        try { mapEl?.scrollIntoView({behavior:'smooth',block:'center'}); } catch (_) { mapEl?.scrollIntoView(); }
+      }, 80);
+    }
   }
 
   // Run last in the addon chain. Earlier modules may move or recreate their own ring objects;
@@ -109,8 +173,31 @@
   $('apply')?.addEventListener('click', () => scheduleRebuild(120, true));
   $('resetPoint')?.addEventListener('click', () => scheduleRebuild(120, true));
 
+  // Analysis radius controls the map viewport. The map is fitted immediately on click,
+  // regardless of whether a qualifying echo is later found.
+  function bindAnalysisZoom(){
+    const btn = $('echoAnalyze');
+    if (!btn || btn.dataset.radiusZoomBound === '1') return;
+    btn.dataset.radiusZoomBound = '1';
+    btn.addEventListener('click', () => {
+      const radius = selectedAnalysisRadius();
+      zoomToAnalysisRadius(radius,{scroll:true});
+      // Re-apply once after other synchronous listeners have finished manipulating layers.
+      setTimeout(() => zoomToAnalysisRadius(radius,{scroll:false}), 120);
+    }, {capture:true});
+  }
+
+  bindAnalysisZoom();
+  setTimeout(bindAnalysisZoom,700);
+  setInterval(bindAnalysisZoom,1500);
+
   // Initial reconciliation removes duplicate legacy rings left by earlier modules.
   setTimeout(() => rebuild({resetResults:false}), 1200);
 
-  window.PrognozaEPIRRangeReset = {rebuild, clearOldPointGraphics, radiiKm:RADII_KM.slice()};
+  window.PrognozaEPIRRangeReset = {
+    rebuild,
+    clearOldPointGraphics,
+    zoomToAnalysisRadius,
+    radiiKm:RADII_KM.slice()
+  };
 })();
