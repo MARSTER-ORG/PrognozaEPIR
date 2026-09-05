@@ -81,14 +81,14 @@ jobs:
           p.write_text(s, encoding='utf-8')
 
           # Keep older extension's badge from overwriting the new module version.
-          # Also strip the obsolete diagnostic IMGW/POLRAD products card from the
-          # deployed extension; the actual POLRAD layers remain provided by
+          # Remove the redundant diagnostic IMGW/POLRAD products table from the
+          # deployed extension. The real POLRAD layers/animation/AI remain in
           # radar-intelligence.js.
           p = Path('_site/radar-enhance.js')
           s = p.read_text(encoding='utf-8').replace('RADAR / SAT / AI v0.10.3', 'RADAR / SAT / AI v0.11.0')
           s = s.replace('    setTimeout(loadPolradProducts, 150);\n', '')
           start = s.find('  // --- Official IMGW / POLRAD product API ---')
-          end = s.find("  const sources = document.querySelector('.sources');", start)
+          end = s.rfind("  const sources = document.querySelector('.sources');")
           if start >= 0 and end > start:
               s = s[:start] + s[end:]
           p.write_text(s, encoding='utf-8')
