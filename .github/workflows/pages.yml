@@ -30,7 +30,7 @@ jobs:
       - name: Prepare site
         run: |
           mkdir -p _site
-          cp index.html radar.html index-fixes.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js _site/
+          cp index.html radar.html index-fixes.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js _site/
           python3 - <<'PY'
           from pathlib import Path
           import re
@@ -62,7 +62,7 @@ jobs:
           # Radar/Satellite/AI module.
           p = Path('_site/radar.html')
           s = p.read_text(encoding='utf-8')
-          s = re.sub(r'RADAR / SAT / AI v\d+\.\d+\.\d+', 'RADAR / SAT / AI v0.11.8', s)
+          s = re.sub(r'RADAR / SAT / AI v\d+\.\d+\.\d+', 'RADAR / SAT / AI v0.11.9', s)
 
           s = s.replace(
               "function setDot(id,ok){$(id).className='dot '+(ok?'ok':'bad')}",
@@ -83,16 +83,17 @@ jobs:
               '<script src="lightning-layer.js"></script>',
               '<script src="ui-cleanup.js"></script>',
               '<script src="map-extras.js"></script>',
+              '<script src="analysis-plus.js"></script>',
           ]
           for addon in addons:
               if addon not in s:
                   s = s.replace('</body>', addon + '\n</body>')
           p.write_text(s, encoding='utf-8')
 
-          for name in ('radar-enhance.js', 'radar-intelligence.js', 'echo-analysis.js', 'echo-fix.js', 'lightning-layer.js', 'map-extras.js'):
+          for name in ('radar-enhance.js', 'radar-intelligence.js', 'echo-analysis.js', 'echo-fix.js', 'lightning-layer.js', 'map-extras.js', 'analysis-plus.js'):
               p = Path('_site') / name
               s = p.read_text(encoding='utf-8')
-              s = re.sub(r'RADAR / SAT / AI v\d+\.\d+\.\d+', 'RADAR / SAT / AI v0.11.8', s)
+              s = re.sub(r'RADAR / SAT / AI v\d+\.\d+\.\d+', 'RADAR / SAT / AI v0.11.9', s)
               p.write_text(s, encoding='utf-8')
 
           # Remove only the old diagnostic product table. Real POLRAD layers remain.
@@ -117,6 +118,7 @@ jobs:
           node --check lightning-layer.js
           node --check ui-cleanup.js
           node --check map-extras.js
+          node --check analysis-plus.js
           node --check _site/index-fixes.js
           node --check _site/radar-enhance.js
           node --check _site/warnings-readable.js
@@ -126,15 +128,18 @@ jobs:
           node --check _site/lightning-layer.js
           node --check _site/ui-cleanup.js
           node --check _site/map-extras.js
+          node --check _site/analysis-plus.js
 
-      - name: Verify deployed radar model guard
+      - name: Verify deployed radar features
         run: |
           grep -F "function setDot(id,ok){const el=\$(id);if(el)el.className='dot '+(ok?'ok':'bad')}" _site/radar.html
           grep -F "echo-fix.js" _site/radar.html
           grep -F "map-extras.js" _site/radar.html
+          grep -F "analysis-plus.js" _site/radar.html
           grep -F "maps.blitzortung.org" _site/map-extras.js
-          grep -F "result-jump" _site/map-extras.js
-          grep -F "RADAR / SAT / AI v0.11.8" _site/map-extras.js
+          grep -F "const RADII = [10,25,50,75,100]" _site/analysis-plus.js
+          grep -F "stormHobbyCard" _site/analysis-plus.js
+          grep -F "RADAR / SAT / AI v0.11.9" _site/analysis-plus.js
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
