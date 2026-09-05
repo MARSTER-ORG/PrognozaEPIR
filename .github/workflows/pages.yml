@@ -35,11 +35,68 @@ jobs:
           from pathlib import Path
           p = Path('_site/index.html')
           s = p.read_text(encoding='utf-8')
-          s = s.replace('v0.9.13 HTML', 'v0.9.14 HTML')
-          s = s.replace('HTML v0.9.13', 'HTML v0.9.14')
-          s = s.replace("{id:'icon_global',name:'ICON',w:.05,provider:'openmeteo'},", "{id:'icon_global',name:'ICON',w:.05,provider:'openmeteo',surfaceExclude:['visibility']},")
-          s = s.replace("const vars=prof?profileVarsFor(model):SURFACE;", "const vars=prof?profileVarsFor(model):SURFACE.filter(v=>!(model.surfaceExclude||[]).includes(v));")
-          s = s.replace("const msg=j?.error||j?.reason||j?.message||('HTTP '+r.status);", "const msg=j?.reason||j?.message||(typeof j?.error==='string'?j.error:('HTTP '+r.status));")
+          replacements = [
+              ('v0.9.13 HTML', 'v0.9.15 HTML'),
+              ('HTML v0.9.12', 'HTML v0.9.15'),
+              ("{id:'icon_global',name:'ICON',w:.05,provider:'openmeteo'},", "{id:'icon_global',name:'ICON',w:.05,provider:'openmeteo',surfaceExclude:['visibility']},"),
+              ("const vars=prof?profileVarsFor(model):SURFACE;", "const vars=prof?profileVarsFor(model):SURFACE.filter(v=>!(model.surfaceExclude||[]).includes(v));"),
+              ("const msg=j?.error||j?.reason||j?.message||('HTTP '+r.status);", "const msg=j?.reason||j?.message||(typeof j?.error==='string'?j.error:('HTTP '+r.status));"),
+              ('.canvas-viewport{position:relative;width:100%;overflow:hidden;background:var(--surface2);min-height:360px;touch-action:pan-y}', '.canvas-viewport{position:relative;width:100%;overflow:hidden;background:var(--surface2);min-height:360px;touch-action:none;overscroll-behavior:contain}'),
+              ('.canvas-stage canvas{display:block;background:var(--surface2);touch-action:pan-y}', '.canvas-stage canvas{display:block;background:var(--surface2);touch-action:none}'),
+              ('<div class="gesture-hint"><b>Telefon:</b> dwa palce = zoom i przesuwanie. Jeden palec = przewijanie strony. <b>Krótkie dotknięcie punktu</b> wybiera godzinę i sekcję; parametry pojawią się pod meteogramem.</div>', '<div class="gesture-hint"><b>Telefon:</b> dwa palce przeciągaj = przesuwanie wykresu, rozsuwaj/zsuwaj = zoom. Jeden palec = przewijanie strony. <b>Krótkie dotknięcie punktu</b> wybiera godzinę i sekcję.</div>'),
+              ('let selection=null;', 'let selection=null, singleTouch=null, suppressClickUntil=0;'),
+          ]
+          for old, new in replacements:
+              s = s.replace(old, new)
+
+          s = s.replace(
+          """function beginGesture(e){if(e.touches.length<2)return false;const a=e.touches[0],b=e.touches[1],mid=touchMid(a,b),vr=viewport.getBoundingClientRect();gesture={dist:Math.max(10,touchDist(a,b)),zoom,contentX:(mid.x-vr.left-panX)/zoom,contentY:(mid.y-vr.top-panY)/zoom};return true}
+          function updateGesture(e){if(!gesture||e.touches.length<2)return;const a=e.touches[0],b=e.touches[1],mid=touchMid(a,b),vr=viewport.getBoundingClientRect(),ratio=touchDist(a,b)/gesture.dist;zoom=clamp(gesture.zoom*ratio,ZOOM_MIN,ZOOM_MAX);panX=(mid.x-vr.left)-gesture.contentX*zoom;panY=(mid.y-vr.top)-gesture.contentY*zoom;applyTransform()}""",
+          """function beginGesture(e){
+            if(e.touches.length<2)return false;
+            const a=e.touches[0],b=e.touches[1],mid=touchMid(a,b),vr=viewport.getBoundingClientRect();
+            gesture={dist:Math.max(10,touchDist(a,b)),zoom,contentX:(mid.x-vr.left-panX)/zoom,contentY:(mid.y-vr.top-panY)/zoom,moved:false};
+            singleTouch=null;
+            return true
+          }
+          function updateGesture(e){
+            if(!gesture||e.touches.length<2)return;
+            const a=e.touches[0],b=e.touches[1],mid=touchMid(a,b),vr=viewport.getBoundingClientRect(),ratio=touchDist(a,b)/gesture.dist;
+            const nextZoom=clamp(gesture.zoom*ratio,ZOOM_MIN,ZOOM_MAX);
+            panX=(mid.x-vr.left)-gesture.contentX*nextZoom;
+            panY=(mid.y-vr.top)-gesture.contentY*nextZoom;
+            zoom=nextZoom; gesture.moved=true; applyTransform()
+          }
+          function beginSingleTouch(t){singleTouch={startX:t.clientX,startY:t.clientY,lastY:t.clientY,moved:false}}
+          function scrollPageWithOneTouch(t){
+            if(!singleTouch)beginSingleTouch(t);
+            const dx=t.clientX-singleTouch.startX,dy=t.clientY-singleTouch.startY;
+            if(Math.hypot(dx,dy)>7)singleTouch.moved=true;
+            if(singleTouch.moved){const delta=singleTouch.lastY-t.clientY;if(Math.abs(delta)>.1)window.scrollBy(0,delta);singleTouch.lastY=t.clientY}
+          }""")
+
+          s = s.replace(
+          """viewport.addEventListener('touchstart',e=>{if(e.touches.length>=2){e.preventDefault();beginGesture(e);return}gesture=null},{passive:false});
+          viewport.addEventListener('touchmove',e=>{if(e.touches.length>=2){e.preventDefault();if(!gesture)beginGesture(e);updateGesture(e)}},{passive:false});
+          viewport.addEventListener('touchend',e=>{if(e.touches.length<2&&gesture){gesture=null;lastGestureEnd=Date.now();applyTransform()}},{passive:true});
+          viewport.addEventListener('touchcancel',()=>{gesture=null;lastGestureEnd=Date.now();applyTransform()},{passive:true});
+          cv.addEventListener('click',e=>selectAt(e.clientX,e.clientY));""",
+          """viewport.addEventListener('touchstart',e=>{
+            if(e.touches.length>=2){e.preventDefault();beginGesture(e);return}
+            if(e.touches.length===1){gesture=null;beginSingleTouch(e.touches[0])}
+          },{passive:false});
+          viewport.addEventListener('touchmove',e=>{
+            if(e.touches.length>=2){e.preventDefault();if(!gesture)beginGesture(e);updateGesture(e);return}
+            if(e.touches.length===1&&!gesture){e.preventDefault();scrollPageWithOneTouch(e.touches[0])}
+          },{passive:false});
+          viewport.addEventListener('touchend',e=>{
+            if(gesture&&e.touches.length<2){gesture=null;lastGestureEnd=Date.now();suppressClickUntil=Date.now()+450;applyTransform()}
+            if(singleTouch&&e.touches.length===0){if(singleTouch.moved)suppressClickUntil=Date.now()+350;singleTouch=null}
+            else if(e.touches.length===1&&!gesture)beginSingleTouch(e.touches[0])
+          },{passive:true});
+          viewport.addEventListener('touchcancel',()=>{gesture=null;singleTouch=null;lastGestureEnd=Date.now();suppressClickUntil=Date.now()+450;applyTransform()},{passive:true});
+          cv.addEventListener('click',e=>{if(Date.now()<suppressClickUntil)return;selectAt(e.clientX,e.clientY)});""")
+
           p.write_text(s, encoding='utf-8')
           PY
 
