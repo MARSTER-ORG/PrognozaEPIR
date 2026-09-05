@@ -3,11 +3,12 @@
   const canvas = document.getElementById('meteo');
   if (!canvas || typeof ctx === 'undefined' || typeof draw !== 'function') return;
 
-  const VERSION = 'v0.10.11 HTML';
+  const VERSION = 'v0.10.12 HTML';
   const RH_COLOR = '#bd4723';
   const RH_AXIS_X_OFFSET = 38; // legacy compatibility marker for deployment check
   const MM_AXIS_RIGHT_OFFSET = 8;
   const RH_MM_GAP_PX = 3;
+  const LEGEND_RIGHT_GAP = 30;
 
   function yForRh(value,p) {
     const pad = Math.min(9,Math.max(7,p.h*.09));
@@ -48,6 +49,44 @@
     }
 
     ctx.restore();
+  }
+
+  // Narrower legend frame: its right border no longer crosses vertical section labels.
+  if (typeof drawLegend === 'function' && typeof LEGEND_W !== 'undefined') {
+    drawLegend = function(top,totalH) {
+      const x=8;
+      const w=Math.max(120,LEGEND_W-LEGEND_RIGHT_GAP-18);
+      const cp=canvasPalette();
+      ctx.fillStyle=cp.legend;ctx.fillRect(x,top,w,totalH);
+      ctx.strokeStyle=cp.border;ctx.lineWidth=.9;ctx.strokeRect(x,top,w,totalH);
+      let y=top+14,sx=x+9;
+      legendTitle(sx,y,'Temperatury');y+=14;
+      legendSample(sx,y,'#d43d31','Temp. powietrza');y+=13;
+      legendSample(sx,y,'#25278f','Punkt rosy',[2,2]);y+=18;
+      legendTitle(sx,y,'Opady / wilgotność');y+=14;
+      legendSample(sx,y,'#039c29','Opad');y+=13;
+      legendSample(sx,y,'#bd4723','Wilgotność');y+=18;
+      legendTitle(sx,y,'Prawdopodobieństwo');y+=14;
+      legendSample(sx,y,'#0b9f2b','Szansa opadu');y+=13;
+      legendSample(sx,y,'#8b3db8','Szansa burzy');y+=18;
+      legendTitle(sx,y,'Ciśnienie');y+=14;
+      legendSample(sx,y,activeTheme()==='dark'?'#e7e9ed':'#222','QNH / MSLP');y+=18;
+      legendTitle(sx,y,'Wiatr');y+=14;
+      legendSample(sx,y,'#152f9a','Wiatr 10 m');y+=13;
+      legendSample(sx,y,'#c33b2b','Porywy',[5,4]);y+=13;
+      legendSample(sx,y,'#ef4444','Kierunek');y+=18;
+      legendTitle(sx,y,'Chmury');y+=14;
+      legendSample(sx,y,'#8d4a1a','Podstawa ≥5/8');y+=13;
+      legendSample(sx,y,'#d66c12','Widzialność');y+=13;
+      legendDot(sx,y,activeTheme()==='dark'?'#fff':'#555','Profil zachmurzenia');y+=18;
+      legendTitle(sx,y,'Warstwy chmur');y+=14;
+      legendSample(sx,y,'#f59e0b','Niskie 0–2 km');y+=13;
+      legendSample(sx,y,'#22c55e','Średnie 2–5 km');y+=13;
+      legendSample(sx,y,'#3b82f6','Wysokie 5–13 km');y+=18;
+      ctx.fillStyle=cp.muted;ctx.font='8px Arial';ctx.textAlign='left';
+      ctx.fillText('Dotknij panelu, aby',sx,y);
+      ctx.fillText('zobaczyć parametry godziny.',sx,y+11);
+    };
   }
 
   if (!window.__epirRhAxisWrapped) {
