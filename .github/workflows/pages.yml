@@ -30,17 +30,17 @@ jobs:
       - name: Prepare site
         run: |
           mkdir -p _site
-          cp index.html radar.html index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
+          cp index.html radar.html index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js rh-axis-fix.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
           python3 - <<'PY'
           from pathlib import Path
           import re
 
           p = Path('_site/index.html')
           s = p.read_text(encoding='utf-8')
-          for old in ('v0.9.13 HTML','v0.10.0 HTML','v0.10.1 HTML','v0.10.2 HTML','v0.10.3 HTML','v0.10.4 HTML','v0.10.5 HTML','v0.10.6 HTML','v0.10.7 HTML','v0.10.8 HTML','v0.10.9 HTML'):
-              s = s.replace(old, 'v0.10.10 HTML')
-          for old in ('HTML v0.9.12','HTML v0.9.13','HTML v0.10.0','HTML v0.10.1','HTML v0.10.2','HTML v0.10.3','HTML v0.10.4','HTML v0.10.5','HTML v0.10.6','HTML v0.10.7','HTML v0.10.8','HTML v0.10.9'):
-              s = s.replace(old, 'HTML v0.10.10')
+          for old in ('v0.9.13 HTML','v0.10.0 HTML','v0.10.1 HTML','v0.10.2 HTML','v0.10.3 HTML','v0.10.4 HTML','v0.10.5 HTML','v0.10.6 HTML','v0.10.7 HTML','v0.10.8 HTML','v0.10.9 HTML','v0.10.10 HTML'):
+              s = s.replace(old, 'v0.10.11 HTML')
+          for old in ('HTML v0.9.12','HTML v0.9.13','HTML v0.10.0','HTML v0.10.1','HTML v0.10.2','HTML v0.10.3','HTML v0.10.4','HTML v0.10.5','HTML v0.10.6','HTML v0.10.7','HTML v0.10.8','HTML v0.10.9','HTML v0.10.10'):
+              s = s.replace(old, 'HTML v0.10.11')
           icm = '<a class="control-link" href="https://www.meteo.pl/um/php/meteorogram_id_um.php?ntype=0n&amp;id=2077" target="_blank" rel="noopener noreferrer">ICM UM meteogram ↗</a>'
           radar = '<a class="control-link" href="radar.html">RADAR / SAT / AI</a>'
           if radar not in s and icm in s:
@@ -63,6 +63,9 @@ jobs:
           layout_addon = '<script src="meteogram-layout-v2.js"></script>'
           if layout_addon not in s:
               s = s.replace('</body>', layout_addon + '\n</body>')
+          rh_addon = '<script src="rh-axis-fix.js"></script>'
+          if rh_addon not in s:
+              s = s.replace('</body>', rh_addon + '\n</body>')
           p.write_text(s, encoding='utf-8')
 
           p = Path('_site/radar.html')
@@ -115,6 +118,7 @@ jobs:
           node --check axis-layout-fix.js
           node --check visual-style-fix.js
           node --check meteogram-layout-v2.js
+          node --check rh-axis-fix.js
           node --check radar-enhance.js
           node --check warnings-readable.js
           node --check radar-intelligence.js
@@ -129,6 +133,7 @@ jobs:
           node --check _site/axis-layout-fix.js
           node --check _site/visual-style-fix.js
           node --check _site/meteogram-layout-v2.js
+          node --check _site/rh-axis-fix.js
           node --check _site/radar-enhance.js
           node --check _site/warnings-readable.js
           node --check _site/radar-intelligence.js
@@ -142,8 +147,11 @@ jobs:
 
       - name: Verify deployed features
         run: |
-          grep -F "v0.10.10 HTML" _site/index.html
+          grep -F "v0.10.11 HTML" _site/index.html
           grep -F "meteogram-layout-v2.js" _site/index.html
+          grep -F "rh-axis-fix.js" _site/index.html
+          grep -F "RH_AXIS_X_OFFSET = 38" _site/rh-axis-fix.js
+          grep -F "rh+'%'" _site/rh-axis-fix.js
           grep -F "id:'probstorm'" _site/meteogram-layout-v2.js
           grep -F "Szansa opadu / burzy" _site/meteogram-layout-v2.js
           grep -F "major?.72:.42" _site/meteogram-layout-v2.js
