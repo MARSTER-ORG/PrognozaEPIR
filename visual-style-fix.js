@@ -97,7 +97,7 @@
   }
 
   const version=document.querySelector('.brand small');
-  if (version) version.textContent='v0.10.8 HTML';
+  if (version) version.textContent='v0.10.9 HTML';
 
   requestAnimationFrame(()=>{
     if (typeof consensus!=='undefined' && consensus.length) draw();
