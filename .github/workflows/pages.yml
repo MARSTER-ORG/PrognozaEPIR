@@ -37,10 +37,10 @@ jobs:
 
           p = Path('_site/index.html')
           s = p.read_text(encoding='utf-8')
-          for old in ('v0.9.13 HTML','v0.10.0 HTML','v0.10.1 HTML','v0.10.2 HTML','v0.10.3 HTML','v0.10.4 HTML','v0.10.5 HTML'):
-              s = s.replace(old, 'v0.10.6 HTML')
-          for old in ('HTML v0.9.12','HTML v0.9.13','HTML v0.10.0','HTML v0.10.1','HTML v0.10.2','HTML v0.10.3','HTML v0.10.4','HTML v0.10.5'):
-              s = s.replace(old, 'HTML v0.10.6')
+          for old in ('v0.9.13 HTML','v0.10.0 HTML','v0.10.1 HTML','v0.10.2 HTML','v0.10.3 HTML','v0.10.4 HTML','v0.10.5 HTML','v0.10.6 HTML'):
+              s = s.replace(old, 'v0.10.7 HTML')
+          for old in ('HTML v0.9.12','HTML v0.9.13','HTML v0.10.0','HTML v0.10.1','HTML v0.10.2','HTML v0.10.3','HTML v0.10.4','HTML v0.10.5','HTML v0.10.6'):
+              s = s.replace(old, 'HTML v0.10.7')
           icm = '<a class="control-link" href="https://www.meteo.pl/um/php/meteorogram_id_um.php?ntype=0n&amp;id=2077" target="_blank" rel="noopener noreferrer">ICM UM meteogram ↗</a>'
           radar = '<a class="control-link" href="radar.html">RADAR / SAT / AI</a>'
           if radar not in s and icm in s:
@@ -132,11 +132,14 @@ jobs:
 
       - name: Verify deployed features
         run: |
-          grep -F "v0.10.6 HTML" _site/index.html
+          grep -F "v0.10.7 HTML" _site/index.html
           grep -F "axis-layout-fix.js" _site/index.html
           grep -F "drawMeteogramGrid" _site/index-fixes.js
           grep -F "hourMs = 3600e3" _site/index-fixes.js
           grep -F "redrawSingleAxis" _site/axis-layout-fix.js
+          grep -F "drawUtcZuluAxis" _site/axis-layout-fix.js
+          grep -F "hh+'Z'" _site/axis-layout-fix.js
+          grep -F "UTC_MONTHS" _site/axis-layout-fix.js
           grep -F "m.x0-8" _site/axis-layout-fix.js
           grep -F "INNER_PAD = 10" _site/axis-layout-fix.js
           grep -F "function setDot(id,ok){const el=\$(id);if(el)el.className='dot '+(ok?'ok':'bad')}" _site/radar.html
