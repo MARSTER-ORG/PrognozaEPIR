@@ -30,86 +30,49 @@ jobs:
       - name: Prepare site
         run: |
           mkdir -p _site
-          cp index.html _site/index.html
-          cp radar.html _site/radar.html
+          cp index.html radar.html index-fixes.js radar-enhance.js _site/
           python3 - <<'PY'
           from pathlib import Path
+
+          # Main meteogram: keep source compact; fixes live in index-fixes.js.
           p = Path('_site/index.html')
           s = p.read_text(encoding='utf-8')
-          replacements = [
-              ('v0.9.13 HTML', 'v0.10.1 HTML'),
-              ('HTML v0.9.12', 'HTML v0.10.1'),
-              ('HTML v0.9.13', 'HTML v0.10.1'),
-              ('<a class="control-link" href="https://www.meteo.pl/um/php/meteorogram_id_um.php?ntype=0n&amp;id=2077" target="_blank" rel="noopener noreferrer">ICM UM meteogram ↗</a>', '<a class="control-link" href="radar.html">RADAR / SAT / AI</a>\n    <a class="control-link" href="https://www.meteo.pl/um/php/meteorogram_id_um.php?ntype=0n&amp;id=2077" target="_blank" rel="noopener noreferrer">ICM UM meteogram ↗</a>'),
-              ("{id:'icon_global',name:'ICON',w:.05,provider:'openmeteo'},", "{id:'icon_global',name:'ICON',w:.05,provider:'openmeteo',surfaceExclude:['visibility']},"),
-              ("const vars=prof?profileVarsFor(model):SURFACE;", "const vars=prof?profileVarsFor(model):SURFACE.filter(v=>!(model.surfaceExclude||[]).includes(v));"),
-              ("const msg=j?.error||j?.reason||j?.message||('HTTP '+r.status);", "const msg=j?.reason||j?.message||(typeof j?.error==='string'?j.error:('HTTP '+r.status));"),
-              ('.canvas-viewport{position:relative;width:100%;overflow:hidden;background:var(--surface2);min-height:360px;touch-action:pan-y}', '.canvas-viewport{position:relative;width:100%;overflow:hidden;background:var(--surface2);min-height:360px;touch-action:pan-y;overscroll-behavior:contain;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}'),
-              ('<div class="gesture-hint"><b>Telefon:</b> dwa palce = zoom i przesuwanie. Jeden palec = przewijanie strony. <b>Krótkie dotknięcie punktu</b> wybiera godzinę i sekcję; parametry pojawią się pod meteogramem.</div>', '<div class="gesture-hint"><b>Telefon:</b> 2 palce na meteogramie = przesuwanie i zoom tylko wykresu. Jeden palec przewija stronę. Krótkie pojedyncze dotknięcie wykresu wybiera godzinę i od razu pokazuje dane pod meteogramem.</div>'),
-              ('let selection=null;', 'let selection=null, singleTouch=null, suppressClickUntil=0, viewportBaseH=0;'),
-              ("function setViewportHeight(){const s=stageSize(),mobile=window.innerWidth<=700,contentH=s.h*zoom,maxPhone=Math.max(430,Math.min(700,window.innerHeight-185)),desired=mobile?Math.max(380,Math.min(maxPhone,contentH)):Math.min(contentH,860);viewport.style.height=Math.round(desired)+'px'}", """function computeViewportBaseHeight(){
-            const s=stageSize(),vw=Math.max(1,viewport.clientWidth-2),fit=clamp(vw/s.w,ZOOM_MIN,ZOOM_MAX),fitH=s.h*fit;
-            const mobile=window.innerWidth<=700,cap=mobile?Math.max(360,Math.min(620,window.innerHeight*.64)):Math.max(420,Math.min(860,window.innerHeight*.78));
-            return Math.max(360,Math.min(fitH,cap))
-          }
-          function setViewportHeight(force=false){if(force||!viewportBaseH)viewportBaseH=computeViewportBaseHeight();viewport.style.height=Math.round(viewportBaseH)+'px'}"""),
-              ("function applyTransform(){setViewportHeight();clampPan();stage.style.transform='translate('+panX.toFixed(1)+'px,'+panY.toFixed(1)+'px) scale('+zoom.toFixed(4)+')';if($('zoomReset'))$('zoomReset').textContent=Math.round(zoom*100)+'%'}", "function applyTransform(){setViewportHeight(false);clampPan();stage.style.transform='translate('+panX.toFixed(1)+'px,'+panY.toFixed(1)+'px) scale('+zoom.toFixed(4)+')';if($('zoomReset'))$('zoomReset').textContent=Math.round(zoom*100)+'%'}"),
-              ("function fitWidth(){const s=stageSize();zoom=clamp((viewport.clientWidth-2)/s.w,ZOOM_MIN,ZOOM_MAX);panX=0;panY=0;applyTransform()}", "function fitWidth(){const s=stageSize();zoom=clamp((viewport.clientWidth-2)/s.w,ZOOM_MIN,ZOOM_MAX);panX=0;panY=0;setViewportHeight(true);applyTransform()}"),
-          ]
-          for old, new in replacements:
-              s = s.replace(old, new)
+          for old in ('v0.9.13 HTML','v0.10.0 HTML','v0.10.1 HTML'):
+              s = s.replace(old, 'v0.10.2 HTML')
+          for old in ('HTML v0.9.12','HTML v0.9.13','HTML v0.10.0','HTML v0.10.1'):
+              s = s.replace(old, 'HTML v0.10.2')
 
-          s = s.replace(
-          """function beginGesture(e){if(e.touches.length<2)return false;const a=e.touches[0],b=e.touches[1],mid=touchMid(a,b),vr=viewport.getBoundingClientRect();gesture={dist:Math.max(10,touchDist(a,b)),zoom,contentX:(mid.x-vr.left-panX)/zoom,contentY:(mid.y-vr.top-panY)/zoom};return true}
-          function updateGesture(e){if(!gesture||e.touches.length<2)return;const a=e.touches[0],b=e.touches[1],mid=touchMid(a,b),vr=viewport.getBoundingClientRect(),ratio=touchDist(a,b)/gesture.dist;zoom=clamp(gesture.zoom*ratio,ZOOM_MIN,ZOOM_MAX);panX=(mid.x-vr.left)-gesture.contentX*zoom;panY=(mid.y-vr.top)-gesture.contentY*zoom;applyTransform()}""",
-          """function beginGesture(e){
-            if(e.touches.length<2)return false;
-            const a=e.touches[0],b=e.touches[1],mid=touchMid(a,b),vr=viewport.getBoundingClientRect();
-            gesture={dist:Math.max(10,touchDist(a,b)),zoom,contentX:(mid.x-vr.left-panX)/zoom,contentY:(mid.y-vr.top-panY)/zoom};
-            singleTouch=null;
-            return true
-          }
-          function updateGesture(e){
-            if(!gesture||e.touches.length<2)return;
-            const a=e.touches[0],b=e.touches[1],mid=touchMid(a,b),vr=viewport.getBoundingClientRect(),ratio=touchDist(a,b)/gesture.dist;
-            const nextZoom=clamp(gesture.zoom*ratio,ZOOM_MIN,ZOOM_MAX);
-            panX=(mid.x-vr.left)-gesture.contentX*nextZoom;
-            panY=(mid.y-vr.top)-gesture.contentY*nextZoom;
-            zoom=nextZoom;applyTransform()
-          }
-          function beginSingleTouch(t){singleTouch={startX:t.clientX,startY:t.clientY,startTime:Date.now(),moved:false}}
-          function updateSingleTouch(t){if(!singleTouch)return;const dx=t.clientX-singleTouch.startX,dy=t.clientY-singleTouch.startY;if(Math.hypot(dx,dy)>9)singleTouch.moved=true}""")
+          icm = '<a class="control-link" href="https://www.meteo.pl/um/php/meteorogram_id_um.php?ntype=0n&amp;id=2077" target="_blank" rel="noopener noreferrer">ICM UM meteogram ↗</a>'
+          radar = '<a class="control-link" href="radar.html">RADAR / SAT / AI</a>'
+          if radar not in s and icm in s:
+              s = s.replace(icm, radar + '\n    ' + icm, 1)
 
-          s = s.replace(
-          """viewport.addEventListener('touchstart',e=>{if(e.touches.length>=2){e.preventDefault();beginGesture(e);return}gesture=null},{passive:false});
-          viewport.addEventListener('touchmove',e=>{if(e.touches.length>=2){e.preventDefault();if(!gesture)beginGesture(e);updateGesture(e)}},{passive:false});
-          viewport.addEventListener('touchend',e=>{if(e.touches.length<2&&gesture){gesture=null;lastGestureEnd=Date.now();applyTransform()}},{passive:true});
-          viewport.addEventListener('touchcancel',()=>{gesture=null;lastGestureEnd=Date.now();applyTransform()},{passive:true});
-          cv.addEventListener('click',e=>selectAt(e.clientX,e.clientY));""",
-          """viewport.addEventListener('touchstart',e=>{
-            if(e.touches.length>=2){e.preventDefault();beginGesture(e);return}
-            if(e.touches.length===1){gesture=null;beginSingleTouch(e.touches[0])}
-          },{passive:false});
-          viewport.addEventListener('touchmove',e=>{
-            if(e.touches.length>=2){e.preventDefault();if(!gesture)beginGesture(e);updateGesture(e);return}
-            if(e.touches.length===1&&!gesture)updateSingleTouch(e.touches[0]);
-          },{passive:false});
-          viewport.addEventListener('touchend',e=>{
-            if(gesture&&e.touches.length<2){gesture=null;lastGestureEnd=Date.now();suppressClickUntil=Date.now()+500;applyTransform();singleTouch=null;return}
-            if(singleTouch&&e.touches.length===0){
-              const t=e.changedTouches&&e.changedTouches[0],isTap=!singleTouch.moved&&(Date.now()-singleTouch.startTime)<700;
-              singleTouch=null;
-              if(isTap&&t){suppressClickUntil=Date.now()+500;selectAt(t.clientX,t.clientY)}
-            }
-          },{passive:true});
-          viewport.addEventListener('touchcancel',()=>{gesture=null;singleTouch=null;lastGestureEnd=Date.now();suppressClickUntil=Date.now()+500;applyTransform()},{passive:true});
-          for(const ev of ['gesturestart','gesturechange','gestureend'])viewport.addEventListener(ev,e=>e.preventDefault(),{passive:false,capture:true});
-          cv.addEventListener('click',e=>{if(Date.now()<suppressClickUntil)return;selectAt(e.clientX,e.clientY)});""")
+          s = s.replace("{id:'icon_global',name:'ICON',w:.05,provider:'openmeteo'},",
+                        "{id:'icon_global',name:'ICON',w:.05,provider:'openmeteo',surfaceExclude:['visibility']},")
+          s = s.replace("const vars=prof?profileVarsFor(model):SURFACE;",
+                        "const vars=prof?profileVarsFor(model):SURFACE.filter(v=>!(model.surfaceExclude||[]).includes(v));")
+          s = s.replace("const msg=j?.error||j?.reason||j?.message||('HTTP '+r.status);",
+                        "const msg=j?.reason||j?.message||(typeof j?.error==='string'?j.error:('HTTP '+r.status));")
+          addon = '<script src="index-fixes.js"></script>'
+          if addon not in s:
+              s = s.replace('</body>', addon + '\n</body>')
+          p.write_text(s, encoding='utf-8')
 
-          s = s.replace("window.addEventListener('resize',()=>{clearTimeout(window._r);window._r=setTimeout(()=>{draw();if(window.innerWidth<=700)fitWidth();else applyTransform()},140)});", "window.addEventListener('resize',()=>{clearTimeout(window._r);window._r=setTimeout(()=>{viewportBaseH=0;draw();if(window.innerWidth<=700)fitWidth();else{setViewportHeight(true);applyTransform()}},140)});")
-          s = s.replace("draw();fitWidth()}));", "draw();viewportBaseH=0;fitWidth()}));")
+          # Radar/Satellite module: official-source and map interaction extension.
+          p = Path('_site/radar.html')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace('RADAR / SAT / AI v0.10.0','RADAR / SAT / AI v0.10.2')
+          s = s.replace('RADAR / SAT / AI v0.10.1','RADAR / SAT / AI v0.10.2')
+          addon = '<script src="radar-enhance.js"></script>'
+          if addon not in s:
+              s = s.replace('</body>', addon + '\n</body>')
           p.write_text(s, encoding='utf-8')
           PY
+
+      - name: Validate JavaScript
+        run: |
+          node --check index-fixes.js
+          node --check radar-enhance.js
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
