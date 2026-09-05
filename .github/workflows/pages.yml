@@ -30,17 +30,17 @@ jobs:
       - name: Prepare site
         run: |
           mkdir -p _site
-          cp index.html radar.html index-fixes.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
+          cp index.html radar.html index-fixes.js axis-layout-fix.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
           python3 - <<'PY'
           from pathlib import Path
           import re
 
           p = Path('_site/index.html')
           s = p.read_text(encoding='utf-8')
-          for old in ('v0.9.13 HTML','v0.10.0 HTML','v0.10.1 HTML','v0.10.2 HTML','v0.10.3 HTML','v0.10.4 HTML'):
-              s = s.replace(old, 'v0.10.5 HTML')
-          for old in ('HTML v0.9.12','HTML v0.9.13','HTML v0.10.0','HTML v0.10.1','HTML v0.10.2','HTML v0.10.3','HTML v0.10.4'):
-              s = s.replace(old, 'HTML v0.10.5')
+          for old in ('v0.9.13 HTML','v0.10.0 HTML','v0.10.1 HTML','v0.10.2 HTML','v0.10.3 HTML','v0.10.4 HTML','v0.10.5 HTML'):
+              s = s.replace(old, 'v0.10.6 HTML')
+          for old in ('HTML v0.9.12','HTML v0.9.13','HTML v0.10.0','HTML v0.10.1','HTML v0.10.2','HTML v0.10.3','HTML v0.10.4','HTML v0.10.5'):
+              s = s.replace(old, 'HTML v0.10.6')
           icm = '<a class="control-link" href="https://www.meteo.pl/um/php/meteorogram_id_um.php?ntype=0n&amp;id=2077" target="_blank" rel="noopener noreferrer">ICM UM meteogram ↗</a>'
           radar = '<a class="control-link" href="radar.html">RADAR / SAT / AI</a>'
           if radar not in s and icm in s:
@@ -54,6 +54,9 @@ jobs:
           addon = '<script src="index-fixes.js"></script>'
           if addon not in s:
               s = s.replace('</body>', addon + '\n</body>')
+          axis_addon = '<script src="axis-layout-fix.js"></script>'
+          if axis_addon not in s:
+              s = s.replace('</body>', axis_addon + '\n</body>')
           p.write_text(s, encoding='utf-8')
 
           p = Path('_site/radar.html')
@@ -103,6 +106,7 @@ jobs:
       - name: Validate JavaScript
         run: |
           node --check index-fixes.js
+          node --check axis-layout-fix.js
           node --check radar-enhance.js
           node --check warnings-readable.js
           node --check radar-intelligence.js
@@ -114,6 +118,7 @@ jobs:
           node --check analysis-plus.js
           node --check range-rings-reset.js
           node --check _site/index-fixes.js
+          node --check _site/axis-layout-fix.js
           node --check _site/radar-enhance.js
           node --check _site/warnings-readable.js
           node --check _site/radar-intelligence.js
@@ -127,13 +132,13 @@ jobs:
 
       - name: Verify deployed features
         run: |
-          grep -F "v0.10.5 HTML" _site/index.html
+          grep -F "v0.10.6 HTML" _site/index.html
+          grep -F "axis-layout-fix.js" _site/index.html
           grep -F "drawMeteogramGrid" _site/index-fixes.js
           grep -F "hourMs = 3600e3" _site/index-fixes.js
-          grep -F "boundaryLabelX" _site/index-fixes.js
-          grep -F "paddedScale" _site/index-fixes.js
-          grep -F "drawSectionLabels" _site/index-fixes.js
-          grep -F "Chmury / widzialność" _site/index-fixes.js
+          grep -F "redrawSingleAxis" _site/axis-layout-fix.js
+          grep -F "m.x0-8" _site/axis-layout-fix.js
+          grep -F "INNER_PAD = 10" _site/axis-layout-fix.js
           grep -F "function setDot(id,ok){const el=\$(id);if(el)el.className='dot '+(ok?'ok':'bad')}" _site/radar.html
           grep -F "echo-fix.js" _site/radar.html
           grep -F "map-extras.js" _site/radar.html
