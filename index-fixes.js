@@ -107,6 +107,107 @@
   const hint = document.querySelector('.gesture-hint');
   if (hint) hint.innerHTML = '<b>Telefon:</b> jeden palec przewija stronę. <b>Dwa palce na meteogramie</b> przesuwają i powiększają wyłącznie wykres. − / + zmienia skalę, 100% przywraca 1:1, a <b>Dopasuj</b> mieści wykres na szerokość.';
 
+  // --- Meteogram helper grid: left-side values + vertical hourly lines ---
+  function panelRange(id, data) {
+    if (!Array.isArray(data) || !data.length) return null;
+    if (id === 'temp') return niceRange(data.flatMap(z => [z.T,z.Td]),1,5);
+    if (id === 'prec') return [0,Math.max(2,...data.map(z => Number(z.RR)||0))];
+    if (id === 'prob' || id === 'storm') return [0,100];
+    if (id === 'press') return niceRange(data.map(z => z.P),1,8);
+    if (id === 'wind') {
+      const maxW = Math.max(10,...data.flatMap(z => [Number(z.WS)||0,Number(z.G)||0]));
+      return [0,Math.ceil(maxW/5)*5];
+    }
+    if (id === 'cloud') return [0,15];
+    if (id === 'okta') return [0,8];
+    return null;
+  }
+
+  function axisValue(v, id, min, max) {
+    if (!Number.isFinite(v)) return '—';
+    const span = Math.abs(max-min);
+    if (id === 'press' || id === 'prob' || id === 'storm' || id === 'okta') return String(Math.round(v));
+    if (id === 'cloud') return (Math.abs(v-Math.round(v))<0.05 ? Math.round(v) : v.toFixed(1)).toString();
+    if (id === 'prec') return (v < 1 && span <= 5 ? v.toFixed(1) : (Math.abs(v-Math.round(v))<0.05 ? Math.round(v) : v.toFixed(1))).toString();
+    if (span <= 6) return v.toFixed(1);
+    return Math.abs(v-Math.round(v))<0.05 ? String(Math.round(v)) : v.toFixed(1);
+  }
+
+  function drawMeteogramGrid() {
+    const m = canvas._meta;
+    if (!m || !Array.isArray(m.data) || m.data.length < 2 || typeof ctx === 'undefined') return;
+    const cp = canvasPalette();
+    const hourMs = 3600e3;
+    const startHour = Math.ceil(m.t0/hourMs)*hourMs;
+    const plotH = m.totalPanelH;
+
+    ctx.save();
+
+    // Vertical grid every hour; every third hour is a little stronger.
+    for (let t=startHour, n=0; t<=m.t1; t+=hourMs, n++) {
+      const xx = m.x0 + (t-m.t0)/(m.t1-m.t0)*(m.x1-m.x0);
+      const major = n % 3 === 0;
+      ctx.globalAlpha = major ? 0.34 : 0.17;
+      ctx.strokeStyle = major ? cp.grid : cp.grid2;
+      ctx.lineWidth = major ? 0.8 : 0.55;
+      ctx.setLineDash(major ? [] : [2,3]);
+      ctx.beginPath();
+      ctx.moveTo(xx,m.top);
+      ctx.lineTo(xx,m.top+plotH);
+      ctx.stroke();
+    }
+
+    // Horizontal value grid and numeric labels in the reserved left axis area.
+    ctx.setLineDash([]);
+    ctx.font = '9px Arial';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    for (const p of m.panelYs || []) {
+      const range = panelRange(p.id,m.data);
+      if (!range) continue; // direction panel has no vertical numeric scale
+      const [min,max] = range;
+      const divisions = p.id === 'cloud' ? 3 : 4;
+      for (let i=0;i<=divisions;i++) {
+        const value = min + (max-min)*i/divisions;
+        const yy = p.y + p.h - (value-min)/(max-min)*p.h;
+        ctx.globalAlpha = (i===0 || i===divisions) ? 0.32 : 0.22;
+        ctx.strokeStyle = cp.grid2;
+        ctx.lineWidth = 0.65;
+        ctx.beginPath();
+        ctx.moveTo(m.x0,yy);
+        ctx.lineTo(m.x1,yy);
+        ctx.stroke();
+
+        ctx.globalAlpha = 0.92;
+        ctx.fillStyle = cp.muted;
+        ctx.fillText(axisValue(value,p.id,min,max),m.x0-7,yy);
+      }
+    }
+
+    // Clear visual separation between value axis and plot.
+    ctx.globalAlpha = 0.55;
+    ctx.strokeStyle = cp.border;
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(m.x0,m.top);
+    ctx.lineTo(m.x0,m.top+plotH);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  if (typeof draw === 'function' && !window.__epirMeteogramGridWrapped) {
+    window.__epirMeteogramGridWrapped = true;
+    const baseDraw = draw;
+    draw = function() {
+      const out = baseDraw.apply(this,arguments);
+      drawMeteogramGrid();
+      return out;
+    };
+  }
+
+  const meteoVersion = document.querySelector('.brand small');
+  if (meteoVersion) meteoVersion.textContent = 'v0.10.3 HTML';
+
   requestAnimationFrame(() => {
     viewportBaseH = 0;
     if (typeof draw === 'function' && typeof consensus !== 'undefined' && consensus.length) draw();
