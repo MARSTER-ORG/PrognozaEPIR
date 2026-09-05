@@ -4,6 +4,8 @@
   if (!canvas || typeof ctx === 'undefined' || typeof draw !== 'function') return;
 
   const INNER_PAD = 10;
+  const HOUR_MS = 3600e3;
+  const UTC_MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
 
   function panelRange(id, data) {
     if (!Array.isArray(data) || !data.length) return null;
@@ -55,8 +57,7 @@
     ctx.fillStyle = cp.muted;
     ctx.globalAlpha = 0.95;
 
-    // Every panel now uses exactly the same X coordinate for its numeric values.
-    // The extra Y inset separates shared boundary values without a second column.
+    // Every panel uses exactly the same X coordinate for its numeric values.
     for (const p of m.panelYs) {
       const range = panelRange(p.id,m.data);
       if (!range) continue;
@@ -94,18 +95,82 @@
     ctx.restore();
   }
 
+  function drawUtcZuluAxis() {
+    const m = canvas._meta;
+    if (!m || !Number.isFinite(m.t0) || !Number.isFinite(m.t1) || m.t1 <= m.t0) return;
+    const cp = canvasPalette();
+    const bottom = m.top + m.totalPanelH;
+    const available = Math.max(22,(m.H || canvas.height) - bottom);
+    const yHour = bottom + Math.min(10,available*0.42);
+    const yDate = bottom + Math.min(21,available-3);
+    const xFor = t => m.x0 + (t-m.t0)/(m.t1-m.t0)*(m.x1-m.x0);
+    const firstHour = Math.ceil(m.t0/HOUR_MS)*HOUR_MS;
+
+    ctx.save();
+    ctx.fillStyle = cp.bg;
+    ctx.fillRect(m.x0-58,bottom,Math.max(0,m.x1-(m.x0-58)),available);
+
+    ctx.strokeStyle = cp.border;
+    ctx.globalAlpha = 0.72;
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(m.x0,bottom);
+    ctx.lineTo(m.x1,bottom);
+    ctx.stroke();
+
+    ctx.globalAlpha = 0.96;
+    ctx.fillStyle = cp.text;
+    ctx.font = 'bold 8px Arial';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('UTC',m.x0-8,yHour);
+
+    ctx.textAlign = 'center';
+    ctx.font = '8px Arial';
+    for (let t=firstHour; t<=m.t1; t+=HOUR_MS) {
+      const d = new Date(t);
+      const hh = String(d.getUTCHours()).padStart(2,'0');
+      const xx = xFor(t);
+      const midnight = d.getUTCHours() === 0;
+
+      ctx.strokeStyle = midnight ? cp.border : cp.grid2;
+      ctx.globalAlpha = midnight ? 0.78 : 0.52;
+      ctx.lineWidth = midnight ? 1 : 0.6;
+      ctx.beginPath();
+      ctx.moveTo(xx,bottom);
+      ctx.lineTo(xx,bottom+4);
+      ctx.stroke();
+
+      ctx.globalAlpha = 0.96;
+      ctx.fillStyle = cp.text;
+      ctx.font = midnight ? 'bold 8px Arial' : '8px Arial';
+      ctx.fillText(hh+'Z',xx,yHour);
+
+      if (midnight) {
+        const day = String(d.getUTCDate()).padStart(2,'0');
+        const month = UTC_MONTHS[d.getUTCMonth()];
+        ctx.fillStyle = cp.muted;
+        ctx.font = '7px Arial';
+        ctx.fillText(day+' '+month,xx,yDate);
+      }
+    }
+
+    ctx.restore();
+  }
+
   if (!window.__epirSingleAxisWrapped) {
     window.__epirSingleAxisWrapped = true;
     const previousDraw = draw;
     draw = function() {
       const out = previousDraw.apply(this,arguments);
       redrawSingleAxis();
+      drawUtcZuluAxis();
       return out;
     };
   }
 
   const version = document.querySelector('.brand small');
-  if (version) version.textContent = 'v0.10.6 HTML';
+  if (version) version.textContent = 'v0.10.7 HTML';
 
   requestAnimationFrame(() => {
     if (typeof consensus !== 'undefined' && consensus.length) draw();
