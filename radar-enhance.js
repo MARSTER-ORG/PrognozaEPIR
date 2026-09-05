@@ -4,9 +4,9 @@
   const byId = id => document.getElementById(id);
 
   const version = document.querySelector('.brand small');
-  if (version) version.textContent = 'RADAR / SAT / AI v0.10.2';
+  if (version) version.textContent = 'RADAR / SAT / AI v0.10.3';
 
-  // --- Map point selection: 3 second hold ---
+  // --- Map point selection: reliable 3 second hold on touch/mouse ---
   const mapEl = byId('map');
   if (mapEl) {
     mapEl.style.position = 'relative';
@@ -25,14 +25,20 @@
   style.textContent = `
     .map-hint{padding:6px 8px;font-size:10px;color:var(--muted);border-bottom:1px solid var(--line);background:var(--panel2)}
     .map-hint b{color:var(--blue2)}
-    .hold-progress{position:absolute;z-index:1000;pointer-events:none;background:rgba(0,0,0,.76);color:#fff;padding:5px 8px;border-radius:999px;font-size:10px;transform:translate(-50%,-120%);display:none}
+    .hold-progress{position:absolute;z-index:1000;pointer-events:none;background:rgba(0,0,0,.78);color:#fff;padding:6px 9px;border-radius:999px;font-size:10px;font-weight:700;transform:translate(-50%,-125%);display:none}
     .products{padding:8px}.product-row{display:grid;grid-template-columns:105px 1fr auto;gap:7px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:10px}.product-row:last-child{border-bottom:0}.product-row a{color:var(--blue2);text-decoration:none}
     @media(max-width:560px){.product-row{grid-template-columns:80px 1fr auto;font-size:9px}}
   `;
   document.head.appendChild(style);
 
-  let holdTimer = null, holdTick = null, holdLatLng = null, holdStart = 0, holdPoint = null;
+  let holdTimer = null;
+  let holdTick = null;
+  let holdLatLng = null;
+  let holdStart = 0;
+  let holdClient = null;
+  let holdPointerId = null;
   const bubble = byId('holdProgress');
+
   const holdUi = (show, text, ll) => {
     if (!bubble) return;
     bubble.style.display = show ? 'block' : 'none';
@@ -43,44 +49,93 @@
       bubble.style.top = q.y + 'px';
     }
   };
-  const cancelHold = () => {
+
+  const clearHoldTimers = () => {
     if (holdTimer) clearTimeout(holdTimer);
     if (holdTick) clearInterval(holdTick);
     holdTimer = holdTick = null;
+  };
+
+  const cancelHold = () => {
+    clearHoldTimers();
     holdLatLng = null;
-    holdPoint = null;
+    holdClient = null;
+    holdPointerId = null;
     holdUi(false);
   };
-  const startHold = e => {
+
+  const eventLatLng = e => {
+    const r = mapEl.getBoundingClientRect();
+    return map.containerPointToLatLng(L.point(e.clientX - r.left, e.clientY - r.top));
+  };
+
+  const applyHeldPoint = ll => {
+    if (!ll) return;
+    const lat = byId('lat');
+    const lon = byId('lon');
+    const apply = byId('apply');
+    if (!lat || !lon || !apply) return;
+    lat.value = Number(ll.lat).toFixed(4);
+    lon.value = Number(ll.lng).toFixed(4);
+    apply.click();
+    try { if (navigator.vibrate) navigator.vibrate(35); } catch (_) {}
+    setTimeout(loadPolradProducts, 150);
+  };
+
+  const startHoldFromPointer = e => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    // A second finger means map gesture, not point selection.
+    if (holdPointerId !== null && holdPointerId !== e.pointerId) {
+      cancelHold();
+      return;
+    }
     cancelHold();
-    holdLatLng = e.latlng;
-    holdPoint = map.latLngToContainerPoint(e.latlng);
-    holdStart = Date.now();
+    holdPointerId = e.pointerId;
+    holdClient = {x:e.clientX, y:e.clientY};
+    holdLatLng = eventLatLng(e);
+    holdStart = performance.now();
     holdUi(true, 'Przytrzymaj… 0.0 s', holdLatLng);
+
     holdTick = setInterval(() => {
-      const sec = Math.min(3, (Date.now() - holdStart) / 1000);
+      if (!holdLatLng) return;
+      const sec = Math.min(3, (performance.now() - holdStart) / 1000);
       holdUi(true, 'Przytrzymaj… ' + sec.toFixed(1) + ' s', holdLatLng);
     }, 100);
-    holdTimer = setTimeout(async () => {
+
+    holdTimer = setTimeout(() => {
       const ll = holdLatLng;
-      cancelHold();
-      if (!ll) return;
-      point = {lat: ll.lat, lon: ll.lng, name: 'Punkt z mapy'};
-      updatePointUI();
-      map.setView([point.lat, point.lon], Math.max(map.getZoom(), 8));
-      try { await refreshAll(); } catch (_) {}
-      loadPolradProducts();
+      clearHoldTimers();
+      holdUi(true, 'Punkt ustawiony', ll);
+      holdLatLng = null;
+      holdClient = null;
+      holdPointerId = null;
+      applyHeldPoint(ll);
+      setTimeout(() => holdUi(false), 700);
     }, 3000);
   };
-  const cancelIfMoved = e => {
-    if (!holdPoint || !e.latlng) return;
-    const q = map.latLngToContainerPoint(e.latlng);
-    if (Math.hypot(q.x - holdPoint.x, q.y - holdPoint.y) > 14) cancelHold();
+
+  const moveHoldPointer = e => {
+    if (holdPointerId === null || e.pointerId !== holdPointerId || !holdClient) return;
+    const d = Math.hypot(e.clientX - holdClient.x, e.clientY - holdClient.y);
+    // Small finger jitter is ignored. Intentional map movement cancels selection.
+    if (d > 18) cancelHold();
   };
-  map.on('mousedown touchstart', startHold);
-  map.on('mousemove touchmove', cancelIfMoved);
-  map.on('mouseup touchend dragstart zoomstart', cancelHold);
-  map.getContainer().addEventListener('contextmenu', e => e.preventDefault());
+
+  const endHoldPointer = e => {
+    if (holdPointerId !== null && e.pointerId === holdPointerId) cancelHold();
+  };
+
+  if (mapEl) {
+    // Capture phase guarantees that Leaflet cannot swallow the initial touch event.
+    mapEl.addEventListener('pointerdown', startHoldFromPointer, {capture:true, passive:true});
+    mapEl.addEventListener('pointermove', moveHoldPointer, {capture:true, passive:true});
+    mapEl.addEventListener('pointerup', endHoldPointer, {capture:true, passive:true});
+    mapEl.addEventListener('pointercancel', endHoldPointer, {capture:true, passive:true});
+    mapEl.addEventListener('pointerleave', e => {
+      if (e.pointerType === 'mouse') endHoldPointer(e);
+    }, {capture:true, passive:true});
+    mapEl.addEventListener('contextmenu', e => e.preventDefault());
+  }
 
   // Replace old fixed rings with rings that follow the selected point.
   const stale = [];
