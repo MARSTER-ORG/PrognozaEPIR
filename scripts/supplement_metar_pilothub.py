@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""PilotHub fallback collector for EPIR METAR.
+"""PilotHub verification/fallback collector for EPIR METAR.
 
-The main collector still prefers the official IMGW aviation page. This helper
-adds PilotHub as an independent fallback/verification source and rebuilds the
-observation files without replacing a newer METAR already collected directly.
+The main collector prefers official IMGW, but PilotHub is always checked as an
+independent source. The newest timestamp wins, so a still-fresh but older IMGW
+report cannot block a newer half-hour EPIR report published by PilotHub.
 """
 import html
 import json
@@ -15,9 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import collect_epir_observations as c
 
 PILOTHUB_URL = 'https://pilothub.pl/lotniska/inowroclaw-szpital'
-MAX_PRIMARY_AGE_MIN = 90
 MAX_PILOTHUB_AGE_MIN = 180
-DIRECT_IMGW_SOURCE = 'IMGW_AVIATION_METAR'
 
 
 def read_latest():
@@ -39,24 +37,40 @@ def is_fresh(row, max_age_min):
     return 0 <= (c.now() - dt).total_seconds() <= max_age_min * 60
 
 
+def _candidate_raw_reports(plain):
+    """Return all plausible EPIR METAR strings visible on the PilotHub page."""
+    out = []
+    seen = set()
+    patterns = (
+        r'\bMETAR\s+(EPIR\s+\d{6}Z\s+.*?\bQ\d{4}\b)=?',
+        r'\b(EPIR\s+\d{6}Z\s+.*?\bQ\d{4}\b)=?',
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, plain, re.I):
+            raw = re.sub(r'\s+', ' ', match.group(1)).strip()
+            if raw not in seen:
+                seen.add(raw)
+                out.append(raw)
+    return out
+
+
 def fetch_pilothub_metar():
     text = c.get_text(PILOTHUB_URL)
     plain = html.unescape(re.sub(r'<[^>]+>', ' ', text))
     plain = re.sub(r'\s+', ' ', plain)
-    # PilotHub exposes the raw report in the weather section, e.g.
-    # METAR EPIR 061400Z AUTO ... Q1023=
-    match = re.search(
-        r'\bMETAR\s+(EPIR\s+\d{6}Z\s+.*?\bQ\d{4}\b)=?',
-        plain,
-        re.I,
-    )
-    if not match:
-        # Keep a second pattern in case the visible "METAR" label changes.
-        match = re.search(r'\b(EPIR\s+\d{6}Z\s+.*?\bQ\d{4}\b)=?', plain, re.I)
-    if not match:
+
+    decoded = []
+    for raw in _candidate_raw_reports(plain):
+        try:
+            row = c.decode_metar(raw, source='PILOTHUB_METAR_IMGW')
+        except Exception:
+            row = None
+        if row and is_fresh(row, MAX_PILOTHUB_AGE_MIN):
+            decoded.append(row)
+
+    if not decoded:
         return None
-    metar = c.decode_metar(match.group(1), source='PILOTHUB_METAR_IMGW')
-    return metar if metar and is_fresh(metar, MAX_PILOTHUB_AGE_MIN) else None
+    return max(decoded, key=lambda row: obs_time(row) or c.parse_dt('1970-01-01T00:00:00Z'))
 
 
 def same_report(a, b):
@@ -81,21 +95,12 @@ def main():
     latest = read_latest()
     primary = latest.get('metar')
 
-    # A fresh direct IMGW METAR is already the highest-priority source.
-    # If the primary collector had to use OGIMET/CZAD (or returned stale data),
-    # check PilotHub and let an equal/newer PilotHub report outrank those fallbacks.
-    if primary and primary.get('source') == DIRECT_IMGW_SOURCE and is_fresh(primary, MAX_PRIMARY_AGE_MIN):
-        print(json.dumps({
-            'pilothub': 'not_needed',
-            'metar_source': primary.get('source'),
-            'metar_time': primary.get('obs_time'),
-        }, ensure_ascii=False))
-        return
-
+    # Always check PilotHub. A primary report can still be within the freshness
+    # window while being one or more half-hour EPIR cycles behind.
     try:
         fallback = fetch_pilothub_metar()
     except Exception as exc:
-        print('PilotHub METAR fallback warning:', exc)
+        print('PilotHub METAR verification warning:', exc)
         return
     if not fallback:
         print('PilotHub: no fresh EPIR METAR found')
@@ -104,7 +109,6 @@ def main():
     chosen = newest_report(primary, fallback)
     if not same_report(primary, fallback):
         day = c.parse_dt(fallback['obs_time']).strftime('%Y-%m-%d')
-        # Do not duplicate an identical report already archived from another source.
         existing = c.recent('metar')
         if not any(same_report(row, fallback) for row in existing):
             c.append(c.OUT / 'metar' / f'{day}.jsonl', fallback)
@@ -135,10 +139,11 @@ def main():
         'observations': hist,
     })
     print(json.dumps({
-        'pilothub': 'used',
-        'metar_source': chosen.get('source'),
-        'metar_time': chosen.get('obs_time'),
-        'metar_raw': chosen.get('raw'),
+        'pilothub': 'checked',
+        'pilothub_time': fallback.get('obs_time'),
+        'chosen_source': chosen.get('source'),
+        'chosen_time': chosen.get('obs_time'),
+        'chosen_raw': chosen.get('raw'),
     }, ensure_ascii=False))
 
 
