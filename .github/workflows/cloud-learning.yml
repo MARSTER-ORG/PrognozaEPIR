@@ -9,6 +9,7 @@ on:
     paths:
       - 'scripts/cloud_learning.py'
       - 'scripts/cloud_learning_smoke_test.py'
+      - 'scripts/model_verification.py'
       - '.github/workflows/cloud-learning.yml'
 
 permissions:
@@ -34,8 +35,13 @@ jobs:
       - name: Run Cloud Learning
         run: python3 scripts/cloud_learning.py
 
+      - name: Run model verification
+        run: python3 scripts/model_verification.py
+
       - name: Validate generated JSON
-        run: python3 -m json.tool data/learning/cloud-skill.json >/dev/null
+        run: |
+          python3 -m json.tool data/learning/cloud-skill.json >/dev/null
+          python3 -m json.tool data/learning/model-verification.json >/dev/null
 
       - name: Commit learning data
         run: |
@@ -43,9 +49,9 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/learning
           if git diff --cached --quiet; then
-            echo "No cloud-learning changes"
+            echo "No learning changes"
             exit 0
           fi
-          git commit -m "weather: update Cloud Learning data"
+          git commit -m "weather: update learning and model verification data"
           git pull --rebase origin main
           git push origin HEAD:main
