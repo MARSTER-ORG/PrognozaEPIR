@@ -10,12 +10,14 @@ on:
       - 'scripts/organize_observation_archive.py'
       - '.github/workflows/collect-epir-observations.yml'
   schedule:
-    # Collect every 15 minutes with a short publication delay: :07, :22, :37, :52 UTC.
-    - cron: '7,22,37,52 * * * *'
+    # GitHub cron can be delayed, so poll every 5 minutes and archive only genuinely new reports.
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 permissions:
   contents: write
+
+timeout-minutes: 10
 
 concurrency:
   group: epir-observation-collector
