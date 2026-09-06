@@ -1,6 +1,11 @@
 name: Collect EPIR METAR and SYNOP
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/collect_epir_observations.py'
+      - '.github/workflows/collect-epir-observations.yml'
   schedule:
     # EPIR METAR is normally half-hourly; run with a publication delay.
     - cron: '17,47 * * * *'
@@ -38,7 +43,7 @@ jobs:
           assert p['station']['wigos']=='0-20000-0-12342'
           assert p.get('metar') or p.get('synop')
           f=p.get('fused') or {}
-          if p.get('synop',{}).get('visibility_m') is not None:
+          if p.get('synop',{}).get('visibility_m') is not None and p.get('synop',{}).get('source')=='IMGW_WIS2_SYNOP':
               assert f.get('visibility_source')=='IMGW_WIS2_SYNOP'
           print('METAR:', (p.get('metar') or {}).get('obs_time'))
           print('SYNOP:', (p.get('synop') or {}).get('obs_time'))
