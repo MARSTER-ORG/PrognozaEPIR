@@ -42,7 +42,7 @@ jobs:
           from pathlib import Path
           import re
 
-          APP='v0.10.22 HTML'
+          APP='v0.10.23 HTML'
           favicon = '<link rel="icon" href="epir-icon-192.png" type="image/png" sizes="192x192">\n<link rel="shortcut icon" href="epir-icon-192.png" type="image/png">\n<link rel="apple-touch-icon" href="epir-icon-192.png">'
           shortcut_addon = '<script src="shortcut-mode.js"></script>'
           cloud_loader = '<script src="cloud-learning-client.js"></script>'
@@ -52,7 +52,7 @@ jobs:
           if 'href="epir-icon-192.png"' not in s:
               s=s.replace('<title>',favicon+'\n<title>',1)
           s=re.sub(r'v0\.\d+\.\d+ HTML',APP,s)
-          s=re.sub(r'HTML v0\.\d+\.\d+','HTML v0.10.22',s)
+          s=re.sub(r'HTML v0\.\d+\.\d+','HTML v0.10.23',s)
           s=s.replace('function timeline(){const now=Date.now(),t0=Math.ceil(now/3600e3)*3600e3',
                       'function timeline(){const now=Date.now(),t0=Math.floor(now/3600e3)*3600e3')
           icm='<a class="control-link" href="https://www.meteo.pl/um/php/meteorogram_id_um.php?ntype=0n&amp;id=2077" target="_blank" rel="noopener noreferrer">ICM UM meteogram ↗</a>'
@@ -181,10 +181,12 @@ jobs:
           grep -F "automatic-epir-metar-synop" _site/observation-engine.js
           grep -F "SYNOP ma pierwszeństwo" _site/observation-engine.js
           grep -F "data/observations/recent.json" _site/observation-engine.js
-          grep -F "EPIR FOG ENGINE v1.0" _site/fog-engine.js
+          grep -F "EPIR FOG ENGINE v1.1" _site/fog-engine.js
+          grep -F "if(o.freezingFog||o.fog)" _site/fog-engine.js
+          grep -F "if(o.mist)" _site/fog-engine.js
           grep -F "Math.floor(now/3600e3)" _site/index.html
           ! grep -F "Math.ceil(now/3600e3)" _site/index.html
-          grep -F "v0.10.22 HTML" _site/index.html
+          grep -F "v0.10.23 HTML" _site/index.html
           grep -F '<link rel="icon" href="epir-icon-192.png" type="image/png" sizes="192x192">' _site/index.html
           grep -F '<script src="shortcut-mode.js"></script>' _site/index.html
           grep -F '<script src="day-night-fix.js"></script>' _site/index.html
