@@ -31,7 +31,7 @@ jobs:
         run: |
           mkdir -p _site/data/observations _site/data/learning
           cp index.html radar.html epir-icon.svg epir-icon-192.png epir-icon-512.png \
-             index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js \
+             index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js meteogram-visfog-split.js meteogram-visfog-cleanup.js \
              rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js shortcut-mode.js \
              cloud-learning-client.js \
              radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js \
@@ -42,10 +42,12 @@ jobs:
           from pathlib import Path
           import re
 
-          APP='v0.10.24 HTML'
+          APP='v0.10.25 HTML'
           favicon = '<link rel="icon" href="epir-icon-192.png" type="image/png" sizes="192x192">\n<link rel="shortcut icon" href="epir-icon-192.png" type="image/png">\n<link rel="apple-touch-icon" href="epir-icon-192.png">'
           shortcut_addon = '<script src="shortcut-mode.js"></script>'
           cloud_loader = '<script src="cloud-learning-client.js"></script>'
+          split_addon = '<script src="meteogram-visfog-split.js"></script>'
+          cleanup_addon = '<script src="meteogram-visfog-cleanup.js"></script>'
           fog_overlay_addon = '<script src="fog-meteogram-overlay.js"></script>'
 
           p=Path('_site/index.html')
@@ -53,7 +55,7 @@ jobs:
           if 'href="epir-icon-192.png"' not in s:
               s=s.replace('<title>',favicon+'\n<title>',1)
           s=re.sub(r'v0\.\d+\.\d+ HTML',APP,s)
-          s=re.sub(r'HTML v0\.\d+\.\d+','HTML v0.10.24',s)
+          s=re.sub(r'HTML v0\.\d+\.\d+','HTML v0.10.25',s)
           s=s.replace('function timeline(){const now=Date.now(),t0=Math.ceil(now/3600e3)*3600e3',
                       'function timeline(){const now=Date.now(),t0=Math.floor(now/3600e3)*3600e3')
           icm='<a class="control-link" href="https://www.meteo.pl/um/php/meteorogram_id_um.php?ntype=0n&amp;id=2077" target="_blank" rel="noopener noreferrer">ICM UM meteogram ↗</a>'
@@ -67,19 +69,15 @@ jobs:
           s=s.replace("const msg=j?.error||j?.reason||j?.message||('HTTP '+r.status);",
                       "const msg=j?.reason||j?.message||(typeof j?.error==='string'?j.error:('HTTP '+r.status));")
 
-          # Load the learning client before the main inline application script.
           if cloud_loader not in s:
               s=s.replace("<script>\n'use strict';",cloud_loader+"\n<script>\n'use strict';",1)
 
-          # Keep the original model weights for temperature, humidity, wind,
-          # visibility and precipitation. Adapt only the cloud-profile ensemble.
           old_cloud="const pr=profile(items,terr),ceil=ceiling(pr)"
           new_cloud="const cloudItems=items.map(i=>({...i,w:i.w*(window.PrognozaEPIRCloudLearning?.factor?.(i.model.id,t)||1)})),cloudSw=cloudItems.reduce((a,b)=>a+b.w,0);if(cloudSw)cloudItems.forEach(i=>i.w/=cloudSw);const pr=profile(cloudItems,terr),ceil=ceiling(pr)"
           if old_cloud not in s:
               raise SystemExit('Cloud Learning profile hook not found')
           s=s.replace(old_cloud,new_cloud,1)
 
-          # Ensure skill data is loaded before the asynchronous model requests finish.
           old_load="async function load(){setBadge('ŁADOWANIE','');failures=[];datasets.clear();demo=false;"
           new_load="async function load(){try{await window.PrognozaEPIRCloudLearning?.loadSkill?.()}catch(_){ }setBadge('ŁADOWANIE','');failures=[];datasets.clear();demo=false;"
           if old_load not in s:
@@ -91,7 +89,9 @@ jobs:
               '<script src="axis-layout-fix.js"></script>',
               '<script src="visual-style-fix.js"></script>',
               '<script src="meteogram-layout-v2.js"></script>',
+              split_addon,
               '<script src="rh-axis-fix.js"></script>',
+              cleanup_addon,
               '<script src="day-night-fix.js"></script>',
               '<script src="observation-engine.js"></script>',
               '<script src="mifg-engine.js"></script>',
@@ -105,7 +105,6 @@ jobs:
           s=s.replace('<script src="fog-archive.js"></script>\n','')
           p.write_text(s,encoding='utf-8')
 
-          # Keep all meteogram modules on the same visible application version.
           for name in ('meteogram-layout-v2.js','observation-engine.js','fog-engine.js'):
               p=Path('_site')/name
               s=p.read_text(encoding='utf-8')
@@ -166,9 +165,11 @@ jobs:
 
       - name: Validate JavaScript
         run: |
-          for f in index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js shortcut-mode.js cloud-learning-client.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js; do
+          for f in index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js meteogram-visfog-split.js meteogram-visfog-cleanup.js rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js shortcut-mode.js cloud-learning-client.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js; do
             node --check "$f"
           done
+          node --check _site/meteogram-visfog-split.js
+          node --check _site/meteogram-visfog-cleanup.js
           node --check _site/observation-engine.js
           node --check _site/fog-engine.js
           node --check _site/fog-meteogram-overlay.js
@@ -183,6 +184,8 @@ jobs:
           test -s _site/observation-engine.js
           test -s _site/mifg-engine.js
           test -s _site/fog-meteogram-overlay.js
+          test -s _site/meteogram-visfog-split.js
+          test -s _site/meteogram-visfog-cleanup.js
           test -s _site/cloud-learning-client.js
           test -s _site/data/observations/latest.json
           test -s _site/data/observations/recent.json
@@ -190,10 +193,15 @@ jobs:
           python3 -m json.tool _site/data/observations/latest.json >/dev/null
           python3 -m json.tool _site/data/observations/recent.json >/dev/null
           python3 -m json.tool _site/data/learning/cloud-skill.json >/dev/null
+          grep -F '<script src="meteogram-visfog-split.js"></script>' _site/index.html
+          grep -F '<script src="meteogram-visfog-cleanup.js"></script>' _site/index.html
           grep -F '<script src="observation-engine.js"></script>' _site/index.html
           grep -F '<script src="mifg-engine.js"></script>' _site/index.html
           grep -F '<script src="fog-meteogram-overlay.js"></script>' _site/index.html
           grep -F '<script src="cloud-learning-client.js"></script>' _site/index.html
+          grep -F "{id:'visfog',h:96,label:'widzialność / mgła'" _site/meteogram-visfog-split.js
+          grep -F "x.id === 'visfog'" _site/fog-meteogram-overlay.js
+          grep -F "panelId !== 'visfog'" _site/fog-meteogram-overlay.js
           grep -F 'const cloudItems=items.map' _site/index.html
           grep -F 'PrognozaEPIRCloudLearning?.factor' _site/index.html
           grep -F 'PrognozaEPIRCloudLearning?.loadSkill' _site/index.html
@@ -211,12 +219,12 @@ jobs:
           grep -F "PrognozaEPIRFogSeries" _site/fog-engine.js
           grep -F "prognozaepir:fog-series-updated" _site/fog-engine.js
           grep -F "FOG_DRAW_THRESHOLD = 40" _site/fog-meteogram-overlay.js
-          grep -F "FOG ≥40/100" _site/fog-meteogram-overlay.js
+          grep -F "FOG ≥40" _site/fog-meteogram-overlay.js
           grep -F "if(o.freezingFog||o.fog)" _site/fog-engine.js
           grep -F "if(o.mist)" _site/fog-engine.js
           grep -F "Math.floor(now/3600e3)" _site/index.html
           ! grep -F "Math.ceil(now/3600e3)" _site/index.html
-          grep -F "v0.10.24 HTML" _site/index.html
+          grep -F "v0.10.25 HTML" _site/index.html
           grep -F '<link rel="icon" href="epir-icon-192.png" type="image/png" sizes="192x192">' _site/index.html
           grep -F '<script src="shortcut-mode.js"></script>' _site/index.html
           grep -F '<script src="day-night-fix.js"></script>' _site/index.html
