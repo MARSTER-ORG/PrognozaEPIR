@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'scripts/collect_epir_observations.py'
+      - 'scripts/supplement_synop_12342.py'
       - '.github/workflows/collect-epir-observations.yml'
   schedule:
     # EPIR METAR is normally half-hourly; run with a publication delay.
@@ -29,7 +30,9 @@ jobs:
           fetch-depth: 0
 
       - name: Collect METAR EPIR and SYNOP 12342
-        run: python3 scripts/collect_epir_observations.py
+        run: |
+          python3 scripts/collect_epir_observations.py
+          python3 scripts/supplement_synop_12342.py
 
       - name: Validate observation data
         run: |
@@ -42,11 +45,15 @@ jobs:
           assert p['station']['synop']=='12342'
           assert p['station']['wigos']=='0-20000-0-12342'
           assert p.get('metar') or p.get('synop')
+          m=p.get('metar') or {}
+          s=p.get('synop') or {}
           f=p.get('fused') or {}
-          if p.get('synop',{}).get('visibility_m') is not None and p.get('synop',{}).get('source')=='IMGW_WIS2_SYNOP':
-              assert f.get('visibility_source')=='IMGW_WIS2_SYNOP'
-          print('METAR:', (p.get('metar') or {}).get('obs_time'))
-          print('SYNOP:', (p.get('synop') or {}).get('obs_time'))
+          if s.get('visibility_m') is not None:
+              assert f.get('visibility_source')==s.get('source'), (f.get('visibility_source'),s.get('source'))
+          if m.get('visibility_report') in ('9999','CAVOK'):
+              assert m.get('visibility_lower_bound') is True
+          print('METAR:', m.get('obs_time'), m.get('raw'))
+          print('SYNOP:', s.get('obs_time'), s.get('raw'))
           print('VIS:', f.get('visibility_m'), f.get('visibility_source'))
           PY
 
