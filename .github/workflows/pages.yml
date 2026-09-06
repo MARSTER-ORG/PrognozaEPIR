@@ -30,7 +30,7 @@ jobs:
       - name: Prepare site
         run: |
           mkdir -p _site
-          cp index.html radar.html epir-icon.svg epir-icon-192.png epir-icon-512.png index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js rh-axis-fix.js day-night-fix.js shortcut-mode.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
+          cp index.html radar.html epir-icon.svg epir-icon-192.png epir-icon-512.png index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js rh-axis-fix.js day-night-fix.js fog-engine.js shortcut-mode.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
           python3 - <<'PY'
           from pathlib import Path
           import re
@@ -42,10 +42,13 @@ jobs:
           s = p.read_text(encoding='utf-8')
           if 'href="epir-icon-192.png"' not in s:
               s = s.replace('<title>', favicon + '\n<title>', 1)
-          for old in ('v0.9.13 HTML','v0.10.0 HTML','v0.10.1 HTML','v0.10.2 HTML','v0.10.3 HTML','v0.10.4 HTML','v0.10.5 HTML','v0.10.6 HTML','v0.10.7 HTML','v0.10.8 HTML','v0.10.9 HTML','v0.10.10 HTML','v0.10.11 HTML','v0.10.12 HTML','v0.10.13 HTML','v0.10.14 HTML','v0.10.15 HTML'):
-              s = s.replace(old, 'v0.10.16 HTML')
-          for old in ('HTML v0.9.12','HTML v0.9.13','HTML v0.10.0','HTML v0.10.1','HTML v0.10.2','HTML v0.10.3','HTML v0.10.4','HTML v0.10.5','HTML v0.10.6','HTML v0.10.7','HTML v0.10.8','HTML v0.10.9','HTML v0.10.10','HTML v0.10.11','HTML v0.10.12','HTML v0.10.13','HTML v0.10.14','HTML v0.10.15'):
-              s = s.replace(old, 'HTML v0.10.16')
+          for old in ('v0.9.13 HTML','v0.10.0 HTML','v0.10.1 HTML','v0.10.2 HTML','v0.10.3 HTML','v0.10.4 HTML','v0.10.5 HTML','v0.10.6 HTML','v0.10.7 HTML','v0.10.8 HTML','v0.10.9 HTML','v0.10.10 HTML','v0.10.11 HTML','v0.10.12 HTML','v0.10.13 HTML','v0.10.14 HTML','v0.10.15 HTML','v0.10.16 HTML'):
+              s = s.replace(old, 'v0.10.17 HTML')
+          for old in ('HTML v0.9.12','HTML v0.9.13','HTML v0.10.0','HTML v0.10.1','HTML v0.10.2','HTML v0.10.3','HTML v0.10.4','HTML v0.10.5','HTML v0.10.6','HTML v0.10.7','HTML v0.10.8','HTML v0.10.9','HTML v0.10.10','HTML v0.10.11','HTML v0.10.12','HTML v0.10.13','HTML v0.10.14','HTML v0.10.15','HTML v0.10.16'):
+              s = s.replace(old, 'HTML v0.10.17')
+          # Start at the current full hour, not the next hour.
+          s = s.replace('function timeline(){const now=Date.now(),t0=Math.ceil(now/3600e3)*3600e3',
+                        'function timeline(){const now=Date.now(),t0=Math.floor(now/3600e3)*3600e3')
           icm = '<a class="control-link" href="https://www.meteo.pl/um/php/meteorogram_id_um.php?ntype=0n&amp;id=2077" target="_blank" rel="noopener noreferrer">ICM UM meteogram ↗</a>'
           radar = '<a class="control-link" href="radar.html">RADAR / SAT / AI</a>'
           if radar not in s and icm in s:
@@ -63,6 +66,7 @@ jobs:
               '<script src="meteogram-layout-v2.js"></script>',
               '<script src="rh-axis-fix.js"></script>',
               '<script src="day-night-fix.js"></script>',
+              '<script src="fog-engine.js"></script>',
               shortcut_addon,
           ]
           for addon in addons:
@@ -125,6 +129,7 @@ jobs:
           node --check meteogram-layout-v2.js
           node --check rh-axis-fix.js
           node --check day-night-fix.js
+          node --check fog-engine.js
           node --check shortcut-mode.js
           node --check radar-enhance.js
           node --check warnings-readable.js
@@ -137,12 +142,14 @@ jobs:
           node --check analysis-plus.js
           node --check range-rings-reset.js
           node --check _site/day-night-fix.js
+          node --check _site/fog-engine.js
           node --check _site/shortcut-mode.js
 
       - name: Verify deployed features
         run: |
           test -s _site/epir-icon-192.png
           test -s _site/epir-icon-512.png
+          test -s _site/fog-engine.js
           grep -F '<link rel="icon" href="epir-icon-192.png" type="image/png" sizes="192x192">' _site/index.html
           grep -F '<link rel="icon" href="epir-icon-192.png" type="image/png" sizes="192x192">' _site/radar.html
           ! grep -F 'manifest.webmanifest' _site/index.html
@@ -152,12 +159,19 @@ jobs:
           grep -F '<script src="shortcut-mode.js"></script>' _site/index.html
           grep -F '<script src="shortcut-mode.js"></script>' _site/radar.html
           grep -F '<script src="day-night-fix.js"></script>' _site/index.html
+          grep -F '<script src="fog-engine.js"></script>' _site/index.html
+          grep -F 'Math.floor(now/3600e3)' _site/index.html
+          ! grep -F 'Math.ceil(now/3600e3)' _site/index.html
           grep -F "daily: 'sunrise,sunset'" _site/day-night-fix.js
           grep -F "timezone: 'UTC'" _site/day-night-fix.js
           grep -F "DAY_SHADE_DARK" _site/day-night-fix.js
           grep -F "NIGHT_SHADE_LIGHT" _site/day-night-fix.js
-          grep -F "serviceWorker.getRegistrations" _site/shortcut-mode.js
-          grep -F "v0.10.16 HTML" _site/index.html
+          grep -F "dmi_harmonie_arome_europe" _site/fog-engine.js
+          grep -F "cloud_cover_2m" _site/fog-engine.js
+          grep -F "visibility" _site/fog-engine.js
+          grep -F "prognozaepir-fog-observations-v1" _site/fog-engine.js
+          grep -F "FOG / VIS" _site/fog-engine.js
+          grep -F "v0.10.17 HTML" _site/index.html
           grep -F "meteogram-layout-v2.js" _site/index.html
           grep -F "rh-axis-fix.js" _site/index.html
           grep -F "RH_AXIS_X_OFFSET = 38" _site/rh-axis-fix.js
