@@ -7,10 +7,13 @@ selects WMO 12342 exactly. It reuses the FM-12 decoder and archive/fusion code
 from collect_epir_observations.py.
 """
 import json
+import sys
 import urllib.parse
 from datetime import timedelta
+from pathlib import Path
 
-from scripts import collect_epir_observations as c
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import collect_epir_observations as c
 
 
 def fetch_synop_poland(hours=18):
