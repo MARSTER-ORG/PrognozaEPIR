@@ -2,8 +2,8 @@
 (() => {
   if (typeof PLACE === 'undefined') return;
 
-  const APP_VERSION = 'v0.10.19 HTML';
-  const ENGINE_VERSION = 'EPIR FOG ENGINE v1.0';
+  const APP_VERSION = 'v0.10.23 HTML';
+  const ENGINE_VERSION = 'EPIR FOG ENGINE v1.1';
   const HOUR = 3600e3;
   const OBS_KEY = 'prognozaepir-fog-observations-v2';
   const MAX_OBS = 60;
@@ -102,7 +102,7 @@
     return ({RAD:'radiacyjna',ADV:'adwekcyjna',CBL:'obniżanie podstawy Stratusa',PCP:'opadowa'})[k]||'—';
   }
 
-  // --- Normalizacje EPIR v1.0 ---
+  // --- Normalizacje EPIR v1.1 ---
   function SD(D){
     if(!finite(D))return null;
     if(D<=.3)return 1;
@@ -236,10 +236,10 @@
     el.innerHTML=`
       <div class="fog-head"><b>${ENGINE_VERSION}</b><span id="fogSource">physics + NWP ensemble + obserwacje</span></div>
       <div id="fogSummary" class="fog-summary"><div class="fog-card"><small>Status</small><strong>Ładowanie…</strong></div></div>
-      <div class="fog-thresholds"><b>Skala ryzyka v1:</b> 0–19 bardzo małe · 20–39 małe · 40–59 umiarkowane · 60–74 wysokie · 75–89 bardzo wysokie · 90–100 skrajnie wysokie. <b>Wynik /100 jest score ryzyka, nie skalibrowanym procentem P(FG).</b></div>
+      <div class="fog-thresholds"><b>Skala ryzyka v1.1:</b> 0–19 bardzo małe · 20–39 małe · 40–59 umiarkowane · 60–74 wysokie · 75–89 bardzo wysokie · 90–100 skrajnie wysokie. <b>Wynik /100 jest score ryzyka, nie skalibrowanym procentem P(FG).</b></div>
       <div id="fogDataNote" class="fog-data-note">Brak danych nie jest traktowany jako zero — składniki niedostępne są usuwane, a wagi renormalizowane.</div>
       <div id="fogStrip" class="fog-strip" hidden><div id="fogHours" class="fog-hours"></div></div>
-      <details class="fog-diag"><summary>Diagnostyka EPIR v1</summary><div id="fogDiag" class="fog-diag-grid"></div></details>
+      <details class="fog-diag"><summary>Diagnostyka EPIR v1.1</summary><div id="fogDiag" class="fog-diag-grid"></div></details>
       <details class="fog-observe"><summary>Dodaj rzeczywistą obserwację</summary>
         <div class="fog-form">
           <label>Godzina<input id="fogObsTime" type="datetime-local"></label>
@@ -457,15 +457,40 @@
     };
   }
 
+  function obsPhenomenon(o){
+    if(!o)return '—';
+    if(o.freezingFog)return 'FZFG';
+    if(o.fog)return 'FG';
+    if(o.mist)return 'BR';
+    return o.automatic?'bez FG/BR':'manualna';
+  }
   function obsScore(o){
     if(!o)return null;
-    const RH=rhFromTempDew(o.T,o.Td),D=o.T-o.Td;
+    const RH=rhFromTempDew(o.T,o.Td),D=finite(o.T)&&finite(o.Td)?o.T-o.Td:null;
+    const vis=finite(o.visM)?SVIS(o.visM)*100:null;
+    const sat=mean([SD(D),SRH(RH)]);
+    const sat100=finite(sat)?sat*100:null;
+
+    // Automatic METAR/SYNOP observations carry explicit FG/BR flags. A low VIS
+    // without FG/BR can be caused by precipitation/haze and must not be treated
+    // as near-certain fog. Manual observations keep the legacy VIS/saturation logic.
+    if(o.automatic){
+      if(o.freezingFog||o.fog){
+        return clip(weightedAvailable([{v:vis,w:.55},{v:sat100,w:.25},{v:100,w:.20}]).v??90,0,100);
+      }
+      if(o.mist){
+        return clip(weightedAvailable([{v:vis,w:.45},{v:sat100,w:.35},{v:55,w:.20}]).v??55,0,85);
+      }
+      const precursor=weightedAvailable([{v:sat100,w:.75},{v:vis,w:.25}]).v;
+      return clip((precursor??0)*.55,0,45);
+    }
+
     let s=0;
     if(o.visM<1000)s=.95;
     else if(o.visM<1500)s=.80;
     else if(o.visM<3000)s=.55;
     else if(o.visM<5000)s=.35;
-    if(finite(RH)&&RH>=97&&D<=.5)s=Math.max(s,.40);
+    if(finite(RH)&&RH>=97&&finite(D)&&D<=.5)s=Math.max(s,.40);
     return s*100;
   }
   function recentObservation(){
@@ -480,6 +505,11 @@
     let s=50;
     if(dp<0)s+=clip(-dp*18,0,30);else s-=clip(dp*12,0,20);
     if(dv<0)s+=clip((-dv/1000)*15,0,25);else s-=clip((dv/1000)*10,0,20);
+    if(q.automatic){
+      if(q.fog||q.freezingFog)s=Math.max(s,90);
+      else if(q.mist)s=Math.max(s,65);
+      else if(p.fog||p.freezingFog||p.mist)s-=20;
+    }
     return clip(s,0,100);
   }
   function obsForLead(t){
@@ -487,7 +517,8 @@
     const lead=Math.max(0,t-Date.now())/HOUR;
     if(lead>6)return null;
     const freshness=Math.exp(-Math.max(0,Date.now()-o.t)/(3*HOUR));
-    return {score:obsScore(o)*freshness,raw:obsScore(o),obs:o,trend:observationTrend()};
+    const raw=obsScore(o);
+    return {score:finite(raw)?raw*freshness:null,raw,obs:o,trend:observationTrend(),phenomenon:obsPhenomenon(o)};
   }
 
   function modelDefinitions(){
@@ -548,7 +579,7 @@
     return {
       t,lead,score:final.v,PHYS:phys,NWP:nwp,agreement:agree,data,confidence:conf,type,models,
       vis,vis1500:visRisk(1500),vis1000:visRisk(1000),vis500:visRisk(500),vis200:visRisk(200),
-      T,fzfg,obsScore:obs?.raw??null,obsUsed:Boolean(obs),sat:finite(sat)?sat*100:null,
+      T,fzfg,obsScore:obs?.raw??null,obsUsed:Boolean(obs),obsPhenomenon:obs?.phenomenon??null,sat:finite(sat)?sat*100:null,
       dmiFog:models.find(m=>m.id===DMI_MODEL)?.directFog??null,
       FSI:mean(models.map(m=>m.fsi).filter(finite))
     };
@@ -612,8 +643,8 @@
       <div class="fog-card"><small>VIS &lt;1500 / &lt;200 m</small><strong>${fmt0(current.vis1500)}/100 · ${fmt0(current.vis200)}/100</strong><em>osobne zagrożenia</em></div>
       <div class="fog-card"><small>Mgła marznąca</small><strong>${freeze}</strong><em>T przy maksimum ${fmt1(peak.T)}°C</em></div>
       <div class="fog-card"><small>Pewność prognozy</small><strong>${confidenceLabel(current.confidence)}</strong><em>${fmt0((current.confidence??0)*100)}% wskaźnika CONF</em></div>`;
-    if(source)source.textContent=`${ENGINE_VERSION} · ${current.models.length} modeli${current.obsUsed?' · OBS aktywne':''}`;
-    if(note)note.innerHTML=`<b>Dostępność danych:</b> ${fmt0(current.data*100)}% · zgodność modeli ${fmt0((current.agreement??0)*100)}% · MTG FCI: brak automatycznego pola (waga usunięta i zrenormalizowana) · obserwacje: ${current.obsUsed?'użyte w nowcaście':'brak świeżej obserwacji'}. DMI 2 m fog: ${finite(current.dmiFog)?fmt0(current.dmiFog)+'%':'—'}.`;
+    if(source)source.textContent=`${ENGINE_VERSION} · ${current.models.length} modeli${current.obsUsed?' · OBS '+(current.obsPhenomenon||'aktywne'):''}`;
+    if(note)note.innerHTML=`<b>Dostępność danych:</b> ${fmt0(current.data*100)}% · zgodność modeli ${fmt0((current.agreement??0)*100)}% · MTG FCI: brak automatycznego pola (waga usunięta i zrenormalizowana) · obserwacje: ${current.obsUsed?'użyte w nowcaście ('+(current.obsPhenomenon||'OBS')+')':'brak świeżej obserwacji'}. DMI 2 m fog: ${finite(current.dmiFog)?fmt0(current.dmiFog)+'%':'—'}.`;
     if(hours){
       hours.innerHTML=future.slice(0,13).map(x=>`<div class="fog-hour ${riskCss(x.score)}"><b>${localHour(x.t)}</b><div class="p">${fmt0(x.score)}/100</div><small>${scoreClass(x.score)}</small><small>${x.type?.text||'—'}</small><small>VIS ${fmtM(x.vis)}</small><small>&lt;1km ${fmt0(x.vis1000)}/100</small></div>`).join('');
     }
@@ -623,7 +654,7 @@
       diag.innerHTML=[
         diagCell('RAD',fmt0(tv.RAD)+'/100'),diagCell('ADV',fmt0(tv.ADV)+'/100'),diagCell('CBL',fmt0(tv.CBL)+'/100'),diagCell('PCP',fmt0(tv.PCP)+'/100'),
         diagCell('PHYS',fmt0(current.PHYS)+'/100'),diagCell('NWP ensemble',fmt0(current.NWP)+'/100'),diagCell('FSI_KT średni',fmt1(current.FSI)),diagCell('DMI fog 2 m',finite(current.dmiFog)?fmt0(current.dmiFog)+'%':'—'),
-        diagCell('Agreement',fmt0((current.agreement??0)*100)+'%'),diagCell('Data',fmt0(current.data*100)+'%'),diagCell('Saturation',fmt0(current.sat)+'/100'),diagCell('OBS',finite(current.obsScore)?fmt0(current.obsScore)+'/100':'—')
+        diagCell('Agreement',fmt0((current.agreement??0)*100)+'%'),diagCell('Data',fmt0(current.data*100)+'%'),diagCell('Saturation',fmt0(current.sat)+'/100'),diagCell('OBS '+(current.obsPhenomenon||''),finite(current.obsScore)?fmt0(current.obsScore)+'/100':'—')
       ].join('');
     }
   }
