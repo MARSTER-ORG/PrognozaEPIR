@@ -100,13 +100,6 @@
       cell.innerHTML = '<small>Ryzyko mgły · FOG ENGINE</small><strong>' + fogRiskText(fog) + '</strong>';
       values.appendChild(cell);
     }
-    if (!box.querySelector('[data-fog-help="1"]')) {
-      const help = document.createElement('div');
-      help.className = 'section-help';
-      help.dataset.fogHelp = '1';
-      help.textContent = 'Słupki FOG są rysowane od 40/100. Skala 40–100 zajmuje zakres od 0 do 19,5 km na osi panelu, dlatego FOG 100 znajduje się tuż przed poziomem 20 km. Pomarańczowa linia jest niezależną prognozą widzialności.';
-      box.appendChild(help);
-    }
   }
 
   function installLegendNote() {
