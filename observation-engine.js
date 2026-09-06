@@ -109,6 +109,39 @@
     return `${m.visibility_lower_bound?'≥':''}${Math.round(m.visibility_m)} m`;
   }
 
+  function boolText(v){
+    return v===true?'TAK':v===false?'NIE':'—';
+  }
+
+  function cell(label,value,sub=''){
+    return `<div class="fog-diag-cell"><small>${esc(label)}</small><b>${esc(value)}</b>${sub?`<small>${esc(sub)}</small>`:''}</div>`;
+  }
+
+  function cloudText(m){
+    const c=Array.isArray(m?.clouds)?m.clouds:[];
+    if(!c.length)return 'brak warstw / NSC';
+    return c.map(x=>`${x.cover||'—'} ${finite(num(x.base_ft_agl))?Math.round(num(x.base_ft_agl))+' ft':'—'} / ${finite(num(x.base_m_agl))?Math.round(num(x.base_m_agl))+' m':'—'}`).join(' · ');
+  }
+
+  function metarWeatherText(m){
+    if(!m)return '—';
+    const p=metarPhenomena(m);
+    const a=[
+      p.shallowFog?'MIFG':null,
+      p.freezingFog?'FZFG':null,
+      p.fogPatches?'BCFG':null,
+      p.partialFog?'PRFG':null,
+      p.plainFog?'FG':null,
+      p.mist?'BR':null,
+      m.weather||null
+    ].filter(Boolean);
+    return [...new Set(a)].join(' / ')||'brak zjawiska';
+  }
+
+  function rawNote(title,raw){
+    return `<div class="fog-data-note"><b>${esc(title)}:</b> <span style="font-family:monospace;word-break:break-word">${esc(raw||'—')}</span></div>`;
+  }
+
   function nearestConsensus(t,maxDiff=75*60e3){
     try{
       if(typeof consensus==='undefined'||!Array.isArray(consensus)||!consensus.length)return null;
@@ -139,27 +172,71 @@
       `VIS ${deltaText(visModel,visObs,'m',0)}. Te różnice są używane jako lokalna informacja korekcyjna dla najbliższych godzin.</div>`;
   }
 
+  function metarGridHtml(m){
+    if(!m)return '<div class="fog-data-note"><b>METAR EPIR:</b> brak aktualnej depeszy.</div>';
+    const gust=num(m.wind_gust_ms);
+    const visFlags=`raport ${m.visibility_report||'—'}${m.visibility_lower_bound?' · dolna granica':''}${m.visibility_upper_bound?' · górna granica':''}`;
+    return `
+      <div class="fog-data-note"><b>METAR EPIR — wszystkie dostępne parametry</b></div>
+      <div class="fog-diag-grid">
+        ${cell('Stacja',m.station||'EPIR',m.source||'—')}
+        ${cell('Czas obserwacji',localTime(m.obs_time),`wiek ${ageText(m.obs_time)}`)}
+        ${cell('Temperatura',`${fmt(num(m.temperature_c))} °C`)}
+        ${cell('Punkt rosy',`${fmt(num(m.dew_point_c))} °C`)}
+        ${cell('Wilgotność RH',`${fmt(num(m.relative_humidity_pct),0)}%`)}
+        ${cell('Widzialność',metarVisText(m),visFlags)}
+        ${cell('Kierunek wiatru',finite(num(m.wind_direction_deg))?`${fmt(num(m.wind_direction_deg),0)}°`:'VRB / —')}
+        ${cell('Prędkość wiatru',`${fmt(num(m.wind_speed_ms),2)} m/s`)}
+        ${cell('Porywy',gust===null?'—':`${fmt(gust,2)} m/s`)}
+        ${cell('QNH',`${fmt(num(m.pressure_hpa),0)} hPa`)}
+        ${cell('Zjawiska',metarWeatherText(m))}
+        ${cell('Mgła FG',boolText(m.fog))}
+        ${cell('Zamglenie BR',boolText(m.mist))}
+        ${cell('Mgła marznąca FZFG',boolText(m.freezing_fog))}
+        ${cell('Ceiling BKN/OVC/VV',fmtM(num(m.ceiling_m_agl)))}
+        ${cell('Warstwy chmur',cloudText(m))}
+      </div>
+      ${rawNote('Surowy METAR',m.raw)}`;
+  }
+
+  function synopGridHtml(s){
+    if(!s)return '<div class="fog-data-note"><b>SYNOP 12342:</b> brak aktualnej depeszy.</div>';
+    const vis=num(s.visibility_m);
+    const visText=vis===null?'—':`${s.visibility_lower_bound?'≥':''}${s.visibility_upper_bound?'≤':''}${Math.round(vis)} m`;
+    const visSub=`VV ${s.visibility_code_vv||'—'} · ${s.visibility_report||'—'}`;
+    return `
+      <div class="fog-data-note"><b>SYNOP 12342 — wszystkie dostępne parametry</b></div>
+      <div class="fog-diag-grid">
+        ${cell('Stacja WMO',s.station||'12342',s.source||'—')}
+        ${cell('WIGOS',s.wigos||'—')}
+        ${cell('Czas obserwacji',localTime(s.obs_time),`wiek ${ageText(s.obs_time)}`)}
+        ${cell('Temperatura',`${fmt(num(s.temperature_c))} °C`)}
+        ${cell('Punkt rosy',`${fmt(num(s.dew_point_c))} °C`)}
+        ${cell('Wilgotność RH',`${fmt(num(s.relative_humidity_pct),0)}%`)}
+        ${cell('Widzialność',visText,visSub)}
+        ${cell('Dolna granica VIS',boolText(s.visibility_lower_bound))}
+        ${cell('Górna granica VIS',boolText(s.visibility_upper_bound))}
+        ${cell('Kierunek wiatru',finite(num(s.wind_direction_deg))?`${fmt(num(s.wind_direction_deg),0)}°`:'—')}
+        ${cell('Prędkość wiatru',`${fmt(num(s.wind_speed_ms),2)} m/s`)}
+        ${cell('Ciśnienie MSLP',`${fmt(num(s.pressure_hpa),1)} hPa`)}
+        ${cell('Ciśnienie stacyjne',`${fmt(num(s.station_pressure_hpa),1)} hPa`)}
+        ${cell('Pogoda bieżąca ww',s.present_weather_code==null?'—':String(s.present_weather_code),s.present_weather||'—')}
+        ${cell('Mgła',boolText(s.fog))}
+        ${cell('Zamglenie',boolText(s.mist))}
+        ${cell('Mgła marznąca',boolText(s.freezing_fog))}
+        ${cell('Podstawa chmur',fmtM(num(s.cloud_base_m_agl)))}
+        ${cell('Zachmurzenie ogólne',s.total_cloud_oktas==null?'—':`${s.total_cloud_oktas}/8`)}
+      </div>
+      ${rawNote('Surowy SYNOP',s.raw)}`;
+  }
+
   function observationPanelHtml(){
     const m=latestData?.metar||null, s=latestData?.synop||null, f=latestData?.fused||null;
-    const synVis=s&&finite(num(s.visibility_m))?fmtM(num(s.visibility_m)):'—';
-    const mp=metarPhenomena(m);
-    const weather=[
-      mp.shallowFog?'MIFG':null,mp.freezingFog?'FZFG':null,mp.fogPatches?'BCFG':null,
-      mp.partialFog?'PRFG':null,mp.plainFog?'FG':null,mp.mist?'BR':null,s?.present_weather||null
-    ].filter(Boolean).join(' / ')||'brak zjawiska';
     return `<details id="epirObservationPanel" class="fog-diag" open>
       <summary>Obserwacje automatyczne EPIR — METAR + SYNOP 12342</summary>
-      <div class="fog-diag-grid">
-        <div class="fog-diag-cell"><small>METAR EPIR</small><b>${esc(localTime(m?.obs_time))}</b><small>wiek ${esc(ageText(m?.obs_time))}</small></div>
-        <div class="fog-diag-cell"><small>VIS METAR</small><b>${esc(metarVisText(m))}</b><small>${m?.visibility_lower_bound?'wartość graniczna ≥':'wartość raportowana'}</small></div>
-        <div class="fog-diag-cell"><small>SYNOP 12342</small><b>${esc(localTime(s?.obs_time))}</b><small>wiek ${esc(ageText(s?.obs_time))}</small></div>
-        <div class="fog-diag-cell"><small>VIS SYNOP</small><b>${esc(synVis)}</b><small>${s?.source==='IMGW_WIS2_SYNOP'?'dokładna widzialność WIS2':'brak pełnego WIS2'}</small></div>
-        <div class="fog-diag-cell"><small>T / Td</small><b>${fmt(num(f?.temperature_c))} / ${fmt(num(f?.dew_point_c))} °C</b></div>
-        <div class="fog-diag-cell"><small>RH</small><b>${fmt(num(f?.relative_humidity_pct),0)}%</b></div>
-        <div class="fog-diag-cell"><small>Wiatr</small><b>${fmt(num(f?.wind_speed_ms))} m/s · ${fmt(num(f?.wind_direction_deg),0)}°</b></div>
-        <div class="fog-diag-cell"><small>Zjawiska</small><b>${esc(weather)}</b></div>
-      </div>
-      <div class="fog-data-note"><b>Źródło VIS dla Fog Engine:</b> ${esc(f?.visibility_source||'—')} · ${esc(fmtM(num(f?.visibility_m)))}. SYNOP ma pierwszeństwo dla widzialności, ponieważ METAR przy dobrej widzialności raportuje wartość graniczną 9999/CAVOK zamiast dokładnej wartości powyżej około 10 km. MIFG jest traktowane osobno i nie jest utożsamiane z ograniczeniem VIS na wysokości obserwacji.</div>
+      ${metarGridHtml(m)}
+      ${synopGridHtml(s)}
+      <div class="fog-data-note"><b>Dane scalone dla Fog Engine:</b> VIS ${esc(fmtM(num(f?.visibility_m)))} · źródło ${esc(f?.visibility_source||'—')} · T ${fmt(num(f?.temperature_c))}°C · Td ${fmt(num(f?.dew_point_c))}°C · RH ${fmt(num(f?.relative_humidity_pct),0)}% · wiatr ${fmt(num(f?.wind_speed_ms),2)} m/s / ${fmt(num(f?.wind_direction_deg),0)}° · ciśnienie ${fmt(num(f?.pressure_hpa),1)} hPa. SYNOP ma pierwszeństwo dla dokładnej widzialności; METAR 9999/CAVOK jest traktowany jako wartość graniczna ≥10 km.</div>
       <div id="epirModelVerification">${verificationHtml()}</div>
     </details>`;
   }
