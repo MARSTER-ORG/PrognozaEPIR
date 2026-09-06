@@ -29,27 +29,30 @@ jobs:
 
       - name: Prepare site
         run: |
-          mkdir -p _site/data/observations
+          mkdir -p _site/data/observations _site/data/learning
           cp index.html radar.html epir-icon.svg epir-icon-192.png epir-icon-512.png \
              index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js \
              rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js shortcut-mode.js \
+             cloud-learning-client.js \
              radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js \
              lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
           cp data/observations/latest.json data/observations/recent.json _site/data/observations/
+          cp data/learning/cloud-skill.json _site/data/learning/
           python3 - <<'PY'
           from pathlib import Path
           import re
 
-          APP='v0.10.21 HTML'
+          APP='v0.10.22 HTML'
           favicon = '<link rel="icon" href="epir-icon-192.png" type="image/png" sizes="192x192">\n<link rel="shortcut icon" href="epir-icon-192.png" type="image/png">\n<link rel="apple-touch-icon" href="epir-icon-192.png">'
           shortcut_addon = '<script src="shortcut-mode.js"></script>'
+          cloud_loader = '<script src="cloud-learning-client.js"></script>'
 
           p=Path('_site/index.html')
           s=p.read_text(encoding='utf-8')
           if 'href="epir-icon-192.png"' not in s:
               s=s.replace('<title>',favicon+'\n<title>',1)
           s=re.sub(r'v0\.\d+\.\d+ HTML',APP,s)
-          s=re.sub(r'HTML v0\.\d+\.\d+','HTML v0.10.21',s)
+          s=re.sub(r'HTML v0\.\d+\.\d+','HTML v0.10.22',s)
           s=s.replace('function timeline(){const now=Date.now(),t0=Math.ceil(now/3600e3)*3600e3',
                       'function timeline(){const now=Date.now(),t0=Math.floor(now/3600e3)*3600e3')
           icm='<a class="control-link" href="https://www.meteo.pl/um/php/meteorogram_id_um.php?ntype=0n&amp;id=2077" target="_blank" rel="noopener noreferrer">ICM UM meteogram ↗</a>'
@@ -62,6 +65,24 @@ jobs:
                       "const vars=prof?profileVarsFor(model):SURFACE.filter(v=>!(model.surfaceExclude||[]).includes(v));")
           s=s.replace("const msg=j?.error||j?.reason||j?.message||('HTTP '+r.status);",
                       "const msg=j?.reason||j?.message||(typeof j?.error==='string'?j.error:('HTTP '+r.status));")
+
+          # Load the learning client before the main inline application script.
+          if cloud_loader not in s:
+              s=s.replace("<script>\n'use strict';",cloud_loader+"\n<script>\n'use strict';",1)
+
+          # Apply learned weights only to cloud consensus. A factor of 1 keeps the
+          # original fixed model weight. Skill is lead-time-aware and conservative.
+          old="if(row)items.push({model:m,row,w:m.w,elevation:ds.elevation})"
+          new="if(row){const cloudFactor=window.PrognozaEPIRCloudLearning?.factor?.(m.id,t)||1;items.push({model:m,row,w:m.w*cloudFactor,elevation:ds.elevation})}"
+          if old in s:
+              s=s.replace(old,new,1)
+
+          # Ensure skill data is loaded before the asynchronous model requests finish.
+          old_load="async function load(){setBadge('ŁADOWANIE','');failures=[];datasets.clear();demo=false;"
+          new_load="async function load(){try{await window.PrognozaEPIRCloudLearning?.loadSkill?.()}catch(_){ }setBadge('ŁADOWANIE','');failures=[];datasets.clear();demo=false;"
+          if old_load in s:
+              s=s.replace(old_load,new_load,1)
+
           addons=[
               '<script src="index-fixes.js"></script>',
               '<script src="axis-layout-fix.js"></script>',
@@ -126,11 +147,12 @@ jobs:
 
       - name: Validate JavaScript
         run: |
-          for f in index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js shortcut-mode.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js; do
+          for f in index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js shortcut-mode.js cloud-learning-client.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js; do
             node --check "$f"
           done
           node --check _site/observation-engine.js
           node --check _site/fog-engine.js
+          node --check _site/cloud-learning-client.js
 
       - name: Verify deployed features
         run: |
@@ -138,11 +160,17 @@ jobs:
           test -s _site/epir-icon-512.png
           test -s _site/fog-engine.js
           test -s _site/observation-engine.js
+          test -s _site/cloud-learning-client.js
           test -s _site/data/observations/latest.json
           test -s _site/data/observations/recent.json
+          test -s _site/data/learning/cloud-skill.json
           python3 -m json.tool _site/data/observations/latest.json >/dev/null
           python3 -m json.tool _site/data/observations/recent.json >/dev/null
+          python3 -m json.tool _site/data/learning/cloud-skill.json >/dev/null
           grep -F '<script src="observation-engine.js"></script>' _site/index.html
+          grep -F '<script src="cloud-learning-client.js"></script>' _site/index.html
+          grep -F 'PrognozaEPIRCloudLearning?.factor' _site/index.html
+          grep -F 'PrognozaEPIRCloudLearning?.loadSkill' _site/index.html
           ! grep -F '<script src="fog-engine.js"></script>' _site/index.html
           ! grep -F 'fog-archive.js' _site/index.html
           grep -F "loadFogEngine" _site/observation-engine.js
@@ -152,7 +180,7 @@ jobs:
           grep -F "EPIR FOG ENGINE v1.0" _site/fog-engine.js
           grep -F "Math.floor(now/3600e3)" _site/index.html
           ! grep -F "Math.ceil(now/3600e3)" _site/index.html
-          grep -F "v0.10.21 HTML" _site/index.html
+          grep -F "v0.10.22 HTML" _site/index.html
           grep -F '<link rel="icon" href="epir-icon-192.png" type="image/png" sizes="192x192">' _site/index.html
           grep -F '<script src="shortcut-mode.js"></script>' _site/index.html
           grep -F '<script src="day-night-fix.js"></script>' _site/index.html
