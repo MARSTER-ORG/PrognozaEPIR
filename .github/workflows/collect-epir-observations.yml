@@ -6,6 +6,7 @@ on:
     paths:
       - 'scripts/collect_epir_observations.py'
       - 'scripts/supplement_metar_pilothub.py'
+      - 'scripts/supplement_synop_wis2.py'
       - 'scripts/supplement_synop_12342.py'
       - 'scripts/refresh_epir_metar.py'
       - 'scripts/organize_observation_archive.py'
@@ -39,6 +40,9 @@ jobs:
           # must not prevent the remaining sources from being checked.
           python3 scripts/collect_epir_observations.py || echo "Primary EPIR collector unavailable; continuing with fallbacks"
           python3 scripts/supplement_metar_pilothub.py
+          # WMO WIS2/NOAA decoded BUFR is preferred for current SYNOP observations.
+          python3 scripts/supplement_synop_wis2.py
+          # Legacy FM-12/Ogimet remains an independent fallback when available.
           python3 scripts/supplement_synop_12342.py
           # Final freshness guard compares all METAR sources and always keeps the newest report.
           python3 scripts/refresh_epir_metar.py
@@ -73,7 +77,7 @@ jobs:
                   canonical=Path('data/observations')/kind/y/mo/f'{d}.jsonl'
                   assert canonical.exists(), f'missing canonical archive: {canonical}'
           print('METAR:', m.get('obs_time'), m.get('source'), m.get('raw'))
-          print('SYNOP:', s.get('obs_time'), s.get('raw'))
+          print('SYNOP:', s.get('obs_time'), s.get('source'), s.get('raw'))
           print('VIS:', f.get('visibility_m'), f.get('visibility_source'))
           PY
 
