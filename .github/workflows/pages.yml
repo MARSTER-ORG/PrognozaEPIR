@@ -32,7 +32,7 @@ jobs:
           mkdir -p _site/data/observations _site/data/learning
           cp index.html radar.html epir-icon.svg epir-icon-192.png epir-icon-512.png \
              index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js \
-             rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js shortcut-mode.js \
+             rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js shortcut-mode.js \
              cloud-learning-client.js \
              radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js \
              lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
@@ -42,17 +42,18 @@ jobs:
           from pathlib import Path
           import re
 
-          APP='v0.10.23 HTML'
+          APP='v0.10.24 HTML'
           favicon = '<link rel="icon" href="epir-icon-192.png" type="image/png" sizes="192x192">\n<link rel="shortcut icon" href="epir-icon-192.png" type="image/png">\n<link rel="apple-touch-icon" href="epir-icon-192.png">'
           shortcut_addon = '<script src="shortcut-mode.js"></script>'
           cloud_loader = '<script src="cloud-learning-client.js"></script>'
+          fog_overlay_addon = '<script src="fog-meteogram-overlay.js"></script>'
 
           p=Path('_site/index.html')
           s=p.read_text(encoding='utf-8')
           if 'href="epir-icon-192.png"' not in s:
               s=s.replace('<title>',favicon+'\n<title>',1)
           s=re.sub(r'v0\.\d+\.\d+ HTML',APP,s)
-          s=re.sub(r'HTML v0\.\d+\.\d+','HTML v0.10.23',s)
+          s=re.sub(r'HTML v0\.\d+\.\d+','HTML v0.10.24',s)
           s=s.replace('function timeline(){const now=Date.now(),t0=Math.ceil(now/3600e3)*3600e3',
                       'function timeline(){const now=Date.now(),t0=Math.floor(now/3600e3)*3600e3')
           icm='<a class="control-link" href="https://www.meteo.pl/um/php/meteorogram_id_um.php?ntype=0n&amp;id=2077" target="_blank" rel="noopener noreferrer">ICM UM meteogram ↗</a>'
@@ -94,6 +95,7 @@ jobs:
               '<script src="day-night-fix.js"></script>',
               '<script src="observation-engine.js"></script>',
               '<script src="mifg-engine.js"></script>',
+              fog_overlay_addon,
               shortcut_addon,
           ]
           for addon in addons:
@@ -102,6 +104,20 @@ jobs:
           s=s.replace('<script src="fog-engine.js"></script>\n','')
           s=s.replace('<script src="fog-archive.js"></script>\n','')
           p.write_text(s,encoding='utf-8')
+
+          # Keep all meteogram modules on the same visible application version.
+          for name in ('meteogram-layout-v2.js','observation-engine.js','fog-engine.js'):
+              p=Path('_site')/name
+              s=p.read_text(encoding='utf-8')
+              s=re.sub(r"const VERSION = 'v0\.\d+\.\d+ HTML';",f"const VERSION = '{APP}';",s)
+              s=re.sub(r"const APP_VERSION = 'v0\.\d+\.\d+ HTML';",f"const APP_VERSION = '{APP}';",s)
+              if name == 'fog-engine.js':
+                  old='fogSeries=out;renderFog();'
+                  new="fogSeries=out;window.PrognozaEPIRFogSeries=fogSeries;window.dispatchEvent(new CustomEvent('prognozaepir:fog-series-updated',{detail:{count:fogSeries.length}}));renderFog();"
+                  if old not in s:
+                      raise SystemExit('Fog Engine series export hook not found')
+                  s=s.replace(old,new,1)
+              p.write_text(s,encoding='utf-8')
 
           p=Path('_site/radar.html')
           s=p.read_text(encoding='utf-8')
@@ -150,11 +166,12 @@ jobs:
 
       - name: Validate JavaScript
         run: |
-          for f in index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js shortcut-mode.js cloud-learning-client.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js; do
+          for f in index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js shortcut-mode.js cloud-learning-client.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js; do
             node --check "$f"
           done
           node --check _site/observation-engine.js
           node --check _site/fog-engine.js
+          node --check _site/fog-meteogram-overlay.js
           node --check _site/mifg-engine.js
           node --check _site/cloud-learning-client.js
 
@@ -165,6 +182,7 @@ jobs:
           test -s _site/fog-engine.js
           test -s _site/observation-engine.js
           test -s _site/mifg-engine.js
+          test -s _site/fog-meteogram-overlay.js
           test -s _site/cloud-learning-client.js
           test -s _site/data/observations/latest.json
           test -s _site/data/observations/recent.json
@@ -174,6 +192,7 @@ jobs:
           python3 -m json.tool _site/data/learning/cloud-skill.json >/dev/null
           grep -F '<script src="observation-engine.js"></script>' _site/index.html
           grep -F '<script src="mifg-engine.js"></script>' _site/index.html
+          grep -F '<script src="fog-meteogram-overlay.js"></script>' _site/index.html
           grep -F '<script src="cloud-learning-client.js"></script>' _site/index.html
           grep -F 'const cloudItems=items.map' _site/index.html
           grep -F 'PrognozaEPIRCloudLearning?.factor' _site/index.html
@@ -189,11 +208,15 @@ jobs:
           grep -F "MIFG &lt;2 m" _site/mifg-engine.js
           grep -F "surface_temperature" _site/mifg-engine.js
           grep -F "EPIR FOG ENGINE v1.1" _site/fog-engine.js
+          grep -F "PrognozaEPIRFogSeries" _site/fog-engine.js
+          grep -F "prognozaepir:fog-series-updated" _site/fog-engine.js
+          grep -F "FOG_DRAW_THRESHOLD = 40" _site/fog-meteogram-overlay.js
+          grep -F "FOG ≥40/100" _site/fog-meteogram-overlay.js
           grep -F "if(o.freezingFog||o.fog)" _site/fog-engine.js
           grep -F "if(o.mist)" _site/fog-engine.js
           grep -F "Math.floor(now/3600e3)" _site/index.html
           ! grep -F "Math.ceil(now/3600e3)" _site/index.html
-          grep -F "v0.10.23 HTML" _site/index.html
+          grep -F "v0.10.24 HTML" _site/index.html
           grep -F '<link rel="icon" href="epir-icon-192.png" type="image/png" sizes="192x192">' _site/index.html
           grep -F '<script src="shortcut-mode.js"></script>' _site/index.html
           grep -F '<script src="day-night-fix.js"></script>' _site/index.html
