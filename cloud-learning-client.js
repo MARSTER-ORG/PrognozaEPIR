@@ -111,8 +111,8 @@
     const agreement=currentAgreement();
     const verified=verifiedScore();
     box.innerHTML=
-      '<div><b>Zgodność modeli:</b> '+(agreement===null?'—':agreement+'%')+'</div>'+
-      '<div><b>Sprawdzalność z realnymi danymi:</b> '+(verified===null?'—':verified+'%')+'</div>';
+      '<div>Dostępność danych: <b>'+(agreement===null?'—':agreement+'%')+'</b> – zgodność modeli</div>'+
+      '<div><b>'+(verified===null?'—':verified+'%')+'</b> – sprawdzalność modelu z realnymi danymi</div>';
   }
 
   function installMetrics(){
