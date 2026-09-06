@@ -178,21 +178,21 @@ def get_synop():
 # ---------------- Archive + fusion ----------------
 def age(r):
     t=parse_dt((r or {}).get('obs_time')); return 1e9 if not t else max(0,(now()-t).total_seconds()/60)
-def newest(rows,key,max_age=150):
-    a=[(parse_dt(r.get('obs_time')),r.get(key),r.get('source')) for r in rows if r and r.get(key) is not None and age(r)<=max_age]
+def newest(rows,key,max_age=150,allow_stale=False):
+    a=[(parse_dt(r.get('obs_time')),r.get(key),r.get('source')) for r in rows if r and r.get(key) is not None and (allow_stale or age(r)<=max_age)]
     if not a:return None,None
     a.sort(reverse=True,key=lambda z:z[0]);return a[0][1],a[0][2]
-def fuse(m,s):
+def fuse(m,s,allow_stale=False):
     rows=[x for x in (m,s) if x]
     if not rows:return None
     vis=vsrc=vlb=vub=None
-    if s and s.get('visibility_m') is not None and age(s)<=130:vis=s['visibility_m'];vsrc=s['source'];vlb=s.get('visibility_lower_bound');vub=s.get('visibility_upper_bound')
-    elif m and m.get('visibility_m') is not None and age(m)<=100:vis=m['visibility_m'];vsrc=m['source'];vlb=m.get('visibility_lower_bound');vub=m.get('visibility_upper_bound')
-    T,Tsrc=newest(rows,'temperature_c');Td,Tdsrc=newest(rows,'dew_point_c');RH,RHsrc=newest(rows,'relative_humidity_pct')
+    if s and s.get('visibility_m') is not None and (allow_stale or age(s)<=130):vis=s['visibility_m'];vsrc=s['source'];vlb=s.get('visibility_lower_bound');vub=s.get('visibility_upper_bound')
+    elif m and m.get('visibility_m') is not None and (allow_stale or age(m)<=100):vis=m['visibility_m'];vsrc=m['source'];vlb=m.get('visibility_lower_bound');vub=m.get('visibility_upper_bound')
+    T,Tsrc=newest(rows,'temperature_c',allow_stale=allow_stale);Td,Tdsrc=newest(rows,'dew_point_c',allow_stale=allow_stale);RH,RHsrc=newest(rows,'relative_humidity_pct',allow_stale=allow_stale)
     if RH is None:RH=rh(T,Td);RHsrc='derived_T_Td' if RH is not None else None
-    wd,wdsrc=newest(rows,'wind_direction_deg');ws,wssrc=newest(rows,'wind_speed_ms');p,psrc=newest(rows,'pressure_hpa')
-    cbh,cbhsrc=newest(rows,'cloud_base_m_agl')
-    if cbh is None:cbh,cbhsrc=newest(rows,'ceiling_m_agl')
+    wd,wdsrc=newest(rows,'wind_direction_deg',allow_stale=allow_stale);ws,wssrc=newest(rows,'wind_speed_ms',allow_stale=allow_stale);p,psrc=newest(rows,'pressure_hpa',allow_stale=allow_stale)
+    cbh,cbhsrc=newest(rows,'cloud_base_m_agl',allow_stale=allow_stale)
+    if cbh is None:cbh,cbhsrc=newest(rows,'ceiling_m_agl',allow_stale=allow_stale)
     times=[parse_dt(r.get('obs_time')) for r in rows];times=[x for x in times if x]
     return {'obs_time':iso(max(times)) if times else None,'temperature_c':rnd(T,1),'dew_point_c':rnd(Td,1),'relative_humidity_pct':rnd(RH,1),'visibility_m':rnd(vis,0),
       'visibility_lower_bound':vlb,'visibility_upper_bound':vub,'visibility_source':vsrc,'wind_direction_deg':rnd(wd,0),'wind_speed_ms':rnd(ws,2),'pressure_hpa':rnd(p,1),'cloud_base_m_agl':rnd(cbh,0),
@@ -227,11 +227,11 @@ def history(ms,ss):
     for s in ss:
         t=parse_dt(s.get('obs_time'));m=nearest(ms,t) if t else None
         if m:used.add(key(m))
-        z=fuse(m,s)
+        z=fuse(m,s,allow_stale=True)
         if z:z['metar_obs_time']=m.get('obs_time') if m else None;z['synop_obs_time']=s.get('obs_time');out.append(z)
     for m in ms:
         if key(m) in used:continue
-        z=fuse(m,None)
+        z=fuse(m,None,allow_stale=True)
         if z:z['metar_obs_time']=m.get('obs_time');z['synop_obs_time']=None;out.append(z)
     return sorted(out,key=lambda z:parse_dt(z.get('obs_time')) or datetime(1970,1,1,tzinfo=timezone.utc))[-100:]
 def write(path,obj,pretty=False):
