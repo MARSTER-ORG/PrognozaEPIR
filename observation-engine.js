@@ -1,6 +1,6 @@
 'use strict';
 (() => {
-  const APP_VERSION = 'v0.10.21 HTML';
+  const APP_VERSION = 'v0.10.22 HTML';
   const OBS_KEY = 'prognozaepir-fog-observations-v2';
   const LATEST_URL = 'data/observations/latest.json';
   const RECENT_URL = 'data/observations/recent.json';
@@ -49,7 +49,6 @@
   function storeAutomaticObservations(data){
     const rows=(data?.observations||[]).map(toLocalObservation).filter(Boolean).sort((a,b)=>a.t-b.t).slice(-MAX_OBS);
     try{
-      // Manual observations are intentionally replaced by the server-side EPIR observation stream.
       localStorage.setItem(OBS_KEY,JSON.stringify(rows));
       localStorage.setItem('prognozaepir-observation-mode','automatic-epir-metar-synop');
     }catch(_){ }
