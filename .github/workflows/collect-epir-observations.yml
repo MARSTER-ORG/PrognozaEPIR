@@ -7,10 +7,11 @@ on:
       - 'scripts/collect_epir_observations.py'
       - 'scripts/supplement_metar_pilothub.py'
       - 'scripts/supplement_synop_12342.py'
+      - 'scripts/refresh_epir_metar.py'
       - 'scripts/organize_observation_archive.py'
       - '.github/workflows/collect-epir-observations.yml'
   schedule:
-    # GitHub cron can be delayed. Poll every 5 minutes; deduplication prevents duplicate archive rows.
+    # Poll at GitHub's minimum cron interval. Archive deduplication prevents duplicate reports.
     - cron: '*/5 * * * *'
   workflow_dispatch:
 
@@ -34,11 +35,13 @@ jobs:
 
       - name: Collect METAR EPIR and SYNOP 12342
         run: |
-          # Primary collector prefers direct IMGW and then its existing fallbacks.
-          # A temporary primary-source outage must not block PilotHub/SYNOP fallbacks.
+          # Primary collector plus independent fallbacks. A temporary outage of one source
+          # must not prevent the remaining sources from being checked.
           python3 scripts/collect_epir_observations.py || echo "Primary EPIR collector unavailable; continuing with fallbacks"
           python3 scripts/supplement_metar_pilothub.py
           python3 scripts/supplement_synop_12342.py
+          # Final freshness guard compares all METAR sources and always keeps the newest report.
+          python3 scripts/refresh_epir_metar.py
 
       - name: Organize long-term observation archive
         run: |
