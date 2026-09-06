@@ -1,0 +1,60 @@
+name: Import meteo.mil EPIR archive
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'data/observations/manual/meteo_mil/**'
+      - 'scripts/import_meteo_mil_archive.py'
+      - '.github/workflows/import-meteo-mil-archive.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: import-meteo-mil-archive
+  cancel-in-progress: false
+
+jobs:
+  decode-and-archive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Decode METAR and SYNOP
+        run: python scripts/import_meteo_mil_archive.py
+
+      - name: Validate generated JSONL
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          files = list(Path('data/observations/metar').rglob('*.jsonl')) + list(Path('data/observations/synop').rglob('*.jsonl'))
+          for path in files:
+              for n, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
+                  if line.strip():
+                      json.loads(line)
+          print(f'Validated {len(files)} JSONL archive files')
+          PY
+
+      - name: Commit decoded archive
+        run: |
+          if git diff --quiet -- data/observations/metar data/observations/synop; then
+            echo 'Archive already up to date.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/observations/metar data/observations/synop
+          git commit -m 'weather: decode meteo.mil EPIR archive'
+          git pull --rebase origin main
+          git push origin HEAD:main
