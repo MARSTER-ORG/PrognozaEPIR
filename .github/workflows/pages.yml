@@ -70,18 +70,20 @@ jobs:
           if cloud_loader not in s:
               s=s.replace("<script>\n'use strict';",cloud_loader+"\n<script>\n'use strict';",1)
 
-          # Apply learned weights only to cloud consensus. A factor of 1 keeps the
-          # original fixed model weight. Skill is lead-time-aware and conservative.
-          old="if(row)items.push({model:m,row,w:m.w,elevation:ds.elevation})"
-          new="if(row){const cloudFactor=window.PrognozaEPIRCloudLearning?.factor?.(m.id,t)||1;items.push({model:m,row,w:m.w*cloudFactor,elevation:ds.elevation})}"
-          if old in s:
-              s=s.replace(old,new,1)
+          # Keep the original model weights for temperature, humidity, wind,
+          # visibility and precipitation. Adapt only the cloud-profile ensemble.
+          old_cloud="const pr=profile(items,terr),ceil=ceiling(pr)"
+          new_cloud="const cloudItems=items.map(i=>({...i,w:i.w*(window.PrognozaEPIRCloudLearning?.factor?.(i.model.id,t)||1)})),cloudSw=cloudItems.reduce((a,b)=>a+b.w,0);if(cloudSw)cloudItems.forEach(i=>i.w/=cloudSw);const pr=profile(cloudItems,terr),ceil=ceiling(pr)"
+          if old_cloud not in s:
+              raise SystemExit('Cloud Learning profile hook not found')
+          s=s.replace(old_cloud,new_cloud,1)
 
           # Ensure skill data is loaded before the asynchronous model requests finish.
           old_load="async function load(){setBadge('ŁADOWANIE','');failures=[];datasets.clear();demo=false;"
           new_load="async function load(){try{await window.PrognozaEPIRCloudLearning?.loadSkill?.()}catch(_){ }setBadge('ŁADOWANIE','');failures=[];datasets.clear();demo=false;"
-          if old_load in s:
-              s=s.replace(old_load,new_load,1)
+          if old_load not in s:
+              raise SystemExit('Cloud Learning load hook not found')
+          s=s.replace(old_load,new_load,1)
 
           addons=[
               '<script src="index-fixes.js"></script>',
@@ -169,8 +171,10 @@ jobs:
           python3 -m json.tool _site/data/learning/cloud-skill.json >/dev/null
           grep -F '<script src="observation-engine.js"></script>' _site/index.html
           grep -F '<script src="cloud-learning-client.js"></script>' _site/index.html
+          grep -F 'const cloudItems=items.map' _site/index.html
           grep -F 'PrognozaEPIRCloudLearning?.factor' _site/index.html
           grep -F 'PrognozaEPIRCloudLearning?.loadSkill' _site/index.html
+          grep -F 'if(row)items.push({model:m,row,w:m.w,elevation:ds.elevation})' _site/index.html
           ! grep -F '<script src="fog-engine.js"></script>' _site/index.html
           ! grep -F 'fog-archive.js' _site/index.html
           grep -F "loadFogEngine" _site/observation-engine.js
