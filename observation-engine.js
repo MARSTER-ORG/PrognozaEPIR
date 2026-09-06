@@ -1,6 +1,6 @@
 'use strict';
 (() => {
-  const APP_VERSION = 'v0.10.22 HTML';
+  const APP_VERSION = 'v0.10.23 HTML';
   const OBS_KEY = 'prognozaepir-fog-observations-v2';
   const LATEST_URL = 'data/observations/latest.json';
   const RECENT_URL = 'data/observations/recent.json';
