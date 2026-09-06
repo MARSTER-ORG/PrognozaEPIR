@@ -182,13 +182,14 @@
 
   async function refresh(){
     if(busy)return;busy=true;
-    try{await Promise.all([fetchObs(),fetchModel()]);render();}
+    try{await fetchObs();await fetchModel();render();}
     catch(e){console.warn('EPIR MIFG engine:',e);}
     finally{busy=false;}
   }
 
   window.PrognozaEPIRMIFG={getSeries:()=>series.slice(),refresh};
   refresh();
+  setTimeout(render,5000);
   setInterval(refresh,30*60e3);
   setInterval(render,90*1000);
 })();
