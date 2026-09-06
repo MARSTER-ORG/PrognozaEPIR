@@ -2,6 +2,17 @@
 import json
 from pathlib import Path
 
+# Rebuild the visibility component from archived operational model forecasts
+# before exposing verification data to the frontend. This fills historical VIS
+# skill even for hours predating local full-forecast snapshot archiving.
+try:
+    import backfill_visibility_verification as visibility_backfill
+    visibility_backfill.main()
+except Exception as exc:
+    # Do not block the entire learning/deploy pipeline if the external archive
+    # is temporarily unavailable. Existing verified data remains valid.
+    print('visibility verification backfill warning:', exc)
+
 root = Path(__file__).resolve().parents[1]
 learning = root / 'data' / 'learning'
 skill_path = learning / 'cloud-skill.json'
