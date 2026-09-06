@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
 """Cloud Learning v1 for PrognozaEPIR.
 
-Archives model cloud forecasts for EPIR and verifies them against archived METAR
-cloud layers. Produces data/learning/cloud-skill.json with conservative,
-lead-time-aware model weights for cloud consensus.
+Archives compact, lead-time-aware cloud forecasts for EPIR and verifies them
+against later METAR cloud layers. Produces data/learning/cloud-skill.json with
+conservative model weight factors used only by the cloud consensus.
 """
 from __future__ import annotations
 
 import json
-import math
-import os
-import re
-import time
 import urllib.parse
 import urllib.request
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,7 +21,6 @@ VERIFY_DIR = OUT / "verification"
 METAR_DIR = ROOT / "data" / "observations" / "metar"
 LAT = 52.7989
 LON = 18.2639
-TZ = timezone.utc
 
 MODELS = [
     ("ecmwf_ifs", "ECMWF", 0.17),
@@ -40,10 +35,17 @@ MODELS = [
     ("cmc_gem_gdps", "GEM", 0.04),
 ]
 
-LEAD_BUCKETS = [(0, 3, "0-3h"), (3, 6, "3-6h"), (6, 12, "6-12h"), (12, 24, "12-24h"), (24, 48, "24-48h"), (48, 121, "48-120h")]
+LEAD_BUCKETS = [
+    (0, 3, "0-3h", 1.5),
+    (3, 6, "3-6h", 4.5),
+    (6, 12, "6-12h", 9.0),
+    (12, 24, "12-24h", 18.0),
+    (24, 48, "24-48h", 36.0),
+    (48, 121, "48-120h", 72.0),
+]
 MIN_SAMPLES = 12
 FULL_SAMPLES = 60
-MAX_WEIGHT_FACTOR = 1.8
+MAX_WEIGHT_FACTOR = 1.80
 MIN_WEIGHT_FACTOR = 0.55
 
 
@@ -88,9 +90,16 @@ def all_jsonl(directory: Path):
 
 
 def lead_bucket(hours):
-    for a, b, name in LEAD_BUCKETS:
+    for a, b, name, _ in LEAD_BUCKETS:
         if a <= hours < b:
             return name
+    return None
+
+
+def bucket_target(name):
+    for _, _, bucket, target in LEAD_BUCKETS:
+        if bucket == name:
+            return target
     return None
 
 
@@ -113,11 +122,10 @@ def distance_to_range(value, lo, hi):
 
 
 def fetch_model_clouds(model_id):
-    hourly = ["cloud_cover_low", "cloud_cover_mid", "cloud_cover_high"]
     params = {
         "latitude": LAT,
         "longitude": LON,
-        "hourly": ",".join(hourly),
+        "hourly": "cloud_cover_low,cloud_cover_mid,cloud_cover_high",
         "models": model_id,
         "timezone": "UTC",
         "forecast_days": 6,
@@ -132,14 +140,40 @@ def fetch_model_clouds(model_id):
             valid = datetime.fromisoformat(ts).replace(tzinfo=timezone.utc)
         except Exception:
             continue
-        row = {
+        def at(key):
+            arr = h.get(key) or []
+            return arr[i] if i < len(arr) else None
+        rows.append({
             "valid_time": iso(valid),
-            "low_pct": (h.get("cloud_cover_low") or [None] * len(times))[i],
-            "mid_pct": (h.get("cloud_cover_mid") or [None] * len(times))[i],
-            "high_pct": (h.get("cloud_cover_high") or [None] * len(times))[i],
-        }
-        rows.append(row)
+            "low_pct": at("cloud_cover_low"),
+            "mid_pct": at("cloud_cover_mid"),
+            "high_pct": at("cloud_cover_high"),
+        })
     return rows
+
+
+def representative_rows(rows, run):
+    """Keep one forecast per lead bucket, closest to the bucket target.
+
+    This cuts repository growth by roughly an order of magnitude while keeping
+    independent verification for short, medium and long forecast horizons.
+    """
+    grouped = defaultdict(list)
+    for r in rows:
+        try:
+            valid = datetime.fromisoformat(r["valid_time"].replace("Z", "+00:00"))
+        except Exception:
+            continue
+        lead_h = (valid - run).total_seconds() / 3600.0
+        bucket = lead_bucket(lead_h)
+        if bucket:
+            grouped[bucket].append((lead_h, r))
+    selected = []
+    for bucket, candidates in grouped.items():
+        target = bucket_target(bucket)
+        lead_h, r = min(candidates, key=lambda x: abs(x[0] - target))
+        selected.append((bucket, lead_h, r))
+    return selected
 
 
 def archive_forecasts():
@@ -155,12 +189,7 @@ def archive_forecasts():
         except Exception as exc:
             print(f"forecast {model_id}: {exc}")
             continue
-        for r in rows:
-            valid = datetime.fromisoformat(r["valid_time"].replace("Z", "+00:00"))
-            lead_h = (valid - run).total_seconds() / 3600.0
-            bucket = lead_bucket(lead_h)
-            if not bucket or lead_h < -0.25:
-                continue
+        for bucket, lead_h, r in representative_rows(rows, run):
             key = (iso(run), model_id, r["valid_time"])
             if key in seen:
                 continue
@@ -191,6 +220,29 @@ def metar_layers(m):
     return out
 
 
+def observed_bands_from_metar(m):
+    """Return only cloud bands that METAR actually constrains.
+
+    An omitted upper cloud layer in AUTO METAR is not assumed to mean a clear
+    sky at all higher levels. We score explicit layers, plus a lower band that
+    is demonstrably clear because the lowest reported cloud base is above it.
+    """
+    layers = metar_layers(m)
+    observed = {"low": None, "mid": None, "high": None}
+    for band in observed:
+        band_layers = [x for x in layers if x["band"] == band]
+        if band_layers:
+            observed[band] = max(band_layers, key=lambda x: x["okta_hi"])
+
+    if layers:
+        lowest = min(x["base_m_agl"] for x in layers)
+        if lowest >= 2000 and observed["low"] is None:
+            observed["low"] = {"band": "low", "cover": "CLEAR_BELOW", "okta_lo": 0, "okta_hi": 0, "base_m_agl": None}
+        if lowest >= 5000 and observed["mid"] is None:
+            observed["mid"] = {"band": "mid", "cover": "CLEAR_BELOW", "okta_lo": 0, "okta_hi": 0, "base_m_agl": None}
+    return observed
+
+
 def verify_new():
     forecasts = all_jsonl(FORECAST_DIR)
     metars = all_jsonl(METAR_DIR)
@@ -213,28 +265,20 @@ def verify_new():
             continue
         nearest_hour = mdt.replace(minute=0, second=0, microsecond=0)
         if mdt.minute >= 30:
-            nearest_hour = nearest_hour.replace(minute=0) + __import__('datetime').timedelta(hours=1)
+            nearest_hour += timedelta(hours=1)
         valid = iso(nearest_hour)
-        layers = metar_layers(m)
-        observed = {"low": None, "mid": None, "high": None}
-        for band in observed:
-            band_layers = [x for x in layers if x["band"] == band]
-            if band_layers:
-                # Most extensive reported layer in band; METAR coverage is cumulative with height.
-                observed[band] = max(band_layers, key=lambda x: x["okta_hi"])
-            else:
-                observed[band] = {"band": band, "cover": "CLR", "okta_lo": 0, "okta_hi": 0, "base_m_agl": None}
+        observed = observed_bands_from_metar(m)
+        if not any(observed.values()):
+            continue
 
         candidates = []
-        # Accept nearest whole forecast hour within 31 min of METAR.
         for f in by_valid.get(valid, []):
             try:
                 fd = datetime.fromisoformat(f["valid_time"].replace("Z", "+00:00"))
             except Exception:
                 continue
-            if abs((fd - mdt).total_seconds()) > 31 * 60:
-                continue
-            candidates.append(f)
+            if abs((fd - mdt).total_seconds()) <= 31 * 60:
+                candidates.append(f)
         if not candidates:
             continue
 
@@ -248,9 +292,11 @@ def verify_new():
             for band in ("low", "mid", "high"):
                 pred_okta = okta_from_pct(f.get(f"{band}_pct"))
                 o = observed[band]
-                errors[band] = None if pred_okta is None else distance_to_range(pred_okta, o["okta_lo"], o["okta_hi"])
+                errors[band] = None if pred_okta is None or o is None else distance_to_range(pred_okta, o["okta_lo"], o["okta_hi"])
             vals = [v for v in errors.values() if v is not None]
-            mae_okta = sum(vals) / len(vals) if vals else None
+            if not vals:
+                continue
+            mae_okta = sum(vals) / len(vals)
             append_jsonl(vpath, {
                 "model": f.get("model"), "name": f.get("name"),
                 "run_time": f.get("run_time"), "valid_time": f.get("valid_time"),
@@ -258,7 +304,7 @@ def verify_new():
                 "metar_time": mt, "metar_source": m.get("source"), "metar_raw": m.get("raw"),
                 "observed": observed,
                 "predicted": {"low_pct": f.get("low_pct"), "mid_pct": f.get("mid_pct"), "high_pct": f.get("high_pct")},
-                "error_okta": errors, "mae_okta": mae_okta,
+                "error_okta": errors, "mae_okta": round(mae_okta, 4),
             })
             seen.add(key)
             added += 1
@@ -268,7 +314,6 @@ def verify_new():
 def build_skill():
     rows = all_jsonl(VERIFY_DIR)
     base = {m: w for m, _, w in MODELS}
-    names = {m: n for m, n, _ in MODELS}
     stats = defaultdict(lambda: {"n": 0, "sum": 0.0, "bands": defaultdict(lambda: [0, 0.0])})
     for r in rows:
         model = r.get("model")
@@ -287,7 +332,7 @@ def build_skill():
     output = {
         "schema": "prognozaepir-cloud-learning-v1",
         "generated_at": iso(utcnow()),
-        "method": "METAR interval-aware MAE in oktas; conservative empirical-Bayes weight adaptation",
+        "method": "METAR interval-aware cloud amount MAE in oktas; lead-time-aware conservative weight adaptation",
         "min_samples": MIN_SAMPLES,
         "full_samples": FULL_SAMPLES,
         "models": {},
@@ -295,11 +340,10 @@ def build_skill():
 
     for model, name, base_weight in MODELS:
         output["models"][model] = {"name": name, "base_weight": base_weight, "lead_buckets": {}}
-        for _, _, bucket in LEAD_BUCKETS:
+        for _, _, bucket, _ in LEAD_BUCKETS:
             s = stats.get((model, bucket), {"n": 0, "sum": 0.0, "bands": {}})
             n = s["n"]
             mae = s["sum"] / n if n else None
-            # Reference 1.5 okta. Better -> >1, worse -> <1, but only after enough samples.
             raw_factor = 1.0 if mae is None else 1.5 / max(0.5, mae)
             raw_factor = max(MIN_WEIGHT_FACTOR, min(MAX_WEIGHT_FACTOR, raw_factor))
             confidence = max(0.0, min(1.0, (n - MIN_SAMPLES) / max(1, FULL_SAMPLES - MIN_SAMPLES))) if n >= MIN_SAMPLES else 0.0
