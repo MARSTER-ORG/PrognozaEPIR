@@ -21,6 +21,7 @@ SOURCE_PRIORITY = {
     'PILOTHUB_METAR_IMGW': 30,
     'OGIMET_METAR': 20,
     'METAR_CZAD': 10,
+    'METEO_MIL_MANUAL_METAR': 5,
 }
 
 
@@ -130,17 +131,25 @@ def main():
         latest = {}
 
     candidates = fetch_candidates()
+
+    # The canonical archive is an additional monotonicity guard. It is not a
+    # replacement for live IMGW/PilotHub collection; it only prevents latest.json
+    # from staying behind a newer report that has already been safely archived.
+    archived = recent_recursive('metar', hours=4)
+    archived_latest = archived[-1] if archived else None
+    if valid(archived_latest):
+        candidates.append(archived_latest)
+
     existing = latest.get('metar')
     if valid(existing):
         candidates.append(existing)
     if not candidates:
-        raise SystemExit('No fresh EPIR METAR available from any source')
+        raise SystemExit('No fresh EPIR METAR available from any source or archive')
 
     chosen = max(candidates, key=rank)
     archive(chosen)
 
     metars = recent_recursive('metar')
-    # Ensure the just-selected row participates even before/without archive migration.
     if not any(report_identity(x) == report_identity(chosen) for x in metars):
         metars.append(chosen)
         metars.sort(key=lambda r: c.parse_dt(r.get('obs_time')) or datetime(1970, 1, 1, tzinfo=timezone.utc))
@@ -172,6 +181,7 @@ def main():
     print(json.dumps({
         'fresh_guard': 'ok',
         'candidate_count': len(candidates),
+        'archived_candidate_time': (archived_latest or {}).get('obs_time'),
         'chosen_source': chosen.get('source'),
         'chosen_time': chosen.get('obs_time'),
         'chosen_raw': chosen.get('raw'),
