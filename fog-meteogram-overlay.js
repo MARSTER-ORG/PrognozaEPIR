@@ -72,21 +72,16 @@
     ctx.beginPath();ctx.moveTo(x0,baseY);ctx.lineTo(x1,baseY);ctx.stroke();
     ctx.beginPath();ctx.moveTo(x0,fullY);ctx.lineTo(x1,fullY);ctx.stroke();
     ctx.setLineDash([]);
-    ctx.globalAlpha = .96;
-    ctx.fillStyle = cp.muted || '#666';
-    ctx.font = 'bold 8px Arial';
-    ctx.textBaseline = 'bottom';
-    ctx.textAlign = 'right';
-    ctx.fillText('FOG ≥40',x1-5,baseY-2);
     ctx.restore();
 
-    // Put FOG 100 immediately before the 20 km axis label.
+    // Put FOG 40 immediately before the 0 km axis label and FOG 100 before 20 km.
     ctx.save();
     ctx.globalAlpha = .96;
     ctx.fillStyle = cp.muted || '#666';
     ctx.font = 'bold 8px Arial';
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'right';
+    ctx.fillText('FOG 40',x0-24,baseY);
     ctx.fillText('FOG 100',x0-24,fog100LabelY);
     ctx.restore();
   }
