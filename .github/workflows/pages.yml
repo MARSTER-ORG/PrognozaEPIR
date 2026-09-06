@@ -30,13 +30,17 @@ jobs:
       - name: Prepare site
         run: |
           mkdir -p _site
-          cp index.html radar.html index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js rh-axis-fix.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
+          cp index.html radar.html epir-icon.svg index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js rh-axis-fix.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
           python3 - <<'PY'
           from pathlib import Path
           import re
 
+          favicon = '<link rel="icon" href="epir-icon.svg" type="image/svg+xml">\n<link rel="shortcut icon" href="epir-icon.svg">'
+
           p = Path('_site/index.html')
           s = p.read_text(encoding='utf-8')
+          if 'href="epir-icon.svg"' not in s:
+              s = s.replace('<title>', favicon + '\n<title>', 1)
           for old in ('v0.9.13 HTML','v0.10.0 HTML','v0.10.1 HTML','v0.10.2 HTML','v0.10.3 HTML','v0.10.4 HTML','v0.10.5 HTML','v0.10.6 HTML','v0.10.7 HTML','v0.10.8 HTML','v0.10.9 HTML','v0.10.10 HTML'):
               s = s.replace(old, 'v0.10.11 HTML')
           for old in ('HTML v0.9.12','HTML v0.9.13','HTML v0.10.0','HTML v0.10.1','HTML v0.10.2','HTML v0.10.3','HTML v0.10.4','HTML v0.10.5','HTML v0.10.6','HTML v0.10.7','HTML v0.10.8','HTML v0.10.9','HTML v0.10.10'):
@@ -70,6 +74,8 @@ jobs:
 
           p = Path('_site/radar.html')
           s = p.read_text(encoding='utf-8')
+          if 'href="epir-icon.svg"' not in s:
+              s = s.replace('<title>', favicon + '\n<title>', 1)
           s = re.sub(r'RADAR / SAT / AI v\d+\.\d+\.\d+', 'RADAR / SAT / AI v0.12.3', s)
           s = s.replace(
               "function setDot(id,ok){$(id).className='dot '+(ok?'ok':'bad')}",
@@ -147,6 +153,9 @@ jobs:
 
       - name: Verify deployed features
         run: |
+          test -s _site/epir-icon.svg
+          grep -F '<link rel="icon" href="epir-icon.svg" type="image/svg+xml">' _site/index.html
+          grep -F '<link rel="icon" href="epir-icon.svg" type="image/svg+xml">' _site/radar.html
           grep -F "v0.10.11 HTML" _site/index.html
           grep -F "meteogram-layout-v2.js" _site/index.html
           grep -F "rh-axis-fix.js" _site/index.html
