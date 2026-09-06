@@ -82,9 +82,10 @@ def load_jsonl(path: Path):
 
 
 def all_jsonl(directory: Path):
+    """Load JSONL recursively so YYYY/MM/DD archives remain part of learning."""
     out = []
     if directory.exists():
-        for p in sorted(directory.glob("*.jsonl")):
+        for p in sorted(directory.rglob("*.jsonl")):
             out.extend(load_jsonl(p))
     return out
 
