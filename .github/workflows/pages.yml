@@ -30,13 +30,13 @@ jobs:
       - name: Prepare site
         run: |
           mkdir -p _site
-          cp index.html radar.html epir-icon.svg manifest.webmanifest pwa.js sw.js index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js rh-axis-fix.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
+          cp index.html radar.html epir-icon.svg epir-icon-192.png epir-icon-512.png manifest.webmanifest pwa.js sw.js index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js rh-axis-fix.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
           python3 - <<'PY'
           from pathlib import Path
           import re
 
           favicon = '<link rel="icon" href="epir-icon.svg" type="image/svg+xml">\n<link rel="shortcut icon" href="epir-icon.svg">'
-          pwa_head = '<link rel="manifest" href="manifest.webmanifest">\n<meta name="theme-color" content="#111418">\n<meta name="mobile-web-app-capable" content="yes">\n<meta name="apple-mobile-web-app-capable" content="yes">\n<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">\n<link rel="apple-touch-icon" href="epir-icon.svg">'
+          pwa_head = '<link rel="manifest" href="manifest.webmanifest">\n<meta name="theme-color" content="#111418">\n<meta name="mobile-web-app-capable" content="yes">\n<meta name="apple-mobile-web-app-capable" content="yes">\n<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">\n<link rel="apple-touch-icon" href="epir-icon-192.png">'
           pwa_addon = '<script src="pwa.js"></script>'
 
           p = Path('_site/index.html')
@@ -170,6 +170,8 @@ jobs:
       - name: Verify deployed features
         run: |
           test -s _site/epir-icon.svg
+          test -s _site/epir-icon-192.png
+          test -s _site/epir-icon-512.png
           test -s _site/manifest.webmanifest
           test -s _site/pwa.js
           test -s _site/sw.js
@@ -181,7 +183,10 @@ jobs:
           grep -F '<script src="pwa.js"></script>' _site/radar.html
           grep -F '"display": "standalone"' _site/manifest.webmanifest
           grep -F '"start_url": "./index.html"' _site/manifest.webmanifest
-          grep -F "serviceWorker.register('./sw.js'" _site/pwa.js
+          grep -F '"src":"epir-icon-192.png"' _site/manifest.webmanifest
+          grep -F '"src":"epir-icon-512.png"' _site/manifest.webmanifest
+          grep -F "serviceWorker.register('./sw.js?v=2'" _site/pwa.js
+          grep -F "prognozaepir-pwa-v2" _site/sw.js
           grep -F "v0.10.15 HTML" _site/index.html
           grep -F "meteogram-layout-v2.js" _site/index.html
           grep -F "rh-axis-fix.js" _site/index.html
