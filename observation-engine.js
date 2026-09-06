@@ -29,11 +29,29 @@
     } finally { clearTimeout(timer); }
   }
 
-  function toLocalObservation(o){
+  function metarPhenomena(m){
+    const wx=`${m?.weather||''} ${m?.raw||''}`.toUpperCase();
+    const has = code => new RegExp(`(^|\\s)${code}(?=\\s|$|=)`).test(wx);
+    return {
+      shallowFog:has('MIFG'),
+      freezingFog:has('FZFG'),
+      fogPatches:has('BCFG'),
+      partialFog:has('PRFG'),
+      plainFog:has('FG'),
+      mist:has('BR')
+    };
+  }
+
+  function toLocalObservation(o,m=null){
     if(!o) return null;
     const t=Date.parse(o.obs_time||'');
     const T=num(o.temperature_c), Td=num(o.dew_point_c), visM=num(o.visibility_m);
     if(!finite(t)||T===null||Td===null||visM===null||visM<=0) return null;
+    const p=metarPhenomena(m);
+    const hasMetar=Boolean(m);
+    const fullFog=hasMetar
+      ?Boolean(p.plainFog||p.freezingFog||p.fogPatches||p.partialFog)
+      :Boolean(o.fog&&!o.shallow_fog);
     return {
       t,T,Td,visM,
       created:t,
@@ -42,12 +60,20 @@
       metarObsTime:o.metar_obs_time||null,
       synopObsTime:o.synop_obs_time||null,
       visibilitySource:o.visibility_source||null,
-      fog:Boolean(o.fog),mist:Boolean(o.mist),freezingFog:Boolean(o.freezing_fog)
+      fog:fullFog,
+      mist:hasMetar?p.mist:Boolean(o.mist),
+      freezingFog:hasMetar?p.freezingFog:Boolean(o.freezing_fog),
+      shallowFog:Boolean(p.shallowFog||o.shallow_fog),
+      fogPatches:Boolean(p.fogPatches||o.fog_patches),
+      partialFog:Boolean(p.partialFog||o.partial_fog)
     };
   }
 
   function storeAutomaticObservations(data){
-    const rows=(data?.observations||[]).map(toLocalObservation).filter(Boolean).sort((a,b)=>a.t-b.t).slice(-MAX_OBS);
+    const byMetarTime=new Map((data?.metar||[]).filter(m=>m?.obs_time).map(m=>[m.obs_time,m]));
+    const rows=(data?.observations||[])
+      .map(o=>toLocalObservation(o,byMetarTime.get(o?.metar_obs_time)||null))
+      .filter(Boolean).sort((a,b)=>a.t-b.t).slice(-MAX_OBS);
     try{
       localStorage.setItem(OBS_KEY,JSON.stringify(rows));
       localStorage.setItem('prognozaepir-observation-mode','automatic-epir-metar-synop');
@@ -116,7 +142,11 @@
   function observationPanelHtml(){
     const m=latestData?.metar||null, s=latestData?.synop||null, f=latestData?.fused||null;
     const synVis=s&&finite(num(s.visibility_m))?fmtM(num(s.visibility_m)):'—';
-    const weather=[m?.fog?'FG':null,m?.mist?'BR':null,m?.freezing_fog?'FZFG':null,s?.present_weather||null].filter(Boolean).join(' / ')||'brak zjawiska';
+    const mp=metarPhenomena(m);
+    const weather=[
+      mp.shallowFog?'MIFG':null,mp.freezingFog?'FZFG':null,mp.fogPatches?'BCFG':null,
+      mp.partialFog?'PRFG':null,mp.plainFog?'FG':null,mp.mist?'BR':null,s?.present_weather||null
+    ].filter(Boolean).join(' / ')||'brak zjawiska';
     return `<details id="epirObservationPanel" class="fog-diag" open>
       <summary>Obserwacje automatyczne EPIR — METAR + SYNOP 12342</summary>
       <div class="fog-diag-grid">
@@ -129,7 +159,7 @@
         <div class="fog-diag-cell"><small>Wiatr</small><b>${fmt(num(f?.wind_speed_ms))} m/s · ${fmt(num(f?.wind_direction_deg),0)}°</b></div>
         <div class="fog-diag-cell"><small>Zjawiska</small><b>${esc(weather)}</b></div>
       </div>
-      <div class="fog-data-note"><b>Źródło VIS dla Fog Engine:</b> ${esc(f?.visibility_source||'—')} · ${esc(fmtM(num(f?.visibility_m)))}. SYNOP ma pierwszeństwo dla widzialności, ponieważ METAR przy dobrej widzialności raportuje wartość graniczną 9999/CAVOK zamiast dokładnej wartości powyżej około 10 km.</div>
+      <div class="fog-data-note"><b>Źródło VIS dla Fog Engine:</b> ${esc(f?.visibility_source||'—')} · ${esc(fmtM(num(f?.visibility_m)))}. SYNOP ma pierwszeństwo dla widzialności, ponieważ METAR przy dobrej widzialności raportuje wartość graniczną 9999/CAVOK zamiast dokładnej wartości powyżej około 10 km. MIFG jest traktowane osobno i nie jest utożsamiane z ograniczeniem VIS na wysokości obserwacji.</div>
       <div id="epirModelVerification">${verificationHtml()}</div>
     </details>`;
   }
