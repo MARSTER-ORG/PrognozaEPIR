@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """PilotHub verification/fallback collector for EPIR METAR.
 
-PilotHub can expose the current EPIR report on more than one nearby-airport page.
-Both known working pages are checked and the newest EPIR timestamp wins, so a
-stale page cannot block a newer half-hour METAR visible on another PilotHub page.
+PilotHub's EPIN page has no local METAR, but server-side HTML contains the
+nearest station EPIR in a dedicated METAR section. Parse that section first,
+then fall back to a whole-page scan and other known nearby PilotHub pages.
 """
 import html
 import json
@@ -15,6 +15,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import collect_epir_observations as c
 
 PILOTHUB_URLS = (
+    # Confirmed from a saved PilotHub EPIN page: this page contains the nearest
+    # station EPIR and its current METAR in <h3>METAR</h3> ... <code>...</code>.
+    ('EPIN', 'https://pilothub.pl/lotniska/epin'),
     ('SZPITAL', 'https://pilothub.pl/lotniska/inowroclaw-szpital'),
     ('LATKOWO', 'https://pilothub.pl/lotniska/inowroclaw-latkowo-lotnisko-wojskowe'),
 )
@@ -40,12 +43,41 @@ def is_fresh(row, max_age_min):
     return 0 <= (c.now() - dt).total_seconds() <= max_age_min * 60
 
 
+def _metar_section_raw_reports(text):
+    """Extract EPIR from PilotHub's dedicated METAR HTML section.
+
+    The EPIN page renders e.g.:
+      <h3>METAR</h3>
+      <p><code>METAR EPIR 062100Z ... Q1025=</code></p>
+    This is preferred over scanning arbitrary page text.
+    """
+    out = []
+    seen = set()
+    section_re = re.compile(
+        r'<h3[^>]*>\s*METAR\s*</h3>\s*<p[^>]*>\s*<code[^>]*>(.*?)</code>',
+        re.I | re.S,
+    )
+    report_re = re.compile(
+        r'\b((?:METAR|SPECI)\s+EPIR\s+\d{6}Z\s+.*?\bQ\d{4}\b)=?',
+        re.I,
+    )
+    for section in section_re.finditer(text or ''):
+        value = html.unescape(re.sub(r'<[^>]+>', ' ', section.group(1)))
+        value = re.sub(r'\s+', ' ', value).strip()
+        for match in report_re.finditer(value):
+            raw = re.sub(r'\s+', ' ', match.group(1)).strip()
+            if raw not in seen:
+                seen.add(raw)
+                out.append(raw)
+    return out
+
+
 def _candidate_raw_reports(plain):
     """Return all plausible EPIR METAR/SPECI strings visible on PilotHub."""
     out = []
     seen = set()
     patterns = (
-        r'\b(?:METAR|SPECI)\s+(EPIR\s+\d{6}Z\s+.*?\bQ\d{4}\b)=?',
+        r'\b((?:METAR|SPECI)\s+EPIR\s+\d{6}Z\s+.*?\bQ\d{4}\b)=?',
         r'\b(EPIR\s+\d{6}Z\s+.*?\bQ\d{4}\b)=?',
     )
     for pattern in patterns:
@@ -59,21 +91,34 @@ def _candidate_raw_reports(plain):
 
 def fetch_pilothub_reports():
     decoded = []
+    decoded_ids = set()
     for label, url in PILOTHUB_URLS:
         try:
             text = c.get_text(url)
             plain = html.unescape(re.sub(r'<[^>]+>', ' ', text))
             plain = re.sub(r'\s+', ' ', plain)
+
+            # Prefer the exact METAR block seen in the saved EPIN page, then
+            # retain the generic whole-page parser as a compatibility fallback.
+            raw_reports = _metar_section_raw_reports(text) + _candidate_raw_reports(plain)
             page_rows = []
-            for raw in _candidate_raw_reports(plain):
+            page_seen = set()
+            for raw in raw_reports:
                 try:
                     row = c.decode_metar(raw, source='PILOTHUB_METAR_IMGW')
                 except Exception:
                     row = None
-                if row and is_fresh(row, MAX_PILOTHUB_AGE_MIN):
-                    row['pilothub_page'] = label
-                    row['pilothub_url'] = url
-                    page_rows.append(row)
+                if not row or not is_fresh(row, MAX_PILOTHUB_AGE_MIN):
+                    continue
+                ident = (row.get('station'), row.get('obs_time'), row.get('raw'))
+                if ident in page_seen:
+                    continue
+                page_seen.add(ident)
+                row['pilothub_page'] = label
+                row['pilothub_url'] = url
+                page_rows.append(row)
+                if ident not in decoded_ids:
+                    decoded_ids.add(ident)
                     decoded.append(row)
             print(f'PilotHub {label}: fresh={len(page_rows)}' + (
                 f' newest={max(page_rows, key=lambda r: obs_time(r)).get("obs_time")}' if page_rows else ''))
