@@ -8,6 +8,7 @@ on:
       - 'scripts/supplement_metar_pilothub.py'
       - 'scripts/supplement_synop_12342.py'
       - 'scripts/refresh_epir_metar.py'
+      - 'scripts/live_metar_collector.py'
       - 'scripts/organize_observation_archive.py'
       - 'scripts/model_verification.py'
       - 'scripts/model_verification_realtime.py'
@@ -20,6 +21,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: epir-observation-collector
@@ -38,15 +40,15 @@ jobs:
 
       - name: Collect METAR EPIR and SYNOP 12342
         run: |
-          # Primary collector plus independent fallbacks. A temporary outage of one source
-          # must not prevent the remaining sources from being checked.
-          python3 scripts/collect_epir_observations.py || echo "Primary EPIR collector unavailable; continuing with fallbacks"
-          python3 scripts/supplement_metar_pilothub.py || echo "PilotHub supplement unavailable; continuing"
+          # Keep the legacy collector as one independent source path. The final
+          # live collector below is authoritative and compares all timestamps.
+          python3 scripts/collect_epir_observations.py || echo "Primary EPIR collector unavailable; continuing"
           python3 scripts/supplement_synop_12342.py || echo "SYNOP supplement unavailable; continuing"
-          # Final live-source scanner reads all visible EPIR reports from IMGW,
-          # PilotHub, CZAD and OGIMET, archives every fresh report and selects
-          # the newest timestamp for latest.json.
-          python3 scripts/refresh_epir_metar.py
+
+          # Authoritative METAR path: IMGW + PilotHub EPIN exact METAR block +
+          # additional PilotHub pages + OGIMET + CZAD. It archives every fresh
+          # EPIR report and selects the newest DDHHMMZ timestamp.
+          python3 scripts/live_metar_collector.py
 
       - name: Organize long-term observation archive
         run: python3 scripts/organize_observation_archive.py
@@ -102,9 +104,11 @@ jobs:
           PY
 
       - name: Commit new observations and verification
+        id: commit
         run: |
           if git diff --quiet -- data/observations data/learning; then
             echo "No new observation to archive"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git config user.name "github-actions[bot]"
@@ -113,3 +117,10 @@ jobs:
           git commit -m "data: archive EPIR observations $(date -u +'%Y-%m-%d %H:%MZ')"
           git pull --rebase origin main
           git push origin HEAD:main
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Redeploy updated observations
+        if: steps.commit.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main
