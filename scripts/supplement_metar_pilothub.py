@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """PilotHub verification/fallback collector for EPIR METAR.
 
-The main collector prefers official IMGW, but PilotHub is always checked as an
-independent source. The exact Inowroclaw-Latkowo EPIR airport page is used and
-the newest timestamp wins, so an older still-fresh report cannot block a newer
-half-hour METAR.
+PilotHub can expose the current EPIR report on more than one nearby-airport page.
+Both known working pages are checked and the newest EPIR timestamp wins, so a
+stale page cannot block a newer half-hour METAR visible on another PilotHub page.
 """
 import html
 import json
@@ -15,7 +14,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import collect_epir_observations as c
 
-PILOTHUB_URL = 'https://pilothub.pl/lotniska/inowroclaw-latkowo-lotnisko-wojskowe'
+PILOTHUB_URLS = (
+    ('SZPITAL', 'https://pilothub.pl/lotniska/inowroclaw-szpital'),
+    ('LATKOWO', 'https://pilothub.pl/lotniska/inowroclaw-latkowo-lotnisko-wojskowe'),
+)
 MAX_PILOTHUB_AGE_MIN = 240
 
 
@@ -55,20 +57,33 @@ def _candidate_raw_reports(plain):
     return out
 
 
-def fetch_pilothub_metar():
-    text = c.get_text(PILOTHUB_URL)
-    plain = html.unescape(re.sub(r'<[^>]+>', ' ', text))
-    plain = re.sub(r'\s+', ' ', plain)
-
+def fetch_pilothub_reports():
     decoded = []
-    for raw in _candidate_raw_reports(plain):
+    for label, url in PILOTHUB_URLS:
         try:
-            row = c.decode_metar(raw, source='PILOTHUB_METAR_IMGW')
-        except Exception:
-            row = None
-        if row and is_fresh(row, MAX_PILOTHUB_AGE_MIN):
-            decoded.append(row)
+            text = c.get_text(url)
+            plain = html.unescape(re.sub(r'<[^>]+>', ' ', text))
+            plain = re.sub(r'\s+', ' ', plain)
+            page_rows = []
+            for raw in _candidate_raw_reports(plain):
+                try:
+                    row = c.decode_metar(raw, source='PILOTHUB_METAR_IMGW')
+                except Exception:
+                    row = None
+                if row and is_fresh(row, MAX_PILOTHUB_AGE_MIN):
+                    row['pilothub_page'] = label
+                    row['pilothub_url'] = url
+                    page_rows.append(row)
+                    decoded.append(row)
+            print(f'PilotHub {label}: fresh={len(page_rows)}' + (
+                f' newest={max(page_rows, key=lambda r: obs_time(r)).get("obs_time")}' if page_rows else ''))
+        except Exception as exc:
+            print(f'PilotHub {label} warning:', exc)
+    return decoded
 
+
+def fetch_pilothub_metar():
+    decoded = fetch_pilothub_reports()
     if not decoded:
         return None
     return max(decoded, key=lambda row: obs_time(row) or c.parse_dt('1970-01-01T00:00:00Z'))
@@ -96,13 +111,9 @@ def main():
     latest = read_latest()
     primary = latest.get('metar')
 
-    try:
-        fallback = fetch_pilothub_metar()
-    except Exception as exc:
-        print('PilotHub METAR verification warning:', exc)
-        return
+    fallback = fetch_pilothub_metar()
     if not fallback:
-        print('PilotHub: no fresh EPIR METAR found')
+        print('PilotHub: no fresh EPIR METAR found on checked pages')
         return
 
     chosen = newest_report(primary, fallback)
@@ -139,7 +150,8 @@ def main():
     })
     print(json.dumps({
         'pilothub': 'checked',
-        'pilothub_url': PILOTHUB_URL,
+        'pilothub_pages': [u for _, u in PILOTHUB_URLS],
+        'pilothub_page': fallback.get('pilothub_page'),
         'pilothub_time': fallback.get('obs_time'),
         'chosen_source': chosen.get('source'),
         'chosen_time': chosen.get('obs_time'),
