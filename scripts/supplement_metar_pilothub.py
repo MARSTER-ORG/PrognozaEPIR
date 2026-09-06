@@ -17,6 +17,7 @@ import collect_epir_observations as c
 PILOTHUB_URL = 'https://pilothub.pl/lotniska/inowroclaw-szpital'
 MAX_PRIMARY_AGE_MIN = 90
 MAX_PILOTHUB_AGE_MIN = 180
+DIRECT_IMGW_SOURCE = 'IMGW_AVIATION_METAR'
 
 
 def read_latest():
@@ -42,7 +43,7 @@ def fetch_pilothub_metar():
     text = c.get_text(PILOTHUB_URL)
     plain = html.unescape(re.sub(r'<[^>]+>', ' ', text))
     plain = re.sub(r'\s+', ' ', plain)
-    # PilotHub currently exposes the raw report in the weather section, e.g.
+    # PilotHub exposes the raw report in the weather section, e.g.
     # METAR EPIR 061400Z AUTO ... Q1023=
     match = re.search(
         r'\bMETAR\s+(EPIR\s+\d{6}Z\s+.*?\bQ\d{4}\b)=?',
@@ -63,6 +64,7 @@ def same_report(a, b):
 
 
 def newest_report(a, b):
+    """Return the newer report; for equal timestamps prefer PilotHub (b)."""
     if not a:
         return b
     if not b:
@@ -72,16 +74,17 @@ def newest_report(a, b):
         return b
     if not tb:
         return a
-    return b if tb > ta else a
+    return b if tb >= ta else a
 
 
 def main():
     latest = read_latest()
     primary = latest.get('metar')
 
-    # A fresh direct/primary METAR wins. PilotHub is queried when that path is
-    # unavailable or stale, which avoids duplicate archive rows every 15 min.
-    if is_fresh(primary, MAX_PRIMARY_AGE_MIN):
+    # A fresh direct IMGW METAR is already the highest-priority source.
+    # If the primary collector had to use OGIMET/CZAD (or returned stale data),
+    # check PilotHub and let an equal/newer PilotHub report outrank those fallbacks.
+    if primary and primary.get('source') == DIRECT_IMGW_SOURCE and is_fresh(primary, MAX_PRIMARY_AGE_MIN):
         print(json.dumps({
             'pilothub': 'not_needed',
             'metar_source': primary.get('source'),
