@@ -1,0 +1,13 @@
+'use strict';
+(() => {
+  const standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  document.documentElement.classList.toggle('pwa-standalone', standalone);
+
+  if (!('serviceWorker' in navigator)) return;
+
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js', { scope: './', updateViaCache: 'none' })
+      .then(reg => reg.update())
+      .catch(err => console.warn('PrognozaEPIR PWA service worker:', err));
+  });
+})();
