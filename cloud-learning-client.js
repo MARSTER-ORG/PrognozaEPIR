@@ -45,6 +45,11 @@
   }
 
   const finite=Number.isFinite;
+  function numericOrNull(v){
+    if(v===null||v===undefined||v==='')return null;
+    const x=Number(v);
+    return finite(x)?x:null;
+  }
 
   function selectedModelKey(){
     try{
@@ -59,17 +64,17 @@
     const row=skill?.model_verification?.models?.[key]||null;
     if(!row)return {key,row:null,score:null,cloud:null,visibility:null};
     const comp=row.components||{};
-    const overall=Number(row.score_pct);
+    const overall=numericOrNull(row.score_pct);
     const cloudN=Number(comp.cloud?.n)||0;
     const visN=Number(comp.visibility?.n)||0;
-    const cloud=Number(comp.cloud?.score_pct);
-    const visibility=Number(comp.visibility?.score_pct);
+    const cloud=numericOrNull(comp.cloud?.score_pct);
+    const visibility=numericOrNull(comp.visibility?.score_pct);
     return {
       key,
       row,
-      score:finite(overall)?overall:null,
-      cloud:cloudN>0&&finite(cloud)?cloud:null,
-      visibility:visN>0&&finite(visibility)?visibility:null,
+      score:overall,
+      cloud:cloudN>0?cloud:null,
+      visibility:visN>0?visibility:null,
       samples:Number(row.forecast_samples)||0,
       cloudSamples:cloudN,
       visibilitySamples:visN
@@ -92,8 +97,8 @@
   }
 
   function pct(v){
-    const x=Number(v);
-    return finite(x)?Math.round(x)+'%':'—';
+    const x=numericOrNull(v);
+    return x===null?'—':Math.round(x)+'%';
   }
 
   function hideLegacyMetrics(){
@@ -108,8 +113,10 @@
     if(!box)return false;
     const fog=currentFogRow();
     const v=verification();
-    const availability=finite(Number(fog?.data))?Number(fog.data)*100:null;
-    const agreement=finite(Number(fog?.agreement))?Number(fog.agreement)*100:null;
+    const fogData=numericOrNull(fog?.data);
+    const fogAgreement=numericOrNull(fog?.agreement);
+    const availability=fogData===null?null:fogData*100;
+    const agreement=fogAgreement===null?null:fogAgreement*100;
     box.innerHTML=
       '<div><b>Dostępność danych:</b> '+pct(availability)+'.</div>'+
       '<div><b>Zgodność modeli:</b> '+pct(agreement)+'.</div>'+
