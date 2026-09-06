@@ -1,6 +1,9 @@
 'use strict';
 (() => {
   const FOG_DRAW_THRESHOLD = 40;
+  const FOG_FULL_SCALE_KM = 19.5;
+  const VIS_SCALE_MAX_KM = 30;
+  const VIS_INNER_PAD = 9;
   const MAX_MATCH_MS = 70 * 60e3;
 
   const finite = Number.isFinite;
@@ -24,6 +27,12 @@
     return 'rgba(212,154,40,.50)';
   }
 
+  function yOnVisibilityScale(km,p) {
+    const pad = Math.min(VIS_INNER_PAD,Math.max(7,p.h*.09));
+    const usable = Math.max(1,p.h-2*pad);
+    return p.y+p.h-pad-(clip(km,0,VIS_SCALE_MAX_KM)/VIS_SCALE_MAX_KM)*usable;
+  }
+
   function drawFogBars() {
     if (typeof cv === 'undefined' || typeof ctx === 'undefined') return;
     const m = cv._meta;
@@ -34,13 +43,11 @@
     const x0 = m.x0, x1 = m.x1, plotW = x1 - x0;
     const step = Math.max(3, plotW / Math.max(1, m.data.length - 1));
     const barW = Math.max(2.5, step * .58);
-    const topPad = 13;
-    const bottomPad = 8;
-    const maxBarH = Math.max(12, p.h - topPad - bottomPad);
-    const baseY = p.y + p.h - bottomPad;
+    const baseY = yOnVisibilityScale(0,p);
+    const fullY = yOnVisibilityScale(FOG_FULL_SCALE_KM,p);
+    const maxBarH = Math.max(12,baseY-fullY);
     const x = t => clip(x0 + (t - m.t0) / (m.t1 - m.t0) * plotW, x0, x1);
 
-    let drawn = 0;
     ctx.save();
     ctx.beginPath();
     ctx.rect(x0, p.y, plotW, p.h);
@@ -50,27 +57,28 @@
       const fog = fogAt(z.t);
       if (!fog || fog.score < FOG_DRAW_THRESHOLD) continue;
       const frac = clip((fog.score - FOG_DRAW_THRESHOLD) / (100 - FOG_DRAW_THRESHOLD), 0, 1);
-      const h = Math.max(3, frac * maxBarH);
+      const h = Math.max(2, frac * maxBarH);
       const xx = x(z.t);
       ctx.fillStyle = fogColor(fog.score);
       ctx.fillRect(xx - barW / 2, baseY - h, barW, h);
-      drawn++;
     }
 
     const cp = typeof canvasPalette === 'function' ? canvasPalette() : {muted:'#666',grid2:'#999'};
     ctx.strokeStyle = cp.grid2 || '#999';
-    ctx.globalAlpha = .48;
+    ctx.globalAlpha = .52;
     ctx.setLineDash([3,3]);
     ctx.lineWidth = .8;
     ctx.beginPath();ctx.moveTo(x0,baseY);ctx.lineTo(x1,baseY);ctx.stroke();
-    ctx.beginPath();ctx.moveTo(x0,p.y+topPad);ctx.lineTo(x1,p.y+topPad);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(x0,fullY);ctx.lineTo(x1,fullY);ctx.stroke();
     ctx.setLineDash([]);
-    ctx.globalAlpha = .95;
+    ctx.globalAlpha = .96;
     ctx.fillStyle = cp.muted || '#666';
     ctx.font = 'bold 8px Arial';
-    ctx.textBaseline = 'top';
-    ctx.textAlign = 'left';ctx.fillText('FOG 100',x0+5,p.y+2);
-    ctx.textAlign = 'right';ctx.fillText('FOG ≥40',x1-5,baseY-11);
+    ctx.textBaseline = 'bottom';
+    ctx.textAlign = 'left';
+    ctx.fillText('FOG 100',x0+5,fullY-2);
+    ctx.textAlign = 'right';
+    ctx.fillText('FOG ≥40',x1-5,baseY-2);
     ctx.restore();
   }
 
@@ -96,7 +104,7 @@
       const help = document.createElement('div');
       help.className = 'section-help';
       help.dataset.fogHelp = '1';
-      help.textContent = 'Słupki FOG są rysowane wyłącznie w tym panelu od 40/100. Wysokość przedstawia wynik EPIR FOG ENGINE w zakresie 40–100; pomarańczowa linia jest niezależną prognozą widzialności.';
+      help.textContent = 'Słupki FOG są rysowane od 40/100. Skala 40–100 zajmuje zakres od 0 do 19,5 km na osi panelu, dlatego FOG 100 znajduje się tuż przed poziomem 20 km. Pomarańczowa linia jest niezależną prognozą widzialności.';
       box.appendChild(help);
     }
   }
@@ -106,7 +114,7 @@
     if (!legend || document.getElementById('fogMeteogramLegend')) return;
     const el = document.createElement('span');
     el.id = 'fogMeteogramLegend';
-    el.innerHTML = '<b>Widzialność / FOG:</b> osobny panel nad chmurami; słupki EPIR FOG ENGINE od 40/100.';
+    el.innerHTML = '<b>Widzialność / FOG:</b> słupki EPIR FOG ENGINE od 40/100; FOG 100 = poziom 19,5 km.';
     legend.appendChild(el);
   }
 
