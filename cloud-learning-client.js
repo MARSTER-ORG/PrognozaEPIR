@@ -3,6 +3,7 @@
   const SKILL_URL='data/learning/cloud-skill.json';
   const HOUR=3600000;
   let skill=null;
+  let hooksInstalled=false;
 
   function bucketForLead(h){
     if(h<0)return null;
@@ -24,7 +25,7 @@
       console.warn('Cloud Learning: skill unavailable',e);
       skill=null;
     }
-    setTimeout(installMetrics,0);
+    setTimeout(renderMetrics,0);
   }
 
   function factor(modelId,targetMs){
@@ -44,84 +45,99 @@
   }
 
   const finite=Number.isFinite;
-  const clip01=v=>Math.max(0,Math.min(1,v));
 
-  function circularDiff(a,b){
-    if(!finite(a)||!finite(b))return null;
-    const d=Math.abs((a-b)%360);
-    return Math.min(d,360-d);
-  }
-
-  function scoreLinear(err,bad){
-    return finite(err)?100*clip01(1-err/bad):null;
-  }
-
-  function scoreVisibility(a,b){
-    if(!finite(a)||!finite(b))return null;
-    const aa=Math.max(500,a),bb=Math.max(500,b);
-    return 100*clip01(1-Math.abs(Math.log(aa/bb))/Math.log(5));
-  }
-
-  function pairAgreement(a,b){
-    const p=[];
-    const add=v=>{if(finite(v))p.push(v)};
-    add(scoreLinear(Math.abs((a.T??NaN)-(b.T??NaN)),6));
-    add(scoreLinear(Math.abs((a.Td??NaN)-(b.Td??NaN)),6));
-    add(scoreLinear(Math.abs((a.P??NaN)-(b.P??NaN)),10));
-    add(scoreLinear(Math.abs((a.WS??NaN)-(b.WS??NaN)),6));
-    if((a.WS??0)>=1.5&&(b.WS??0)>=1.5)add(scoreLinear(circularDiff(a.WD,b.WD),90));
-    add(scoreVisibility(a.VIS,b.VIS));
-    add(scoreLinear(Math.abs((a.oktaL??NaN)-(b.oktaL??NaN)),5));
-    add(scoreLinear(Math.abs((a.oktaM??NaN)-(b.oktaM??NaN)),5));
-    add(scoreLinear(Math.abs((a.oktaH??NaN)-(b.oktaH??NaN)),5));
-    return p.length?p.reduce((s,v)=>s+v,0)/p.length:null;
-  }
-
-  function currentAgreement(){
+  function selectedModelKey(){
     try{
-      if(!Array.isArray(consensus)||!consensus.length||!Array.isArray(MODELS)||typeof modelSeries!=='function')return null;
-      const end=Date.now()+Math.min(Number(horizon)||48,48)*HOUR;
-      const base=consensus.filter(z=>z.t<=end);
-      const byTime=new Map(base.map(z=>[z.t,z]));
-      const scores=[];
-      for(const m of MODELS){
-        if(!datasets?.has?.(m.id))continue;
-        for(const z of modelSeries(m.id)){
-          const c=byTime.get(z.t);
-          if(!c)continue;
-          const s=pairAgreement(z,c);
-          if(finite(s))scores.push(s);
-        }
+      return (typeof selected==='string'&&selected)?selected:'consensus';
+    }catch(_){
+      return 'consensus';
+    }
+  }
+
+  function verification(){
+    const key=selectedModelKey();
+    const row=skill?.model_verification?.models?.[key]||null;
+    if(!row)return {key,row:null,score:null,cloud:null,visibility:null};
+    const comp=row.components||{};
+    const overall=Number(row.score_pct);
+    const cloudN=Number(comp.cloud?.n)||0;
+    const visN=Number(comp.visibility?.n)||0;
+    const cloud=Number(comp.cloud?.score_pct);
+    const visibility=Number(comp.visibility?.score_pct);
+    return {
+      key,
+      row,
+      score:finite(overall)?overall:null,
+      cloud:cloudN>0&&finite(cloud)?cloud:null,
+      visibility:visN>0&&finite(visibility)?visibility:null,
+      samples:Number(row.forecast_samples)||0,
+      cloudSamples:cloudN,
+      visibilitySamples:visN
+    };
+  }
+
+  function currentFogRow(){
+    try{
+      const a=window.PrognozaEPIRFogSeries;
+      if(!Array.isArray(a)||!a.length)return null;
+      const now=Date.now();
+      let best=null,dist=Infinity;
+      for(const r of a){
+        if(!r||!finite(Number(r.t)))continue;
+        const d=Math.abs(Number(r.t)-now);
+        if(d<dist){dist=d;best=r;}
       }
-      return scores.length?Math.round(scores.reduce((a,b)=>a+b,0)/scores.length):null;
+      return best;
     }catch(_){return null;}
   }
 
-  function verifiedScore(){
-    try{
-      const key=(typeof selected==='string'&&selected)?selected:'consensus';
-      const v=skill?.model_verification?.models?.[key]?.score_pct;
-      return finite(Number(v))?Math.round(Number(v)):null;
-    }catch(_){return null;}
+  function pct(v){
+    const x=Number(v);
+    return finite(x)?Math.round(x)+'%':'—';
+  }
+
+  function hideLegacyMetrics(){
+    const box=document.getElementById('models');
+    if(!box)return;
+    box.innerHTML='';
+    box.hidden=true;
+  }
+
+  function renderFogMetrics(){
+    const box=document.getElementById('fogDataNote');
+    if(!box)return false;
+    const fog=currentFogRow();
+    const v=verification();
+    const availability=finite(Number(fog?.data))?Number(fog.data)*100:null;
+    const agreement=finite(Number(fog?.agreement))?Number(fog.agreement)*100:null;
+    box.innerHTML=
+      '<div><b>Dostępność danych:</b> '+pct(availability)+'.</div>'+
+      '<div><b>Zgodność modeli:</b> '+pct(agreement)+'.</div>'+
+      '<div><b>Sprawdzalność modelu z realnymi danymi:</b> '+pct(v.score)+'.</div>'+
+      '<div><b>Sprawdzalność sekcji Chmury:</b> '+pct(v.cloud)+'.</div>'+
+      '<div><b>Sprawdzalność sekcji Widzialność:</b> '+pct(v.visibility)+'.</div>';
+    box.dataset.verificationModel=v.key;
+    box.dataset.verificationSamples=String(v.samples||0);
+    box.dataset.cloudVerificationSamples=String(v.cloudSamples||0);
+    box.dataset.visibilityVerificationSamples=String(v.visibilitySamples||0);
+    return true;
   }
 
   function renderMetrics(){
-    const box=document.getElementById('models');
-    if(!box)return;
-    const agreement=currentAgreement();
-    const verified=verifiedScore();
-    box.innerHTML=
-      '<div>Dostępność danych: <b>'+(agreement===null?'—':agreement+'%')+'</b> – zgodność modeli</div>'+
-      '<div><b>'+(verified===null?'—':verified+'%')+'</b> – sprawdzalność modelu z realnymi danymi</div>';
+    hideLegacyMetrics();
+    renderFogMetrics();
   }
+
+  function scheduleRender(){setTimeout(renderMetrics,0);}
 
   function installMetrics(){
     try{
+      hideLegacyMetrics();
       if(typeof render==='function'&&!window.__epirModelMetricsWrapped){
         const baseRender=render;
         render=function(){
           const out=baseRender.apply(this,arguments);
-          renderMetrics();
+          scheduleRender();
           return out;
         };
         window.__epirModelMetricsWrapped=true;
@@ -129,19 +145,25 @@
       const view=document.getElementById('view');
       if(view&&!view.dataset.modelMetricsHook){
         view.dataset.modelMetricsHook='1';
-        view.addEventListener('change',()=>setTimeout(renderMetrics,0));
+        view.addEventListener('change',scheduleRender);
       }
       document.querySelectorAll('button[data-h]').forEach(b=>{
         if(b.dataset.modelMetricsHook)return;
         b.dataset.modelMetricsHook='1';
-        b.addEventListener('click',()=>setTimeout(renderMetrics,0));
+        b.addEventListener('click',scheduleRender);
       });
+      if(!hooksInstalled){
+        window.addEventListener('prognozaepir:fog-series-updated',scheduleRender);
+        hooksInstalled=true;
+      }
       renderMetrics();
+      setTimeout(renderMetrics,1200);
+      setTimeout(renderMetrics,4500);
     }catch(_){ }
   }
 
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(installMetrics,0),{once:true});
   else setTimeout(installMetrics,0);
 
-  window.PrognozaEPIRCloudLearning={loadSkill,factor,info,getSkill:()=>skill,renderMetrics};
+  window.PrognozaEPIRCloudLearning={loadSkill,factor,info,getSkill:()=>skill,verification,renderMetrics};
 })();
