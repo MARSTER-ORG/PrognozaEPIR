@@ -1,10 +1,11 @@
 'use strict';
-const CACHE_NAME = 'prognozaepir-pwa-v3';
+const CACHE_NAME = 'prognozaepir-pwa-v2';
 const APP_SHELL = [
   './',
   './index.html',
   './radar.html',
   './manifest.webmanifest',
+  './epir-icon.svg',
   './epir-icon-192.png',
   './epir-icon-512.png',
   './pwa.js'
