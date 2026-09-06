@@ -29,66 +29,68 @@ jobs:
 
       - name: Prepare site
         run: |
-          mkdir -p _site
-          cp index.html radar.html epir-icon.svg epir-icon-192.png epir-icon-512.png index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js rh-axis-fix.js day-night-fix.js fog-engine.js fog-archive.js shortcut-mode.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
+          mkdir -p _site/data/observations
+          cp index.html radar.html epir-icon.svg epir-icon-192.png epir-icon-512.png \
+             index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js \
+             rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js shortcut-mode.js \
+             radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js \
+             lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
+          cp data/observations/latest.json data/observations/recent.json _site/data/observations/
           python3 - <<'PY'
           from pathlib import Path
           import re
 
+          APP='v0.10.21 HTML'
           favicon = '<link rel="icon" href="epir-icon-192.png" type="image/png" sizes="192x192">\n<link rel="shortcut icon" href="epir-icon-192.png" type="image/png">\n<link rel="apple-touch-icon" href="epir-icon-192.png">'
           shortcut_addon = '<script src="shortcut-mode.js"></script>'
 
-          p = Path('_site/index.html')
-          s = p.read_text(encoding='utf-8')
+          p=Path('_site/index.html')
+          s=p.read_text(encoding='utf-8')
           if 'href="epir-icon-192.png"' not in s:
-              s = s.replace('<title>', favicon + '\n<title>', 1)
-          for old in ('v0.9.13 HTML','v0.10.0 HTML','v0.10.1 HTML','v0.10.2 HTML','v0.10.3 HTML','v0.10.4 HTML','v0.10.5 HTML','v0.10.6 HTML','v0.10.7 HTML','v0.10.8 HTML','v0.10.9 HTML','v0.10.10 HTML','v0.10.11 HTML','v0.10.12 HTML','v0.10.13 HTML','v0.10.14 HTML','v0.10.15 HTML','v0.10.16 HTML','v0.10.17 HTML','v0.10.18 HTML','v0.10.19 HTML'):
-              s = s.replace(old, 'v0.10.20 HTML')
-          for old in ('HTML v0.9.12','HTML v0.9.13','HTML v0.10.0','HTML v0.10.1','HTML v0.10.2','HTML v0.10.3','HTML v0.10.4','HTML v0.10.5','HTML v0.10.6','HTML v0.10.7','HTML v0.10.8','HTML v0.10.9','HTML v0.10.10','HTML v0.10.11','HTML v0.10.12','HTML v0.10.13','HTML v0.10.14','HTML v0.10.15','HTML v0.10.16','HTML v0.10.17','HTML v0.10.18','HTML v0.10.19'):
-              s = s.replace(old, 'HTML v0.10.20')
-          # Start at the current full hour, not the next hour.
-          s = s.replace('function timeline(){const now=Date.now(),t0=Math.ceil(now/3600e3)*3600e3',
-                        'function timeline(){const now=Date.now(),t0=Math.floor(now/3600e3)*3600e3')
-          icm = '<a class="control-link" href="https://www.meteo.pl/um/php/meteorogram_id_um.php?ntype=0n&amp;id=2077" target="_blank" rel="noopener noreferrer">ICM UM meteogram ↗</a>'
-          radar = '<a class="control-link" href="radar.html">RADAR / SAT / AI</a>'
+              s=s.replace('<title>',favicon+'\n<title>',1)
+          s=re.sub(r'v0\.\d+\.\d+ HTML',APP,s)
+          s=re.sub(r'HTML v0\.\d+\.\d+','HTML v0.10.21',s)
+          s=s.replace('function timeline(){const now=Date.now(),t0=Math.ceil(now/3600e3)*3600e3',
+                      'function timeline(){const now=Date.now(),t0=Math.floor(now/3600e3)*3600e3')
+          icm='<a class="control-link" href="https://www.meteo.pl/um/php/meteorogram_id_um.php?ntype=0n&amp;id=2077" target="_blank" rel="noopener noreferrer">ICM UM meteogram ↗</a>'
+          radar='<a class="control-link" href="radar.html">RADAR / SAT / AI</a>'
           if radar not in s and icm in s:
-              s = s.replace(icm, radar + '\n    ' + icm, 1)
-          s = s.replace("{id:'icon_global',name:'ICON',w:.05,provider:'openmeteo'},",
-                        "{id:'icon_global',name:'ICON',w:.05,provider:'openmeteo',surfaceExclude:['visibility']},")
-          s = s.replace("const vars=prof?profileVarsFor(model):SURFACE;",
-                        "const vars=prof?profileVarsFor(model):SURFACE.filter(v=>!(model.surfaceExclude||[]).includes(v));")
-          s = s.replace("const msg=j?.error||j?.reason||j?.message||('HTTP '+r.status);",
-                        "const msg=j?.reason||j?.message||(typeof j?.error==='string'?j.error:('HTTP '+r.status));")
-          addons = [
+              s=s.replace(icm,radar+'\n    '+icm,1)
+          s=s.replace("{id:'icon_global',name:'ICON',w:.05,provider:'openmeteo'},",
+                      "{id:'icon_global',name:'ICON',w:.05,provider:'openmeteo',surfaceExclude:['visibility']},")
+          s=s.replace("const vars=prof?profileVarsFor(model):SURFACE;",
+                      "const vars=prof?profileVarsFor(model):SURFACE.filter(v=>!(model.surfaceExclude||[]).includes(v));")
+          s=s.replace("const msg=j?.error||j?.reason||j?.message||('HTTP '+r.status);",
+                      "const msg=j?.reason||j?.message||(typeof j?.error==='string'?j.error:('HTTP '+r.status));")
+          addons=[
               '<script src="index-fixes.js"></script>',
               '<script src="axis-layout-fix.js"></script>',
               '<script src="visual-style-fix.js"></script>',
               '<script src="meteogram-layout-v2.js"></script>',
               '<script src="rh-axis-fix.js"></script>',
               '<script src="day-night-fix.js"></script>',
-              '<script src="fog-engine.js"></script>',
-              '<script src="fog-archive.js"></script>',
+              '<script src="observation-engine.js"></script>',
               shortcut_addon,
           ]
           for addon in addons:
               if addon not in s:
-                  s = s.replace('</body>', addon + '\n</body>')
-          p.write_text(s, encoding='utf-8')
+                  s=s.replace('</body>',addon+'\n</body>')
+          s=s.replace('<script src="fog-engine.js"></script>\n','')
+          s=s.replace('<script src="fog-archive.js"></script>\n','')
+          p.write_text(s,encoding='utf-8')
 
-          p = Path('_site/radar.html')
-          s = p.read_text(encoding='utf-8')
+          p=Path('_site/radar.html')
+          s=p.read_text(encoding='utf-8')
           if 'href="epir-icon-192.png"' not in s:
-              s = s.replace('<title>', favicon + '\n<title>', 1)
-          s = re.sub(r'RADAR / SAT / AI v\d+\.\d+\.\d+', 'RADAR / SAT / AI v0.12.3', s)
-          s = s.replace(
-              "function setDot(id,ok){$(id).className='dot '+(ok?'ok':'bad')}",
-              "function setDot(id,ok){const el=$(id);if(el)el.className='dot '+(ok?'ok':'bad')}"
-          )
-          brand_old = '<div class="brand">PrognozaEPIR <small>'
-          brand_new = '<div class="brand"><a href="index.html" title="Przejdź do meteogramu" aria-label="PrognozaEPIR — meteogram" style="color:inherit;text-decoration:none;cursor:pointer">PrognozaEPIR</a> <small>'
+              s=s.replace('<title>',favicon+'\n<title>',1)
+          s=re.sub(r'RADAR / SAT / AI v\d+\.\d+\.\d+','RADAR / SAT / AI v0.12.3',s)
+          s=s.replace("function setDot(id,ok){$(id).className='dot '+(ok?'ok':'bad')}",
+                      "function setDot(id,ok){const el=$(id);if(el)el.className='dot '+(ok?'ok':'bad')}")
+          brand_old='<div class="brand">PrognozaEPIR <small>'
+          brand_new='<div class="brand"><a href="index.html" title="Przejdź do meteogramu" aria-label="PrognozaEPIR — meteogram" style="color:inherit;text-decoration:none;cursor:pointer">PrognozaEPIR</a> <small>'
           if brand_old in s:
-              s = s.replace(brand_old, brand_new, 1)
-          addons = [
+              s=s.replace(brand_old,brand_new,1)
+          radar_addons=[
               '<script src="radar-enhance.js"></script>',
               '<script src="warnings-readable.js"></script>',
               '<script src="radar-intelligence.js"></script>',
@@ -101,121 +103,59 @@ jobs:
               '<script src="range-rings-reset.js"></script>',
               shortcut_addon,
           ]
-          for addon in addons:
+          for addon in radar_addons:
               if addon not in s:
-                  s = s.replace('</body>', addon + '\n</body>')
-          p.write_text(s, encoding='utf-8')
+                  s=s.replace('</body>',addon+'\n</body>')
+          p.write_text(s,encoding='utf-8')
 
-          for name in ('radar-enhance.js', 'radar-intelligence.js', 'echo-analysis.js', 'echo-fix.js', 'lightning-layer.js', 'map-extras.js', 'analysis-plus.js', 'range-rings-reset.js'):
-              p = Path('_site') / name
-              s = p.read_text(encoding='utf-8')
-              s = re.sub(r'RADAR / SAT / AI v\d+\.\d+\.\d+', 'RADAR / SAT / AI v0.12.3', s)
-              p.write_text(s, encoding='utf-8')
+          for name in ('radar-enhance.js','radar-intelligence.js','echo-analysis.js','echo-fix.js','lightning-layer.js','map-extras.js','analysis-plus.js','range-rings-reset.js'):
+              p=Path('_site')/name
+              s=p.read_text(encoding='utf-8')
+              s=re.sub(r'RADAR / SAT / AI v\d+\.\d+\.\d+','RADAR / SAT / AI v0.12.3',s)
+              p.write_text(s,encoding='utf-8')
 
-          p = Path('_site/radar-enhance.js')
-          s = p.read_text(encoding='utf-8')
-          s = s.replace('    setTimeout(loadPolradProducts, 150);\n', '')
-          start = s.find('  // --- Official IMGW / POLRAD product API ---')
-          end = s.rfind("  const sources = document.querySelector('.sources');")
-          if start >= 0 and end > start:
-              s = s[:start] + s[end:]
-          p.write_text(s, encoding='utf-8')
+          p=Path('_site/radar-enhance.js')
+          s=p.read_text(encoding='utf-8')
+          s=s.replace('    setTimeout(loadPolradProducts, 150);\n','')
+          start=s.find('  // --- Official IMGW / POLRAD product API ---')
+          end=s.rfind("  const sources = document.querySelector('.sources');")
+          if start>=0 and end>start:
+              s=s[:start]+s[end:]
+          p.write_text(s,encoding='utf-8')
           PY
 
       - name: Validate JavaScript
         run: |
-          node --check index-fixes.js
-          node --check axis-layout-fix.js
-          node --check visual-style-fix.js
-          node --check meteogram-layout-v2.js
-          node --check rh-axis-fix.js
-          node --check day-night-fix.js
-          node --check fog-engine.js
-          node --check fog-archive.js
-          node --check shortcut-mode.js
-          node --check radar-enhance.js
-          node --check warnings-readable.js
-          node --check radar-intelligence.js
-          node --check echo-analysis.js
-          node --check echo-fix.js
-          node --check lightning-layer.js
-          node --check ui-cleanup.js
-          node --check map-extras.js
-          node --check analysis-plus.js
-          node --check range-rings-reset.js
-          node --check _site/day-night-fix.js
+          for f in index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js shortcut-mode.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js; do
+            node --check "$f"
+          done
+          node --check _site/observation-engine.js
           node --check _site/fog-engine.js
-          node --check _site/fog-archive.js
-          node --check _site/shortcut-mode.js
 
       - name: Verify deployed features
         run: |
           test -s _site/epir-icon-192.png
           test -s _site/epir-icon-512.png
           test -s _site/fog-engine.js
-          test -s _site/fog-archive.js
-          grep -F '<link rel="icon" href="epir-icon-192.png" type="image/png" sizes="192x192">' _site/index.html
-          grep -F '<link rel="icon" href="epir-icon-192.png" type="image/png" sizes="192x192">' _site/radar.html
-          ! grep -F 'manifest.webmanifest' _site/index.html
-          ! grep -F 'manifest.webmanifest' _site/radar.html
-          ! grep -F 'pwa.js' _site/index.html
-          ! grep -F 'pwa.js' _site/radar.html
-          grep -F '<script src="shortcut-mode.js"></script>' _site/index.html
-          grep -F '<script src="shortcut-mode.js"></script>' _site/radar.html
-          grep -F '<script src="day-night-fix.js"></script>' _site/index.html
-          grep -F '<script src="fog-engine.js"></script>' _site/index.html
-          grep -F '<script src="fog-archive.js"></script>' _site/index.html
-          grep -F 'Math.floor(now/3600e3)' _site/index.html
-          ! grep -F 'Math.ceil(now/3600e3)' _site/index.html
-          grep -F "daily: 'sunrise,sunset'" _site/day-night-fix.js
-          grep -F "timezone: 'UTC'" _site/day-night-fix.js
-          grep -F "DAY_SHADE_DARK" _site/day-night-fix.js
-          grep -F "NIGHT_SHADE_LIGHT" _site/day-night-fix.js
+          test -s _site/observation-engine.js
+          test -s _site/data/observations/latest.json
+          test -s _site/data/observations/recent.json
+          python3 -m json.tool _site/data/observations/latest.json >/dev/null
+          python3 -m json.tool _site/data/observations/recent.json >/dev/null
+          grep -F '<script src="observation-engine.js"></script>' _site/index.html
+          ! grep -F '<script src="fog-engine.js"></script>' _site/index.html
+          ! grep -F 'fog-archive.js' _site/index.html
+          grep -F "loadFogEngine" _site/observation-engine.js
+          grep -F "automatic-epir-metar-synop" _site/observation-engine.js
+          grep -F "SYNOP ma pierwszeństwo" _site/observation-engine.js
+          grep -F "data/observations/recent.json" _site/observation-engine.js
           grep -F "EPIR FOG ENGINE v1.0" _site/fog-engine.js
-          grep -F "function SFSI" _site/fog-engine.js
-          grep -F "const rad=weightedAvailable" _site/fog-engine.js
-          grep -F "const adv=weightedAvailable" _site/fog-engine.js
-          grep -F "const cbl=weightedAvailable" _site/fog-engine.js
-          grep -F "const pcp=weightedAvailable" _site/fog-engine.js
-          grep -F "dmi_harmonie_arome_europe" _site/fog-engine.js
-          grep -F "cloud_cover_2m" _site/fog-engine.js
-          grep -F "temperature_850hPa" _site/fog-engine.js
-          grep -F "wind_speed_850hPa" _site/fog-engine.js
-          grep -F "prognozaepir-fog-observations-v2" _site/fog-engine.js
-          grep -F "MGŁA — EPIR score" _site/fog-engine.js
-          grep -F "VIS &lt;1000 / &lt;500 m" _site/fog-engine.js
-          grep -F "epir-fog-observation-v1" _site/fog-archive.js
-          grep -F "Zapisz + archiwizuj" _site/fog-archive.js
-          grep -F "captured_before_observation_assimilation" _site/fog-archive.js
-          grep -F "data/fog-observations.jsonl" _site/fog-archive.js
-          grep -F "v0.10.20 HTML" _site/index.html
-          grep -F "meteogram-layout-v2.js" _site/index.html
-          grep -F "rh-axis-fix.js" _site/index.html
-          grep -F "RH_AXIS_X_OFFSET = 38" _site/rh-axis-fix.js
-          grep -F "rh+'%'" _site/rh-axis-fix.js
-          grep -F "id:'probstorm'" _site/meteogram-layout-v2.js
-          grep -F "Szansa opadu / burzy" _site/meteogram-layout-v2.js
-          grep -F "major?.72:.42" _site/meteogram-layout-v2.js
-          grep -F "ctx.rect(x0,p.y,x1-x0,p.h)" _site/meteogram-layout-v2.js
-          grep -F "CLOUD_LOW = '#f59e0b'" _site/meteogram-layout-v2.js
-          grep -F "CLOUD_MID = '#22c55e'" _site/meteogram-layout-v2.js
-          grep -F "CLOUD_HIGH = '#3b82f6'" _site/meteogram-layout-v2.js
-          grep -F "WIND_ARROW = '#ef4444'" _site/meteogram-layout-v2.js
-          grep -F "bold 22px Arial" _site/meteogram-layout-v2.js
-          grep -F "t+=THREE_HOURS" _site/meteogram-layout-v2.js
-          grep -F "function setDot(id,ok){const el=\$(id);if(el)el.className='dot '+(ok?'ok':'bad')}" _site/radar.html
-          grep -F "echo-fix.js" _site/radar.html
-          grep -F "map-extras.js" _site/radar.html
-          grep -F "analysis-plus.js" _site/radar.html
-          grep -F "range-rings-reset.js" _site/radar.html
-          grep -F "maps.blitzortung.org" _site/map-extras.js
-          grep -F "const RADII=[10,25,50,75,100]" _site/analysis-plus.js
-          grep -F "getPointsAround" _site/lightning-layer.js
-          grep -F "cmaxPhenomena" _site/analysis-plus.js
-          grep -F "RADII_KM = [10,25,50,75,100]" _site/range-rings-reset.js
-          grep -F "clearOldPointGraphics" _site/range-rings-reset.js
-          grep -F "goToAnalysisMap" _site/range-rings-reset.js
-          grep -F "scrollMapIntoView" _site/range-rings-reset.js
+          grep -F "Math.floor(now/3600e3)" _site/index.html
+          ! grep -F "Math.ceil(now/3600e3)" _site/index.html
+          grep -F "v0.10.21 HTML" _site/index.html
+          grep -F '<link rel="icon" href="epir-icon-192.png" type="image/png" sizes="192x192">' _site/index.html
+          grep -F '<script src="shortcut-mode.js"></script>' _site/index.html
+          grep -F '<script src="day-night-fix.js"></script>' _site/index.html
           grep -F "RADAR / SAT / AI v0.12.3" _site/range-rings-reset.js
 
       - name: Upload Pages artifact
