@@ -1,0 +1,146 @@
+name: Archive EPIR fog observation
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: fog-observation-archive
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    if: startsWith(github.event.issue.title, '[FOG OBS]')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Validate and append observation
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          body = os.environ.get('ISSUE_BODY', '')
+          issue_no = int(os.environ['ISSUE_NUMBER'])
+          issue_url = os.environ.get('ISSUE_URL', '')
+
+          m = re.search(r'```json\s*(\{.*?\})\s*```', body, re.S)
+          if not m:
+              raise SystemExit('Missing JSON observation block')
+          if len(m.group(1)) > 30000:
+              raise SystemExit('Observation payload too large')
+
+          p = json.loads(m.group(1))
+          if p.get('schema') != 'epir-fog-observation-v1':
+              raise SystemExit('Unsupported observation schema')
+
+          obs = p.get('observation') or {}
+          loc = p.get('location') or {}
+          snap = p.get('forecast_snapshot') or {}
+
+          def f(name, value, lo, hi):
+              try: v = float(value)
+              except Exception: raise SystemExit(f'Invalid {name}')
+              if not lo <= v <= hi: raise SystemExit(f'{name} outside allowed range')
+              return v
+
+          T = f('temperature_c', obs.get('temperature_c'), -60, 60)
+          Td = f('dew_point_c', obs.get('dew_point_c'), -80, 60)
+          vis = f('visibility_m', obs.get('visibility_m'), 1, 100000)
+          if Td > T + 2:
+              raise SystemExit('Dew point unrealistically above temperature')
+
+          try:
+              observed = datetime.fromisoformat(str(p['observed_at']).replace('Z', '+00:00'))
+              if observed.tzinfo is None: observed = observed.replace(tzinfo=timezone.utc)
+          except Exception:
+              raise SystemExit('Invalid observed_at')
+
+          record = {
+              'schema': 'epir-fog-observation-archive-v1',
+              'archive_id': f'github-issue-{issue_no}',
+              'observed_at': observed.astimezone(timezone.utc).isoformat().replace('+00:00','Z'),
+              'archived_at': datetime.now(timezone.utc).isoformat().replace('+00:00','Z'),
+              'location': {
+                  'name': str(loc.get('name') or 'Inowrocław')[:80],
+                  'lat': f('latitude', loc.get('lat'), -90, 90),
+                  'lon': f('longitude', loc.get('lon'), -180, 180),
+                  'tz': str(loc.get('tz') or 'Europe/Warsaw')[:64],
+              },
+              'observation': {
+                  'temperature_c': round(T, 2),
+                  'dew_point_c': round(Td, 2),
+                  'relative_humidity_pct': round(f('relative_humidity_pct', obs.get('relative_humidity_pct'), 0, 100), 1),
+                  'visibility_m': int(round(vis)),
+              },
+              'forecast_snapshot': {
+                  'epir_score': snap.get('epir_score'),
+                  'mechanism': snap.get('mechanism'),
+                  'phys_score': snap.get('phys_score'),
+                  'nwp_score': snap.get('nwp_score'),
+                  'rad_score': snap.get('rad_score'),
+                  'adv_score': snap.get('adv_score'),
+                  'cbl_score': snap.get('cbl_score'),
+                  'pcp_score': snap.get('pcp_score'),
+                  'fsi_kt': snap.get('fsi_kt'),
+                  'dmi_fog_2m_pct': snap.get('dmi_fog_2m_pct'),
+                  'agreement_pct': snap.get('agreement_pct'),
+                  'data_coverage_pct': snap.get('data_coverage_pct'),
+                  'saturation_score': snap.get('saturation_score'),
+                  'predicted_visibility_m': snap.get('predicted_visibility_m'),
+                  'confidence_label': snap.get('confidence_label'),
+                  'captured_before_observation_assimilation': bool(snap.get('captured_before_observation_assimilation')),
+              },
+              'app_version': str(p.get('app_version') or '')[:40],
+              'engine_version': str(p.get('engine_version') or '')[:60],
+              'source': 'manual_web_observation',
+              'github_issue_number': issue_no,
+              'github_issue_url': issue_url,
+          }
+
+          out = Path('data/fog-observations.jsonl')
+          out.parent.mkdir(parents=True, exist_ok=True)
+          existing = out.read_text(encoding='utf-8').splitlines() if out.exists() else []
+          if any(f'"archive_id":"github-issue-{issue_no}"' in line.replace(' ', '') for line in existing):
+              print('Observation already archived; nothing to append')
+          else:
+              with out.open('a', encoding='utf-8') as fh:
+                  fh.write(json.dumps(record, ensure_ascii=False, separators=(',', ':')) + '\n')
+              print('Archived', record['archive_id'])
+          PY
+
+      - name: Commit archive
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          if git diff --quiet -- data/fog-observations.jsonl; then
+            echo "No archive changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/fog-observations.jsonl
+          git commit -m "data: archive fog observation #${ISSUE_NUMBER}"
+          git push origin HEAD:main
+
+      - name: Confirm and close issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --body "Obserwacja została zarchiwizowana w \`data/fog-observations.jsonl\`."
+          gh issue close "$ISSUE_NUMBER" --reason completed
