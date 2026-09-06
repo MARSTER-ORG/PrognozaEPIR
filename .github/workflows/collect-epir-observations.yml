@@ -9,9 +9,12 @@ on:
       - 'scripts/supplement_synop_12342.py'
       - 'scripts/refresh_epir_metar.py'
       - 'scripts/organize_observation_archive.py'
+      - 'scripts/model_verification.py'
+      - 'scripts/model_verification_realtime.py'
+      - 'scripts/embed_model_verification.py'
       - '.github/workflows/collect-epir-observations.yml'
   schedule:
-    # Poll 7 minutes after each quarter-hour boundary to catch newly published half-hour reports.
+    # Poll shortly after quarter-hour boundaries; EPIR METAR is normally half-hourly.
     - cron: '7,22,37,52 * * * *'
   workflow_dispatch:
 
@@ -38,25 +41,35 @@ jobs:
           # Primary collector plus independent fallbacks. A temporary outage of one source
           # must not prevent the remaining sources from being checked.
           python3 scripts/collect_epir_observations.py || echo "Primary EPIR collector unavailable; continuing with fallbacks"
-          # PilotHub is always compared by observation time; it is not skipped merely
-          # because IMGW returned an older but still technically fresh report.
-          python3 scripts/supplement_metar_pilothub.py
-          # Legacy FM-12/Ogimet SYNOP remains enabled if station 12342 is published again.
-          python3 scripts/supplement_synop_12342.py
-          # Final freshness guard compares IMGW, PilotHub, OGIMET, CZAD and the newest
-          # already archived METAR, then keeps the report with the latest observation time.
+          python3 scripts/supplement_metar_pilothub.py || echo "PilotHub supplement unavailable; continuing"
+          python3 scripts/supplement_synop_12342.py || echo "SYNOP supplement unavailable; continuing"
+          # Final live-source scanner reads all visible EPIR reports from IMGW,
+          # PilotHub, CZAD and OGIMET, archives every fresh report and selects
+          # the newest timestamp for latest.json.
           python3 scripts/refresh_epir_metar.py
 
       - name: Organize long-term observation archive
-        run: |
-          python3 scripts/organize_observation_archive.py
+        run: python3 scripts/organize_observation_archive.py
 
-      - name: Validate observation data
+      - name: Refresh verification for new observations
+        run: |
+          if git diff --quiet -- data/observations; then
+            echo "No new observation; verification unchanged"
+          else
+            # Recompute against forecasts archived before the observation valid time.
+            # Do not fetch a new forecast here: that would contaminate verification.
+            python3 scripts/model_verification_realtime.py --summary-only
+            python3 scripts/embed_model_verification.py
+          fi
+
+      - name: Validate observation and verification data
         run: |
           python3 -m json.tool data/observations/latest.json >/dev/null
           python3 -m json.tool data/observations/recent.json >/dev/null
+          python3 -m json.tool data/learning/model-verification.json >/dev/null
           python3 - <<'PY'
           import json
+          from datetime import datetime, timezone
           from pathlib import Path
           p=json.load(open('data/observations/latest.json',encoding='utf-8'))
           assert p['station']['icao']=='EPIR'
@@ -76,20 +89,27 @@ jobs:
                   y,mo,d=dt[0:4],dt[5:7],dt[8:10]
                   canonical=Path('data/observations')/kind/y/mo/f'{d}.jsonl'
                   assert canonical.exists(), f'missing canonical archive: {canonical}'
+          # A METAR 9999/CAVOK is a lower bound of 10 km, therefore a model
+          # prediction >=10 km must score 100 for that sample.
+          import sys
+          sys.path.insert(0,'scripts')
+          import model_verification as mv
+          assert mv.visibility_score(10000,10000,True)==100.0
+          assert mv.visibility_score(25000,10000,True)==100.0
           print('METAR:', m.get('obs_time'), m.get('source'), m.get('raw'))
           print('SYNOP:', s.get('obs_time'), s.get('source'), s.get('raw'))
           print('VIS:', f.get('visibility_m'), f.get('visibility_source'))
           PY
 
-      - name: Commit new observations
+      - name: Commit new observations and verification
         run: |
-          if git diff --quiet -- data/observations; then
+          if git diff --quiet -- data/observations data/learning; then
             echo "No new observation to archive"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/observations
+          git add data/observations data/learning
           git commit -m "data: archive EPIR observations $(date -u +'%Y-%m-%d %H:%MZ')"
           git pull --rebase origin main
           git push origin HEAD:main
