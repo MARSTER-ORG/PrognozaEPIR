@@ -26,7 +26,10 @@ SOURCE_PRIORITY = {
 
 LIVE_PAGES = (
     ('IMGW', 'https://awiacja.imgw.pl/metar-i-taf', 'IMGW_AVIATION_METAR'),
-    ('PILOTHUB', 'https://pilothub.pl/lotniska/inowroclaw-szpital', 'PILOTHUB_METAR_IMGW'),
+    # PilotHub exposes EPIR as the nearest station on more than one local page.
+    # Scan both known pages and let the report timestamp decide which one wins.
+    ('PILOTHUB-SZPITAL', 'https://pilothub.pl/lotniska/inowroclaw-szpital', 'PILOTHUB_METAR_IMGW'),
+    ('PILOTHUB-LATKOWO', 'https://pilothub.pl/lotniska/inowroclaw-latkowo-lotnisko-wojskowe', 'PILOTHUB_METAR_IMGW'),
     ('CZAD', 'https://metar.czad.org/', 'METAR_CZAD'),
 )
 
@@ -76,8 +79,6 @@ def extract_epir_reports(text, source):
         row = c.decode_metar(raw_for_decode, source=source)
         if not row:
             continue
-        # Preserve report class for verification statistics even though the base
-        # decoder normalizes the raw string by removing METAR/SPECI prefix.
         row['report_type'] = 'SPECI' if prefix == 'SPECI' else 'METAR'
         ident = report_identity(row)
         if ident not in seen:
@@ -90,6 +91,10 @@ def fetch_page_reports(label, url, source):
     try:
         rows = extract_epir_reports(c.get_text(url), source)
         fresh = [r for r in rows if valid(r)]
+        for r in fresh:
+            if source == 'PILOTHUB_METAR_IMGW':
+                r['pilothub_page'] = label
+                r['pilothub_url'] = url
         print(f'{label}: decoded={len(rows)} fresh={len(fresh)}' + (
             f' newest={max(fresh, key=rank).get("obs_time")}' if fresh else ''))
         return fresh
@@ -119,8 +124,6 @@ def fetch_candidates():
         rows.extend(fetch_page_reports(label, url, source))
     rows.extend(fetch_ogimet_reports())
 
-    # De-duplicate identical reports but keep the higher-priority source for the
-    # same station/time/raw payload.
     best = {}
     for row in rows:
         ident = report_identity(row)
@@ -244,6 +247,7 @@ def main():
         'new_live_archived': archived_count,
         'newest_live_source': (newest_live or {}).get('source'),
         'newest_live_time': (newest_live or {}).get('obs_time'),
+        'newest_live_pilothub_page': (newest_live or {}).get('pilothub_page'),
         'chosen_source': chosen.get('source'),
         'chosen_time': chosen.get('obs_time'),
         'chosen_raw': chosen.get('raw'),
