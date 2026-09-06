@@ -11,8 +11,8 @@ on:
       - 'scripts/organize_observation_archive.py'
       - '.github/workflows/collect-epir-observations.yml'
   schedule:
-    # Poll every 15 minutes to limit GitHub Actions usage while still catching new reports promptly.
-    - cron: '*/15 * * * *'
+    # Poll 7 minutes after each quarter-hour boundary to catch newly published half-hour reports.
+    - cron: '7,22,37,52 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -38,10 +38,13 @@ jobs:
           # Primary collector plus independent fallbacks. A temporary outage of one source
           # must not prevent the remaining sources from being checked.
           python3 scripts/collect_epir_observations.py || echo "Primary EPIR collector unavailable; continuing with fallbacks"
+          # PilotHub is always compared by observation time; it is not skipped merely
+          # because IMGW returned an older but still technically fresh report.
           python3 scripts/supplement_metar_pilothub.py
           # Legacy FM-12/Ogimet SYNOP remains enabled if station 12342 is published again.
           python3 scripts/supplement_synop_12342.py
-          # Final freshness guard compares all METAR sources and always keeps the newest report.
+          # Final freshness guard compares IMGW, PilotHub, OGIMET, CZAD and the newest
+          # already archived METAR, then keeps the report with the latest observation time.
           python3 scripts/refresh_epir_metar.py
 
       - name: Organize long-term observation archive
