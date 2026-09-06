@@ -10,6 +10,7 @@ on:
       - 'scripts/cloud_learning.py'
       - 'scripts/cloud_learning_smoke_test.py'
       - 'scripts/model_verification.py'
+      - 'scripts/model_verification_realtime.py'
       - 'scripts/embed_model_verification.py'
       - '.github/workflows/cloud-learning.yml'
 
@@ -38,7 +39,13 @@ jobs:
         run: python3 scripts/cloud_learning.py
 
       - name: Run model verification
-        run: python3 scripts/model_verification.py
+        run: |
+          # Keep the established long-lead samples.
+          python3 scripts/model_verification.py
+          # Additionally archive every model hour for the next six hours. This
+          # makes METAR/SPECI visibility verification available as soon as that
+          # observation hour has passed instead of waiting for a sparse bucket.
+          python3 scripts/model_verification_realtime.py
 
       - name: Embed model verification
         run: python3 scripts/embed_model_verification.py
