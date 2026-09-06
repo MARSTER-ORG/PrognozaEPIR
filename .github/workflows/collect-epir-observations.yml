@@ -71,7 +71,6 @@ jobs:
           python3 -m json.tool data/learning/model-verification.json >/dev/null
           python3 - <<'PY'
           import json
-          from datetime import datetime, timezone
           from pathlib import Path
           p=json.load(open('data/observations/latest.json',encoding='utf-8'))
           assert p['station']['icao']=='EPIR'
@@ -81,7 +80,12 @@ jobs:
           m=p.get('metar') or {}
           s=p.get('synop') or {}
           f=p.get('fused') or {}
-          if s.get('visibility_m') is not None:
+
+          # SYNOP has priority for exact visibility only in a fused record that
+          # actually contains that SYNOP observation. A newer standalone METAR
+          # must not be rejected merely because latest.synop is older.
+          if (s.get('visibility_m') is not None
+                  and f.get('synop_obs_time') == s.get('obs_time')):
               assert f.get('visibility_source')==s.get('source'), (f.get('visibility_source'),s.get('source'))
           if m.get('visibility_report') in ('9999','CAVOK'):
               assert m.get('visibility_lower_bound') is True
@@ -91,6 +95,7 @@ jobs:
                   y,mo,d=dt[0:4],dt[5:7],dt[8:10]
                   canonical=Path('data/observations')/kind/y/mo/f'{d}.jsonl'
                   assert canonical.exists(), f'missing canonical archive: {canonical}'
+
           # A METAR 9999/CAVOK is a lower bound of 10 km, therefore a model
           # prediction >=10 km must score 100 for that sample.
           import sys
