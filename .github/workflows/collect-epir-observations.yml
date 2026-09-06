@@ -6,7 +6,6 @@ on:
     paths:
       - 'scripts/collect_epir_observations.py'
       - 'scripts/supplement_metar_pilothub.py'
-      - 'scripts/supplement_synop_wis2.py'
       - 'scripts/supplement_synop_12342.py'
       - 'scripts/refresh_epir_metar.py'
       - 'scripts/organize_observation_archive.py'
@@ -40,9 +39,7 @@ jobs:
           # must not prevent the remaining sources from being checked.
           python3 scripts/collect_epir_observations.py || echo "Primary EPIR collector unavailable; continuing with fallbacks"
           python3 scripts/supplement_metar_pilothub.py
-          # WMO WIS2/NOAA decoded BUFR is preferred for current SYNOP observations.
-          python3 scripts/supplement_synop_wis2.py
-          # Legacy FM-12/Ogimet remains an independent fallback when available.
+          # Legacy FM-12/Ogimet SYNOP remains enabled if station 12342 is published again.
           python3 scripts/supplement_synop_12342.py
           # Final freshness guard compares all METAR sources and always keeps the newest report.
           python3 scripts/refresh_epir_metar.py
