@@ -45,6 +45,7 @@
     const barW = Math.max(2.5, step * .58);
     const baseY = yOnVisibilityScale(0,p);
     const fullY = yOnVisibilityScale(FOG_FULL_SCALE_KM,p);
+    const fog100LabelY = yOnVisibilityScale(20,p);
     const maxBarH = Math.max(12,baseY-fullY);
     const x = t => clip(x0 + (t - m.t0) / (m.t1 - m.t0) * plotW, x0, x1);
 
@@ -75,10 +76,18 @@
     ctx.fillStyle = cp.muted || '#666';
     ctx.font = 'bold 8px Arial';
     ctx.textBaseline = 'bottom';
-    ctx.textAlign = 'left';
-    ctx.fillText('FOG 100',x0+5,fullY-2);
     ctx.textAlign = 'right';
     ctx.fillText('FOG ≥40',x1-5,baseY-2);
+    ctx.restore();
+
+    // Put FOG 100 immediately before the 20 km axis label.
+    ctx.save();
+    ctx.globalAlpha = .96;
+    ctx.fillStyle = cp.muted || '#666';
+    ctx.font = 'bold 8px Arial';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'right';
+    ctx.fillText('FOG 100',x0-24,fog100LabelY);
     ctx.restore();
   }
 
