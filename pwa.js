@@ -10,7 +10,7 @@
   if (!('serviceWorker' in navigator)) return;
 
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js?v=3', { scope: './', updateViaCache: 'none' })
+    navigator.serviceWorker.register('./sw.js?v=2', { scope: './', updateViaCache: 'none' })
       .then(reg => reg.update())
       .catch(err => console.warn('PrognozaEPIR PWA service worker:', err));
   });
