@@ -2,8 +2,9 @@
 """PilotHub verification/fallback collector for EPIR METAR.
 
 The main collector prefers official IMGW, but PilotHub is always checked as an
-independent source. The newest timestamp wins, so a still-fresh but older IMGW
-report cannot block a newer half-hour EPIR report published by PilotHub.
+independent source. The exact Inowroclaw-Latkowo EPIR airport page is used and
+the newest timestamp wins, so an older still-fresh report cannot block a newer
+half-hour METAR.
 """
 import html
 import json
@@ -14,8 +15,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import collect_epir_observations as c
 
-PILOTHUB_URL = 'https://pilothub.pl/lotniska/inowroclaw-szpital'
-MAX_PILOTHUB_AGE_MIN = 180
+PILOTHUB_URL = 'https://pilothub.pl/lotniska/inowroclaw-latkowo-lotnisko-wojskowe'
+MAX_PILOTHUB_AGE_MIN = 240
 
 
 def read_latest():
@@ -38,11 +39,11 @@ def is_fresh(row, max_age_min):
 
 
 def _candidate_raw_reports(plain):
-    """Return all plausible EPIR METAR strings visible on the PilotHub page."""
+    """Return all plausible EPIR METAR/SPECI strings visible on PilotHub."""
     out = []
     seen = set()
     patterns = (
-        r'\bMETAR\s+(EPIR\s+\d{6}Z\s+.*?\bQ\d{4}\b)=?',
+        r'\b(?:METAR|SPECI)\s+(EPIR\s+\d{6}Z\s+.*?\bQ\d{4}\b)=?',
         r'\b(EPIR\s+\d{6}Z\s+.*?\bQ\d{4}\b)=?',
     )
     for pattern in patterns:
@@ -95,8 +96,6 @@ def main():
     latest = read_latest()
     primary = latest.get('metar')
 
-    # Always check PilotHub. A primary report can still be within the freshness
-    # window while being one or more half-hour EPIR cycles behind.
     try:
         fallback = fetch_pilothub_metar()
     except Exception as exc:
@@ -140,6 +139,7 @@ def main():
     })
     print(json.dumps({
         'pilothub': 'checked',
+        'pilothub_url': PILOTHUB_URL,
         'pilothub_time': fallback.get('obs_time'),
         'chosen_source': chosen.get('source'),
         'chosen_time': chosen.get('obs_time'),
