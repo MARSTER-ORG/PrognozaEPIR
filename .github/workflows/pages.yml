@@ -30,25 +30,22 @@ jobs:
       - name: Prepare site
         run: |
           mkdir -p _site
-          cp index.html radar.html epir-icon.svg epir-icon-192.png epir-icon-512.png manifest.webmanifest pwa.js sw.js index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js rh-axis-fix.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
+          cp index.html radar.html epir-icon.svg epir-icon-192.png epir-icon-512.png index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js rh-axis-fix.js day-night-fix.js shortcut-mode.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
           python3 - <<'PY'
           from pathlib import Path
           import re
 
-          favicon = '<link rel="icon" href="epir-icon.svg" type="image/svg+xml">\n<link rel="shortcut icon" href="epir-icon.svg">'
-          pwa_head = '<link rel="manifest" href="manifest.webmanifest">\n<meta name="theme-color" content="#111418">\n<meta name="mobile-web-app-capable" content="yes">\n<meta name="apple-mobile-web-app-capable" content="yes">\n<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">\n<link rel="apple-touch-icon" href="epir-icon-192.png">'
-          pwa_addon = '<script src="pwa.js"></script>'
+          favicon = '<link rel="icon" href="epir-icon-192.png" type="image/png" sizes="192x192">\n<link rel="shortcut icon" href="epir-icon-192.png" type="image/png">\n<link rel="apple-touch-icon" href="epir-icon-192.png">'
+          shortcut_addon = '<script src="shortcut-mode.js"></script>'
 
           p = Path('_site/index.html')
           s = p.read_text(encoding='utf-8')
-          if 'href="epir-icon.svg"' not in s:
+          if 'href="epir-icon-192.png"' not in s:
               s = s.replace('<title>', favicon + '\n<title>', 1)
-          if 'href="manifest.webmanifest"' not in s:
-              s = s.replace('<title>', pwa_head + '\n<title>', 1)
-          for old in ('v0.9.13 HTML','v0.10.0 HTML','v0.10.1 HTML','v0.10.2 HTML','v0.10.3 HTML','v0.10.4 HTML','v0.10.5 HTML','v0.10.6 HTML','v0.10.7 HTML','v0.10.8 HTML','v0.10.9 HTML','v0.10.10 HTML','v0.10.11 HTML','v0.10.12 HTML','v0.10.13 HTML','v0.10.14 HTML'):
-              s = s.replace(old, 'v0.10.15 HTML')
-          for old in ('HTML v0.9.12','HTML v0.9.13','HTML v0.10.0','HTML v0.10.1','HTML v0.10.2','HTML v0.10.3','HTML v0.10.4','HTML v0.10.5','HTML v0.10.6','HTML v0.10.7','HTML v0.10.8','HTML v0.10.9','HTML v0.10.10','HTML v0.10.11','HTML v0.10.12','HTML v0.10.13','HTML v0.10.14'):
-              s = s.replace(old, 'HTML v0.10.15')
+          for old in ('v0.9.13 HTML','v0.10.0 HTML','v0.10.1 HTML','v0.10.2 HTML','v0.10.3 HTML','v0.10.4 HTML','v0.10.5 HTML','v0.10.6 HTML','v0.10.7 HTML','v0.10.8 HTML','v0.10.9 HTML','v0.10.10 HTML','v0.10.11 HTML','v0.10.12 HTML','v0.10.13 HTML','v0.10.14 HTML','v0.10.15 HTML'):
+              s = s.replace(old, 'v0.10.16 HTML')
+          for old in ('HTML v0.9.12','HTML v0.9.13','HTML v0.10.0','HTML v0.10.1','HTML v0.10.2','HTML v0.10.3','HTML v0.10.4','HTML v0.10.5','HTML v0.10.6','HTML v0.10.7','HTML v0.10.8','HTML v0.10.9','HTML v0.10.10','HTML v0.10.11','HTML v0.10.12','HTML v0.10.13','HTML v0.10.14','HTML v0.10.15'):
+              s = s.replace(old, 'HTML v0.10.16')
           icm = '<a class="control-link" href="https://www.meteo.pl/um/php/meteorogram_id_um.php?ntype=0n&amp;id=2077" target="_blank" rel="noopener noreferrer">ICM UM meteogram ↗</a>'
           radar = '<a class="control-link" href="radar.html">RADAR / SAT / AI</a>'
           if radar not in s and icm in s:
@@ -59,31 +56,24 @@ jobs:
                         "const vars=prof?profileVarsFor(model):SURFACE.filter(v=>!(model.surfaceExclude||[]).includes(v));")
           s = s.replace("const msg=j?.error||j?.reason||j?.message||('HTTP '+r.status);",
                         "const msg=j?.reason||j?.message||(typeof j?.error==='string'?j.error:('HTTP '+r.status));")
-          addon = '<script src="index-fixes.js"></script>'
-          if addon not in s:
-              s = s.replace('</body>', addon + '\n</body>')
-          axis_addon = '<script src="axis-layout-fix.js"></script>'
-          if axis_addon not in s:
-              s = s.replace('</body>', axis_addon + '\n</body>')
-          visual_addon = '<script src="visual-style-fix.js"></script>'
-          if visual_addon not in s:
-              s = s.replace('</body>', visual_addon + '\n</body>')
-          layout_addon = '<script src="meteogram-layout-v2.js"></script>'
-          if layout_addon not in s:
-              s = s.replace('</body>', layout_addon + '\n</body>')
-          rh_addon = '<script src="rh-axis-fix.js"></script>'
-          if rh_addon not in s:
-              s = s.replace('</body>', rh_addon + '\n</body>')
-          if pwa_addon not in s:
-              s = s.replace('</body>', pwa_addon + '\n</body>')
+          addons = [
+              '<script src="index-fixes.js"></script>',
+              '<script src="axis-layout-fix.js"></script>',
+              '<script src="visual-style-fix.js"></script>',
+              '<script src="meteogram-layout-v2.js"></script>',
+              '<script src="rh-axis-fix.js"></script>',
+              '<script src="day-night-fix.js"></script>',
+              shortcut_addon,
+          ]
+          for addon in addons:
+              if addon not in s:
+                  s = s.replace('</body>', addon + '\n</body>')
           p.write_text(s, encoding='utf-8')
 
           p = Path('_site/radar.html')
           s = p.read_text(encoding='utf-8')
-          if 'href="epir-icon.svg"' not in s:
+          if 'href="epir-icon-192.png"' not in s:
               s = s.replace('<title>', favicon + '\n<title>', 1)
-          if 'href="manifest.webmanifest"' not in s:
-              s = s.replace('<title>', pwa_head + '\n<title>', 1)
           s = re.sub(r'RADAR / SAT / AI v\d+\.\d+\.\d+', 'RADAR / SAT / AI v0.12.3', s)
           s = s.replace(
               "function setDot(id,ok){$(id).className='dot '+(ok?'ok':'bad')}",
@@ -104,12 +94,11 @@ jobs:
               '<script src="map-extras.js"></script>',
               '<script src="analysis-plus.js"></script>',
               '<script src="range-rings-reset.js"></script>',
+              shortcut_addon,
           ]
           for addon in addons:
               if addon not in s:
                   s = s.replace('</body>', addon + '\n</body>')
-          if pwa_addon not in s:
-              s = s.replace('</body>', pwa_addon + '\n</body>')
           p.write_text(s, encoding='utf-8')
 
           for name in ('radar-enhance.js', 'radar-intelligence.js', 'echo-analysis.js', 'echo-fix.js', 'lightning-layer.js', 'map-extras.js', 'analysis-plus.js', 'range-rings-reset.js'):
@@ -130,13 +119,13 @@ jobs:
 
       - name: Validate JavaScript
         run: |
-          node --check pwa.js
-          node --check sw.js
           node --check index-fixes.js
           node --check axis-layout-fix.js
           node --check visual-style-fix.js
           node --check meteogram-layout-v2.js
           node --check rh-axis-fix.js
+          node --check day-night-fix.js
+          node --check shortcut-mode.js
           node --check radar-enhance.js
           node --check warnings-readable.js
           node --check radar-intelligence.js
@@ -147,47 +136,28 @@ jobs:
           node --check map-extras.js
           node --check analysis-plus.js
           node --check range-rings-reset.js
-          node --check _site/pwa.js
-          node --check _site/sw.js
-          node --check _site/index-fixes.js
-          node --check _site/axis-layout-fix.js
-          node --check _site/visual-style-fix.js
-          node --check _site/meteogram-layout-v2.js
-          node --check _site/rh-axis-fix.js
-          node --check _site/radar-enhance.js
-          node --check _site/warnings-readable.js
-          node --check _site/radar-intelligence.js
-          node --check _site/echo-analysis.js
-          node --check _site/echo-fix.js
-          node --check _site/lightning-layer.js
-          node --check _site/ui-cleanup.js
-          node --check _site/map-extras.js
-          node --check _site/analysis-plus.js
-          node --check _site/range-rings-reset.js
-          python3 -m json.tool manifest.webmanifest >/dev/null
-          python3 -m json.tool _site/manifest.webmanifest >/dev/null
+          node --check _site/day-night-fix.js
+          node --check _site/shortcut-mode.js
 
       - name: Verify deployed features
         run: |
-          test -s _site/epir-icon.svg
           test -s _site/epir-icon-192.png
           test -s _site/epir-icon-512.png
-          test -s _site/manifest.webmanifest
-          test -s _site/pwa.js
-          test -s _site/sw.js
-          grep -F '<link rel="icon" href="epir-icon.svg" type="image/svg+xml">' _site/index.html
-          grep -F '<link rel="icon" href="epir-icon.svg" type="image/svg+xml">' _site/radar.html
-          grep -F '<link rel="manifest" href="manifest.webmanifest">' _site/index.html
-          grep -F '<link rel="manifest" href="manifest.webmanifest">' _site/radar.html
-          grep -F '<script src="pwa.js"></script>' _site/index.html
-          grep -F '<script src="pwa.js"></script>' _site/radar.html
-          grep -F '"display": "standalone"' _site/manifest.webmanifest
-          grep -F '"start_url": "./index.html"' _site/manifest.webmanifest
-          grep -F '"src":"epir-icon-192.png"' _site/manifest.webmanifest
-          grep -F '"src":"epir-icon-512.png"' _site/manifest.webmanifest
-          grep -F "serviceWorker.register('./sw.js?v=2'" _site/pwa.js
-          grep -F "prognozaepir-pwa-v2" _site/sw.js
-          grep -F "v0.10.15 HTML" _site/index.html
+          grep -F '<link rel="icon" href="epir-icon-192.png" type="image/png" sizes="192x192">' _site/index.html
+          grep -F '<link rel="icon" href="epir-icon-192.png" type="image/png" sizes="192x192">' _site/radar.html
+          ! grep -F 'manifest.webmanifest' _site/index.html
+          ! grep -F 'manifest.webmanifest' _site/radar.html
+          ! grep -F 'pwa.js' _site/index.html
+          ! grep -F 'pwa.js' _site/radar.html
+          grep -F '<script src="shortcut-mode.js"></script>' _site/index.html
+          grep -F '<script src="shortcut-mode.js"></script>' _site/radar.html
+          grep -F '<script src="day-night-fix.js"></script>' _site/index.html
+          grep -F "daily: 'sunrise,sunset'" _site/day-night-fix.js
+          grep -F "timezone: 'UTC'" _site/day-night-fix.js
+          grep -F "DAY_SHADE_DARK" _site/day-night-fix.js
+          grep -F "NIGHT_SHADE_LIGHT" _site/day-night-fix.js
+          grep -F "serviceWorker.getRegistrations" _site/shortcut-mode.js
+          grep -F "v0.10.16 HTML" _site/index.html
           grep -F "meteogram-layout-v2.js" _site/index.html
           grep -F "rh-axis-fix.js" _site/index.html
           grep -F "RH_AXIS_X_OFFSET = 38" _site/rh-axis-fix.js
