@@ -32,7 +32,7 @@ jobs:
           mkdir -p _site/data/observations _site/data/learning
           cp index.html radar.html epir-icon.svg epir-icon-192.png epir-icon-512.png \
              index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js \
-             rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js shortcut-mode.js \
+             rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js shortcut-mode.js \
              cloud-learning-client.js \
              radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js \
              lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
@@ -93,6 +93,7 @@ jobs:
               '<script src="rh-axis-fix.js"></script>',
               '<script src="day-night-fix.js"></script>',
               '<script src="observation-engine.js"></script>',
+              '<script src="mifg-engine.js"></script>',
               shortcut_addon,
           ]
           for addon in addons:
@@ -149,11 +150,12 @@ jobs:
 
       - name: Validate JavaScript
         run: |
-          for f in index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js shortcut-mode.js cloud-learning-client.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js; do
+          for f in index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js shortcut-mode.js cloud-learning-client.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js; do
             node --check "$f"
           done
           node --check _site/observation-engine.js
           node --check _site/fog-engine.js
+          node --check _site/mifg-engine.js
           node --check _site/cloud-learning-client.js
 
       - name: Verify deployed features
@@ -162,6 +164,7 @@ jobs:
           test -s _site/epir-icon-512.png
           test -s _site/fog-engine.js
           test -s _site/observation-engine.js
+          test -s _site/mifg-engine.js
           test -s _site/cloud-learning-client.js
           test -s _site/data/observations/latest.json
           test -s _site/data/observations/recent.json
@@ -170,6 +173,7 @@ jobs:
           python3 -m json.tool _site/data/observations/recent.json >/dev/null
           python3 -m json.tool _site/data/learning/cloud-skill.json >/dev/null
           grep -F '<script src="observation-engine.js"></script>' _site/index.html
+          grep -F '<script src="mifg-engine.js"></script>' _site/index.html
           grep -F '<script src="cloud-learning-client.js"></script>' _site/index.html
           grep -F 'const cloudItems=items.map' _site/index.html
           grep -F 'PrognozaEPIRCloudLearning?.factor' _site/index.html
@@ -179,8 +183,11 @@ jobs:
           ! grep -F 'fog-archive.js' _site/index.html
           grep -F "loadFogEngine" _site/observation-engine.js
           grep -F "automatic-epir-metar-synop" _site/observation-engine.js
+          grep -F "shallowFog" _site/observation-engine.js
           grep -F "SYNOP ma pierwszeństwo" _site/observation-engine.js
           grep -F "data/observations/recent.json" _site/observation-engine.js
+          grep -F "MIFG &lt;2 m" _site/mifg-engine.js
+          grep -F "surface_temperature" _site/mifg-engine.js
           grep -F "EPIR FOG ENGINE v1.1" _site/fog-engine.js
           grep -F "if(o.freezingFog||o.fog)" _site/fog-engine.js
           grep -F "if(o.mist)" _site/fog-engine.js
