@@ -6,9 +6,10 @@ on:
     paths:
       - '.github/workflows/observation-watchdog.yml'
   schedule:
-    # Second clock, halfway between the primary collector slots. It dispatches
-    # the armored collector if the primary GitHub schedule is skipped/delayed.
-    - cron: '14,29,44,59 * * * *'
+    # Recovery clock: poll every 5 minutes. This deliberately uses the simplest
+    # GitHub cron form and dispatches the armored collector independently from
+    # the primary heartbeat schedule.
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 permissions:
