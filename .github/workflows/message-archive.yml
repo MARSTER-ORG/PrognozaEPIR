@@ -10,6 +10,10 @@ on:
       - 'data/import/**'
       - 'data/observations/manual/**'
       - 'scripts/message_archive.py'
+      - 'scripts/metar_armored.py'
+      - 'scripts/live_metar_collector.py'
+      - 'scripts/refresh_epir_metar.py'
+      - 'scripts/check_epir_archive_freshness.py'
       - 'scripts/apply_central_archive_cutover.py'
       - 'scripts/finalize_central_message_architecture.py'
       - 'scripts/ensure_taf_native_archive.py'
@@ -26,7 +30,7 @@ concurrency:
 jobs:
   archive:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,18 +39,47 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
       - name: Validate code
-        run: python3 -m py_compile scripts/message_archive.py scripts/apply_central_archive_cutover.py scripts/finalize_central_message_architecture.py scripts/ensure_taf_native_archive.py
+        run: |
+          python3 -m py_compile \
+            scripts/message_archive.py \
+            scripts/metar_armored.py \
+            scripts/live_metar_collector.py \
+            scripts/refresh_epir_metar.py \
+            scripts/check_epir_archive_freshness.py \
+            scripts/apply_central_archive_cutover.py \
+            scripts/finalize_central_message_architecture.py \
+            scripts/ensure_taf_native_archive.py
+
       - name: Acquire bulletins into temporary staging
         shell: bash
         run: |
-          set +e
-          python3 scripts/collect_epir_observations.py; echo "observations=$?"
-          python3 scripts/supplement_synop_12342.py; echo "synop=$?"
-          python3 scripts/metar_armored.py; echo "metar-armored=$?"
-          python3 scripts/collect_neighbor_tafs.py; echo "taf-neighbors=$?"
-          python3 scripts/sanitize_neighbor_tafs.py; echo "taf-sanitize=$?"
-          exit 0
+          set -euo pipefail
+
+          # SYNOP is useful but must never block aviation bulletins.
+          python3 scripts/collect_epir_observations.py || echo 'generic observations source degraded'
+          python3 scripts/supplement_synop_12342.py || echo 'SYNOP supplement degraded'
+
+          # METAR/SPECI is safety-critical for archive freshness. Retry the
+          # armored multi-source collector instead of hiding its exit status.
+          metar_transport_ok=0
+          for attempt in 1 2 3; do
+            echo "=== METAR/SPECI transport attempt ${attempt}/3 ==="
+            if python3 scripts/metar_armored.py; then
+              metar_transport_ok=1
+              break
+            fi
+            if [ "$attempt" -lt 3 ]; then sleep $((attempt * 15)); fi
+          done
+          test "$metar_transport_ok" = 1
+
+          # EPIR TAF history + current neighbour snapshots. The freshness gate
+          # after centralisation decides whether the retained EPIR cycle is new
+          # enough; one unavailable provider is therefore non-fatal here.
+          python3 scripts/collect_neighbor_tafs.py || echo 'TAF sources degraded'
+          python3 scripts/sanitize_neighbor_tafs.py || echo 'TAF sanitize degraded'
+
       - name: Normalize deduplicate migrate and cut over consumers
         run: |
           python3 scripts/message_archive.py
@@ -57,6 +90,33 @@ jobs:
           python3 scripts/message_archive.py --validate-only
           python3 -m py_compile scripts/model_verification.py scripts/cloud_learning.py scripts/finalize_central_message_architecture.py scripts/ensure_taf_native_archive.py
           node --check taf-verification.js
+
+      - name: Freshness gate with in-job recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            echo "=== central freshness check ${attempt}/3 ==="
+            if python3 scripts/check_epir_archive_freshness.py; then
+              exit 0
+            fi
+            if [ "$attempt" -ge 3 ]; then
+              break
+            fi
+
+            # A report can appear upstream seconds after the first request.
+            # Retry inside the same job instead of waiting for another cron.
+            sleep $((attempt * 20))
+            python3 scripts/metar_armored.py || true
+            python3 scripts/collect_neighbor_tafs.py || true
+            python3 scripts/sanitize_neighbor_tafs.py || true
+            python3 scripts/message_archive.py
+            python3 scripts/finalize_central_message_architecture.py
+            python3 scripts/ensure_taf_native_archive.py
+            python3 scripts/message_archive.py --validate-only
+          done
+          python3 scripts/check_epir_archive_freshness.py
+
       - name: Drop legacy staging changes
         run: |
           git restore --worktree -- data/observations data/taf 2>/dev/null || true
@@ -67,6 +127,7 @@ jobs:
           test -s data/messages/status.json
           test -s data/messages/taf-neighbors.json
           python3 scripts/message_archive.py --validate-only
+          python3 scripts/check_epir_archive_freshness.py
           grep -F "data/messages/latest.json" observation-engine.js
           grep -F 'PrognozaEPIRMessageArchive' taf.html
           grep -F 'loadNeighborArchive' taf.html
@@ -100,6 +161,7 @@ jobs:
           if status.get('taf_history_scope') != 'EPIR only':
               raise SystemExit('TAF history scope not finalized')
           PY
+
       - name: Commit authoritative archive
         id: publish
         run: |
@@ -124,6 +186,7 @@ jobs:
             sleep $((attempt*3))
           done
           exit 1
+
       - name: Refresh dependent consumers
         if: steps.publish.outputs.changed == 'true'
         env:
