@@ -1,0 +1,92 @@
+name: Backfill EPIR model history
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: First run date (UTC)
+        required: false
+        default: '2026-06-01'
+      end:
+        description: Last run date (UTC)
+        required: false
+        default: '2026-09-07'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/backfill_model_history.py'
+      - '.github/workflows/model-history-backfill.yml'
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: model-history-backfill-main
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Backfill archived operational model runs
+        env:
+          START: ${{ github.event.inputs.start || '2026-06-01' }}
+          END: ${{ github.event.inputs.end || '2026-09-07' }}
+        run: python3 scripts/backfill_model_history.py --start "$START" --end "$END" --workers 4 --run-hour 0
+
+      - name: Rebuild cloud skill from historical METAR
+        run: python3 scripts/cloud_learning.py
+
+      - name: Rebuild full model verification from METAR and SYNOP
+        run: python3 scripts/model_verification.py
+
+      - name: Keep dense recent visibility verification
+        run: python3 scripts/backfill_visibility_verification.py
+
+      - name: Embed verification into learning payload
+        run: python3 scripts/embed_model_verification.py
+
+      - name: Validate generated learning data
+        run: |
+          python3 -m json.tool data/learning/model-backfill-state.json >/dev/null
+          python3 -m json.tool data/learning/cloud-skill.json >/dev/null
+          python3 -m json.tool data/learning/model-verification.json >/dev/null
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          rows=0
+          for p in Path('data/learning/model-forecasts').glob('backfill-single-runs-*.jsonl'):
+              for line in p.read_text(encoding='utf-8').splitlines():
+                  json.loads(line); rows+=1
+          assert rows > 1000, f'too few historical forecast rows: {rows}'
+          print('validated historical forecast rows:', rows)
+          PY
+
+      - name: Commit historical learning data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/learning
+          if git diff --cached --quiet; then
+            echo "No backfill changes"
+          else
+            git commit -m "weather: backfill June-September 2026 model learning"
+            for attempt in 1 2 3 4; do
+              git pull --rebase origin main && git push origin HEAD:main && break
+              test "$attempt" = 4 && exit 1
+              sleep $((attempt * 5))
+            done
+          fi
+
+      - name: Redeploy updated learning data
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main
