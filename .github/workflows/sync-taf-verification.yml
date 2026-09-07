@@ -6,6 +6,7 @@ on:
     paths:
       - taf-verification.js
       - scripts/embed_taf_verification.py
+      - scripts/integrate_taf_mifg.py
       - .github/workflows/sync-taf-verification.yml
   workflow_dispatch:
 
@@ -25,39 +26,59 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Integrate MIFG engine with TAF
+        run: python3 scripts/integrate_taf_mifg.py
+
       - name: Validate source JavaScript
         run: node --check taf-verification.js
 
       - name: Embed verifier in TAF page
         run: python3 scripts/embed_taf_verification.py
 
-      - name: Validate embedded JavaScript
+      - name: Validate TAF JavaScript and MIFG hooks
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
           s=Path('taf.html').read_text(encoding='utf-8')
+          scripts=re.findall(r'<script>(.*?)</script>',s,re.S)
+          if len(scripts) < 3:
+              raise SystemExit('expected TAF inline scripts missing')
+          for i,js in enumerate(scripts):
+              Path(f'/tmp/taf-inline-{i}.js').write_text(js,encoding='utf-8')
           marker='/* TAF Verification v2.0 inline — generated from taf-verification.js */'
           pos=s.rfind(marker)
           if pos < 0:
               raise SystemExit('embedded verifier marker missing')
           a=s.rfind('<script>',0,pos)+len('<script>')
           b=s.find('</script>',pos)
-          Path('/tmp/taf-verification-inline.js').write_text(s[a:b],encoding='utf-8')
-          if 'prognozaepir-taf-skill-v1' not in s[a:b]:
+          verifier=s[a:b]
+          if 'prognozaepir-taf-skill-v1' not in verifier:
               raise SystemExit('verification-only guard missing')
-          if 'Sprawdzalność TAF — raport dobowy' not in s[a:b]:
+          if 'Sprawdzalność TAF — raport dobowy' not in verifier:
               raise SystemExit('daily TAF report UI missing')
+          required=(
+              'PrognozaEPIRMIFG',
+              "return'MIFG'",
+              'FG / MIFG',
+              'MIFG ${fin(z.mifgRisk)',
+          )
+          for token in required:
+              if token not in s:
+                  raise SystemExit('missing TAF MIFG hook: '+token)
+          if "return'MIFG'" not in verifier:
+              raise SystemExit('verifier does not recognize MIFG')
           PY
-          node --check /tmp/taf-verification-inline.js
+          for f in /tmp/taf-inline-*.js; do node --check "$f"; done
 
       - name: Commit synchronized page
         run: |
-          if git diff --quiet -- taf.html; then
-            echo 'taf.html already synchronized'
+          if git diff --quiet -- taf.html taf-verification.js; then
+            echo 'TAF page and verifier already synchronized'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add taf.html
-          git commit -m 'taf: sync daily verification view'
+          git add taf.html taf-verification.js
+          git commit -m 'taf: integrate shallow-fog MIFG engine'
           git push
