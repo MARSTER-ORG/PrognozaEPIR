@@ -18,6 +18,9 @@
   let fitMode = false;
   let resizeTimer = 0;
 
+  const FOG_INFO_THRESHOLD = 40;
+  const FOG_MATCH_MS = 70 * 60e3;
+
   function fitWholeMeteogram() {
     try {
       if (typeof stageSize !== 'function' || typeof applyTransform !== 'function' || typeof viewport === 'undefined') return;
@@ -75,11 +78,195 @@
     try { fitWidth = fitWholeMeteogram; } catch (_) { }
   }
 
+  function nearestScoreRow(series,t) {
+    if (!Array.isArray(series) || !series.length || !Number.isFinite(t)) return null;
+    let best = null;
+    let bestDiff = Infinity;
+    for (const row of series) {
+      if (!row || !Number.isFinite(row.t) || !Number.isFinite(row.score)) continue;
+      const diff = Math.abs(row.t - t);
+      if (diff < bestDiff) {
+        best = row;
+        bestDiff = diff;
+      }
+    }
+    return bestDiff <= FOG_MATCH_MS ? best : null;
+  }
+
+  function currentFogRow(t) {
+    return nearestScoreRow(window.PrognozaEPIRFogSeries,t);
+  }
+
+  function currentMifgRow(t) {
+    try {
+      return nearestScoreRow(window.PrognozaEPIRMIFG?.getSeries?.(),t);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function syncRiskCell(values,selector,dataName,label,row) {
+    let cell = values.querySelector(selector);
+    if (!row || !Number.isFinite(row.score) || row.score < FOG_INFO_THRESHOLD) {
+      cell?.remove();
+      return;
+    }
+    if (!cell) {
+      cell = document.createElement('div');
+      cell.className = 'section-value';
+      cell.dataset[dataName] = '1';
+      cell.innerHTML = '<small></small><strong></strong>';
+      values.appendChild(cell);
+    }
+    const small = cell.querySelector('small');
+    const strong = cell.querySelector('strong');
+    if (small) small.textContent = label;
+    if (strong) strong.textContent = Math.round(row.score) + '/100';
+  }
+
+  function refineVisibilityInfo(z,panelId) {
+    if (panelId !== 'visfog') return;
+    const box = document.getElementById('sectionInfo');
+    const values = box?.querySelector('.section-values');
+    if (!values) return;
+
+    const fog = currentFogRow(z?.t);
+    const mifg = currentMifgRow(z?.t);
+
+    syncRiskCell(
+      values,
+      '[data-fog-risk="1"]',
+      'fogRisk',
+      'Prawdopodobieństwo mgły · FOG ENGINE',
+      fog
+    );
+    syncRiskCell(
+      values,
+      '[data-mifg-risk="1"]',
+      'mifgRisk',
+      'Prawdopodobieństwo niskiej mgły <2 m · MIFG',
+      mifg
+    );
+  }
+
+  function installVisibilityInfoFilter() {
+    if (window.__epirVisibilityInfoThresholdWrapped || typeof showSectionInfo !== 'function') return;
+    const baseInfo = showSectionInfo;
+    showSectionInfo = function(z,panelId) {
+      const out = baseInfo.apply(this,arguments);
+      refineVisibilityInfo(z,panelId);
+      return out;
+    };
+    window.__epirVisibilityInfoThresholdWrapped = true;
+  }
+
+  function mergeWindPanels() {
+    if (window.__epirWindPanelMerged || typeof PANELS === 'undefined' || !Array.isArray(PANELS)) return;
+    const wind = PANELS.find(p => p?.id === 'wind');
+    const dir = PANELS.find(p => p?.id === 'dir');
+    if (!wind || !dir) return;
+
+    // Zachowujemy łączną wysokość obu dotychczasowych sekcji, ale kierunek
+    // staje się częścią sekcji Wiatr zamiast osobnym panelem.
+    wind.h = Math.max(84,Number(wind.h) || 84) + Math.max(0,Number(dir.h) || 0);
+    wind.label = 'wiatr / kierunek';
+    dir.h = 0;
+    dir.label = '';
+    dir.unit = '';
+    window.__epirWindPanelMerged = true;
+  }
+
+  function xForTime(t,m) {
+    return m.x0 + (t-m.t0)/(m.t1-m.t0)*(m.x1-m.x0);
+  }
+
+  function drawWindDirectionInsideWind() {
+    if (typeof cv === 'undefined' || typeof ctx === 'undefined') return;
+    const m = cv._meta;
+    if (!m || !Array.isArray(m.data) || !Array.isArray(m.panelYs)) return;
+    const wind = m.panelYs.find(p => p.id === 'wind');
+    const dir = m.panelYs.find(p => p.id === 'dir');
+    if (!wind) return;
+
+    const cp = typeof canvasPalette === 'function'
+      ? canvasPalette()
+      : {panel:'#20252b',grid2:'#59616b',muted:'#a6acb5',bg:'#111418'};
+
+    // Osobny wiersz strzałek wewnątrz sekcji Wiatr.
+    const rowH = Math.min(38,Math.max(30,wind.h*.27));
+    const rowTop = wind.y + wind.h - rowH;
+    const arrowY = rowTop + rowH*.62;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(m.x0,wind.y,m.x1-m.x0,wind.h);
+    ctx.clip();
+
+    // Lekko wydzielamy dolny wiersz kierunku, ale nadal pozostaje on częścią
+    // jednej sekcji Wiatr.
+    ctx.fillStyle = cp.panel;
+    ctx.globalAlpha = .90;
+    ctx.fillRect(m.x0,rowTop,m.x1-m.x0,rowH);
+    ctx.globalAlpha = .72;
+    ctx.strokeStyle = cp.grid2;
+    ctx.lineWidth = .8;
+    ctx.beginPath();
+    ctx.moveTo(m.x0,rowTop);
+    ctx.lineTo(m.x1,rowTop);
+    ctx.stroke();
+
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#ef4444';
+    ctx.strokeStyle = '#ef4444';
+    ctx.lineWidth = 1;
+    ctx.font = 'bold 18px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    for (let i=0;i<m.data.length;i+=3) {
+      const z = m.data[i];
+      if (!Number.isFinite(z?.WD)) continue;
+      const xx = xForTime(z.t,m);
+      ctx.save();
+      ctx.translate(xx,arrowY);
+      ctx.rotate((z.WD+180)*Math.PI/180);
+      ctx.strokeText('↑',0,6);
+      ctx.fillText('↑',0,6);
+      ctx.restore();
+    }
+    ctx.restore();
+
+    // Stary panel kierunku ma wysokość 0, ale jego pionowy podpis mógłby zostać
+    // narysowany na granicy paneli. Czyścimy wyłącznie pas podpisu, bez osi liczb.
+    if (dir) {
+      ctx.save();
+      ctx.fillStyle = cp.bg;
+      ctx.fillRect(m.x0-88,dir.y-42,28,84);
+      ctx.restore();
+    }
+  }
+
+  function installWindPanelMerge() {
+    mergeWindPanels();
+    if (window.__epirWindMergedDrawWrapped || typeof draw !== 'function') return;
+    const baseDraw = draw;
+    draw = function() {
+      const out = baseDraw.apply(this,arguments);
+      drawWindDirectionInsideWind();
+      return out;
+    };
+    window.__epirWindMergedDrawWrapped = true;
+  }
+
   function install() {
     // Usuń ewentualny dodatkowy pasek z poprzedniej wersji bez przeładowania cache.
     document.getElementById('desktopZoomControls')?.remove();
     document.getElementById('desktopZoomControlsStyle')?.remove();
     installSingleFitControl();
+    installWindPanelMerge();
+    installVisibilityInfoFilter();
+
+    const hint = document.querySelector('.gesture-hint');
+    if (hint) hint.innerHTML = '<b>Telefon:</b> jeden palec przewija stronę, dwa palce przesuwają i powiększają meteogram. <b>Komputer:</b> po powiększeniu przytrzymaj lewy przycisk myszy i przeciągnij wykres. − / + zmienia skalę, a <b>Dopasuj</b> mieści cały meteogram.';
 
     window.addEventListener('resize', () => {
       clearTimeout(resizeTimer);
@@ -87,6 +274,12 @@
         if (fitMode) fitWholeMeteogram();
       }, 160);
     }, {passive:true});
+
+    requestAnimationFrame(() => {
+      try {
+        if (typeof consensus !== 'undefined' && Array.isArray(consensus) && consensus.length && typeof draw === 'function') draw();
+      } catch (_) { }
+    });
   }
 
   if (document.readyState === 'loading') {
