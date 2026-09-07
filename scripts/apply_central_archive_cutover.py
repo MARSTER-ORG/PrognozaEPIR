@@ -86,6 +86,8 @@ def patch_pages_workflow() -> bool:
     s=s.replace('          test -s _site/data/observations/latest.json\n          test -s _site/data/observations/recent.json','          test -s _site/data/messages/latest.json\n          test -s _site/data/messages/recent.json\n          test -s _site/data/messages/status.json')
     s=s.replace('          test -s _site/data/taf/neighbors.json\n','')
     s=s.replace('          python3 -m json.tool _site/data/observations/latest.json >/dev/null\n          python3 -m json.tool _site/data/observations/recent.json >/dev/null','          python3 -m json.tool _site/data/messages/latest.json >/dev/null\n          python3 -m json.tool _site/data/messages/recent.json >/dev/null\n          python3 -m json.tool _site/data/messages/status.json >/dev/null')
+    s=s.replace('          python3 -m json.tool _site/data/taf/neighbors.json >/dev/null\n','')
+    s=s.replace('          grep -F "data/observations/recent.json" _site/observation-engine.js','          grep -F "data/messages/recent.json" _site/observation-engine.js')
     if '_site/data/observations' in s or '_site/data/taf' in s: raise SystemExit('legacy bulletin trees survived Pages cutover')
     if 'message-archive-client.js' not in s or 'taf-archive-source.js' not in s or '_site/data/messages' not in s: raise SystemExit('central archive assets missing from Pages workflow')
     if s!=before: p.write_text(s,encoding='utf-8'); return True
