@@ -11,6 +11,78 @@
   const WIND_ARROW_COLOR = '#ef4444';
   const WIND_ARROW_FONT = 'bold 22px Arial';
 
+  // Desktop: po powiększeniu meteogram można przesuwać trzymając lewy przycisk myszy.
+  const viewport = document.getElementById('canvasViewport');
+  if (viewport && typeof stageSize === 'function' && typeof applyTransform === 'function') {
+    let mouseDrag = null;
+    let suppressMouseClickUntil = 0;
+
+    const canMousePan = () => {
+      const s = stageSize();
+      return s.w * zoom > viewport.clientWidth + 2 || s.h * zoom > viewport.clientHeight + 2;
+    };
+
+    const updateMouseCursor = () => {
+      if (mouseDrag) viewport.style.cursor = 'grabbing';
+      else viewport.style.cursor = canMousePan() ? 'grab' : 'default';
+    };
+
+    viewport.addEventListener('pointerdown', e => {
+      if (e.pointerType !== 'mouse' || e.button !== 0 || !canMousePan()) return;
+      mouseDrag = {
+        id: e.pointerId,
+        x: e.clientX,
+        y: e.clientY,
+        panX,
+        panY,
+        moved: false
+      };
+      try { viewport.setPointerCapture(e.pointerId); } catch (_) {}
+      viewport.style.cursor = 'grabbing';
+      e.preventDefault();
+    });
+
+    viewport.addEventListener('pointermove', e => {
+      if (!mouseDrag || e.pointerId !== mouseDrag.id) return;
+      const dx = e.clientX - mouseDrag.x;
+      const dy = e.clientY - mouseDrag.y;
+      if (Math.hypot(dx,dy) >= 3) mouseDrag.moved = true;
+      panX = mouseDrag.panX + dx;
+      panY = mouseDrag.panY + dy;
+      applyTransform();
+      e.preventDefault();
+    });
+
+    const endMouseDrag = e => {
+      if (!mouseDrag || (e.pointerId != null && e.pointerId !== mouseDrag.id)) return;
+      const moved = mouseDrag.moved;
+      const pointerId = mouseDrag.id;
+      mouseDrag = null;
+      if (moved) suppressMouseClickUntil = Date.now() + 450;
+      try { viewport.releasePointerCapture(pointerId); } catch (_) {}
+      updateMouseCursor();
+    };
+
+    viewport.addEventListener('pointerup', endMouseDrag);
+    viewport.addEventListener('pointercancel', endMouseDrag);
+    viewport.addEventListener('lostpointercapture', endMouseDrag);
+    viewport.addEventListener('pointerenter', updateMouseCursor);
+
+    viewport.addEventListener('click', e => {
+      if (Date.now() < suppressMouseClickUntil) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    }, true);
+
+    window.addEventListener('resize', updateMouseCursor);
+    document.getElementById('zoomOut')?.addEventListener('click', () => requestAnimationFrame(updateMouseCursor));
+    document.getElementById('zoomIn')?.addEventListener('click', () => requestAnimationFrame(updateMouseCursor));
+    document.getElementById('zoomReset')?.addEventListener('click', () => requestAnimationFrame(updateMouseCursor));
+    document.getElementById('zoomFit')?.addEventListener('click', () => requestAnimationFrame(updateMouseCursor));
+    requestAnimationFrame(updateMouseCursor);
+  }
+
   function xFor(t,m) {
     return m.x0 + (t-m.t0)/(m.t1-m.t0)*(m.x1-m.x0);
   }
