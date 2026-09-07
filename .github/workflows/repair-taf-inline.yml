@@ -1,0 +1,70 @@
+name: Repair TAF inline scripts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/repair-taf-inline.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Rebuild embedded TAF scripts from validated sources
+        run: |
+          node --check taf-multisource.js
+          node --check taf-verification.js
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('taf.html')
+          s=p.read_text(encoding='utf-8')
+
+          # First inline script is the multi-source loader.
+          a=s.find('<script>')
+          if a<0: raise SystemExit('first script not found')
+          b=s.find('</script>',a)
+          if b<0: raise SystemExit('first script end not found')
+          multi=Path('taf-multisource.js').read_text(encoding='utf-8').strip()
+          s=s[:a]+'<script>\n'+multi+'\n</script>'+s[b+9:]
+
+          # Keep the embedded verifier synchronized with its source file.
+          marker='/* TAF Verification v1.0 inline */'
+          pos=s.find(marker)
+          if pos<0: raise SystemExit('verification marker not found')
+          va=s.rfind('<script>',0,pos)
+          vb=s.find('</script>',pos)
+          if va<0 or vb<0: raise SystemExit('verification script bounds not found')
+          verify=Path('taf-verification.js').read_text(encoding='utf-8').strip()
+          s=s[:va]+'<script>\n'+marker+'\n'+verify+'\n</script>'+s[vb+9:]
+          p.write_text(s,encoding='utf-8')
+          PY
+
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('taf.html').read_text(encoding='utf-8')
+          a=s.find('<script>'); b=s.find('</script>',a)
+          Path('/tmp/taf-multi.js').write_text(s[a+8:b],encoding='utf-8')
+          marker='/* TAF Verification v1.0 inline */'; pos=s.find(marker)
+          va=s.rfind('<script>',0,pos); vb=s.find('</script>',pos)
+          Path('/tmp/taf-verify.js').write_text(s[va+8:vb],encoding='utf-8')
+          PY
+          node --check /tmp/taf-multi.js
+          node --check /tmp/taf-verify.js
+
+      - name: Commit repair
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add taf.html
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: rebuild validated TAF inline scripts"
+          git pull --rebase origin main
+          git push origin HEAD:main
