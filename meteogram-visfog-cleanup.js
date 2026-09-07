@@ -6,17 +6,13 @@
   const WIND_ARROW = '#ef4444';
   const FOG_TOOLTIP_THRESHOLD = 40;
   const MAX_RISK_MATCH_MS = 70 * 60e3;
+  const HOUR = 3600e3;
 
   function mergeWindPanels() {
     if (typeof PANELS === 'undefined' || !Array.isArray(PANELS)) return;
     const wind = PANELS.find(p => p && p.id === 'wind');
     const dir = PANELS.find(p => p && p.id === 'dir');
     if (wind) wind.h = 84;
-
-    // Zachowujemy techniczny wpis "dir", ponieważ meteogram-visfog-split.js
-    // odwołuje się do niego przez byId('dir'). Usunięcie wpisu powodowało
-    // wyjątek w withClip() i przerywało rysowanie całego meteogramu.
-    // Wysokość 0 usuwa ten panel z układu bez łamania kodu bazowego.
     if (dir) dir.h = 0;
   }
 
@@ -59,45 +55,115 @@
     values.appendChild(cell);
   }
 
-  function drawWindDirectionForeground() {
+  function redrawWindPanelForeground() {
     if (typeof cv === 'undefined' || typeof ctx === 'undefined') return;
     const m = cv._meta;
-    if (!m || !Array.isArray(m.panelYs) || !Array.isArray(m.data)) return;
+    if (!m || !Array.isArray(m.panelYs) || !Array.isArray(m.data) || !m.data.length) return;
     const p = m.panelYs.find(row => row && row.id === 'wind');
     if (!p || !finite(p.y) || !finite(p.h) || p.h <= 0) return;
 
     const x0 = m.x0, x1 = m.x1;
     const plotW = x1 - x0;
     const x = t => clamp(x0 + (t - m.t0) / (m.t1 - m.t0) * plotW, x0, x1);
-    const cy = p.y + p.h / 2;
-    const dark = typeof activeTheme === 'function' && activeTheme() === 'dark';
+    const cp = canvasPalette();
+    const maxW = Math.max(10,...m.data.flatMap(z=>[Number(z.WS)||0,Number(z.G)||0]));
+    const windMax = Math.ceil(maxW/5)*5;
+    const y = value => p.y + p.h - clamp(Number(value)||0,0,windMax) / windMax * p.h;
 
     ctx.save();
     ctx.beginPath();
     ctx.rect(x0,p.y,plotW,p.h);
     ctx.clip();
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.font = 'bold 22px Arial';
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
 
+    // Przerysuj cały panel od zera, aby żadna stara warstwa kierunku
+    // ani poprzednie linie skali nie mogły zostać pod spodem.
+    ctx.fillStyle = cp.panel;
+    ctx.fillRect(x0,p.y,plotW,p.h);
+
+    // Pionowa siatka godzinowa jak w pozostałych sekcjach.
+    const firstHour = Math.ceil(m.t0/HOUR)*HOUR;
+    for (let t=firstHour;t<=m.t1;t+=HOUR) {
+      const xx=x(t), major=(new Date(t).getUTCHours()%3===0);
+      ctx.save();
+      ctx.strokeStyle=major?cp.grid:cp.grid2;
+      ctx.globalAlpha=major?.72:.42;
+      ctx.lineWidth=major?1.15:.75;
+      ctx.beginPath();ctx.moveTo(xx,p.y);ctx.lineTo(xx,p.y+p.h);ctx.stroke();
+      ctx.restore();
+    }
+
+    // Skala wiatru bez wewnętrznego marginesu: 0 dokładnie na dolnej
+    // krawędzi sekcji, maksimum dokładnie na górnej krawędzi.
+    ctx.font='9px Arial';
+    ctx.textAlign='right';
+    ctx.textBaseline='middle';
+    for (let i=0;i<=4;i++) {
+      const value=windMax*i/4;
+      const yy=y(value);
+      ctx.save();
+      ctx.strokeStyle=cp.grid2;
+      ctx.globalAlpha=(i===0||i===4)?.58:.36;
+      ctx.lineWidth=.8;
+      ctx.beginPath();ctx.moveTo(x0,yy);ctx.lineTo(x1,yy);ctx.stroke();
+      ctx.restore();
+      ctx.fillStyle=cp.muted;
+      ctx.globalAlpha=.98;
+      const label=Math.abs(value-Math.round(value))<.05?String(Math.round(value)):value.toFixed(1);
+      ctx.fillText(label,x0-8,yy);
+      ctx.globalAlpha=1;
+    }
+
+    function drawSeries(key,color,width,dash=[]) {
+      ctx.strokeStyle=color;
+      ctx.lineWidth=width;
+      ctx.setLineDash(dash);
+      ctx.lineJoin='round';
+      ctx.lineCap='round';
+      ctx.beginPath();
+      let started=false;
+      for (const z of m.data) {
+        if (!finite(z?.t) || !finite(z?.[key])) { started=false; continue; }
+        const xx=x(z.t), yy=y(z[key]);
+        if (!started) { ctx.moveTo(xx,yy); started=true; }
+        else ctx.lineTo(xx,yy);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    drawSeries('WS','#152f9a',1.8);
+    drawSeries('G','#c33b2b',1.9,[5,4]);
+
+    // Jeden zestaw strzałek, dokładnie w połowie wysokości sekcji Wiatr,
+    // rysowany na końcu na pierwszym planie.
+    const cy=p.y+p.h/2;
+    const dark=typeof activeTheme==='function' && activeTheme()==='dark';
+    ctx.textAlign='center';
+    ctx.textBaseline='middle';
+    ctx.font='bold 22px Arial';
+    ctx.lineJoin='round';
+    ctx.lineCap='round';
     for (let i=0;i<m.data.length;i+=3) {
-      const z = m.data[i];
+      const z=m.data[i];
       if (!z || !finite(z.WD) || !finite(z.t)) continue;
       ctx.save();
       ctx.translate(x(z.t),cy);
       ctx.rotate((z.WD+180)*Math.PI/180);
-
-      // Jedyny widoczny zestaw strzałek: na pierwszym planie i dokładnie
-      // pośrodku sekcji Wiatr.
-      ctx.strokeStyle = dark ? 'rgba(10,15,20,.94)' : 'rgba(255,255,255,.96)';
-      ctx.lineWidth = 3.4;
+      ctx.strokeStyle=dark?'rgba(10,15,20,.94)':'rgba(255,255,255,.96)';
+      ctx.lineWidth=3.4;
       ctx.strokeText('↑',0,0);
-      ctx.fillStyle = WIND_ARROW;
+      ctx.fillStyle=WIND_ARROW;
       ctx.fillText('↑',0,0);
       ctx.restore();
     }
+
+    ctx.restore();
+
+    ctx.save();
+    ctx.strokeStyle=cp.border;
+    ctx.globalAlpha=.98;
+    ctx.lineWidth=1;
+    ctx.strokeRect(x0,p.y,plotW,p.h);
     ctx.restore();
   }
 
@@ -156,8 +222,6 @@
       if (e.pointerType !== 'mouse') return;
       const x = e.clientX;
       const y = e.clientY;
-      // visual-style-fix.js najpierw przebudowuje dymek. Mikrozadanie dopisuje
-      // ryzyka dopiero po zakończeniu wszystkich listenerów pointermove.
       queueMicrotask(() => updateTooltip(x,y));
     });
   }
@@ -265,8 +329,7 @@
     draw = function() {
       mergeWindPanels();
 
-      // Bazowy meteogram nadal zawiera techniczny panel dir. Wyłączamy jego
-      // stare strzałki i etykietę wyłącznie na czas rysowania bazowego.
+      // Zablokuj wszystkie stare strzałki kierunku podczas bazowego rysowania.
       const nativeFillText = ctx.fillText;
       const nativeStrokeText = ctx.strokeText;
       ctx.fillText = function(text,...args) {
@@ -286,9 +349,7 @@
         ctx.strokeText = nativeStrokeText;
       }
 
-      // Po przywróceniu natywnych metod rysujemy tylko jeden zestaw strzałek
-      // na pierwszym planie, pośrodku sekcji Wiatr.
-      drawWindDirectionForeground();
+      redrawWindPanelForeground();
       return out;
     };
     window.__epirMergedWindPanelWrapped = true;
