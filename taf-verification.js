@@ -2,8 +2,7 @@
 (() => {
   const VERSION='TAF Verification v2.0';
   const BLOCKED_SKILL_KEY='prognozaepir-taf-skill-v1';
-  const METAR_RAW_BASE='https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/observations/metar/';
-  const TAF_RAW_BASE='https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/taf/epir/';
+  const CENTRAL_RAW_BASE='https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/messages/';
   const VIS_BANDS=[800,1500,3000,5000];
   const CEIL_BANDS=[200,300,500,1000,1500];
   const PARAMS=['wind','vis','ceiling','wx'];
@@ -173,14 +172,22 @@
     }
     return[];
   }
+  function centralDayUrls(kind,day){
+    const [y,m,d]=day.split('-');
+    return [
+      `data/messages/${kind}/${y}/${m}/${d}.jsonl?_=${Date.now()}`,
+      `${CENTRAL_RAW_BASE}${kind}/${y}/${m}/${d}.jsonl?raw=${Date.now()}`
+    ];
+  }
   async function fetchMetarDay(day){
-    return fetchJsonl([`data/observations/metar/${day}.jsonl?_=${Date.now()}`,`${METAR_RAW_BASE}${day}.jsonl?raw=${Date.now()}`]);
+    const [metar,speci]=await Promise.all([
+      fetchJsonl(centralDayUrls('metar',day)),
+      fetchJsonl(centralDayUrls('speci',day))
+    ]);
+    return [...metar,...speci];
   }
   async function fetchTafIssueDay(day){
-    const [y,m,d]=day.split('-');
-    const rel=`data/taf/epir/${y}/${m}/${d}.jsonl?_=${Date.now()}`;
-    const raw=`${TAF_RAW_BASE}${y}/${m}/${d}.jsonl?raw=${Date.now()}`;
-    return fetchJsonl([rel,raw]);
+    return fetchJsonl(centralDayUrls('taf',day));
   }
   async function observationsFor(p){
     const chunks=await Promise.all(datesBetween(p.vs,p.ve).map(fetchMetarDay)),map=new Map();
@@ -191,8 +198,8 @@
     return[...map.values()].sort((a,b)=>Date.parse(a.obs_time)-Date.parse(b.obs_time));
   }
   function normalizeRecord(r){
-    if(!r||r.station!=='EPIR'||r.kind!=='official'||!r.raw)return null;
-    const ref=Date.parse(r.issue_time||r.source_updated_at||0)||Date.now();
+    if(!r||r.station!=='EPIR'||String(r.type||'').toUpperCase()!=='TAF'||!r.raw)return null;
+    const ref=Date.parse(r.issue_time||r.message_time||0)||Date.now();
     const p=parseTaf(r.raw,ref);if(!p)return null;
     const issue=Date.parse(r.issue_time||0),vs=Date.parse(r.valid_start||0),ve=Date.parse(r.valid_end||0);
     if(finite(issue))p.issue=issue;if(finite(vs))p.vs=vs;if(finite(ve))p.ve=ve;
