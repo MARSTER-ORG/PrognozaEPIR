@@ -212,12 +212,125 @@
 
   setTimeout(() => rebuild({resetResults:false}), 1200);
 
+  // Keep the POLRAD legend intentionally compact. A legacy CAPPI helper still
+  // contains the full 21-colour scale, so the final renderer must run after it.
+  const LEGEND_11 = [
+    ['≥59','#f58cff'],
+    ['53–58','#ff19cc'],
+    ['47–52','#e60059'],
+    ['41–46','#ff1600'],
+    ['35–40','#ff8800'],
+    ['29–34','#fff200'],
+    ['23–28','#fffbd8'],
+    ['17–22','#b8f4f1'],
+    ['11–16','#1bc8f0'],
+    ['5–10','#0033e8'],
+    ['0–4','#0000aa']
+  ];
+
+  function renderLegend11(){
+    const legend = document.querySelector('.legend-dbz');
+    if (!legend) return;
+    legend.dataset.fullScale = '1';
+    legend.dataset.steps = '11';
+    legend.innerHTML = '<b>POLRAD dBZ</b><div class="dbz-grid">' + LEGEND_11.map(([label,color]) =>
+      '<div class="dbz-row"><span class="sw" style="background:'+color+'"></span><span>'+label+'</span></div>'
+    ).join('') + '</div>';
+  }
+
+  const legendStyle = document.createElement('style');
+  legendStyle.id = 'epirFinalLegend11Style';
+  legendStyle.textContent = `
+    .legend-dbz{font-size:7px!important;line-height:1.05!important;padding:4px 5px!important;min-width:82px!important;max-height:none!important;overflow:visible!important}
+    .legend-dbz>b{display:block;font-size:8px!important;margin-bottom:3px!important}
+    .legend-dbz .dbz-grid{display:grid!important;grid-template-columns:1fr!important;gap:1px!important}
+    .legend-dbz .dbz-row{display:flex!important;align-items:center!important;gap:3px!important;white-space:nowrap!important;margin:0!important}
+    .legend-dbz .sw{width:11px!important;height:6px!important;flex:0 0 11px!important;margin:0!important}
+  `;
+  document.head.appendChild(legendStyle);
+  renderLegend11();
+  setTimeout(renderLegend11,250);
+  setTimeout(renderLegend11,900);
+  setTimeout(renderLegend11,1800);
+
+  const legendHost = document.querySelector('.leaflet-control-container') || document.body;
+  const legendObserver = new MutationObserver(() => {
+    const legend = document.querySelector('.legend-dbz');
+    if (legend && legend.dataset.steps !== '11') renderLegend11();
+  });
+  legendObserver.observe(legendHost,{childList:true,subtree:true});
+
+  // Layer hygiene: if no radar product button is active, no POLRAD/RainViewer
+  // imagery may remain on the Leaflet map. This also catches a late async CAPPI
+  // response that arrives after CAPPI has already been switched off.
+  const radarButtonIds = ['polrad_cmax','polrad_cappi','polrad_sri','polrad_pac','radarToggle'];
+  function anyRadarActive(){
+    return radarButtonIds.some(id => $(id)?.classList.contains('active'));
+  }
+
+  function isRadarDataLayer(layer){
+    try {
+      const attr = String(layer?.options?.attribution || '');
+      const url = String(layer?._url || layer?._image?.currentSrc || layer?._image?.src || '');
+      const text = (attr + ' ' + url).toLowerCase();
+      return /polrad|rainviewer|meteo\.imgw\.pl\/.*radar/.test(text);
+    } catch (_) { return false; }
+  }
+
+  function purgeInactiveRadarLayers(){
+    if (anyRadarActive()) return;
+    const remove = [];
+    map.eachLayer(layer => { if (isRadarDataLayer(layer)) remove.push(layer); });
+    remove.forEach(removeLayerSafe);
+
+    // CAPPI has a fallback rendered outside Leaflet. Hide that as well if a
+    // delayed request completes after the user has already disabled the layer.
+    const cappiWrap = $('cappiWrap');
+    const cappiImage = $('cappiImage');
+    const mapEl = $('map');
+    if (cappiWrap && cappiWrap.style.display !== 'none') cappiWrap.style.display = 'none';
+    if (cappiImage?.getAttribute('src')) cappiImage.removeAttribute('src');
+    if (mapEl && mapEl.style.display === 'none' && !document.getElementById('blitzortungLive')?.classList.contains('active')) {
+      mapEl.style.display = '';
+      setTimeout(() => { try { map.invalidateSize(); } catch (_) {} }, 30);
+    }
+  }
+
+  map.on('layeradd', e => {
+    if (!anyRadarActive() && isRadarDataLayer(e.layer)) {
+      setTimeout(() => {
+        if (!anyRadarActive() && map.hasLayer(e.layer)) removeLayerSafe(e.layer);
+      }, 0);
+    }
+  });
+
+  const mapbar = document.querySelector('.mapbar');
+  mapbar?.addEventListener('click', () => {
+    setTimeout(purgeInactiveRadarLayers,0);
+    setTimeout(purgeInactiveRadarLayers,120);
+    setTimeout(purgeInactiveRadarLayers,700);
+  });
+
+  const cappiWrap = $('cappiWrap');
+  const cappiImage = $('cappiImage');
+  if (cappiWrap) {
+    const cappiObserver = new MutationObserver(() => {
+      if (!anyRadarActive()) setTimeout(purgeInactiveRadarLayers,0);
+    });
+    cappiObserver.observe(cappiWrap,{attributes:true,subtree:true,attributeFilter:['style','src']});
+    if (cappiImage) cappiObserver.observe(cappiImage,{attributes:true,attributeFilter:['src']});
+  }
+
+  setTimeout(purgeInactiveRadarLayers,2200);
+
   window.PrognozaEPIRRangeReset = {
     rebuild,
     clearOldPointGraphics,
     fitAnalysisRadius,
     goToAnalysisMap,
     zoomToAnalysisRadius,
+    renderLegend11,
+    purgeInactiveRadarLayers,
     radiiKm:RADII_KM.slice()
   };
 })();
