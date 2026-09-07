@@ -94,13 +94,28 @@ function timeline(){const now=Date.now(),t0=Math.ceil(now/3600e3)*3600e3,out=[];
 function compute(){consensus=timeline().map(t=>{let items=[];for(const m of MODELS){const ds=datasets.get(m.id);if(!ds)continue;const row=sample(ds,t);if(row)items.push({model:m,row,w:m.w,elevation:ds.elevation})}const sw=items.reduce((a,b)=>a+b.w,0);if(sw)items=items.map(i=>({...i,w:i.w/sw}));const W=wind(items);let terr=0,tw=0;for(const i of items){if(finite(i.elevation)){terr+=i.elevation*i.w;tw+=i.w}}terr=tw?terr/tw:90;const pr=profile(items,terr),ceil=ceiling(pr),low=band(pr,0,2000),mid=band(pr,2000,5000),high=band(pr,5000,13001),oktaL=toOkta(low),oktaM=toOkta(mid),oktaH=toOkta(high),lowH=bandHeightForAmount(pr,0,2000,oktaL),midH=bandHeightForAmount(pr,2000,5000,oktaM),highH=bandHeightForAmount(pr,5000,13001,oktaH);const wetItems=items.filter(i=>finite(i.row.precipitation)),wetW=wetItems.reduce((a,i)=>a+i.w,0),wet=wetW?wetItems.filter(i=>i.row.precipitation>=.1).reduce((a,i)=>a+i.w,0)/wetW:null;const stormItems=items.filter(i=>finite(i.row.weather_code)),stormW=stormItems.reduce((a,i)=>a+i.w,0),storm=stormW?stormItems.filter(i=>[95,96,99].includes(Math.round(i.row.weather_code))).reduce((a,i)=>a+i.w,0)/stormW:null;return{t,T:wavg(items,'temperature_2m'),Td:wavg(items,'dew_point_2m'),RH:wavg(items,'relative_humidity_2m'),RR:wavg(items,'precipitation'),P:wavg(items,'pressure_msl'),VIS:wavg(items,'visibility'),WS:W.speed,WD:W.dir,G:wavg(items,'wind_gusts_10m'),low,mid,high,lowH,midH,highH,oktaL,oktaM,oktaH,wet:finite(wet)?wet*100:null,storm:finite(storm)?storm*100:null,profile:pr,ceiling:ceil,count:wetItems.length,stormCount:stormItems.length}})}
 async function fetchJSON(url,timeoutMs=12000){
   const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),timeoutMs);
-  try{const r=await fetch(url,{cache:'no-cache',signal:ctl.signal});let j=null;try{j=await r.json()}catch(e){}if(!r.ok){const msg=j?.error||j?.reason||j?.message||('HTTP '+r.status);throw new Error(msg)}return j}
+  try{const r=await fetch(url,{cache:'no-cache',signal:ctl.signal});let j=null;try{j=await r.json()}catch(e){}if(!r.ok){const msg=j?.reason||j?.message||(typeof j?.error==='string'?j.error:('HTTP '+r.status));throw new Error(msg)}return j}
   finally{clearTimeout(timer)}
 }
-async function req(model,prof=false){
-  const vars=prof?profileVarsFor(model):SURFACE;
+async function reqVars(model,vars,timeoutMs){
   const q=new URLSearchParams({latitude:PLACE.lat,longitude:PLACE.lon,hourly:vars.join(','),models:model.id,timezone:'UTC',forecast_days:'6',wind_speed_unit:'ms'});
-  return await fetchJSON('https://api.open-meteo.com/v1/forecast?'+q,prof?16000:12000)
+  return await fetchJSON('https://api.open-meteo.com/v1/forecast?'+q,timeoutMs)
+}
+async function req(model,prof=false){
+  let vars=(prof?profileVarsFor(model):SURFACE).filter(v=>!(model.surfaceExclude||[]).includes(v));
+  if(prof)return await reqVars(model,vars,16000);
+  let last=null;
+  for(let attempt=0;attempt<5&&vars.length;attempt++){
+    try{return await reqVars(model,vars,12000)}catch(e){
+      last=e;
+      const msg=String(e?.message||e||'');
+      const bad=vars.find(v=>msg.includes(v));
+      if(!bad)break;
+      vars=vars.filter(v=>v!==bad);
+    }
+  }
+  const safe=['temperature_2m','relative_humidity_2m','precipitation','wind_speed_10m','wind_direction_10m'].filter(v=>!(model.surfaceExclude||[]).includes(v));
+  try{return await reqVars(model,safe,12000)}catch(e){throw last||e}
 }
 async function fetchModel(m){
   const core=await req(m,false);let prof=null;try{prof=await req(m,true)}catch(e){}
@@ -109,7 +124,7 @@ async function fetchModel(m){
   const rows=core.hourly.time.map((time,i)=>{const r={time};for(const v of SURFACE)r[v]=core.hourly[v]?.[i]??null;Object.assign(r,pm.get(time)||{});return r});
   return{model:m,elevation:finite(core.elevation)?core.elevation:(finite(prof?.elevation)?prof.elevation:null),rows:build(rows)}
 }
-async function load(){setBadge('ŁADOWANIE','');failures=[];datasets.clear();demo=false;try{const res=await Promise.allSettled(MODELS.map(fetchModel));res.forEach((r,i)=>{const m=MODELS[i];if(r.status==='fulfilled')datasets.set(m.id,r.value);else failures.push(m.name+': '+(r.reason?.message||r.reason))});if(datasets.size<3){setBadge('BRAK DANYCH','');$('errors').style.display='block';$('errors').textContent='Nie udało się pobrać wystarczającej liczby modeli z Open-Meteo. Spróbuj ponownie za chwilę.';return}compute();populateView();render()}catch(e){setBadge('BŁĄD','');$('errors').style.display='block';$('errors').textContent='Błąd programu: '+(e?.message||e);console.error(e)}}
+async function load(){setBadge('ŁADOWANIE','');failures=[];datasets.clear();demo=false;populateView();try{const res=await Promise.allSettled(MODELS.map(fetchModel));res.forEach((r,i)=>{const m=MODELS[i];if(r.status==='fulfilled')datasets.set(m.id,r.value);else failures.push(m.name+': '+(r.reason?.message||r.reason))});populateView();if(!datasets.size){setBadge('BRAK DANYCH','');$('errors').style.display='block';$('errors').textContent='Nie udało się pobrać żadnego modelu z Open-Meteo. Spróbuj ponownie za chwilę.';return}compute();render()}catch(e){populateView();setBadge('BŁĄD','');$('errors').style.display='block';$('errors').textContent='Błąd programu: '+(e?.message||e);console.error(e)}}
 function setBadge(t,cls){$('badge').textContent=t;$('badge').className='badge '+cls}
 function populateView(){const sel=$('view'),old=sel.value;sel.innerHTML='<option value="consensus">PrognozaEPIR CONSENSUS</option>';for(const m of MODELS){const o=document.createElement('option');o.value=m.id;o.textContent=m.name+(datasets.has(m.id)?'':' — brak danych');o.disabled=!datasets.has(m.id);sel.appendChild(o)}sel.value=[...sel.options].some(o=>o.value===old&&!o.disabled)?old:'consensus';selected=sel.value}
 function modelSeries(id){const ds=datasets.get(id);if(!ds)return[];const t=timeline();return t.map(x=>{const r=sample(ds,x);if(!r)return null;const pr=profile([{row:r,w:1,elevation:ds.elevation}],finite(ds.elevation)?ds.elevation:90),ceil=ceiling(pr),low=band(pr,0,2000),mid=band(pr,2000,5000),high=band(pr,5000,13001),oktaL=toOkta(low),oktaM=toOkta(mid),oktaH=toOkta(high),lowH=bandHeightForAmount(pr,0,2000,oktaL),midH=bandHeightForAmount(pr,2000,5000,oktaM),highH=bandHeightForAmount(pr,5000,13001,oktaH);return{t:x,T:r.temperature_2m,Td:r.dew_point_2m,RH:r.relative_humidity_2m,RR:r.precipitation,P:r.pressure_msl,VIS:r.visibility,WS:r.wind_speed_10m,WD:r.wind_direction_10m,G:r.wind_gusts_10m,low,mid,high,lowH,midH,highH,oktaL,oktaM,oktaH,wet:finite(r.precipitation)?(r.precipitation>=.1?100:0):null,storm:finite(r.weather_code)?([95,96,99].includes(Math.round(r.weather_code))?100:0):null,profile:pr,ceiling:ceil,count:1,stormCount:finite(r.weather_code)?1:0}}).filter(Boolean)}
