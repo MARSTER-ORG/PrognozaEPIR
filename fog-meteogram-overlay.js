@@ -5,6 +5,7 @@
   const BR_DRAW_THRESHOLD = 60;
   const FOG_INFO_THRESHOLD = 40;
   const MIFG_INFO_THRESHOLD = 40;
+  const BR_INFO_THRESHOLD = 40;
   const BR_COLOR = '#c084fc';
   // Legacy Pages verifier markers only; runtime thresholds above are authoritative.
   // FOG_DRAW_THRESHOLD = 40
@@ -355,7 +356,7 @@
     const values = box.querySelector('.section-values');
     if (!values) return;
     const help = box.querySelector('.section-help');
-    if (help) help.textContent = 'Pomarańczowa linia pokazuje widzialność konsensusu. Na meteogramie FOG, MIFG i BR są rysowane dopiero od 60/100; wartości w informacji godziny pozostają dostępne także poniżej progu rysowania.';
+    if (help) help.textContent = 'Pomarańczowa linia pokazuje widzialność konsensusu. Na meteogramie FOG, MIFG i BR są rysowane dopiero od 60/100; w informacji godziny FOG, MIFG i BR są pokazywane od 40/100.';
     if (fog && fog.score >= FOG_INFO_THRESHOLD && !values.querySelector('[data-fog-risk="1"]')) {
       const cell = document.createElement('div');
       cell.className = 'section-value';
@@ -370,7 +371,7 @@
       cell.innerHTML = '<small>Niska mgła &lt;2 m · MIFG</small><strong>' + Math.round(mifg.score) + '/100</strong>';
       values.appendChild(cell);
     }
-    if (br && !values.querySelector('[data-br-risk="1"]')) {
+    if (br && br.score >= BR_INFO_THRESHOLD && !values.querySelector('[data-br-risk="1"]')) {
       const cell = document.createElement('div');
       cell.className = 'section-value';
       cell.dataset.brRisk = '1';
@@ -453,7 +454,7 @@
         if (!panel || panel.id!=='visfog') return;
         const t=m.t0+(sx-m.x0)/(m.x1-m.x0)*(m.t1-m.t0);
         const br=brAt(t);
-        if (!br || !finite(br.score)) return;
+        if (!br || !finite(br.score) || br.score < BR_INFO_THRESHOLD) return;
         const row=document.createElement('div');
         row.setAttribute('data-epir-br-hover','1');
         row.style.cssText='display:flex;gap:12px;justify-content:space-between;white-space:nowrap';
