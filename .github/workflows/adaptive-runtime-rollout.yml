@@ -1,0 +1,134 @@
+name: Adaptive runtime rollout
+
+on:
+  push:
+    branches:
+      - main
+      - fix/model-snapshot-adaptive
+    paths:
+      - 'scripts/apply_adaptive_runtime_patch.py'
+      - 'scripts/build_model_snapshot.py'
+      - 'scripts/build_adaptive_weights.py'
+      - 'scripts/cloud_learning_backfill.py'
+      - '.github/workflows/adaptive-runtime-rollout.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: adaptive-runtime-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  rollout:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout current branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Apply frontend/runtime patch
+        run: python3 scripts/apply_adaptive_runtime_patch.py
+
+      - name: Validate Python syntax
+        run: |
+          python3 -m py_compile \
+            scripts/apply_adaptive_runtime_patch.py \
+            scripts/build_model_snapshot.py \
+            scripts/build_adaptive_weights.py \
+            scripts/cloud_learning_backfill.py \
+            scripts/cloud_learning.py \
+            scripts/model_verification.py
+
+      - name: Rebuild learning from archive
+        run: |
+          python3 scripts/model_verification.py
+          python3 scripts/cloud_learning_backfill.py
+          python3 scripts/build_adaptive_weights.py
+          python3 scripts/embed_model_verification.py
+
+      - name: Build server-side model snapshot
+        run: python3 scripts/build_model_snapshot.py
+
+      - name: Validate generated data
+        run: |
+          python3 -m json.tool data/runtime/models-latest.json >/dev/null
+          python3 -m json.tool data/learning/cloud-skill.json >/dev/null
+          python3 -m json.tool data/learning/adaptive-weights.json >/dev/null
+          python3 -m json.tool data/learning/model-verification.json >/dev/null
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          snap=json.loads(Path('data/runtime/models-latest.json').read_text(encoding='utf-8'))
+          weights=json.loads(Path('data/learning/adaptive-weights.json').read_text(encoding='utf-8'))
+          cloud=json.loads(Path('data/learning/cloud-skill.json').read_text(encoding='utf-8'))
+          assert snap.get('schema') == 'prognozaepir-model-snapshot-v1'
+          assert len(snap.get('models') or {}) >= 3, snap.get('failures')
+          assert weights.get('schema') == 'prognozaepir-adaptive-weights-v1'
+          assert len(weights.get('models') or {}) >= 8
+          assert cloud.get('schema') == 'prognozaepir-cloud-learning-v1'
+          cloud_samples=sum((b.get('n') or 0) for m in cloud.get('models',{}).values() for b in (m.get('lead_buckets') or {}).values())
+          assert cloud_samples >= 100, cloud_samples
+          print('snapshot models:', len(snap.get('models') or {}))
+          print('cloud learning samples:', cloud_samples)
+          PY
+
+      - name: Validate frontend JavaScript
+        run: |
+          node --check cloud-learning-client.js
+          node --check rh-axis-fix.js
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('index.html').read_text(encoding='utf-8')
+          js=s.split('<script>',1)[1].split('</script>',1)[0]
+          Path('/tmp/index-inline.js').write_text(js,encoding='utf-8')
+          required=[
+            'PrognozaEPIRAdaptiveWeights?.factor',
+            'relativeFactor',
+            'band(pr,2000,6000)',
+            'band(pr,6000,13001)',
+          ]
+          for marker in required:
+              assert marker in s, marker
+          client=Path('cloud-learning-client.js').read_text(encoding='utf-8')
+          assert 'MODEL_SNAPSHOT_RAW' in client
+          assert 'repository-snapshot' in client
+          PY
+          node --check /tmp/index-inline.js
+
+      - name: Commit validated runtime and learning data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            index.html rh-axis-fix.js cloud-learning-client.js \
+            scripts/cloud_learning.py \
+            .github/workflows/pages.yml \
+            data/runtime/models-latest.json \
+            data/learning/cloud-skill.json \
+            data/learning/model-verification.json \
+            data/learning/adaptive-weights.json
+          if git diff --cached --quiet; then
+            echo "No rollout changes"
+          else
+            git commit -m "weather: activate server snapshot and adaptive model weighting"
+            for attempt in 1 2 3 4; do
+              git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin HEAD:"${GITHUB_REF_NAME}" && exit 0
+              echo "rollout push retry $attempt"
+              sleep $((attempt*3))
+            done
+            exit 1
+          fi
+
+      - name: Redeploy main
+        if: github.ref_name == 'main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run pages.yml --ref main
+          gh workflow run model-snapshot.yml --ref main
+          gh workflow run cloud-learning.yml --ref main
