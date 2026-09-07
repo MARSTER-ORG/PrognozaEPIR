@@ -64,6 +64,7 @@
     if(/\bTS(?:RA|SN|GR|GS)?\b/.test(s))return'TS';
     if(/\b(?:FZRA|FZDZ|FZFG)\b/.test(s))return'FZ';
     if(/\b(?:SN|SHSN|RASN|SNRA)\b/.test(s))return'SN';
+    if(/\bMIFG\b/.test(s))return'MIFG';
     if(/\bFG\b/.test(s))return'FG';
     if(/\bBR\b/.test(s))return'BR';
     if(/\b(?:SHRA|RA|DZ)\b/.test(s))return'RA';
@@ -76,7 +77,7 @@
     const vm=s.match(/\b(9999|\d{4})\b/);
     const clouds=[...s.matchAll(/\b(FEW|SCT|BKN|OVC)(\d{3})(CB|TCU)?\b/g)].map(m=>({cover:m[1],ft:+m[2]*100,type:m[3]||''}));
     const cavok=/\bCAVOK\b/.test(s),nsc=/\bNSC\b/.test(s),nsw=/\bNSW\b/.test(s);
-    const wx=(s.match(/\b(?:\+|-)?(?:FZFG|FG|BR|HZ|TSRA|TSGR|TS|SHRA|SHSN|RASN|SNRA|FZRA|FZDZ|RA|DZ|SN|GR|GS|SQ)\b/g)||[]).join(' ');
+    const wx=(s.match(/\b(?:\+|-)?(?:MIFG|FZFG|FG|BR|HZ|TSRA|TSGR|TS|SHRA|SHSN|RASN|SNRA|FZRA|FZDZ|RA|DZ|SN|GR|GS|SQ)\b/g)||[]).join(' ');
     const out={};
     if(w){out.windDir=w[1]==='VRB'?null:+w[1];out.vrb=w[1]==='VRB';out.windKt=+w[2];out.gustKt=w[3]?w[3]==='P99'?100:+w[3]:null}
     if(cavok){out.vis=10000;out.clouds=[];out.wx='';out.wxFamily='NONE';out.cavok=true}
