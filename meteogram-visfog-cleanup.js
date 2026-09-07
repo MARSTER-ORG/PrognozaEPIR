@@ -11,16 +11,13 @@
     const dir = PANELS.find(p => p && p.id === 'dir');
     if (!wind || !dir) return;
 
-    const dirH = Number(dir.h) || 0;
-    if (dirH > 0) {
-      wind.h = (Number(wind.h) || 84) + dirH;
-      dir.h = 0;
-    }
+    // Kierunek wiatru nie jest osobnym panelem i nie zwiększa wysokości sekcji.
+    // Wiatr zachowuje pierwotną wysokość 84 px, więc oś 0 pozostaje dokładnie
+    // dolną granicą panelu, a poziome linie pomocnicze kończą się na osi 0.
+    wind.h = 84;
+    dir.h = 0;
   }
 
-  // Kierunek wiatru ma należeć do tej samej sekcji co prędkość/porywy.
-  // Zachowujemy łączną wysokość dawnych dwóch paneli, dzięki czemu skala
-  // i poziome linie pomocnicze znów obejmują całą sekcję Wiatr.
   mergeWindPanels();
 
   function drawWindDirectionForeground() {
@@ -53,8 +50,8 @@
       ctx.translate(x(z.t),cy);
       ctx.rotate((z.WD+180)*Math.PI/180);
 
-      // Kontrastowy obrys utrzymuje strzałki na pierwszym planie także wtedy,
-      // gdy w środku sekcji przebiega linia prędkości, porywu lub siatki.
+      // Jedyny zestaw strzałek kierunku: na pierwszym planie, dokładnie
+      // pośrodku właściwej sekcji Wiatr. Nie ma już dolnego pasa strzałek.
       ctx.strokeStyle = dark ? 'rgba(10,15,20,.94)' : 'rgba(255,255,255,.96)';
       ctx.lineWidth = 3.4;
       ctx.strokeText('↑',0,0);
