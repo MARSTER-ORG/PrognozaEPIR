@@ -8,6 +8,7 @@ on:
     branches: [main]
     paths:
       - 'scripts/collect_neighbor_tafs.py'
+      - 'scripts/archive_epir_taf.py'
       - '.github/workflows/collect-taf-cache.yml'
 
 permissions:
@@ -28,28 +29,30 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Collect current TAFs
+      - name: Collect and archive current TAFs
         run: |
           python3 scripts/collect_neighbor_tafs.py
+          python3 scripts/archive_epir_taf.py
           python3 -m json.tool data/taf/neighbors.json >/dev/null
+          python3 -m json.tool data/taf/latest.json >/dev/null
 
-      - name: Commit cache when changed
+      - name: Commit cache and archive when changed
         id: cache_commit
         run: |
-          if git diff --quiet -- data/taf/neighbors.json; then
-            echo "TAF cache unchanged"
+          if git diff --quiet -- data/taf; then
+            echo "TAF cache/archive unchanged"
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/taf/neighbors.json
-          git commit -m "data: refresh TAF cache"
+          git add data/taf
+          git commit -m "data: refresh and archive EPIR TAF"
           git pull --rebase origin main
           git push origin HEAD:main
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Deploy refreshed cache to GitHub Pages
+      - name: Deploy refreshed TAF data to GitHub Pages
         if: steps.cache_commit.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
