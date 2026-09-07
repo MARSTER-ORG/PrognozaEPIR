@@ -5,6 +5,7 @@
   const FOG_FULL_SCALE_KM = 19.5;
   const VIS_SCALE_MAX_KM = 30;
   const VIS_INNER_PAD = 9;
+  const PRESSURE_INNER_PAD = 9;
   const MAX_MATCH_MS = 70 * 60e3;
 
   const finite = Number.isFinite;
@@ -59,6 +60,115 @@
   // extent as the FOG overlay, but keep it as labelled points rather than bars.
   function yOnMifgScale(score,p) {
     return yOnVisibilityScale(FOG_FULL_SCALE_KM * clip(score,0,100) / 100,p);
+  }
+
+  function pressureStops() {
+    // Anchors follow the supplied example and continue smoothly downward.
+    return [
+      {p:990,c:[30,102,214]},
+      {p:995,c:[22,166,190]},
+      {p:1000,c:[20,190,115]},
+      {p:1005,c:[55,214,31]},
+      {p:1010,c:[157,240,0]},
+      {p:1015,c:[255,227,0]},
+      {p:1020,c:[255,154,0]},
+      {p:1025,c:[255,77,0]},
+      {p:1030,c:[225,42,28]}
+    ];
+  }
+
+  function pressureRgb(hpa) {
+    const stops = pressureStops();
+    if (!finite(hpa)) return [128,128,128];
+    if (hpa <= stops[0].p) return stops[0].c;
+    if (hpa >= stops[stops.length-1].p) return stops[stops.length-1].c;
+    for (let i=0;i<stops.length-1;i++) {
+      const a=stops[i], b=stops[i+1];
+      if (hpa < a.p || hpa > b.p) continue;
+      const q=(hpa-a.p)/(b.p-a.p);
+      return [
+        Math.round(a.c[0]+(b.c[0]-a.c[0])*q),
+        Math.round(a.c[1]+(b.c[1]-a.c[1])*q),
+        Math.round(a.c[2]+(b.c[2]-a.c[2])*q)
+      ];
+    }
+    return stops[0].c;
+  }
+
+  function pressureCss(hpa,alpha) {
+    const c=pressureRgb(hpa);
+    return `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
+  }
+
+  function pressureY(value,min,max,p) {
+    if (!finite(value) || !finite(min) || !finite(max) || min===max) return NaN;
+    const pad=Math.min(PRESSURE_INNER_PAD,Math.max(7,p.h*.09));
+    const usable=Math.max(1,p.h-2*pad);
+    return p.y+p.h-pad-(value-min)/(max-min)*usable;
+  }
+
+  function drawPressureFill() {
+    if (typeof cv === 'undefined' || typeof ctx === 'undefined') return;
+    const m=cv._meta;
+    if (!m || !Array.isArray(m.data) || m.data.length<2) return;
+    const p=Array.isArray(m.panelYs) ? m.panelYs.find(x=>x.id==='press') : null;
+    if (!p) return;
+
+    const d=m.data.filter(z=>z && finite(z.t));
+    const vals=d.map(z=>z.P).filter(finite);
+    if (d.length<2 || !vals.length) return;
+
+    const range=(typeof niceRange==='function') ? niceRange(vals,1,8) : [Math.floor(Math.min(...vals)-1),Math.ceil(Math.max(...vals)+1)];
+    const min=range[0], max=range[1];
+    const x0=m.x0, x1=m.x1, plotW=x1-x0;
+    const x=t=>clip(x0+(t-m.t0)/(m.t1-m.t0)*plotW,x0,x1);
+    const bottom=p.y+p.h;
+    const dark=(typeof activeTheme==='function' && activeTheme()==='dark');
+    const alpha=dark?.46:.52;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x0,p.y,plotW,p.h);
+    ctx.clip();
+
+    for (let i=0;i<d.length-1;i++) {
+      const a=d[i], b=d[i+1];
+      if (!finite(a.P) || !finite(b.P)) continue;
+      const xa=x(a.t), xb=x(b.t);
+      const ya=pressureY(a.P,min,max,p), yb=pressureY(b.P,min,max,p);
+      if (!finite(ya) || !finite(yb) || xb<=xa) continue;
+
+      const g=ctx.createLinearGradient(xa,0,xb,0);
+      g.addColorStop(0,pressureCss(a.P,alpha));
+      g.addColorStop(1,pressureCss(b.P,alpha));
+      ctx.fillStyle=g;
+      ctx.beginPath();
+      ctx.moveTo(xa,ya);
+      ctx.lineTo(xb,yb);
+      ctx.lineTo(xb,bottom);
+      ctx.lineTo(xa,bottom);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // Redraw the pressure trace over the colour field so it stays crisp.
+    const cp=typeof canvasPalette==='function' ? canvasPalette() : {press:'#f2f2f2'};
+    ctx.strokeStyle=cp.press || (dark?'#f1f1f1':'#202020');
+    ctx.lineWidth=1.8;
+    ctx.lineJoin='round';
+    ctx.lineCap='round';
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    let started=false;
+    for (const z of d) {
+      if (!finite(z.P)) { started=false; continue; }
+      const xx=x(z.t), yy=pressureY(z.P,min,max,p);
+      if (!finite(yy)) { started=false; continue; }
+      if (!started) { ctx.moveTo(xx,yy); started=true; }
+      else ctx.lineTo(xx,yy);
+    }
+    ctx.stroke();
+    ctx.restore();
   }
 
   function drawFogBars() {
@@ -186,6 +296,7 @@
       const baseDraw = draw;
       draw = function() {
         baseDraw();
+        drawPressureFill();
         drawFogBars();
       };
       window.__epirFogMeteogramDrawWrapped = true;
