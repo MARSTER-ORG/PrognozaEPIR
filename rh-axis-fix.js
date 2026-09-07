@@ -97,15 +97,15 @@
           infoValue('Podstawa',finite(z.ceiling)?Math.round(z.ceiling*3.28084)+' ft AGL':'—'),
           infoValue('Widzialność',finite(z.VIS)?f(z.VIS/1000,1)+' km':'—'),
           infoValue('Niskie',detailedCloudLayerText(z.oktaL,z.lowH,z.profile,0,2000)),
-          infoValue('Średnie',detailedCloudLayerText(z.oktaM,z.midH,z.profile,2000,5000)),
-          infoValue('Wysokie',detailedCloudLayerText(z.oktaH,z.highH,z.profile,5000,13001))
+          infoValue('Średnie',detailedCloudLayerText(z.oktaM,z.midH,z.profile,2000,6000)),
+          infoValue('Wysokie',detailedCloudLayerText(z.oktaH,z.highH,z.profile,6000,13001))
         ];
       } else {
         title = 'Warstwy chmur w oktach';
         vals = [
           infoValue('Niskie 0–2 km',detailedCloudLayerText(z.oktaL,z.lowH,z.profile,0,2000)),
-          infoValue('Średnie 2–5 km',detailedCloudLayerText(z.oktaM,z.midH,z.profile,2000,5000)),
-          infoValue('Wysokie 5–13 km',detailedCloudLayerText(z.oktaH,z.highH,z.profile,5000,13001)),
+          infoValue('Średnie 2–6 km',detailedCloudLayerText(z.oktaM,z.midH,z.profile,2000,6000)),
+          infoValue('Wysokie 6–13 km',detailedCloudLayerText(z.oktaH,z.highH,z.profile,6000,13001)),
           infoValue('Podstawa ≥5/8',finite(z.ceiling)?Math.round(z.ceiling)+' m AGL':'brak')
         ];
       }
@@ -146,8 +146,8 @@
       legendDot(sx,y,activeTheme()==='dark'?'#fff':'#555','Profil zachmurzenia');y+=18;
       legendTitle(sx,y,'Warstwy chmur');y+=14;
       legendSample(sx,y,'#f59e0b','Niskie 0–2 km');y+=13;
-      legendSample(sx,y,'#22c55e','Średnie 2–5 km');y+=13;
-      legendSample(sx,y,'#3b82f6','Wysokie 5–13 km');y+=18;
+      legendSample(sx,y,'#22c55e','Średnie 2–6 km');y+=13;
+      legendSample(sx,y,'#3b82f6','Wysokie 6–13 km');y+=18;
       ctx.fillStyle=cp.muted;ctx.font='8px Arial';ctx.textAlign='left';
       ctx.fillText('Dotknij panelu, aby',sx,y);
       ctx.fillText('zobaczyć parametry godziny.',sx,y+11);

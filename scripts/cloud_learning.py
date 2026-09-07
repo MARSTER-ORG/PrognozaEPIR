@@ -216,7 +216,7 @@ def metar_layers(m):
         h = c.get("base_m_agl")
         if not rng or h is None:
             continue
-        band = "low" if h < 2000 else ("mid" if h < 5000 else "high")
+        band = "low" if h < 2000 else ("mid" if h < 6000 else "high")
         out.append({"band": band, "cover": code, "okta_lo": rng[0], "okta_hi": rng[1], "base_m_agl": h})
     return out
 
@@ -239,7 +239,7 @@ def observed_bands_from_metar(m):
         lowest = min(x["base_m_agl"] for x in layers)
         if lowest >= 2000 and observed["low"] is None:
             observed["low"] = {"band": "low", "cover": "CLEAR_BELOW", "okta_lo": 0, "okta_hi": 0, "base_m_agl": None}
-        if lowest >= 5000 and observed["mid"] is None:
+        if lowest >= 6000 and observed["mid"] is None:
             observed["mid"] = {"band": "mid", "cover": "CLEAR_BELOW", "okta_lo": 0, "okta_hi": 0, "base_m_agl": None}
     return observed
 
