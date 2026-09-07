@@ -20,9 +20,15 @@
     const fit = clamp(vw / s.w, ZOOM_MIN, ZOOM_MAX);
     const fitH = s.h * fit;
     const mobile = window.innerWidth <= 700;
-    const cap = mobile
-      ? Math.max(380, Math.min(650, window.innerHeight * 0.66))
-      : Math.max(440, Math.min(860, window.innerHeight * 0.78));
+
+    // Na desktopie meteogram w trybie „Dopasuj” ma być widoczny w całości.
+    // Wcześniejsze ograniczenie do 78% wysokości okna ucinało dolne panele
+    // po zakończeniu ładowania, mimo że sam canvas był narysowany poprawnie.
+    if (!mobile) return Math.max(360, fitH);
+
+    // Na telefonie pozostawiamy kompaktowy viewport, żeby gest dwoma palcami
+    // nadal mógł służyć do przesuwania/powiększania wykresu.
+    const cap = Math.max(380, Math.min(650, window.innerHeight * 0.66));
     return Math.max(360, Math.min(fitH, cap));
   };
 
