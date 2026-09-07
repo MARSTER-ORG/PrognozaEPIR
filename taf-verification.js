@@ -202,7 +202,7 @@
     const target=dayStart(day),end=target+864e5;
     const issueDays=[shiftDay(day,-1),day];
     const chunks=await Promise.all(issueDays.map(fetchTafIssueDay));
-    const entries=chunks.flat().map(normalizeRecord).filter(Boolean).filter(e=>e.p.vs>=target&&e.p.vs<end);
+    const entries=chunks.flat().map(normalizeRecord).filter(Boolean).filter(e=>e.p.ve>target&&e.p.vs<end);
     const seen=new Set(),unique=[];
     for(const e of entries.sort((a,b)=>a.p.issue-b.p.issue)){
       const key=e.raw.replace(/\s+/g,' ').trim();
@@ -324,10 +324,9 @@
       </details>`;
     }).join('');
   }
-  async function refreshDay(){
-    installPanel();const day=$('tafVerifyDay')?.value;if(!day)return;
-    $('tafDayBusy').textContent='Ładowanie archiwum TAF i METAR…';
-    $('tafDayRows').innerHTML='<tr><td colspan="9">Liczenie…</td></tr>';$('tafDayDetails').innerHTML='';
+  let tafVerifyBusy=false;async function refreshDay(silent=false){
+    silent=silent===true;if(tafVerifyBusy)return;installPanel();const day=$('tafVerifyDay')?.value;if(!day)return;tafVerifyBusy=true;
+    if(!silent){$('tafDayBusy').textContent='Ładowanie archiwum TAF i METAR…';$('tafDayRows').innerHTML='<tr><td colspan="9">Liczenie…</td></tr>';$('tafDayDetails').innerHTML='';}
     try{
       const [entries,dayMetars]=await Promise.all([tafsForValidityDay(day),fetchMetarDay(day)]);
       if(!entries.length){
@@ -348,8 +347,8 @@
     }catch(e){
       $('tafDayMeta').textContent='Błąd weryfikacji: '+(e?.message||String(e));
       $('tafDayRows').innerHTML='<tr><td colspan="9" class="bad">Nie udało się policzyć raportu.</td></tr>';
-    }finally{$('tafDayBusy').textContent=VERSION+' · dane TAF tylko do weryfikacji'}
+    }finally{tafVerifyBusy=false;$('tafDayBusy').textContent=VERSION+' · auto 60 s · dane TAF tylko do weryfikacji'}
   }
-  function start(){installPanel();refreshDay()}
+  function start(){installPanel();refreshDay();setInterval(()=>{if(!document.hidden&&$('tafVerifyDay')?.value===utcDate(Date.now()))refreshDay(true)},60000);document.addEventListener('visibilitychange',()=>{if(!document.hidden&&$('tafVerifyDay')?.value===utcDate(Date.now()))refreshDay(true)})}
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start,{once:true});else start();
 })();
