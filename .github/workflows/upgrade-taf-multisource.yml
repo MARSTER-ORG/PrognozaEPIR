@@ -1,0 +1,71 @@
+name: Upgrade TAF multi-source frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/upgrade-taf-multisource.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Integrate TAF v0.3.0
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path('taf.html')
+          s=p.read_text(encoding='utf-8')
+          s=s.replace('<!-- TAF EPBY/EPPW/EPKS -->','')
+          s=s.replace('<title>PrognozaEPIR — GENERATOR TAF</title>', '<title>PrognozaEPIR — GENERATOR TAF</title><!-- TAF EPIR/EPBY/EPPW/EPKS -->', 1)
+          s=s.replace('GENERATOR TAF v0.2.0','GENERATOR TAF v0.3.0')
+          addon='<script src="taf-multisource.js"></script>'
+          if addon not in s:
+              anchor="<script>\n'use strict';"
+              if anchor not in s:
+                  raise SystemExit('TAF inline script anchor not found')
+              s=s.replace(anchor,addon+'\n'+anchor,1)
+          s=s.replace('Generator po kliknięciu „Odśwież i generuj” pobiera bieżące METAR/TAF bezpośrednio z awiacja.imgw.pl,',
+                      'Generator po kliknięciu „Odśwież i generuj” scala TAF z IMGW, AWC, PilotHub przez proxy, cache i źródeł ręcznych,')
+          p.write_text(s,encoding='utf-8')
+
+          p=Path('.github/workflows/pages.yml')
+          s=p.read_text(encoding='utf-8')
+          s=s.replace('cloud-learning-client.js \\\n', 'cloud-learning-client.js taf-multisource.js \\\n', 1)
+          s=s.replace('cloud-learning-client.js radar-enhance.js', 'cloud-learning-client.js taf-multisource.js radar-enhance.js', 1)
+          s=s.replace('node --check _site/cloud-learning-client.js\n', 'node --check _site/cloud-learning-client.js\n          node --check _site/taf-multisource.js\n', 1)
+          s=s.replace('test -s _site/cloud-learning-client.js\n', 'test -s _site/cloud-learning-client.js\n          test -s _site/taf-multisource.js\n', 1)
+          s=s.replace("grep -F 'GENERATOR TAF v0.2.0' _site/taf.html", "grep -F 'GENERATOR TAF v0.3.0' _site/taf.html")
+          s=s.replace("grep -F 'TAF EPBY/EPPW/EPKS' _site/taf.html", "grep -F 'TAF EPIR/EPBY/EPPW/EPKS' _site/taf.html")
+          marker="grep -F 'TAF EPIR/EPBY/EPPW/EPKS' _site/taf.html\n"
+          extra="          grep -F '<script src=\"taf-multisource.js\"></script>' _site/taf.html\n          grep -F 'manualTafInput' _site/taf-multisource.js\n          grep -F 'api/taf-proxy' vercel.json\n"
+          if "manualTafInput' _site/taf-multisource.js" not in s:
+              s=s.replace(marker,marker+extra,1)
+          p.write_text(s,encoding='utf-8')
+
+          Path('.github/workflows/upgrade-taf-multisource.yml').unlink()
+          PY
+
+          node --check taf-multisource.js
+          node --check api/taf-proxy.js
+          grep -F 'GENERATOR TAF v0.3.0' taf.html
+          grep -F '<script src="taf-multisource.js"></script>' taf.html
+          grep -F 'TAF EPIR/EPBY/EPPW/EPKS' taf.html
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "taf: enable multi-source loader manual TAFs and proxy"
+          git pull --rebase origin main
+          git push origin HEAD:main
