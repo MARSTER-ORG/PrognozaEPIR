@@ -8,6 +8,8 @@ on:
     branches: [main]
     paths:
       - 'scripts/cloud_learning.py'
+      - 'scripts/cloud_learning_backfill.py'
+      - 'scripts/build_adaptive_weights.py'
       - 'scripts/cloud_learning_smoke_test.py'
       - 'scripts/model_verification.py'
       - 'scripts/model_verification_realtime.py'
@@ -35,17 +37,21 @@ jobs:
       - name: Smoke test Cloud Learning
         run: python3 scripts/cloud_learning_smoke_test.py
 
-      - name: Run Cloud Learning
+      - name: Archive current cloud forecasts
         run: python3 scripts/cloud_learning.py
 
       - name: Run model verification
         run: |
-          # Keep the established long-lead samples.
+          # Keep established long-lead samples and archive current forecasts.
           python3 scripts/model_verification.py
-          # Additionally archive every model hour for the next six hours. This
-          # makes METAR/SPECI visibility verification available as soon as that
-          # observation hour has passed instead of waiting for a sparse bucket.
+          # Archive every model hour for the next six hours and refresh scores.
           python3 scripts/model_verification_realtime.py
+
+      - name: Rebuild cloud skill from full archived model history
+        run: python3 scripts/cloud_learning_backfill.py
+
+      - name: Build adaptive model weights from METAR and SYNOP verification
+        run: python3 scripts/build_adaptive_weights.py
 
       - name: Embed model verification
         run: python3 scripts/embed_model_verification.py
@@ -54,6 +60,17 @@ jobs:
         run: |
           python3 -m json.tool data/learning/cloud-skill.json >/dev/null
           python3 -m json.tool data/learning/model-verification.json >/dev/null
+          python3 -m json.tool data/learning/adaptive-weights.json >/dev/null
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          w=json.loads(Path('data/learning/adaptive-weights.json').read_text(encoding='utf-8'))
+          assert w.get('schema') == 'prognozaepir-adaptive-weights-v1'
+          assert len(w.get('models') or {}) >= 8
+          c=json.loads(Path('data/learning/cloud-skill.json').read_text(encoding='utf-8'))
+          assert c.get('schema') == 'prognozaepir-cloud-learning-v1'
+          print('adaptive weights and cloud skill validated')
+          PY
 
       - name: Commit learning data
         run: |
@@ -63,9 +80,12 @@ jobs:
           if git diff --cached --quiet; then
             echo "No learning changes"
           else
-            git commit -m "weather: update learning and model verification data"
-            git pull --rebase origin main
-            git push origin HEAD:main
+            git commit -m "weather: update historical learning and adaptive model weights"
+            for attempt in 1 2 3 4; do
+              git pull --rebase origin main && git push origin HEAD:main && break
+              echo "learning push retry $attempt"
+              sleep $((attempt*3))
+            done
           fi
 
       - name: Redeploy updated learning data
