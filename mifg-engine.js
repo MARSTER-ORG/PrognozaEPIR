@@ -4,20 +4,27 @@
 
   const MODEL = 'dmi_harmonie_arome_europe';
   const HOUR = 3600e3;
-  const VARS = [
+  const DMI_VARS = [
     'temperature_2m','dew_point_2m','relative_humidity_2m','surface_temperature',
-    'wind_speed_10m','cloud_cover','cloud_cover_low','shortwave_radiation','is_day',
-    'temperature_50m','temperature_100m','precipitation'
+    'wind_speed_10m','cloud_cover','cloud_cover_low','cloud_cover_2m',
+    'shortwave_radiation','is_day','temperature_50m','temperature_100m','precipitation'
   ];
+  const DMI_MIN_VARS = [
+    'temperature_2m','dew_point_2m','relative_humidity_2m','wind_speed_10m',
+    'cloud_cover','cloud_cover_low','cloud_cover_2m','shortwave_radiation','is_day','precipitation'
+  ];
+
   let series = [];
   let latestObs = null;
-  let busy = false;
+  let refreshPromise = null;
+  let engineStatus = {source:'none', error:null, updated:null, count:0};
 
   const finite = Number.isFinite;
   const num = v => finite(Number(v)) ? Number(v) : null;
   const clip = (v,a,b) => Math.max(a,Math.min(b,v));
   const mean = a => { const x=a.filter(finite); return x.length?x.reduce((s,v)=>s+v,0)/x.length:null; };
   const interp = (x,a,b,ya,yb) => x<=a?ya:x>=b?yb:ya+(yb-ya)*(x-a)/(b-a);
+  const sleep = ms => new Promise(r=>setTimeout(r,ms));
   const pw = (v,pts,below=null,above=null) => {
     if(!finite(v)) return null;
     if(v<=pts[0][0]) return below===null?pts[0][1]:below;
@@ -34,6 +41,10 @@
     try{return new Intl.DateTimeFormat('pl-PL',{timeZone:PLACE.tz,hour:'2-digit',minute:'2-digit'}).format(new Date(t));}
     catch(_){return new Date(t).toLocaleTimeString('pl-PL',{hour:'2-digit',minute:'2-digit'});}
   }
+  function localHourNumber(t){
+    try{return Number(new Intl.DateTimeFormat('en-GB',{timeZone:PLACE.tz,hour:'2-digit',hourCycle:'h23'}).format(new Date(t)));}
+    catch(_){return new Date(t).getHours();}
+  }
   function riskText(s){
     if(!finite(s))return 'brak danych';
     if(s>=80)return 'bardzo wysokie';
@@ -44,8 +55,9 @@
   }
   function riskCss(s){return s>=75?'fog-risk-vhigh':s>=60?'fog-risk-high':s>=40?'fog-risk-mid':'fog-risk-low';}
 
-  // Shallow fog is a surface-layer problem. Visibility at 2 m may remain 9999,
-  // therefore visibility itself is deliberately NOT a predictor here.
+  // MIFG is a very shallow surface-layer phenomenon. Visibility is deliberately
+  // not used as a primary predictor; a METAR can still report 9999 while shallow
+  // fog is present below the normal observation height.
   function surfaceSaturation(Td,Tskin){
     if(!finite(Td)||!finite(Tskin))return null;
     const x=Td-Tskin;
@@ -55,6 +67,10 @@
     if(!finite(T)||!finite(Td))return null;
     const d=T-Td;
     return pw(d,[[.2,1],[.5,.92],[1,.78],[1.5,.60],[2.5,.32],[4,.08]],1,0);
+  }
+  function rhScore(rh){
+    if(!finite(rh))return null;
+    return pw(rh,[[75,.03],[82,.10],[88,.28],[92,.50],[95,.72],[97,.86],[99,.97],[100,1]],.02,1);
   }
   function shallowWind(u){
     if(!finite(u))return null;
@@ -72,6 +88,10 @@
     if(finite(low))vals.push(clip(1-low/100,0,1));
     return mean(vals);
   }
+  function fog2mScore(v){
+    if(!finite(v))return null;
+    return clip(v/100,0,1);
+  }
   function coolingScore(now,prev){
     if(!finite(now)||!finite(prev))return null;
     const d=now-prev;
@@ -86,6 +106,14 @@
     if(finite(sw))return pw(sw,[[0,.85],[30,.65],[100,.40],[250,.18],[500,.05]],.85,.05);
     return isDay===1?.25:null;
   }
+  function fallbackDarkness(t){
+    const h=localHourNumber(t);
+    if(!finite(h))return null;
+    if(h>=21||h<4)return 1;
+    if(h>=19||h<6)return .78;
+    if(h>=18||h<7)return .50;
+    return .18;
+  }
 
   function obsHasMifg(m){
     const s=((m?.weather||'')+' '+(m?.raw||'')).toUpperCase();
@@ -95,66 +123,157 @@
     const t=Date.parse(m?.obs_time||'');
     return finite(t)?Math.max(0,(Date.now()-t)/HOUR):Infinity;
   }
+  function applyObsBoost(score,t,now){
+    if(!finite(score))return score;
+    if(!(obsHasMifg(latestObs)&&obsAgeHours(latestObs)<=2))return score;
+    const lead=Math.max(0,(t-now)/HOUR);
+    const obsWeight=.35*Math.exp(-lead/2.5);
+    return (1-obsWeight)*score+obsWeight*100;
+  }
 
   async function fetchObs(){
     try{
       const r=await fetch('data/observations/latest.json?v='+Date.now(),{cache:'no-store'});
+      if(!r.ok)throw new Error('HTTP '+r.status);
       const j=await r.json();
       latestObs=j?.metar||null;
     }catch(_){latestObs=null;}
   }
 
-  async function fetchModel(){
+  async function fetchJson(url, timeoutMs=12000){
+    const ctl=new AbortController(), timer=setTimeout(()=>ctl.abort(),timeoutMs);
+    try{
+      const r=await fetch(url,{cache:'no-store',signal:ctl.signal});
+      const j=await r.json().catch(()=>null);
+      if(!r.ok||!j)throw new Error(j?.reason||j?.message||('HTTP '+r.status));
+      return j;
+    } finally { clearTimeout(timer); }
+  }
+
+  function dmiUrl(vars){
     const q=new URLSearchParams({
-      latitude:String(PLACE.lat),longitude:String(PLACE.lon),hourly:VARS.join(','),
+      latitude:String(PLACE.lat),longitude:String(PLACE.lon),hourly:vars.join(','),
       models:MODEL,timezone:'UTC',forecast_hours:'24',past_hours:'12',wind_speed_unit:'ms'
     });
-    const r=await fetch('https://api.open-meteo.com/v1/forecast?'+q,{cache:'no-store'});
-    const j=await r.json().catch(()=>null);
-    if(!r.ok||!j?.hourly?.time)throw new Error(j?.reason||j?.message||('DMI HTTP '+r.status));
+    return 'https://api.open-meteo.com/v1/forecast?'+q;
+  }
+
+  function rowsFromDmi(j){
+    if(!j?.hourly?.time)throw new Error(j?.reason||j?.message||'DMI: brak hourly.time');
     const h=j.hourly;
-    const rows=(h.time||[]).map((s,i)=>({
+    return (h.time||[]).map((s,i)=>({
       t:parseUtc(s),T:num(h.temperature_2m?.[i]),Td:num(h.dew_point_2m?.[i]),RH:num(h.relative_humidity_2m?.[i]),
       Tskin:num(h.surface_temperature?.[i]),T50:num(h.temperature_50m?.[i]),T100:num(h.temperature_100m?.[i]),
-      WS:num(h.wind_speed_10m?.[i]),TCC:num(h.cloud_cover?.[i]),LOW:num(h.cloud_cover_low?.[i]),
+      WS:num(h.wind_speed_10m?.[i]),TCC:num(h.cloud_cover?.[i]),LOW:num(h.cloud_cover_low?.[i]),FOG2:num(h.cloud_cover_2m?.[i]),
       SW:num(h.shortwave_radiation?.[i]),isDay:num(h.is_day?.[i]),RR:num(h.precipitation?.[i])
     })).filter(x=>finite(x.t)).sort((a,b)=>a.t-b.t);
+  }
 
-    function nearest(t){
-      let best=null,bd=Infinity;
-      for(const x of rows){const d=Math.abs(x.t-t);if(d<bd){bd=d;best=x;}}
-      return bd<=75*60e3?best:null;
-    }
-    function precip12(t){
-      let s=0,n=0;
-      for(const x of rows){if(x.t<=t&&x.t>t-12*HOUR&&finite(x.RR)){s+=Math.max(0,x.RR);n++;}}
-      return n?s:null;
-    }
+  async function fetchDmiRows(){
+    let firstErr=null;
+    try{return rowsFromDmi(await fetchJson(dmiUrl(DMI_VARS),14000));}
+    catch(e){firstErr=e;}
+    try{return rowsFromDmi(await fetchJson(dmiUrl(DMI_MIN_VARS),12000));}
+    catch(e){throw new Error(`DMI full: ${firstErr?.message||firstErr}; DMI minimal: ${e?.message||e}`);}
+  }
 
+  function nearest(rows,t){
+    let best=null,bd=Infinity;
+    for(const x of rows){const d=Math.abs(x.t-t);if(d<bd){bd=d;best=x;}}
+    return bd<=75*60e3?best:null;
+  }
+  function precip12(rows,t){
+    let s=0,n=0;
+    for(const x of rows){if(x.t<=t&&x.t>t-12*HOUR&&finite(x.RR)){s+=Math.max(0,x.RR);n++;}}
+    return n?s:null;
+  }
+
+  function scoreDmiRows(rows){
     const now=Date.now();
-    const mifgNow=obsHasMifg(latestObs)&&obsAgeHours(latestObs)<=2;
-    series=rows.filter(x=>x.t>=now-HOUR&&x.t<=now+18*HOUR).map(x=>{
-      const p3=nearest(x.t-3*HOUR);
+    return rows.filter(x=>x.t>=now-HOUR&&x.t<=now+18*HOUR).map(x=>{
+      const p3=nearest(rows,x.t-3*HOUR);
       const ss=surfaceSaturation(x.Td,x.Tskin);
       const as=airSaturation(x.T,x.Td);
+      const rhs=rhScore(x.RH);
       const wind=shallowWind(x.WS);
       const inv=inversion(x.T,x.T50,x.T100);
       const sky=skyScore(x.TCC,x.LOW);
+      const fog2=fog2mScore(x.FOG2);
       const cool=coolingScore(x.Tskin,p3?.Tskin);
-      const moist=moistureScore(precip12(x.t));
+      const moist=moistureScore(precip12(rows,x.t));
       const dark=darknessScore(x.isDay,x.SW);
       let score=weighted([
-        {v:ss,w:.30},{v:wind,w:.17},{v:inv,w:.16},{v:as,w:.12},
-        {v:sky,w:.09},{v:cool,w:.09},{v:moist,w:.04},{v:dark,w:.03}
+        {v:fog2,w:.23},{v:ss,w:.24},{v:wind,w:.15},{v:inv,w:.13},{v:as,w:.09},
+        {v:rhs,w:.06},{v:sky,w:.04},{v:cool,w:.03},{v:moist,w:.02},{v:dark,w:.01}
       ]);
       score=finite(score)?score*100:null;
-      if(mifgNow&&finite(score)){
-        const lead=Math.max(0,(x.t-now)/HOUR);
-        const obsWeight=.35*Math.exp(-lead/2.5);
-        score=(1-obsWeight)*score+obsWeight*100;
-      }
-      return {...x,score,components:{surfaceSat:ss,airSat:as,wind,inv,sky,cool,moist,dark}};
+      score=applyObsBoost(score,x.t,now);
+      return {...x,score,source:'DMI HARMONIE AROME',components:{fog2,surfaceSat:ss,airSat:as,rh:rhs,wind,inv,sky,cool,moist,dark}};
     });
+  }
+
+  async function waitConsensus(timeoutMs=10000){
+    const until=Date.now()+timeoutMs;
+    do{
+      try{
+        if(typeof consensus!=='undefined'&&Array.isArray(consensus)&&consensus.length>=8)return consensus.slice();
+      }catch(_){ }
+      await sleep(250);
+    }while(Date.now()<until);
+    return [];
+  }
+
+  function consensusRows(src){
+    return (src||[]).map(x=>({
+      t:num(x?.t),T:num(x?.T),Td:num(x?.Td),RH:num(x?.RH),WS:num(x?.WS),
+      TCC:finite(Number(x?.low))?num(x.low):null,LOW:num(x?.low),RR:num(x?.RR)
+    })).filter(x=>finite(x.t)).sort((a,b)=>a.t-b.t);
+  }
+
+  function scoreConsensus(src){
+    const rows=consensusRows(src), now=Date.now();
+    return rows.filter(x=>x.t>=now-HOUR&&x.t<=now+18*HOUR).map(x=>{
+      const p3=nearest(rows,x.t-3*HOUR);
+      const as=airSaturation(x.T,x.Td);
+      const rhs=rhScore(x.RH);
+      const wind=shallowWind(x.WS);
+      const sky=skyScore(x.TCC,x.LOW);
+      const cool=coolingScore(x.T,p3?.T);
+      const moist=moistureScore(precip12(rows,x.t));
+      const dark=fallbackDarkness(x.t);
+      let score=weighted([
+        {v:as,w:.31},{v:rhs,w:.22},{v:wind,w:.23},{v:sky,w:.09},
+        {v:cool,w:.07},{v:moist,w:.05},{v:dark,w:.03}
+      ]);
+      score=finite(score)?score*100:null;
+      score=applyObsBoost(score,x.t,now);
+      return {...x,Tskin:null,T50:null,T100:null,SW:null,isDay:null,FOG2:null,score,
+        source:'PrognozaEPIR multimodel fallback',
+        components:{fog2:null,surfaceSat:null,airSat:as,rh:rhs,wind,inv:null,sky,cool,moist,dark}};
+    });
+  }
+
+  async function fetchModel(){
+    let dmiError=null;
+    try{
+      const rows=await fetchDmiRows();
+      const scored=scoreDmiRows(rows);
+      if(scored.some(x=>finite(x.score))){
+        series=scored;
+        engineStatus={source:'DMI HARMONIE AROME',error:null,updated:Date.now(),count:series.length};
+        return;
+      }
+      dmiError=new Error('DMI zwrócił dane bez kompletnego score MIFG');
+    }catch(e){dmiError=e;}
+
+    const fallback=await waitConsensus(10000);
+    const scored=scoreConsensus(fallback);
+    if(scored.some(x=>finite(x.score))){
+      series=scored;
+      engineStatus={source:'PrognozaEPIR multimodel fallback',error:String(dmiError?.message||dmiError||''),updated:Date.now(),count:series.length};
+      return;
+    }
+    throw new Error((dmiError?String(dmiError.message||dmiError)+'; ':'')+'fallback multimodel: brak danych');
   }
 
   function render(){
@@ -173,26 +292,40 @@
     summary.appendChild(card);
 
     const note=document.getElementById('fogDataNote');
-    if(note&&!document.getElementById('mifgNote')){
-      const n=document.createElement('div');n.id='mifgNote';n.className='fog-data-note';
-      n.innerHTML='<b>MIFG:</b> osobny score płytkiej mgły &lt;2 m; nie korzysta z VIS jako głównego predyktora. Kluczowe są Tskin↔Td, wiatr, inwersja 50/100 m, wychładzanie radiacyjne i wilgotność podłoża.';
+    let n=document.getElementById('mifgNote');
+    if(note&&!n){
+      n=document.createElement('div');n.id='mifgNote';n.className='fog-data-note';
       note.insertAdjacentElement('afterend',n);
     }
+    if(n){
+      const fallback=engineStatus.source.includes('fallback')?' · fallback multimodel aktywny':'';
+      n.innerHTML='<b>MIFG:</b> osobny score płytkiej mgły &lt;2 m; VIS nie jest głównym predyktorem. Kluczowe są nasycenie przy powierzchni, wiatr, inwersja, wychładzanie i wilgotność podłoża'+fallback+'.';
+    }
+  }
+
+  async function doRefresh(){
+    await fetchObs();
+    await fetchModel();
+    render();
+    window.dispatchEvent(new CustomEvent('prognozaepir:mifg-series-updated',{detail:{count:series.length,source:engineStatus.source}}));
+    return series.slice();
   }
 
   async function refresh(){
-    if(busy)return;busy=true;
-    try{
-      await fetchObs();
-      await fetchModel();
-      render();
-      window.dispatchEvent(new CustomEvent('prognozaepir:mifg-series-updated',{detail:{count:series.length}}));
-    }
-    catch(e){console.warn('EPIR MIFG engine:',e);}
-    finally{busy=false;}
+    if(refreshPromise)return refreshPromise;
+    refreshPromise=doRefresh().catch(e=>{
+      engineStatus={source:'error',error:String(e?.message||e),updated:Date.now(),count:series.length};
+      console.warn('EPIR MIFG engine:',e);
+      return series.slice();
+    }).finally(()=>{refreshPromise=null;});
+    return refreshPromise;
   }
 
-  window.PrognozaEPIRMIFG={getSeries:()=>series.slice(),refresh};
+  window.PrognozaEPIRMIFG={
+    getSeries:()=>series.slice(),
+    getStatus:()=>({...engineStatus}),
+    refresh
+  };
   refresh();
   setTimeout(render,5000);
   setInterval(refresh,30*60e3);
