@@ -20,6 +20,14 @@
 
   const FOG_INFO_THRESHOLD = 40;
   const FOG_MATCH_MS = 70 * 60e3;
+  const DEW_DARK = '#627dff';
+  const WIND_DARK = '#4f7cff';
+  const DEW_LIGHT = '#25278f';
+  const WIND_LIGHT = '#152f9a';
+
+  const isDark = () => typeof activeTheme === 'function' ? activeTheme() === 'dark' : true;
+  const dewColor = () => isDark() ? DEW_DARK : DEW_LIGHT;
+  const windColor = () => isDark() ? WIND_DARK : WIND_LIGHT;
 
   function fitWholeMeteogram() {
     try {
@@ -32,18 +40,15 @@
       const top = Math.max(0, vr.top);
       const availableScreenH = Math.max(360, window.innerHeight - top - 12);
       const frameH = Math.min(860, availableScreenH);
-
-      // Dopasuj cały meteogram, nie tylko jego szerokość. Jeżeli wysokość jest
-      // ograniczeniem, wykres zostaje odpowiednio pomniejszony, aby dół nie był ucięty.
       const byWidth = frameW / s.w;
       const byHeight = frameH / s.h;
+
       zoom = clamp(Math.min(byWidth, byHeight), ZOOM_MIN, ZOOM_MAX);
       panX = 0;
       panY = 0;
       fitMode = true;
       applyTransform();
 
-      // Dla wartości po transformacji ustaw dokładnie pełną wysokość zawartości.
       const fullH = Math.ceil(s.h * zoom);
       viewport.style.height = fullH + 'px';
       panY = 0;
@@ -58,7 +63,6 @@
     const old = document.getElementById('zoomFit');
     if (!old || old.dataset.fullFit === '1') return;
 
-    // Klon usuwa stary listener fitWidth, który dopasowywał tylko szerokość.
     const btn = old.cloneNode(true);
     btn.dataset.fullFit = '1';
     btn.textContent = 'Dopasuj';
@@ -68,13 +72,10 @@
       requestAnimationFrame(() => requestAnimationFrame(fitWholeMeteogram));
     });
 
-    // Pozostałe przyciski wyłączają tryb automatycznego dopasowania.
     for (const id of ['zoomOut','zoomIn','zoomReset']) {
       document.getElementById(id)?.addEventListener('click', () => { fitMode = false; }, {capture:true});
     }
 
-    // Kod meteogramu wywołuje fitWidth po zmianie horyzontu. Podmień funkcję
-    // globalną, aby także wtedy dopasowywany był cały wykres.
     try { fitWidth = fitWholeMeteogram; } catch (_) { }
   }
 
@@ -133,20 +134,8 @@
     const fog = currentFogRow(z?.t);
     const mifg = currentMifgRow(z?.t);
 
-    syncRiskCell(
-      values,
-      '[data-fog-risk="1"]',
-      'fogRisk',
-      'Prawdopodobieństwo mgły · FOG ENGINE',
-      fog
-    );
-    syncRiskCell(
-      values,
-      '[data-mifg-risk="1"]',
-      'mifgRisk',
-      'Prawdopodobieństwo niskiej mgły <2 m · MIFG',
-      mifg
-    );
+    syncRiskCell(values,'[data-fog-risk="1"]','fogRisk','Prawdopodobieństwo mgły · FOG ENGINE',fog);
+    syncRiskCell(values,'[data-mifg-risk="1"]','mifgRisk','Prawdopodobieństwo niskiej mgły <2 m · MIFG',mifg);
   }
 
   function installVisibilityInfoFilter() {
@@ -160,109 +149,105 @@
     window.__epirVisibilityInfoThresholdWrapped = true;
   }
 
-  function mergeWindPanels() {
-    if (window.__epirWindPanelMerged || typeof PANELS === 'undefined' || !Array.isArray(PANELS)) return;
+  // Nie twórz ponownie dolnego pasa kierunku. Ostateczny renderer wiatru
+  // z meteogram-visfog-cleanup.js odpowiada za skalę 0..max i strzałki pośrodku.
+  function normalizeWindPanels() {
+    if (typeof PANELS === 'undefined' || !Array.isArray(PANELS)) return;
     const wind = PANELS.find(p => p?.id === 'wind');
     const dir = PANELS.find(p => p?.id === 'dir');
-    if (!wind || !dir) return;
-
-    // Zachowujemy łączną wysokość obu dotychczasowych sekcji, ale kierunek
-    // staje się częścią sekcji Wiatr zamiast osobnym panelem.
-    wind.h = Math.max(84,Number(wind.h) || 84) + Math.max(0,Number(dir.h) || 0);
-    wind.label = 'wiatr / kierunek';
-    dir.h = 0;
-    dir.label = '';
-    dir.unit = '';
-    window.__epirWindPanelMerged = true;
-  }
-
-  function xForTime(t,m) {
-    return m.x0 + (t-m.t0)/(m.t1-m.t0)*(m.x1-m.x0);
-  }
-
-  function drawWindDirectionInsideWind() {
-    if (typeof cv === 'undefined' || typeof ctx === 'undefined') return;
-    const m = cv._meta;
-    if (!m || !Array.isArray(m.data) || !Array.isArray(m.panelYs)) return;
-    const wind = m.panelYs.find(p => p.id === 'wind');
-    const dir = m.panelYs.find(p => p.id === 'dir');
-    if (!wind) return;
-
-    const cp = typeof canvasPalette === 'function'
-      ? canvasPalette()
-      : {panel:'#20252b',grid2:'#59616b',muted:'#a6acb5',bg:'#111418'};
-
-    // Osobny wiersz strzałek wewnątrz sekcji Wiatr.
-    const rowH = Math.min(38,Math.max(30,wind.h*.27));
-    const rowTop = wind.y + wind.h - rowH;
-    const arrowY = rowTop + rowH*.62;
-
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(m.x0,wind.y,m.x1-m.x0,wind.h);
-    ctx.clip();
-
-    // Lekko wydzielamy dolny wiersz kierunku, ale nadal pozostaje on częścią
-    // jednej sekcji Wiatr.
-    ctx.fillStyle = cp.panel;
-    ctx.globalAlpha = .90;
-    ctx.fillRect(m.x0,rowTop,m.x1-m.x0,rowH);
-    ctx.globalAlpha = .72;
-    ctx.strokeStyle = cp.grid2;
-    ctx.lineWidth = .8;
-    ctx.beginPath();
-    ctx.moveTo(m.x0,rowTop);
-    ctx.lineTo(m.x1,rowTop);
-    ctx.stroke();
-
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = '#ef4444';
-    ctx.strokeStyle = '#ef4444';
-    ctx.lineWidth = 1;
-    ctx.font = 'bold 18px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'alphabetic';
-    for (let i=0;i<m.data.length;i+=3) {
-      const z = m.data[i];
-      if (!Number.isFinite(z?.WD)) continue;
-      const xx = xForTime(z.t,m);
-      ctx.save();
-      ctx.translate(xx,arrowY);
-      ctx.rotate((z.WD+180)*Math.PI/180);
-      ctx.strokeText('↑',0,6);
-      ctx.fillText('↑',0,6);
-      ctx.restore();
+    if (wind) {
+      wind.h = 84;
+      wind.label = 'wiatr';
+      wind.unit = '(m/s)';
     }
-    ctx.restore();
-
-    // Stary panel kierunku ma wysokość 0, ale jego pionowy podpis mógłby zostać
-    // narysowany na granicy paneli. Czyścimy wyłącznie pas podpisu, bez osi liczb.
     if (dir) {
-      ctx.save();
-      ctx.fillStyle = cp.bg;
-      ctx.fillRect(m.x0-88,dir.y-42,28,84);
-      ctx.restore();
+      dir.h = 0;
+      dir.label = '';
+      dir.unit = '';
     }
   }
 
-  function installWindPanelMerge() {
-    mergeWindPanels();
-    if (window.__epirWindMergedDrawWrapped || typeof draw !== 'function') return;
+  function installLegendContrast() {
+    if (window.__epirLegendContrastWrapped || typeof legendSample !== 'function') return;
+    const baseLegendSample = legendSample;
+    legendSample = function(x,y,color,label,dash=[]) {
+      if (label === 'Punkt rosy') color = dewColor();
+      if (label === 'Wiatr 10 m') color = windColor();
+      return baseLegendSample.call(this,x,y,color,label,dash);
+    };
+    window.__epirLegendContrastWrapped = true;
+  }
+
+  function drawContrastSeries() {
+    if (typeof cv === 'undefined' || typeof ctx === 'undefined' || typeof niceRange !== 'function') return;
+    const m = cv._meta;
+    if (!m || !Array.isArray(m.data) || !m.data.length || !Array.isArray(m.panelYs)) return;
+
+    const temp = m.panelYs.find(p => p?.id === 'temp');
+    const wind = m.panelYs.find(p => p?.id === 'wind');
+    const x = t => m.x0 + (t-m.t0)/(m.t1-m.t0)*(m.x1-m.x0);
+
+    function strokeSeries(panel,key,color,width,yFor,dash=[]) {
+      if (!panel || panel.h <= 0) return;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(m.x0,panel.y,m.x1-m.x0,panel.h);
+      ctx.clip();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.setLineDash(dash);
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      let started = false;
+      for (const z of m.data) {
+        const v = z?.[key];
+        if (!Number.isFinite(z?.t) || !Number.isFinite(v)) { started = false; continue; }
+        const xx = x(z.t);
+        const yy = yFor(v);
+        if (!Number.isFinite(yy)) { started = false; continue; }
+        if (!started) { ctx.moveTo(xx,yy); started = true; }
+        else ctx.lineTo(xx,yy);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    if (temp) {
+      const range = niceRange(m.data.flatMap(z => [z.T,z.Td]),1,5);
+      const pad = Math.min(9,Math.max(7,temp.h*.09));
+      const usable = Math.max(1,temp.h-2*pad);
+      const yTemp = v => temp.y + temp.h - pad - (v-range[0])/(range[1]-range[0])*usable;
+      strokeSeries(temp,'Td',dewColor(),1.8,yTemp,[3,3]);
+    }
+
+    if (wind) {
+      const maxW = Math.max(10,...m.data.flatMap(z => [Number(z.WS)||0,Number(z.G)||0]));
+      const windMax = Math.ceil(maxW/5)*5;
+      const yWind = v => wind.y + wind.h - Math.max(0,Math.min(windMax,Number(v))) / windMax * wind.h;
+      strokeSeries(wind,'WS',windColor(),2.0,yWind);
+    }
+  }
+
+  function installContrastSeries() {
+    if (window.__epirContrastSeriesWrapped || typeof draw !== 'function') return;
     const baseDraw = draw;
     draw = function() {
+      normalizeWindPanels();
       const out = baseDraw.apply(this,arguments);
-      drawWindDirectionInsideWind();
+      drawContrastSeries();
       return out;
     };
-    window.__epirWindMergedDrawWrapped = true;
+    window.__epirContrastSeriesWrapped = true;
   }
 
   function install() {
-    // Usuń ewentualny dodatkowy pasek z poprzedniej wersji bez przeładowania cache.
     document.getElementById('desktopZoomControls')?.remove();
     document.getElementById('desktopZoomControlsStyle')?.remove();
     installSingleFitControl();
-    installWindPanelMerge();
+    normalizeWindPanels();
+    installLegendContrast();
+    installContrastSeries();
     installVisibilityInfoFilter();
 
     const hint = document.querySelector('.gesture-hint');
