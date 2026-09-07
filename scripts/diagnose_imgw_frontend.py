@@ -1,60 +1,100 @@
 #!/usr/bin/env python3
-"""One-shot diagnostic helper for discovering IMGW Awiacja frontend data URLs."""
+"""One-shot diagnostic helper for tracing the IMGW Awiacja METAR API."""
 from __future__ import annotations
 
 import re
+from collections import deque
 from urllib.parse import urljoin
 
 import collect_epir_observations as c
 
 PAGE = 'https://awiacja.imgw.pl/metar-i-taf'
+MAX_ASSETS = 80
+
+
+def snippets(text, pattern, before=700, after=1100, limit=12):
+    out = []
+    for m in re.finditer(pattern, text, flags=re.I):
+        a = max(0, m.start() - before)
+        b = min(len(text), m.end() + after)
+        out.append(re.sub(r'\s+', ' ', text[a:b]))
+        if len(out) >= limit:
+            break
+    return out
 
 
 def main():
-    text = c.get_text(PAGE, timeout=15)
-    print('IMGW diagnostic: html_bytes=', len(text.encode('utf-8', 'replace')))
+    html = c.get_text(PAGE, timeout=15)
+    print('IMGW diagnostic v2: html_bytes=', len(html.encode('utf-8', 'replace')))
 
-    srcs = re.findall(r'<script[^>]+src=["\']([^"\']+)["\']', text, flags=re.I)
-    links = re.findall(r'<link[^>]+href=["\']([^"\']+)["\']', text, flags=re.I)
-    assets = []
+    initial = [urljoin(PAGE, x) for x in re.findall(
+        r'<script[^>]+src=["\']([^"\']+)["\']', html, flags=re.I
+    )]
+    # Lazy METAR page discovered in the previous diagnostic run.
+    initial.append('https://awiacja.imgw.pl/chunk-A2BVJ3LU.js')
+
+    queue = deque(initial)
     seen = set()
-    for item in srcs + links:
-        url = urljoin(PAGE, item)
-        if url not in seen and (url.endswith('.js') or '.js?' in url):
-            seen.add(url)
-            assets.append(url)
-
-    print('IMGW diagnostic: script_src_count=', len(srcs), 'js_assets=', len(assets))
-    for url in assets[:30]:
-        print('IMGW asset:', url)
-
-    url_re = re.compile(r'https?://[^"\'`\\\s]+|/[A-Za-z0-9_./?&=%{}:-]{4,}')
-    hints = set()
-    for url in assets[:20]:
+    assets = {}
+    while queue and len(seen) < MAX_ASSETS:
+        url = queue.popleft()
+        if url in seen or not url.startswith('https://awiacja.imgw.pl/') and 'shared.imgw.pl/' not in url:
+            continue
+        seen.add(url)
         try:
             js = c.get_text(url, timeout=12)
         except Exception as exc:
             print('IMGW asset warning:', url, exc)
             continue
+        assets[url] = js
+        for rel in re.findall(r'(?:import\(|from\s*)["\'](\.\/[^"\']+\.js)["\']', js):
+            queue.append(urljoin(url, rel))
+        # Angular/esbuild lazy imports are often minified as import("./chunk-X.js").
+        for rel in re.findall(r'import\(["\'](\.\/[^"\']+\.js)["\']\)', js):
+            queue.append(urljoin(url, rel))
+
+    print('IMGW diagnostic v2: fetched_assets=', len(assets))
+
+    url_hints = set()
+    service_hits = 0
+    for url, js in assets.items():
         low = js.lower()
-        if 'metar' not in low and 'taf' not in low:
+        relevant = any(k in low for k in ('getdata(', 'metar', '/api/', 'api.', 'baseurl', 'apiurl'))
+        if not relevant:
             continue
-        print('IMGW candidate asset:', url, 'bytes=', len(js.encode('utf-8', 'replace')))
-        for m in re.finditer(r'metar|taf', low):
-            a = max(0, m.start() - 220)
-            b = min(len(js), m.start() + 420)
-            snippet = re.sub(r'\s+', ' ', js[a:b])
-            print('IMGW hint snippet:', snippet[:700])
-            for u in url_re.findall(js[a:b]):
-                if any(k in u.lower() for k in ('metar', 'taf', 'api', 'airport', 'aerodrom')):
-                    hints.add(u)
-            if len(hints) >= 30:
+
+        # Collect literal URLs and API-looking relative paths.
+        for value in re.findall(r'https?://[^"\'`\\\s]+', js):
+            if any(k in value.lower() for k in ('imgw', 'api', 'metar', 'taf')):
+                url_hints.add(value.rstrip('),;'))
+        for value in re.findall(r'["\'](/[A-Za-z0-9_./?&=%{}:-]{3,})["\']', js):
+            if any(k in value.lower() for k in ('api', 'metar', 'taf', 'data', 'airport')):
+                url_hints.add(value)
+
+        patterns = (
+            r'getData\s*\(',
+            r'http\.(?:get|post)\s*\(',
+            r'\.get\s*\([^)]*(?:api|metar|taf)',
+            r'(?:baseUrl|apiUrl|apiURL|api_url)',
+            r'/api/',
+        )
+        printed_header = False
+        for pat in patterns:
+            for snip in snippets(js, pat, limit=5):
+                if not printed_header:
+                    print('IMGW SERVICE ASSET:', url, 'bytes=', len(js.encode('utf-8', 'replace')))
+                    printed_header = True
+                print('IMGW SERVICE SNIPPET:', snip[:1900])
+                service_hits += 1
+                if service_hits >= 60:
+                    break
+            if service_hits >= 60:
                 break
-        if len(hints) >= 30:
+        if service_hits >= 60:
             break
 
-    print('IMGW URL hints:')
-    for item in sorted(hints):
+    print('IMGW API/URL hints:')
+    for item in sorted(url_hints):
         print('  ', item)
 
 
