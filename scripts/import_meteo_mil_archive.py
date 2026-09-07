@@ -3,8 +3,9 @@
 
 Input files:
   data/observations/manual/meteo_mil/*.tsv
+  data/observations/manual/meteo_mil/*.tsv.bz2.b64
 
-Expected columns:
+Expected columns after decoding:
   timestamp_utc<TAB>report
 
 The importer intentionally reuses decode_metar() and decode_synop() from
@@ -15,7 +16,10 @@ sources during verification/learning.
 """
 from __future__ import annotations
 
+import base64
+import bz2
 import csv
+import io
 import json
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -74,44 +78,58 @@ def merge_by_observation(path: Path, imported):
     return write_jsonl(path, rows)
 
 
+def iter_manual_tables():
+    """Yield (path, text) for plain TSV and compact bzip2+base64 TSV archives."""
+    paths = sorted(MANUAL.glob('*.tsv')) + sorted(MANUAL.glob('*.tsv.bz2.b64'))
+    for path in paths:
+        if path.name.endswith('.tsv.bz2.b64'):
+            try:
+                packed = base64.b64decode(path.read_text(encoding='ascii').strip(), validate=True)
+                text = bz2.decompress(packed).decode('utf-8')
+            except Exception as exc:
+                raise RuntimeError(f'Cannot decode compact archive {path}: {exc}') from exc
+        else:
+            text = path.read_text(encoding='utf-8')
+        yield path, text
+
+
 def decode_files():
     grouped = {'metar': defaultdict(list), 'synop': defaultdict(list)}
     counts = {'metar': 0, 'synop': 0, 'rejected': 0}
 
-    for path in sorted(MANUAL.glob('*.tsv')):
-        with path.open('r', encoding='utf-8', newline='') as f:
-            reader = csv.DictReader(f, delimiter='\t')
-            for n, row in enumerate(reader, start=2):
-                timestamp = (row.get('timestamp_utc') or '').strip()
-                report = (row.get('report') or '').strip()
-                if not timestamp or not report:
-                    continue
-                try:
-                    dt = parse_utc(timestamp)
-                    if report.upper().startswith(('METAR ', 'SPECI ')):
-                        decoded = c.decode_metar(report, dt, source='METEO_MIL_MANUAL_METAR')
-                        kind = 'metar'
-                    elif report.upper().startswith('AAXX '):
-                        decoded = c.decode_synop(report, dt)
-                        kind = 'synop'
-                        if decoded:
-                            decoded['source'] = 'METEO_MIL_MANUAL_SYNOP_RAW'
-                    else:
-                        decoded = None
-                        kind = None
-                except Exception as exc:
-                    print(f'{path}:{n}: decode error: {exc}')
+    for path, text in iter_manual_tables():
+        reader = csv.DictReader(io.StringIO(text), delimiter='\t')
+        for n, row in enumerate(reader, start=2):
+            timestamp = (row.get('timestamp_utc') or '').strip()
+            report = (row.get('report') or '').strip()
+            if not timestamp or not report:
+                continue
+            try:
+                dt = parse_utc(timestamp)
+                if report.upper().startswith(('METAR ', 'SPECI ')):
+                    decoded = c.decode_metar(report, dt, source='METEO_MIL_MANUAL_METAR')
+                    kind = 'metar'
+                elif report.upper().startswith('AAXX '):
+                    decoded = c.decode_synop(report, dt)
+                    kind = 'synop'
+                    if decoded:
+                        decoded['source'] = 'METEO_MIL_MANUAL_SYNOP_RAW'
+                else:
                     decoded = None
                     kind = None
+            except Exception as exc:
+                print(f'{path}:{n}: decode error: {exc}')
+                decoded = None
+                kind = None
 
-                if not decoded or not kind:
-                    counts['rejected'] += 1
-                    print(f'{path}:{n}: rejected: {report}')
-                    continue
+            if not decoded or not kind:
+                counts['rejected'] += 1
+                print(f'{path}:{n}: rejected: {report}')
+                continue
 
-                day = dt.strftime('%Y-%m-%d')
-                grouped[kind][day].append(decoded)
-                counts[kind] += 1
+            day = dt.strftime('%Y-%m-%d')
+            grouped[kind][day].append(decoded)
+            counts[kind] += 1
 
     return grouped, counts
 
