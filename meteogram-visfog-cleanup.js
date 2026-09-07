@@ -10,13 +10,14 @@
   function mergeWindPanels() {
     if (typeof PANELS === 'undefined' || !Array.isArray(PANELS)) return;
     const wind = PANELS.find(p => p && p.id === 'wind');
+    const dir = PANELS.find(p => p && p.id === 'dir');
     if (wind) wind.h = 84;
 
-    // Usuń panel kierunku całkowicie, zamiast zostawiać go z wysokością 0.
-    // visual-style-fix.js szuka panelu "dir" w cv._meta i rysował w nim drugi,
-    // dolny zestaw strzałek nawet po wcześniejszym wyzerowaniu wysokości.
-    const dirIndex = PANELS.findIndex(p => p && p.id === 'dir');
-    if (dirIndex >= 0) PANELS.splice(dirIndex,1);
+    // Zachowujemy techniczny wpis "dir", ponieważ meteogram-visfog-split.js
+    // odwołuje się do niego przez byId('dir'). Usunięcie wpisu powodowało
+    // wyjątek w withClip() i przerywało rysowanie całego meteogramu.
+    // Wysokość 0 usuwa ten panel z układu bez łamania kodu bazowego.
+    if (dir) dir.h = 0;
   }
 
   mergeWindPanels();
@@ -88,7 +89,8 @@
       ctx.translate(x(z.t),cy);
       ctx.rotate((z.WD+180)*Math.PI/180);
 
-      // Jedyny zestaw strzałek: na pierwszym planie, pośrodku sekcji Wiatr.
+      // Jedyny widoczny zestaw strzałek: na pierwszym planie i dokładnie
+      // pośrodku sekcji Wiatr.
       ctx.strokeStyle = dark ? 'rgba(10,15,20,.94)' : 'rgba(255,255,255,.96)';
       ctx.lineWidth = 3.4;
       ctx.strokeText('↑',0,0);
@@ -154,8 +156,8 @@
       if (e.pointerType !== 'mouse') return;
       const x = e.clientX;
       const y = e.clientY;
-      // Hover z visual-style-fix.js najpierw przebudowuje dymek. Mikrozadanie
-      // dopisuje ryzyka dopiero po zakończeniu wszystkich listenerów pointermove.
+      // visual-style-fix.js najpierw przebudowuje dymek. Mikrozadanie dopisuje
+      // ryzyka dopiero po zakończeniu wszystkich listenerów pointermove.
       queueMicrotask(() => updateTooltip(x,y));
     });
   }
@@ -192,8 +194,6 @@
       const values = box?.querySelector('.section-values');
       if (!values) return;
 
-      // Usuń wartości dodane przez wcześniejsze wrappery i dodaj je ponownie
-      // wyłącznie od progu 40/100, zgodnie z meteogramem.
       values.querySelectorAll('[data-fog-risk],[data-mifg-risk]').forEach(el => el.remove());
       const fog = fogAt(z?.t);
       const mifg = mifgAt(z?.t);
@@ -265,10 +265,18 @@
     draw = function() {
       mergeWindPanels();
 
+      // Bazowy meteogram nadal zawiera techniczny panel dir. Wyłączamy jego
+      // stare strzałki i etykietę podczas rysowania bazowego, po czym dodajemy
+      // jeden właściwy zestaw strzałek w sekcji Wiatr.
       const nativeFillText = ctx.fillText;
+      const nativeStrokeText = ctx.strokeText;
       ctx.fillText = function(text,...args) {
-        if (text === 'Kierunek wiatru') return;
+        if (text === 'Kierunek wiatru' || text === '↑') return;
         return nativeFillText.call(this,text,...args);
+      };
+      ctx.strokeText = function(text,...args) {
+        if (text === '↑') return;
+        return nativeStrokeText.call(this,text,...args);
       };
 
       try {
@@ -277,6 +285,7 @@
         return out;
       } finally {
         ctx.fillText = nativeFillText;
+        ctx.strokeText = nativeStrokeText;
       }
     };
     window.__epirMergedWindPanelWrapped = true;
