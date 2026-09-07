@@ -108,7 +108,8 @@ function tafMeta(raw, now = Date.now()) {
 }
 
 function metarMeta(raw, now = Date.now()) {
-  const s = normalizeReport(raw).replace(/^TAF\s+/i, '');
+  const s = normalizeReport(raw);
+  if (/\bTAF\b/i.test(s) || /\b\d{4}\/\d{4}\b/.test(s) || /\b(?:BECMG|TEMPO|PROB30|PROB40|FM\d{6})\b/i.test(s)) return null;
   const tm = s.match(/\b(\d{6})Z\b/);
   if (!tm) return null;
   const issue = resolveDayTime(tm[1], now, true);
@@ -140,6 +141,7 @@ function extractMetarEpir(input) {
   let m;
   while ((m = re.exec(text))) {
     const raw = normalizeReport(m[0]);
+    if (/\bTAF\b/i.test(raw) || /\b\d{4}\/\d{4}\b/.test(raw) || /\b(?:BECMG|TEMPO|PROB30|PROB40|FM\d{6})\b/i.test(raw)) continue;
     const meta = metarMeta(raw);
     if (meta) out.push(meta);
   }

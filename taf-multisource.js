@@ -1,6 +1,6 @@
 'use strict';
 (() => {
-  const VERSION = 'TAF Sources v0.3.0';
+  const VERSION = 'TAF Sources v0.3.1';
   const IDS = ['EPIR','EPBY','EPPW','EPKS'];
   const IMGW_URL = 'https://awiacja.imgw.pl/metar-i-taf';
   const AWC_TAF = 'https://aviationweather.gov/api/data/taf?ids=EPIR%2CEPBY%2CEPPW%2CEPKS&format=raw';
@@ -29,11 +29,21 @@
     return out;
   }
 
+  function isMetarEpir(raw){
+    const s=String(raw||'').replace(/\s+/g,' ').trim();
+    if(!/\bEPIR\s+\d{6}Z\b/i.test(s)) return false;
+    if(/\bTAF\b/i.test(s)||/\b\d{4}\/\d{4}\b/.test(s)) return false;
+    if(/\b(?:BECMG|TEMPO|PROB30|PROB40|FM\d{6})\b/i.test(s)) return false;
+    const wind=/\b(?:\d{3}|VRB)\d{2,3}(?:G\d{2,3})?KT\b/i.test(s);
+    const vis=/\bCAVOK\b/i.test(s)||/\b(?:9999|\d{4})\b/.test(s);
+    return wind&&vis;
+  }
+
   function metars(text){
     const one=String(text||'').replace(/\s+/g,' ').trim();
     const re=/\b(?:METAR|SPECI)?\s*EPIR\s+\d{6}Z\b[\s\S]*?(?==|(?=\b(?:METAR|SPECI|TAF)\b)|$)/gi;
     const out=[]; let m;
-    while((m=re.exec(one))){let raw=m[0].replace(/\s+/g,' ').trim();if(raw&&!raw.endsWith('='))raw+='=';out.push(raw)}
+    while((m=re.exec(one))){let raw=m[0].replace(/\s+/g,' ').trim();if(raw&&!raw.endsWith('='))raw+='=';if(isMetarEpir(raw))out.push(raw)}
     return out;
   }
 
@@ -76,7 +86,7 @@
         const r=await timeoutFetch(url+(url.includes('?')?'&':'?')+'_='+Date.now(),{cache:'no-store'},12000);if(!r.ok)throw Error('HTTP '+r.status);
         const j=await r.json();let n=0;
         for(const id of IDS){const x=j?.stations?.[id];if(x?.raw){add(store,id,x.raw,`Proxy · ${x.source||'multi-source'}`,x.source_url||url,false,x.confirmed_by||[]);n++}}
-        if(j?.metar_epir?.raw) metar.push({raw:j.metar_epir.raw,source:`Proxy · ${j.metar_epir.source||'multi-source'}`,t:Date.parse(j.metar_epir.obs_time||0)||0});
+        if(j?.metar_epir?.raw&&isMetarEpir(j.metar_epir.raw)) metar.push({raw:j.metar_epir.raw,source:`Proxy · ${j.metar_epir.source||'multi-source'}`,t:Date.parse(j.metar_epir.obs_time||0)||0});
         attempts.push(`proxy ${n}/4`);if(n)return;
       }catch(e){attempts.push('proxy × '+(e?.name==='AbortError'?'timeout':e.message))}
     }
@@ -125,7 +135,10 @@
 
   function synthetic(bundle){
     const lines=[];
-    if(bundle.metar?.raw) lines.push(bundle.metar.raw);
+    if(bundle.metar?.raw&&isMetarEpir(bundle.metar.raw)){
+      const mr=String(bundle.metar.raw).trim();
+      lines.push(/^(?:METAR|SPECI)\b/i.test(mr)?mr:'METAR '+mr);
+    }
     for(const id of IDS){const x=bundle.stations[id];if(!x)continue;if(id!=='EPIR'&&x.nil)continue;lines.push(x.raw)}
     return '<!doctype html><html><body><pre>'+esc(lines.join('\n'))+'</pre></body></html>';
   }
