@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: epir-model-snapshot
@@ -63,3 +64,13 @@ jobs:
             sleep $((attempt*3))
           done
           exit 1
+
+      - name: Hourly disaster-recovery trigger for bulletin archive
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # This workflow's :17 hourly schedule already proved able to run when
+          # the dedicated 5-minute archive schedules were delayed. Use it as an
+          # independent recovery clock for METAR/SPECI/TAF/SYNOP acquisition.
+          gh workflow run message-archive.yml --repo "${{ github.repository }}" --ref main
