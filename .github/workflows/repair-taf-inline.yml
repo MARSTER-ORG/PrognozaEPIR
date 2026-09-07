@@ -18,46 +18,59 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-      - name: Rebuild embedded TAF scripts from validated sources
+
+      - name: Restore clean TAF page and embed verifier safely
         run: |
           node --check taf-multisource.js
           node --check taf-verification.js
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('taf.html')
-          s=p.read_text(encoding='utf-8')
+          import subprocess
 
-          # First inline script is the multi-source loader.
+          BASE='9edd19f378a1cedd8efb1c14b634cc8b5b385839'
+          s=subprocess.check_output(['git','show',f'{BASE}:taf.html'],text=True)
+
+          # Synchronize the first inline block with the current validated multi-source source.
           a=s.find('<script>')
-          if a<0: raise SystemExit('first script not found')
           b=s.find('</script>',a)
-          if b<0: raise SystemExit('first script end not found')
+          if a<0 or b<0:
+              raise SystemExit('clean TAF multi-source script bounds not found')
           multi=Path('taf-multisource.js').read_text(encoding='utf-8').strip()
           s=s[:a]+'<script>\n'+multi+'\n</script>'+s[b+9:]
 
-          # Keep the embedded verifier synchronized with its source file.
+          # Insert the verifier only before the real, final closing BODY tag.
           marker='/* TAF Verification v1.0 inline */'
-          pos=s.find(marker)
-          if pos<0: raise SystemExit('verification marker not found')
-          va=s.rfind('<script>',0,pos)
-          vb=s.find('</script>',pos)
-          if va<0 or vb<0: raise SystemExit('verification script bounds not found')
           verify=Path('taf-verification.js').read_text(encoding='utf-8').strip()
-          s=s[:va]+'<script>\n'+marker+'\n'+verify+'\n</script>'+s[vb+9:]
-          p.write_text(s,encoding='utf-8')
+          end=s.rfind('</body>')
+          if end<0:
+              raise SystemExit('final body tag not found')
+          addon='<script>\n'+marker+'\n'+verify+'\n</script>\n'
+          s=s[:end]+addon+s[end:]
+          Path('taf.html').write_text(s,encoding='utf-8')
           PY
 
           python3 - <<'PY'
           from pathlib import Path
           s=Path('taf.html').read_text(encoding='utf-8')
-          a=s.find('<script>'); b=s.find('</script>',a)
-          Path('/tmp/taf-multi.js').write_text(s[a+8:b],encoding='utf-8')
-          marker='/* TAF Verification v1.0 inline */'; pos=s.find(marker)
-          va=s.rfind('<script>',0,pos); vb=s.find('</script>',pos)
-          Path('/tmp/taf-verify.js').write_text(s[va+8:vb],encoding='utf-8')
+          # Validate all three inline blocks: multi-source, generator, verifier.
+          pos=0; blocks=[]
+          while True:
+              a=s.find('<script>',pos)
+              if a<0: break
+              b=s.find('</script>',a)
+              if b<0: raise SystemExit('unclosed script')
+              blocks.append(s[a+8:b])
+              pos=b+9
+          if len(blocks)!=3:
+              raise SystemExit(f'expected 3 inline scripts, got {len(blocks)}')
+          for i,js in enumerate(blocks,1):
+              Path(f'/tmp/taf-{i}.js').write_text(js,encoding='utf-8')
+          assert '/* TAF Verification v1.0 inline */' in blocks[2]
+          assert 'Sprawdzalność generatora TAF' in blocks[2]
           PY
-          node --check /tmp/taf-multi.js
-          node --check /tmp/taf-verify.js
+          node --check /tmp/taf-1.js
+          node --check /tmp/taf-2.js
+          node --check /tmp/taf-3.js
 
       - name: Commit repair
         run: |
@@ -65,6 +78,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add taf.html
           git diff --cached --quiet && exit 0
-          git commit -m "fix: rebuild validated TAF inline scripts"
+          git commit -m "fix: restore TAF page and enable self-verification"
           git pull --rebase origin main
           git push origin HEAD:main
