@@ -1,0 +1,75 @@
+name: Import EPIR bulk archive
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'data/import/inbox/**'
+      - 'scripts/import_epir_archive.py'
+      - '.github/workflows/import-epir-archive.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: import-epir-bulk-archive
+  cancel-in-progress: false
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Import archive with retry-safe rebasing
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          for attempt in 1 2 3 4; do
+            echo "Import attempt $attempt"
+            git fetch origin main
+            git reset --hard origin/main
+
+            python scripts/import_epir_archive.py
+
+            python - <<'PY'
+          import json
+          from pathlib import Path
+          roots = [Path('data/observations/metar'), Path('data/observations/synop'), Path('data/taf/archive')]
+          files = []
+          for root in roots:
+              if root.exists(): files.extend(root.rglob('*.jsonl'))
+          for path in files:
+              for n, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
+                  if line.strip():
+                      try: json.loads(line)
+                      except Exception as exc: raise SystemExit(f'{path}:{n}: invalid JSONL: {exc}')
+          print(f'Validated {len(files)} JSONL files')
+          PY
+
+            if git diff --quiet -- data/observations/metar data/observations/synop data/taf/archive data/import/import-state.json; then
+              echo 'Bulk archive already up to date.'
+              exit 0
+            fi
+
+            git add data/observations/metar data/observations/synop data/taf/archive data/import/import-state.json
+            git commit -m 'weather: bulk import EPIR METAR SYNOP TAF archive'
+            if git push origin HEAD:main; then exit 0; fi
+            echo 'main changed during import; retrying from newest origin/main'
+            sleep 2
+          done
+
+          echo 'Could not publish bulk archive after 4 attempts.' >&2
+          exit 1
