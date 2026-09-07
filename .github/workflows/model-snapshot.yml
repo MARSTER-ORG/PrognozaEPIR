@@ -1,0 +1,65 @@
+name: Refresh EPIR model snapshot
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/build_model_snapshot.py'
+      - '.github/workflows/model-snapshot.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: epir-model-snapshot
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Build server-side model snapshot
+        run: python3 scripts/build_model_snapshot.py
+
+      - name: Validate snapshot
+        run: |
+          python3 -m json.tool data/runtime/models-latest.json >/dev/null
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('data/runtime/models-latest.json')
+          j=json.loads(p.read_text(encoding='utf-8'))
+          assert j.get('schema') == 'prognozaepir-model-snapshot-v1'
+          models=j.get('models') or {}
+          assert len(models) >= 3, f'only {len(models)} models in snapshot'
+          for mid,row in models.items():
+              times=(row.get('hourly') or {}).get('time') or []
+              assert len(times) >= 24, f'{mid}: only {len(times)} hours'
+          print('validated models:', ', '.join(models))
+          PY
+
+      - name: Commit refreshed snapshot
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/runtime/models-latest.json
+          if git diff --cached --quiet; then
+            echo "No model snapshot changes"
+            exit 0
+          fi
+          git commit -m "weather: refresh server-side model snapshot"
+          for attempt in 1 2 3 4; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            echo "snapshot push retry $attempt"
+            sleep $((attempt*3))
+          done
+          exit 1
