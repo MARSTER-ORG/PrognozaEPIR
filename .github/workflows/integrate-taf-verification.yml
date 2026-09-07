@@ -1,0 +1,65 @@
+name: Integrate TAF verification
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/integrate-taf-verification.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Integrate self-verification
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path('taf.html')
+          s=p.read_text(encoding='utf-8')
+          s=s.replace('GENERATOR TAF v0.2.0','GENERATOR TAF v0.3.0')
+          addon='<script src="taf-verification.js"></script>'
+          if addon not in s:
+              s=s.replace('</body>',addon+'\n</body>',1)
+          p.write_text(s,encoding='utf-8')
+
+          p=Path('.github/workflows/pages.yml')
+          s=p.read_text(encoding='utf-8')
+          s=s.replace('cloud-learning-client.js \\\n             radar-enhance.js','cloud-learning-client.js taf-verification.js \\\n             radar-enhance.js')
+          s=s.replace('cloud-learning-client.js radar-enhance.js','cloud-learning-client.js taf-verification.js radar-enhance.js')
+          s=s.replace('node --check _site/cloud-learning-client.js','node --check _site/cloud-learning-client.js\n          node --check taf-verification.js\n          node --check _site/taf-verification.js')
+          s=s.replace('test -s _site/cloud-learning-client.js','test -s _site/cloud-learning-client.js\n          test -s _site/taf-verification.js')
+          s=s.replace("grep -F 'GENERATOR TAF v0.2.0' _site/taf.html","grep -F 'GENERATOR TAF v0.3.0' _site/taf.html")
+          marker="grep -F '<script src=\"cloud-learning-client.js\"></script>' _site/index.html"
+          if marker in s and "taf-verification.js\"></script>' _site/taf.html" not in s:
+              s=s.replace(marker,marker+"\n          grep -F '<script src=\"taf-verification.js\"></script>' _site/taf.html")
+          p.write_text(s,encoding='utf-8')
+          PY
+
+          node --check taf-verification.js
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('taf.html').read_text(encoding='utf-8')
+          assert 'GENERATOR TAF v0.3.0' in s
+          assert '<script src="taf-verification.js"></script>' in s
+          p=Path('.github/workflows/pages.yml').read_text(encoding='utf-8')
+          assert 'taf-verification.js' in p
+          PY
+
+      - name: Commit integration
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add taf.html .github/workflows/pages.yml
+          git commit -m "feat: integrate TAF self-verification UI"
+          git pull --rebase origin main
+          git push origin HEAD:main
