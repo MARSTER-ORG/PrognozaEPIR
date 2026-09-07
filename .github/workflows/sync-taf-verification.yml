@@ -7,6 +7,7 @@ on:
       - taf-verification.js
       - scripts/embed_taf_verification.py
       - scripts/integrate_taf_mifg.py
+      - scripts/fix_taf_validity_codes.py
       - .github/workflows/sync-taf-verification.yml
   workflow_dispatch:
 
@@ -29,13 +30,16 @@ jobs:
       - name: Integrate MIFG engine with TAF
         run: python3 scripts/integrate_taf_mifg.py
 
+      - name: Fix TAF validity DD24 codes
+        run: python3 scripts/fix_taf_validity_codes.py
+
       - name: Validate source JavaScript
         run: node --check taf-verification.js
 
       - name: Embed verifier in TAF page
         run: python3 scripts/embed_taf_verification.py
 
-      - name: Validate TAF JavaScript and MIFG hooks
+      - name: Validate TAF JavaScript, MIFG and validity codes
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -62,10 +66,13 @@ jobs:
               "return'MIFG'",
               'FG / MIFG',
               'MIFG ${fin(z.mifgRisk)',
+              'ddhhEnd=t=>',
+              '${ddhh(c.start)}/${ddhhEnd(c.end)}',
+              "getUTCHours()===0?'24'",
           )
           for token in required:
               if token not in s:
-                  raise SystemExit('missing TAF MIFG hook: '+token)
+                  raise SystemExit('missing TAF hook: '+token)
           if "return'MIFG'" not in verifier:
               raise SystemExit('verifier does not recognize MIFG')
           PY
@@ -80,5 +87,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add taf.html taf-verification.js
-          git commit -m 'taf: integrate shallow-fog MIFG engine'
+          git commit -m 'taf: fix midnight validity as DD24'
           git push
