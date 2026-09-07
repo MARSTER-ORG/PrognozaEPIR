@@ -17,9 +17,10 @@ on:
       - 'scripts/embed_model_verification.py'
       - '.github/workflows/collect-epir-observations.yml'
   schedule:
-    # GitHub scheduled jobs can be delayed or dropped. Poll every 5 minutes,
-    # shifted away from minute 0, so a missed slot is retried quickly.
-    - cron: '3-58/5 * * * *'
+    # EPIR routine METAR is normally issued at :00 and :30. Poll 7 and 22
+    # minutes after each half-hour boundary so delayed GitHub schedules still
+    # have a second chance before the next routine report.
+    - cron: '7,22,37,52 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -41,6 +42,29 @@ jobs:
           ref: main
           fetch-depth: 0
 
+      - name: Validate METAR multi-report parser
+        run: |
+          python3 - <<'PY'
+          import sys
+          sys.path.insert(0, 'scripts')
+          import refresh_epir_metar as r
+
+          sample = '''
+          METAR EPIR 070800Z 16004KT CAVOK 16/11 Q1025=
+          METAR EPIR 070730Z 16002KT CAVOK 15/11 Q1025=
+          SPECI EPIR 070715Z 15003KT 5000 BR NSC 14/11 Q1025=
+          METAR EPIR 070700Z 16004KT CAVOK 14/11 Q1025=
+          METAR EPIR 070630Z 16004KT CAVOK 12/11 Q1025=
+          '''
+          rows = r.extract_epir_reports(sample, 'IMGW_AVIATION_METAR')
+          assert len(rows) == 5, rows
+          assert sum(x.get('report_type') == 'SPECI' for x in rows) == 1, rows
+          assert len({x.get('obs_time') for x in rows}) == 5, rows
+          assert r.LATEST_MAX_AGE_MIN == 60
+          assert r.BACKFILL_MAX_AGE_MIN >= 90
+          print('multi-report parser: OK, reports=', len(rows))
+          PY
+
       - name: Collect METAR EPIR and SYNOP 12342
         run: |
           # Keep the legacy collector as one independent source path. The final
@@ -48,9 +72,9 @@ jobs:
           python3 scripts/collect_epir_observations.py || echo "Primary EPIR collector unavailable; continuing"
           python3 scripts/supplement_synop_12342.py || echo "SYNOP supplement unavailable; continuing"
 
-          # Authoritative METAR path: IMGW + PilotHub EPIN exact METAR block +
-          # additional PilotHub pages + OGIMET + CZAD. It archives every fresh
-          # EPIR report and selects the newest DDHHMMZ timestamp.
+          # Authoritative METAR path: official IMGW module/endpoints + PilotHub
+          # + OGIMET + CZAD. Every visible EPIR METAR/SPECI inside the backfill
+          # window is archived; only a <=60 min report is marked fresh.
           python3 scripts/live_metar_collector.py
 
       - name: Collect and archive TAFs
@@ -93,6 +117,10 @@ jobs:
           m=p.get('metar') or {}
           s=p.get('synop') or {}
           f=p.get('fused') or {}
+          fr=p.get('metar_freshness') or {}
+          assert fr.get('fresh_limit_min')==60, fr
+          assert (fr.get('backfill_limit_min') or 0)>=90, fr
+          assert fr.get('status') in ('ok','stale'), fr
 
           n=json.load(open('data/taf/neighbors.json',encoding='utf-8'))
           assert n.get('schema')=='prognozaepir-neighbor-tafs-v1'
@@ -137,6 +165,7 @@ jobs:
           assert mv.visibility_score(10000,10000,True)==100.0
           assert mv.visibility_score(25000,10000,True)==100.0
           print('METAR:', m.get('obs_time'), m.get('source'), m.get('raw'))
+          print('FRESHNESS:', fr)
           print('SYNOP:', s.get('obs_time'), s.get('source'), s.get('raw'))
           print('VIS:', f.get('visibility_m'), f.get('visibility_source'))
           print('TAF cache:', {k:(v or {}).get('available') for k,v in n.get('stations',{}).items()})
