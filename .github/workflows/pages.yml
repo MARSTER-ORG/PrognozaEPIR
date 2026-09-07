@@ -41,15 +41,18 @@ jobs:
           cp data/taf/neighbors.json _site/data/taf/
           python3 - <<'PY'
           from pathlib import Path
+          import os
           import re
 
           APP='v0.10.25 HTML'
+          ASSET_V=os.environ.get('GITHUB_SHA','dev')[:12]
           favicon = '<link rel="icon" href="epir-icon-192.png" type="image/png" sizes="192x192">\n<link rel="shortcut icon" href="epir-icon-192.png" type="image/png">\n<link rel="apple-touch-icon" href="epir-icon-192.png">'
           shortcut_addon = '<script src="shortcut-mode.js"></script>'
           cloud_loader = '<script src="cloud-learning-client.js"></script>'
           split_addon = '<script src="meteogram-visfog-split.js"></script>'
           cleanup_addon = '<script src="meteogram-visfog-cleanup.js"></script>'
           fog_overlay_addon = '<script src="fog-meteogram-overlay.js"></script>'
+          mifg_addon = f'<script src="mifg-engine.js?v={ASSET_V}"></script>'
 
           p=Path('_site/index.html')
           s=p.read_text(encoding='utf-8')
@@ -101,7 +104,7 @@ jobs:
               cleanup_addon,
               '<script src="day-night-fix.js"></script>',
               '<script src="observation-engine.js"></script>',
-              '<script src="mifg-engine.js"></script>',
+              mifg_addon,
               fog_overlay_addon,
               shortcut_addon,
           ]
@@ -110,6 +113,12 @@ jobs:
                   s=s.replace('</body>',addon+'\n</body>')
           s=s.replace('<script src="fog-engine.js"></script>\n','')
           s=s.replace('<script src="fog-archive.js"></script>\n','')
+          p.write_text(s,encoding='utf-8')
+
+          p=Path('_site/taf.html')
+          s=p.read_text(encoding='utf-8')
+          s=re.sub(r'<iframe id="engine" src="index\.html(?:\?v=[^"]*)?"',
+                   f'<iframe id="engine" src="index.html?v={ASSET_V}"',s,count=1)
           p.write_text(s,encoding='utf-8')
 
           for name in ('meteogram-layout-v2.js','observation-engine.js','fog-engine.js'):
@@ -217,7 +226,8 @@ jobs:
           grep -F '<script src="meteogram-visfog-split.js"></script>' _site/index.html
           grep -F '<script src="meteogram-visfog-cleanup.js"></script>' _site/index.html
           grep -F '<script src="observation-engine.js"></script>' _site/index.html
-          grep -F '<script src="mifg-engine.js"></script>' _site/index.html
+          grep -F '<script src="mifg-engine.js?v=' _site/index.html
+          grep -F 'src="index.html?v=' _site/taf.html
           grep -F '<script src="fog-meteogram-overlay.js"></script>' _site/index.html
           grep -F '<script src="cloud-learning-client.js"></script>' _site/index.html
           grep -F "{id:'visfog',h:96,label:'widzialność / mgła'" _site/meteogram-visfog-split.js
