@@ -3,6 +3,67 @@
   if (typeof showSectionInfo !== 'function' || typeof drawLegend !== 'function') return;
 
   const LEGEND_RIGHT_GAP = 30;
+  const WIND_ARROW = '#ef4444';
+
+  function mergeWindPanels() {
+    if (typeof PANELS === 'undefined' || !Array.isArray(PANELS)) return;
+    const wind = PANELS.find(p => p && p.id === 'wind');
+    const dir = PANELS.find(p => p && p.id === 'dir');
+    if (!wind || !dir) return;
+
+    const dirH = Number(dir.h) || 0;
+    if (dirH > 0) {
+      wind.h = (Number(wind.h) || 84) + dirH;
+      dir.h = 0;
+    }
+  }
+
+  // Kierunek wiatru ma należeć do tej samej sekcji co prędkość/porywy.
+  // Zachowujemy łączną wysokość dawnych dwóch paneli, dzięki czemu skala
+  // i poziome linie pomocnicze znów obejmują całą sekcję Wiatr.
+  mergeWindPanels();
+
+  function drawWindDirectionForeground() {
+    if (typeof cv === 'undefined' || typeof ctx === 'undefined') return;
+    const m = cv._meta;
+    if (!m || !Array.isArray(m.panelYs) || !Array.isArray(m.data)) return;
+    const p = m.panelYs.find(row => row && row.id === 'wind');
+    if (!p || !finite(p.y) || !finite(p.h) || p.h <= 0) return;
+
+    const x0 = m.x0, x1 = m.x1;
+    const plotW = x1 - x0;
+    const x = t => clamp(x0 + (t - m.t0) / (m.t1 - m.t0) * plotW, x0, x1);
+    const cy = p.y + p.h / 2;
+    const dark = typeof activeTheme === 'function' && activeTheme() === 'dark';
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x0,p.y,plotW,p.h);
+    ctx.clip();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold 22px Arial';
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+
+    for (let i=0;i<m.data.length;i+=3) {
+      const z = m.data[i];
+      if (!z || !finite(z.WD) || !finite(z.t)) continue;
+      ctx.save();
+      ctx.translate(x(z.t),cy);
+      ctx.rotate((z.WD+180)*Math.PI/180);
+
+      // Kontrastowy obrys utrzymuje strzałki na pierwszym planie także wtedy,
+      // gdy w środku sekcji przebiega linia prędkości, porywu lub siatki.
+      ctx.strokeStyle = dark ? 'rgba(10,15,20,.94)' : 'rgba(255,255,255,.96)';
+      ctx.lineWidth = 3.4;
+      ctx.strokeText('↑',0,0);
+      ctx.fillStyle = WIND_ARROW;
+      ctx.fillText('↑',0,0);
+      ctx.restore();
+    }
+    ctx.restore();
+  }
 
   function lowestCloudInBand(profile,min,max) {
     if (!Array.isArray(profile) || !profile.length || typeof interpCC !== 'function' || typeof toOkta !== 'function') return null;
@@ -84,7 +145,32 @@
     ctx.fillText('zobaczyć parametry godziny.',sx,y+11);
   };
 
+  if (typeof draw === 'function' && !window.__epirMergedWindPanelWrapped) {
+    const baseDraw = draw;
+    draw = function() {
+      mergeWindPanels();
+
+      // Stary panel kierunku ma wysokość 0, więc nie rysujemy jego dawnej
+      // pionowej etykiety na granicy między Wiatrem i Widzialnością.
+      const nativeFillText = ctx.fillText;
+      ctx.fillText = function(text,...args) {
+        if (text === 'Kierunek wiatru') return;
+        return nativeFillText.call(this,text,...args);
+      };
+
+      try {
+        const out = baseDraw.apply(this,arguments);
+        drawWindDirectionForeground();
+        return out;
+      } finally {
+        ctx.fillText = nativeFillText;
+      }
+    };
+    window.__epirMergedWindPanelWrapped = true;
+  }
+
   requestAnimationFrame(()=>{
+    mergeWindPanels();
     if (typeof consensus !== 'undefined' && consensus.length) draw();
   });
 })();
