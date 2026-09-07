@@ -18,7 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "data" / "learning"
 FORECAST_DIR = OUT / "forecasts"
 VERIFY_DIR = OUT / "verification"
-METAR_DIR = ROOT / "data" / "observations" / "metar"
+METAR_DIR = ROOT / "data" / "messages" / "metar"
+SPECI_DIR = ROOT / "data" / "messages" / "speci"
 LAT = 52.7989
 LON = 18.2639
 
@@ -246,7 +247,7 @@ def observed_bands_from_metar(m):
 
 def verify_new():
     forecasts = all_jsonl(FORECAST_DIR)
-    metars = all_jsonl(METAR_DIR)
+    metars = all_jsonl(METAR_DIR) + all_jsonl(SPECI_DIR)
     if not forecasts or not metars:
         return
     existing = all_jsonl(VERIFY_DIR)

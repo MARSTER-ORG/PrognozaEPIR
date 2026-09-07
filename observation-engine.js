@@ -2,9 +2,8 @@
 (() => {
   const APP_VERSION = 'v0.10.23 HTML';
   const OBS_KEY = 'prognozaepir-fog-observations-v2';
-  const LATEST_URL = 'data/observations/latest.json';
-  const RECENT_URL = 'data/observations/recent.json';
-  const IMGW_METAR_URL = 'https://aviation-api.imgw.pl/data/last?params=metar,taf&format=json&count=4';
+  const LATEST_URL = 'data/messages/latest.json';
+  const RECENT_URL = 'data/messages/recent.json';
   const MAX_OBS = 60;
   let latestData = null;
   let recentData = null;
@@ -28,101 +27,6 @@
       if(!r.ok) throw new Error(`HTTP ${r.status}`);
       return await r.json();
     } finally { clearTimeout(timer); }
-  }
-
-  function walkImgwMessages(value,out=[]){
-    if(Array.isArray(value)){for(const x of value)walkImgwMessages(x,out);return out;}
-    if(value&&typeof value==='object'){
-      if(typeof value.message==='string')out.push(value);
-      for(const x of Object.values(value))walkImgwMessages(x,out);
-    }
-    return out;
-  }
-
-  function metarTimeFromToken(token){
-    const m=String(token||'').match(/^(\d{2})(\d{2})(\d{2})Z$/);if(!m)return null;
-    const dd=Number(m[1]),hh=Number(m[2]),mm=Number(m[3]),now=new Date(),cand=[];
-    for(const dm of [-1,0,1]){
-      const d=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth()+dm,dd,hh,mm));
-      if(d.getUTCDate()===dd&&d.getUTCHours()===hh&&d.getUTCMinutes()===mm)cand.push(d);
-    }
-    if(!cand.length)return null;
-    cand.sort((a,b)=>Math.abs(a-now)-Math.abs(b-now));return cand[0].toISOString();
-  }
-
-  function signedMetarTemp(v){
-    if(!v)return null;const neg=v.startsWith('M'),n=Number(v.replace(/^M/,''));return finite(n)?(neg?-n:n):null;
-  }
-
-  function decodeImgwLiveMetar(raw){
-    let text=String(raw||'').replace(/\s+/g,' ').trim().replace(/=$/,'');
-    const reportType=/^SPECI\b/i.test(text)?'SPECI':'METAR';
-    text=text.replace(/^(?:METAR|SPECI)\s+/i,'');
-    if(!/^EPIR\s+/i.test(text)||/\bNIL\b/i.test(text))return null;
-    const tm=text.match(/\b(\d{6}Z)\b/),obs=metarTimeFromToken(tm?.[1]);if(!obs)return null;
-    const wind=text.match(/\b(\d{3}|VRB)(\d{2,3})(?:G(\d{2,3}))?KT\b/i);
-    const tt=text.match(/\b(M?\d{2})\/(M?\d{2})\b/i),q=text.match(/\bQ(\d{4})\b/i);
-    const T=signedMetarTemp(tt?.[1]),Td=signedMetarTemp(tt?.[2]);
-    let vis=null,vlb=false,vrep=null;
-    if(/\bCAVOK\b/i.test(text)){vis=10000;vlb=true;vrep='CAVOK';}
-    else if(wind){
-      const tail=text.slice((wind.index||0)+wind[0].length),vm=tail.match(/\b(9999|\d{4})\b/);
-      if(vm){vrep=vm[1];vis=vm[1]==='9999'?10000:Number(vm[1]);vlb=vm[1]==='9999';}
-    }
-    const clouds=[];
-    for(const m of text.matchAll(/\b(FEW|SCT|BKN|OVC|VV)(\d{3})\b/gi)){
-      const ft=Number(m[2])*100;clouds.push({cover:m[1].toUpperCase(),base_ft_agl:ft,base_m_agl:Math.round(ft*.3048)});
-    }
-    const ceil=clouds.find(x=>['BKN','OVC','VV'].includes(x.cover))?.base_m_agl??null;
-    const wx=[];
-    for(const code of ['FZFG','MIFG','BCFG','PRFG','FG','BR'])if(new RegExp(`(^|\\s)${code}(?=\\s|$|=)`).test(text))wx.push(code);
-    let rh=null;
-    if(T!==null&&Td!==null){const a=17.625,b=243.04;rh=Math.max(0,Math.min(100,100*Math.exp(a*Td/(b+Td)-a*T/(b+T))));}
-    return {source:'IMGW_AVIATION_METAR',station:'EPIR',obs_time:obs,temperature_c:T,dew_point_c:Td,
-      relative_humidity_pct:rh===null?null:Math.round(rh*10)/10,visibility_m:vis,visibility_lower_bound:vlb,
-      visibility_upper_bound:false,visibility_report:vrep,wind_direction_deg:!wind||wind[1].toUpperCase()==='VRB'?null:Number(wind[1]),
-      wind_speed_ms:wind?Math.round(Number(wind[2])*.514444*100)/100:null,
-      wind_gust_ms:wind?.[3]?Math.round(Number(wind[3])*.514444*100)/100:null,pressure_hpa:q?Number(q[1]):null,
-      weather:wx.join(' ')||null,fog:wx.some(x=>x.endsWith('FG')),mist:wx.includes('BR'),freezing_fog:wx.includes('FZFG'),
-      ceiling_m_agl:ceil,clouds,raw:text,report_type:reportType,imgw_browser_live:true};
-  }
-
-  async function fetchImgwLiveMetar(){
-    const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),5000);
-    try{
-      const sep=IMGW_METAR_URL.includes('?')?'&':'?';
-      const r=await fetch(`${IMGW_METAR_URL}${sep}_=${Date.now()}`,{cache:'no-store',signal:ctrl.signal});
-      if(!r.ok)throw new Error(`IMGW HTTP ${r.status}`);
-      const j=await r.json(),records=walkImgwMessages(j?.EPIR?.metars||[]),rows=[];
-      for(const rec of records){const row=decodeImgwLiveMetar(rec?.message);if(row)rows.push(row);}
-      rows.sort((a,b)=>Date.parse(a.obs_time)-Date.parse(b.obs_time));return rows.at(-1)||null;
-    }finally{clearTimeout(timer);}
-  }
-
-  function liveFused(m){
-    return {obs_time:m.obs_time,metar_obs_time:m.obs_time,synop_obs_time:null,temperature_c:m.temperature_c,dew_point_c:m.dew_point_c,
-      relative_humidity_pct:m.relative_humidity_pct,visibility_m:m.visibility_m,visibility_lower_bound:m.visibility_lower_bound,
-      visibility_upper_bound:m.visibility_upper_bound,visibility_source:m.source,wind_direction_deg:m.wind_direction_deg,
-      wind_speed_ms:m.wind_speed_ms,pressure_hpa:m.pressure_hpa,fog:m.fog,mist:m.mist,freezing_fog:m.freezing_fog,
-      cloud_base_m_agl:m.ceiling_m_agl,sources:{temperature:m.source,dew_point:m.source,rh:m.source,visibility:m.source,
-      wind_direction:m.source,wind_speed:m.source,pressure:m.source,cloud_base:m.source}};
-  }
-
-  function applyLiveMetar(m){
-    if(!m)return false;
-    const nt=Date.parse(m.obs_time),ot=Date.parse(latestData?.metar?.obs_time||'');
-    if(!finite(nt)||(finite(ot)&&nt<=ot))return false;
-    latestData=latestData||{station:{icao:'EPIR',synop:'12342',wigos:'0-20000-0-12342'}};
-    latestData.metar=m;latestData.fused=liveFused(m);latestData.updated_at=m.obs_time;latestData.collected_at=new Date().toISOString();
-    latestData.metar_freshness={...(latestData.metar_freshness||{}),status:'ok',age_min:Math.max(0,Math.round((Date.now()-nt)/6000)/10),fresh_limit_min:60};
-    recentData=recentData||{schema:'epir-observation-history-v2',station:latestData.station,hours:30,metar:[],synop:[],observations:[]};
-    recentData.metar=Array.isArray(recentData.metar)?recentData.metar:[];
-    recentData.observations=Array.isArray(recentData.observations)?recentData.observations:[];
-    if(!recentData.metar.some(x=>x?.obs_time===m.obs_time&&x?.raw===m.raw))recentData.metar.push(m);
-    const f=liveFused(m);if(!recentData.observations.some(x=>x?.metar_obs_time===m.obs_time))recentData.observations.push(f);
-    recentData.metar.sort((a,b)=>Date.parse(a.obs_time)-Date.parse(b.obs_time));
-    recentData.observations.sort((a,b)=>Date.parse(a.obs_time)-Date.parse(b.obs_time));
-    return true;
   }
 
   function metarPhenomena(m){
@@ -329,7 +233,7 @@
   function observationPanelHtml(){
     const m=latestData?.metar||null, s=latestData?.synop||null, f=latestData?.fused||null;
     return `<details id="epirObservationPanel" class="fog-diag" open>
-      <summary>Obserwacje automatyczne EPIR — METAR + SYNOP 12342</summary>
+      <summary>Obserwacje EPIR — METAR/SPECI + SYNOP 12342</summary>
       ${metarGridHtml(m)}
       ${synopGridHtml(s)}
       <div class="fog-data-note"><b>Dane scalone dla Fog Engine:</b> VIS ${esc(fmtM(num(f?.visibility_m)))} · źródło ${esc(f?.visibility_source||'—')} · T ${fmt(num(f?.temperature_c))}°C · Td ${fmt(num(f?.dew_point_c))}°C · RH ${fmt(num(f?.relative_humidity_pct),0)}% · wiatr ${fmt(num(f?.wind_speed_ms),2)} m/s / ${fmt(num(f?.wind_direction_deg),0)}° · ciśnienie ${fmt(num(f?.pressure_hpa),1)} hPa. SYNOP ma pierwszeństwo dla dokładnej widzialności; METAR 9999/CAVOK jest traktowany jako wartość graniczna ≥10 km.</div>
@@ -354,12 +258,11 @@
 
   async function refreshLiveMetar(){
     try{
-      const live=await fetchImgwLiveMetar();
-      if(applyLiveMetar(live)){
-        storeAutomaticObservations(recentData);installPanel();refreshVerification();
-        console.info('EPIR live METAR from IMGW:',live.obs_time,live.raw);
-      }
-    }catch(e){console.warn('EPIR live IMGW METAR:',e);}
+      const l=await fetchJson(LATEST_URL);
+      if(l)latestData=l;
+      if(recentData)storeAutomaticObservations(recentData);
+      installPanel();refreshVerification();
+    }catch(e){console.warn('EPIR central message archive:',e);}
   }
 
   async function bootstrap(){

@@ -21,8 +21,9 @@ LEARNING = ROOT / "data" / "learning"
 LEGACY_FORECAST_DIR = LEARNING / "forecasts"
 FORECAST_DIR = LEARNING / "model-forecasts"
 SUMMARY_PATH = LEARNING / "model-verification.json"
-METAR_DIR = ROOT / "data" / "observations" / "metar"
-SYNOP_DIR = ROOT / "data" / "observations" / "synop"
+METAR_DIR = ROOT / "data" / "messages" / "metar"
+SPECI_DIR = ROOT / "data" / "messages" / "speci"
+SYNOP_DIR = ROOT / "data" / "messages" / "synop"
 LAT = 52.7989
 LON = 18.2639
 
@@ -247,7 +248,7 @@ def round_hour(dt):
 
 
 def build_observation_maps():
-    metars = unique_rows(all_jsonl(METAR_DIR), ("obs_time", "raw"))
+    metars = unique_rows(all_jsonl(METAR_DIR) + all_jsonl(SPECI_DIR), ("obs_time", "raw"))
     synops = unique_rows(all_jsonl(SYNOP_DIR), ("obs_time", "raw"))
     metar_by_hour = {}
     for m in metars:
@@ -523,7 +524,7 @@ def build_summary():
         forecast_samples[model] += 1
         if m:
             raw = str(m.get("raw") or "").lstrip().upper()
-            source_hits[model]["SPECI" if raw.startswith("SPECI") else "METAR"] += 1
+            source_hits[model]["SPECI" if str(m.get("type") or "").upper() == "SPECI" or raw.startswith("SPECI") else "METAR"] += 1
         if s:
             source_hits[model]["SYNOP"] += 1
         for comp, score in scores.items():
