@@ -1,30 +1,36 @@
-name: EPIR METAR Heartbeat
+name: EPIR METAR Armored Heartbeat
 
 on:
   push:
     branches: [main]
     paths:
+      - 'scripts/metar_armored.py'
       - 'scripts/live_metar_collector.py'
       - 'scripts/refresh_epir_metar.py'
+      - 'scripts/collect_epir_observations.py'
+      - 'scripts/supplement_metar_pilothub.py'
       - '.github/workflows/metar-heartbeat.yml'
   schedule:
-    # Lightweight independent METAR path. It is intentionally separate from
-    # the heavier METAR+SYNOP+TAF+verification workflow.
-    - cron: '*/5 * * * *'
+    # Run away from :00, where GitHub's scheduler is most heavily loaded.
+    # EPIR normally reports every 30 min, so a 5-minute poll gives several
+    # independent chances to capture every METAR/SPECI.
+    - cron: '2,7,12,17,22,27,32,37,42,47,52,57 * * * *'
   workflow_dispatch:
 
 permissions:
   contents: write
   actions: write
 
+# Share the lock with the larger observation collector. METAR persistence must
+# never race another workflow that rewrites latest.json/recent.json.
 concurrency:
-  group: epir-metar-heartbeat
-  cancel-in-progress: true
+  group: epir-observation-collector
+  cancel-in-progress: false
 
 jobs:
   metar:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 5
     steps:
       - name: Checkout main
         uses: actions/checkout@v4
@@ -32,39 +38,68 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Fetch live EPIR METAR and repair recent gaps
-        run: python3 scripts/live_metar_collector.py
-
-      - name: Validate live result
+      - name: Validate armored collector
         run: |
+          python3 -m py_compile \
+            scripts/collect_epir_observations.py \
+            scripts/refresh_epir_metar.py \
+            scripts/live_metar_collector.py \
+            scripts/metar_armored.py
           python3 - <<'PY'
-          import json
-          from datetime import datetime, timezone
-
-          p=json.load(open('data/observations/latest.json',encoding='utf-8'))
-          m=p.get('metar') or {}
-          assert m.get('station')=='EPIR', m
-          assert m.get('obs_time'), m
-          assert m.get('raw'), m
-          t=datetime.fromisoformat(m['obs_time'].replace('Z','+00:00'))
-          age=(datetime.now(timezone.utc)-t).total_seconds()/60
-          print('EPIR METAR:',m.get('obs_time'),m.get('source'),m.get('raw'))
-          print('METAR age minutes:',round(age,1))
-          print('Missing routine slots:',(p.get('metar_freshness') or {}).get('missing_routine_slots'))
-          # Do not silently publish a very old report as live. The collector may
-          # keep a stale record for transparency, but the heartbeat flags it.
-          if age > 90:
-              raise SystemExit(f'EPIR METAR is stale: {age:.1f} min')
+          import sys
+          sys.path.insert(0, 'scripts')
+          import refresh_epir_metar as r
+          sample='''
+          METAR EPIR 071500Z 19006KT CAVOK 22/10 Q1023=
+          SPECI EPIR 071515Z 20008KT 6000 BR SCT020 21/11 Q1023=
+          METAR EPIR 071530Z 20007KT 9999 SCT030 21/10 Q1023=
+          '''
+          rows=r.extract_epir_reports(sample,'TEST')
+          assert len(rows)==3, rows
+          assert len({x['obs_time'] for x in rows})==3, rows
+          assert rows[1]['report_type']=='SPECI', rows
+          print('METAR parser self-test: OK')
           PY
 
-      - name: Commit only when a METAR/backfill really changed
+      - name: Fetch merge backfill and save EPIR METAR
+        run: python3 scripts/metar_armored.py
+
+      - name: Commit meaningful METAR state
         id: commit
         run: |
-          # live_metar_collector updates collected_at/freshness on every poll.
-          # Do not create a repository commit every 5 minutes unless the
-          # canonical METAR archive actually gained/changed a report.
-          if git diff --quiet -- data/observations/metar; then
-            echo "No new METAR or source upgrade to archive"
+          meaningful=false
+
+          # A new/backfilled daily archive row or recent-history change is
+          # always meaningful.
+          if ! git diff --quiet -- data/observations/metar data/observations/recent.json; then
+            meaningful=true
+          else
+            # latest.json contains a volatile collected_at/age. Commit it only
+            # when the actual METAR, freshness state or diagnosed gaps changed.
+            if python3 - <<'PY'
+          import json, subprocess, sys
+          cur=json.load(open('data/observations/latest.json',encoding='utf-8'))
+          try:
+              old=json.loads(subprocess.check_output(
+                  ['git','show','HEAD:data/observations/latest.json'], text=True, encoding='utf-8'))
+          except Exception:
+              sys.exit(0)
+          def metar_key(p):
+              m=(p or {}).get('metar') or {}
+              return (m.get('obs_time'),m.get('raw'),m.get('source'),m.get('report_type'),bool(m.get('correction')))
+          def state_key(p):
+              f=(p or {}).get('metar_freshness') or {}
+              return (f.get('status'),tuple(f.get('missing_routine_slots') or ()))
+          sys.exit(0 if (metar_key(cur)!=metar_key(old) or state_key(cur)!=state_key(old)) else 1)
+          PY
+            then
+              meaningful=true
+            fi
+          fi
+
+          if [ "$meaningful" != true ]; then
+            echo "No new METAR/backfill/source upgrade; skipping timestamp-only commit"
+            git restore -- data/observations/latest.json data/observations/recent.json 2>/dev/null || true
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -72,20 +107,46 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/observations/metar data/observations/latest.json data/observations/recent.json
-          git commit -m "data: EPIR METAR heartbeat $(date -u +'%Y-%m-%d %H:%MZ')"
+          git commit -m "data: armored EPIR METAR $(date -u +'%Y-%m-%d %H:%MZ')"
 
-          for attempt in 1 2 3 4; do
+          # Rebase/push retry. The shared concurrency lock removes data races;
+          # this loop handles unrelated commits landing on main meanwhile.
+          for attempt in 1 2 3 4 5; do
             git fetch origin main
-            git rebase origin/main
-            if git push origin HEAD:main; then
+            if git rebase origin/main && git push origin HEAD:main; then
               echo "changed=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
+            git rebase --abort 2>/dev/null || true
             echo "Push attempt ${attempt} failed; retrying..."
             sleep $((attempt * 4))
           done
-          echo "Failed to push EPIR METAR heartbeat data" >&2
+          echo "Failed to persist EPIR METAR after retries" >&2
           exit 1
+
+      - name: Validate persisted METAR freshness
+        run: |
+          python3 - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          p=json.load(open('data/observations/latest.json',encoding='utf-8'))
+          m=p.get('metar') or {}
+          assert m.get('station')=='EPIR', m
+          assert m.get('obs_time') and m.get('raw'), m
+          t=datetime.fromisoformat(m['obs_time'].replace('Z','+00:00'))
+          age=(datetime.now(timezone.utc)-t).total_seconds()/60
+          day=Path('data/observations/metar')/t.strftime('%Y')/t.strftime('%m')/(t.strftime('%d')+'.jsonl')
+          assert day.exists(), day
+          rows=[json.loads(x) for x in day.read_text(encoding='utf-8').splitlines() if x.strip()]
+          assert any(x.get('obs_time')==m.get('obs_time') and x.get('raw')==m.get('raw') for x in rows), 'latest METAR missing from canonical archive'
+          print('EPIR METAR:',m.get('obs_time'),m.get('source'),m.get('raw'))
+          print('METAR age min:',round(age,1))
+          print('Freshness:',p.get('metar_freshness'))
+          if age > 75:
+              raise SystemExit(f'EPIR METAR stale after armored collection: {age:.1f} min')
+          PY
 
       - name: Redeploy current METAR to GitHub Pages
         if: steps.commit.outputs.changed == 'true'
