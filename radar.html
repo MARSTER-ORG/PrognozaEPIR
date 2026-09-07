@@ -129,7 +129,7 @@ function f(v,d=0){return finite(v)?Number(v).toFixed(d):'—'}
 function weatherName(c){c=Math.round(Number(c));const m={0:'bezchmurnie',1:'głównie pogodnie',2:'częściowe zachmurzenie',3:'pochmurno',45:'mgła',48:'mgła osadzająca szadź',51:'mżawka',53:'mżawka',55:'silna mżawka',61:'słaby deszcz',63:'deszcz',65:'silny deszcz',71:'słaby śnieg',73:'śnieg',75:'silny śnieg',80:'przelotny deszcz',81:'przelotny deszcz',82:'silny przelotny deszcz',85:'przelotny śnieg',86:'silny przelotny śnieg',95:'burza',96:'burza z gradem',99:'silna burza z gradem'};return m[c]||('WMO '+c)}
 async function json(url,timeout=13000){const c=new AbortController(),t=setTimeout(()=>c.abort(),timeout);try{const r=await fetch(url,{cache:'no-cache',signal:c.signal});if(!r.ok)throw new Error('HTTP '+r.status);return await r.json()}finally{clearTimeout(t)}}
 function initMap(){
-  map=L.map('map',{zoomControl:true,preferCanvas:true}).setView([52.05,19.2],6);
+  map=L.map('map',{zoomControl:true,preferCanvas:true}).setView([DEFAULT.lat,DEFAULT.lon],8);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
   marker=L.circleMarker([point.lat,point.lon],{radius:7,color:'#d43d31',weight:3,fillColor:'#fff',fillOpacity:1}).addTo(map).bindTooltip('Punkt PrognozaEPIR');
   L.circle([point.lat,point.lon],{radius:10000,color:'#1f2a75',weight:1,fill:false,dashArray:'4 4'}).addTo(map);
