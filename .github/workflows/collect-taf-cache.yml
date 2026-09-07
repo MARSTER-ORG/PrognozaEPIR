@@ -8,6 +8,7 @@ on:
     branches: [main]
     paths:
       - 'scripts/collect_neighbor_tafs.py'
+      - 'scripts/sanitize_neighbor_tafs.py'
       - 'scripts/archive_epir_taf.py'
       - '.github/workflows/collect-taf-cache.yml'
 
@@ -29,12 +30,25 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Collect and archive current TAFs
+      - name: Collect, sanitize and archive current TAFs
         run: |
           python3 scripts/collect_neighbor_tafs.py
+          python3 scripts/sanitize_neighbor_tafs.py
           python3 scripts/archive_epir_taf.py
           python3 -m json.tool data/taf/neighbors.json >/dev/null
           python3 -m json.tool data/taf/latest.json >/dev/null
+          python3 - <<'PY'
+          import json, re
+          from pathlib import Path
+          p=json.loads(Path('data/taf/neighbors.json').read_text())
+          for sid,row in (p.get('stations') or {}).items():
+              raw=row.get('raw')
+              if not raw:
+                  continue
+              assert len(raw) <= 1600, (sid, len(raw))
+              assert raw.endswith('='), (sid, raw[-80:])
+              assert re.match(rf'^TAF(?:\s+(?:AMD|COR))?\s+{re.escape(sid)}\b', raw), (sid, raw[:80])
+          PY
 
       - name: Commit cache and archive when changed
         id: cache_commit
