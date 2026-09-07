@@ -15,8 +15,9 @@ on:
       - 'scripts/embed_model_verification.py'
       - '.github/workflows/collect-epir-observations.yml'
   schedule:
-    # Poll shortly after quarter-hour boundaries; EPIR METAR is normally half-hourly.
-    - cron: '7,22,37,52 * * * *'
+    # GitHub scheduled jobs can be delayed or dropped. Poll every 5 minutes,
+    # shifted away from minute 0, so a missed slot is retried quickly.
+    - cron: '3-58/5 * * * *'
   workflow_dispatch:
 
 permissions:
