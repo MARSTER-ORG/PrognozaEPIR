@@ -10,7 +10,7 @@
 <section class="card w6"><h2>Uzasadnienie grup zmian</h2><div id="reasons" class="note">—</div></section><section class="card w6"><h2>Kryteria instrukcji 11.2023</h2><ul><li>VIS: 800 / 1500 / 3000 / 5000 m.</li><li>Pułap BKN/OVC: 200 / 300 / 500 / 1000 / 1500 ft.</li><li>PROB30: 30% ≤ P &lt; 50%; PROB40 wyłączone.</li><li>BECMG: zmiana trwała, zalecane ≤2 h, maksimum 4 h.</li><li>TEMPO: pojedynczy epizod &lt;1 h i łącznie &lt; połowy okresu.</li><li>Maksymalnie 5 grup zmian; brak VV w TAF SZ RP.</li></ul></section></div><div class="footer">Generator po kliknięciu „Odśwież i generuj” scala TAF z IMGW, AWC, PilotHub przez proxy, cache i źródeł ręcznych, a następnie korzysta z SYNOP, silnika multimodelowego, Cloud Learning oraz kierunkowych TAF EPBY / EPPW / EPKS. Wiatr jest prognozą modelową skorygowaną wektorowo do najnowszej obserwacji; wpływ korekty maleje wraz z horyzontem. Wynik jest projektem do weryfikacji prognosty; moduł nie wysyła depesz do sieci wymiany informacji hydrometeorologicznej.</div></div><iframe id="engine" src="index.html" title="silnik PrognozaEPIR"></iframe><script>
 'use strict';
 (() => {
-  const VERSION = 'TAF Sources v0.3.2';
+  const VERSION = 'TAF Sources v0.3.3';
   const IDS = ['EPIR','EPBY','EPPW','EPKS'];
   const IMGW_URL = 'https://awiacja.imgw.pl/metar-i-taf';
   const AWC_TAF = 'https://aviationweather.gov/api/data/taf?ids=EPIR%2CEPBY%2CEPPW%2CEPKS&format=raw';
@@ -139,7 +139,7 @@
   async function collect(){
     const store=Object.fromEntries(IDS.map(id=>[id,[]])), metar=[], attempts=[];
     fromManual(store,attempts);
-    await Promise.allSettled([fromProxy(store,metar,attempts),fromImgw(store,metar,attempts),fromAwc(store,attempts),fromCache(store,attempts)]);
+    await fromCache(store,attempts);const cacheCurrent=IDS.filter(id=>select(store[id])?.current).length;if(cacheCurrent<IDS.length){await Promise.allSettled([fromProxy(store,metar,attempts),fromImgw(store,metar,attempts),fromAwc(store,attempts)]);}else{attempts.push('auto cache '+cacheCurrent+'/4 ✓');}
     const stations={};for(const id of IDS)stations[id]=select(store[id]);
     metar.sort((a,b)=>b.t-a.t);
     return {stations,metar:metar[0]||null,attempts,updated:Date.now()};

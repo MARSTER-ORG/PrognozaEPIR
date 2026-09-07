@@ -19,23 +19,20 @@ IMGW_URL = "https://awiacja.imgw.pl/metar-i-taf"
 AWC_BASE = "https://aviationweather.gov/api/data/taf"
 PILOTHUB_PAGES = {
     "EPIR": (
-        "https://pilothub.pl/lotniska/inowroclaw-latkowo-lotnisko-wojskowe",
-        "https://pilothub.pl/lotniska/inowroclaw-szpital",
+        "https://pilothub.pl/lotniska/epin",
     ),
     "EPBY": (
         "https://pilothub.pl/lotniska/epby",
     ),
     "EPPW": (
-        "https://pilothub.pl/lotniska/eppw",
-        "https://pilothub.pl/lotniska/epom",
+        "https://pilothub.pl/lotniska/epfp?lang=en",
     ),
     "EPKS": (
-        "https://pilothub.pl/lotniska/poznan-krzesiny-lotnisko-wojskowe",
         "https://pilothub.pl/lotniska/epze",
     ),
 }
 SOURCE_PRIORITY = {"IMGW Awiacja": 30, "PilotHub / IMGW": 20, "AWC": 10}
-UA = "Mozilla/5.0 (compatible; PrognozaEPIR-TAF-Collector/0.4; +https://github.com/MARSTER-ORG/PrognozaEPIR)"
+UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
 
 
 def utcnow_iso() -> str:
@@ -55,6 +52,8 @@ def fetch_text(url: str, accept: str = "text/plain", retries: int = 1) -> str:
             headers={
                 "User-Agent": UA,
                 "Accept": accept,
+                "Accept-Language": "pl-PL,pl;q=0.9,en;q=0.7",
+                "Referer": "https://awiacja.imgw.pl/",
                 "Cache-Control": "no-cache, no-store, max-age=0",
                 "Pragma": "no-cache",
             },
@@ -89,8 +88,26 @@ def plain_text(page: str) -> str:
     return re.sub(r"\s+", " ", plain).strip()
 
 
+def parseable_text(page: str) -> str:
+    raw = html.unescape(page)
+    hydrated = (
+        raw.replace(r"\u003c", "<")
+           .replace(r"\u003e", ">")
+           .replace(r"\u0026", "&")
+           .replace(r"\n", " ")
+           .replace(r"\r", " ")
+           .replace(r"\/", "/")
+    )
+    visible = plain_text(raw)
+    embedded = html.unescape(hydrated)
+    embedded = re.sub(r"<style\b[^>]*>.*?</style>", " ", embedded, flags=re.I | re.S)
+    embedded = re.sub(r"<[^>]+>", " ", embedded)
+    embedded = re.sub(r"\s+", " ", embedded).strip()
+    return re.sub(r"\s+", " ", f"{visible} {embedded}").strip()
+
+
 def split_tafs(text: str) -> list[tuple[str, str]]:
-    one = plain_text(text)
+    one = parseable_text(text)
     ids = "|".join(map(re.escape, STATIONS))
     pat = re.compile(rf"\bTAF(?:\s+(?:AMD|COR))?\s+({ids})\b", re.I)
     matches = list(pat.finditer(one))
@@ -106,7 +123,7 @@ def split_tafs(text: str) -> list[tuple[str, str]]:
 
 
 def extract_station_tafs(page: str, station: str) -> list[str]:
-    plain = plain_text(page)
+    plain = parseable_text(page)
     matches = re.findall(
         rf"\bTAF(?:\s+(?:AMD|COR))?\s+{re.escape(station)}\b.*?(?:=|(?=\bTAF\b)|$)",
         plain,
