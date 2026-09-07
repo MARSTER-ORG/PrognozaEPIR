@@ -21,6 +21,27 @@
     return bestDiff <= MAX_MATCH_MS ? best : null;
   }
 
+  function mifgSeries() {
+    try {
+      const rows = window.PrognozaEPIRMIFG?.getSeries?.();
+      return Array.isArray(rows) ? rows : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function mifgAt(t) {
+    const series = mifgSeries();
+    if (!series.length || !finite(t)) return null;
+    let best = null, bestDiff = Infinity;
+    for (const row of series) {
+      if (!row || !finite(row.t) || !finite(row.score)) continue;
+      const d = Math.abs(row.t - t);
+      if (d < bestDiff) { best = row; bestDiff = d; }
+    }
+    return bestDiff <= MAX_MATCH_MS ? best : null;
+  }
+
   function fogColor(score) {
     if (score >= 75) return 'rgba(208,80,63,.62)';
     if (score >= 60) return 'rgba(216,108,47,.57)';
@@ -31,6 +52,12 @@
     const pad = Math.min(VIS_INNER_PAD,Math.max(7,p.h*.09));
     const usable = Math.max(1,p.h-2*pad);
     return p.y+p.h-pad-(clip(km,0,VIS_SCALE_MAX_KM)/VIS_SCALE_MAX_KM)*usable;
+  }
+
+  // MIFG is an independent 0–100 shallow-fog score. Use the same vertical
+  // extent as the FOG overlay, but keep it as labelled points rather than bars.
+  function yOnMifgScale(score,p) {
+    return yOnVisibilityScale(FOG_FULL_SCALE_KM * clip(score,0,100) / 100,p);
   }
 
   function drawFogBars() {
@@ -64,6 +91,26 @@
       ctx.fillRect(xx - barW / 2, baseY - h, barW, h);
     }
 
+    // Shallow fog / MIFG: one independent point for each model hour. Points are
+    // intentionally not connected; the numeric label is the exact 0–100 score.
+    const mifg = mifgSeries().filter(row => row && finite(row.t) && finite(row.score) && row.t >= m.t0 && row.t <= m.t1);
+    ctx.font = 'bold 7.5px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    for (const row of mifg) {
+      const xx = x(row.t);
+      const yy = yOnMifgScale(row.score,p);
+      ctx.beginPath();
+      ctx.arc(xx,yy,3.1,0,Math.PI*2);
+      ctx.fillStyle = 'rgba(95,125,255,.96)';
+      ctx.fill();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(235,240,255,.9)';
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(185,198,255,.98)';
+      ctx.fillText(String(Math.round(row.score)),xx,yy-5);
+    }
+
     const cp = typeof canvasPalette === 'function' ? canvasPalette() : {muted:'#666',grid2:'#999'};
     ctx.strokeStyle = cp.grid2 || '#999';
     ctx.globalAlpha = .52;
@@ -94,14 +141,23 @@
   function addFogToSectionInfo(z, panelId) {
     if (panelId !== 'visfog') return;
     const fog = fogAt(z?.t);
+    const mifg = mifgAt(z?.t);
     const box = document.getElementById('sectionInfo');
-    if (!box || !fog) return;
+    if (!box || (!fog && !mifg)) return;
     const values = box.querySelector('.section-values');
-    if (values && !values.querySelector('[data-fog-risk="1"]')) {
+    if (!values) return;
+    if (fog && !values.querySelector('[data-fog-risk="1"]')) {
       const cell = document.createElement('div');
       cell.className = 'section-value';
       cell.dataset.fogRisk = '1';
       cell.innerHTML = '<small>Ryzyko mgły · FOG ENGINE</small><strong>' + fogRiskText(fog) + '</strong>';
+      values.appendChild(cell);
+    }
+    if (mifg && !values.querySelector('[data-mifg-risk="1"]')) {
+      const cell = document.createElement('div');
+      cell.className = 'section-value';
+      cell.dataset.mifgRisk = '1';
+      cell.innerHTML = '<small>Niska mgła &lt;2 m · MIFG</small><strong>' + Math.round(mifg.score) + '/100</strong>';
       values.appendChild(cell);
     }
   }
@@ -111,7 +167,7 @@
     if (!legend || document.getElementById('fogMeteogramLegend')) return;
     const el = document.createElement('span');
     el.id = 'fogMeteogramLegend';
-    el.innerHTML = '<b>Widzialność / FOG:</b> słupki EPIR FOG ENGINE od 40/100; FOG 100 = poziom 19,5 km.';
+    el.innerHTML = '<b>Widzialność / mgła:</b> FOG = słupki od 40/100; MIFG = punkty z wartością 0–100.';
     legend.appendChild(el);
   }
 
@@ -145,6 +201,7 @@
   }
 
   window.addEventListener('prognozaepir:fog-series-updated', redraw);
+  window.addEventListener('prognozaepir:mifg-series-updated', redraw);
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => { install(); installLegendNote(); }, {once:true});
   } else {
