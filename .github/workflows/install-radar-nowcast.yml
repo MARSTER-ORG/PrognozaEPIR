@@ -1,0 +1,77 @@
+name: Install radar nowcast
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/install-radar-nowcast.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Validate nowcast source
+        run: node --check radar-nowcast.js
+
+      - name: Wire module into Pages build
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('.github/workflows/pages.yml')
+          s=p.read_text(encoding='utf-8')
+          original=s
+
+          s=s.replace('analysis-plus.js range-rings-reset.js _site/',
+                      'analysis-plus.js radar-nowcast.js range-rings-reset.js _site/')
+          s=s.replace("              '<script src=\"analysis-plus.js\"></script>',\n              '<script src=\"range-rings-reset.js\"></script>',",
+                      "              '<script src=\"analysis-plus.js\"></script>',\n              '<script src=\"radar-nowcast.js\"></script>',\n              '<script src=\"range-rings-reset.js\"></script>',")
+          s=s.replace("'analysis-plus.js','range-rings-reset.js'):",
+                      "'analysis-plus.js','radar-nowcast.js','range-rings-reset.js'):")
+          s=s.replace('analysis-plus.js range-rings-reset.js; do',
+                      'analysis-plus.js radar-nowcast.js range-rings-reset.js; do')
+
+          marker='          test -s _site/cloud-learning-client.js\n'
+          if 'test -s _site/radar-nowcast.js' not in s:
+              s=s.replace(marker,marker+'          test -s _site/radar-nowcast.js\n',1)
+
+          marker2="          grep -F '<script src=\"cloud-learning-client.js\"></script>' _site/index.html\n"
+          if "<script src=\"radar-nowcast.js\"></script>" not in s[s.find('Verify deployed features'):]:
+              s=s.replace(marker2,marker2+"          grep -F '<script src=\"radar-nowcast.js\"></script>' _site/radar.html\n",1)
+
+          s=s.replace('RADAR / SAT / AI v0.12.3','RADAR / SAT / AI v0.13.0')
+
+          required=[
+              'radar-nowcast.js range-rings-reset.js _site/',
+              "'<script src=\"radar-nowcast.js\"></script>'",
+              'analysis-plus.js radar-nowcast.js range-rings-reset.js; do',
+              'test -s _site/radar-nowcast.js',
+              "grep -F '<script src=\"radar-nowcast.js\"></script>' _site/radar.html",
+              'RADAR / SAT / AI v0.13.0',
+          ]
+          missing=[x for x in required if x not in s]
+          if missing:
+              raise SystemExit('Pages wiring failed, missing: '+repr(missing))
+          if s==original:
+              print('pages.yml already wired')
+          p.write_text(s,encoding='utf-8')
+          PY
+
+          rm -f .github/workflows/install-radar-nowcast.yml
+
+      - name: Commit wiring
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/pages.yml .github/workflows/install-radar-nowcast.yml
+          git commit -m 'feat: deploy POLRAD radar nowcast 0-3h'
+          git pull --rebase origin main
+          git push origin HEAD:main
