@@ -11,6 +11,7 @@ on:
       - 'data/observations/manual/**'
       - 'scripts/message_archive.py'
       - 'scripts/apply_central_archive_cutover.py'
+      - 'scripts/finalize_central_message_architecture.py'
       - '.github/workflows/message-archive.yml'
 
 permissions:
@@ -34,7 +35,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Validate code
-        run: python3 -m py_compile scripts/message_archive.py scripts/apply_central_archive_cutover.py
+        run: python3 -m py_compile scripts/message_archive.py scripts/apply_central_archive_cutover.py scripts/finalize_central_message_architecture.py
       - name: Acquire bulletins into temporary staging
         shell: bash
         run: |
@@ -50,7 +51,10 @@ jobs:
           python3 scripts/message_archive.py
           python3 scripts/message_archive.py --validate-only
           python3 scripts/apply_central_archive_cutover.py
-          python3 -m py_compile scripts/model_verification.py scripts/cloud_learning.py
+          python3 scripts/finalize_central_message_architecture.py
+          python3 scripts/message_archive.py --validate-only
+          python3 -m py_compile scripts/model_verification.py scripts/cloud_learning.py scripts/finalize_central_message_architecture.py
+          node --check taf-verification.js
       - name: Drop legacy staging changes
         run: |
           git restore --worktree -- data/observations data/taf 2>/dev/null || true
@@ -59,18 +63,44 @@ jobs:
           test -s data/messages/latest.json
           test -s data/messages/recent.json
           test -s data/messages/status.json
+          test -s data/messages/taf-neighbors.json
           python3 scripts/message_archive.py --validate-only
           grep -F "data/messages/latest.json" observation-engine.js
+          grep -F 'PrognozaEPIRMessageArchive' taf.html
+          grep -F 'loadNeighborArchive' taf.html
           grep -F 'src="taf-archive-source.js"' taf.html
           grep -F 'ROOT / "data" / "messages" / "metar"' scripts/model_verification.py
           grep -F 'SPECI_DIR = ROOT / "data" / "messages" / "speci"' scripts/cloud_learning.py
           ! grep -F "aviation-api.imgw.pl" observation-engine.js
           ! grep -F "function fromProxy(" taf.html
+          ! grep -F "loadImgwLive(" taf.html
+          ! grep -F "awiacja.imgw.pl" taf.html
+          ! grep -F "data/observations/metar/" taf-verification.js
+          ! grep -F "data/taf/epir/" taf-verification.js
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          bad=[]
+          for p in Path('data/messages/taf').rglob('*.jsonl'):
+              for line in p.read_text(encoding='utf-8').splitlines():
+                  if not line.strip(): continue
+                  r=json.loads(line)
+                  if r.get('station') != 'EPIR': bad.append((str(p),r.get('station')))
+          if bad: raise SystemExit(f'neighbor TAF leaked into history: {bad[:5]}')
+          latest=json.loads(Path('data/messages/latest.json').read_text(encoding='utf-8'))
+          for station in ('EPBY','EPPW','EPKS'):
+              row=(latest.get('taf_by_station') or {}).get(station)
+              if row and not row.get('snapshot_only'):
+                  raise SystemExit(f'{station} is not marked snapshot_only')
+          status=json.loads(Path('data/messages/status.json').read_text(encoding='utf-8'))
+          if status.get('taf_history_scope') != 'EPIR only':
+              raise SystemExit('TAF history scope not finalized')
+          PY
       - name: Commit authoritative archive
         id: publish
         run: |
           set -euo pipefail
-          paths=(data/messages observation-engine.js taf.html scripts/model_verification.py scripts/cloud_learning.py)
+          paths=(data/messages observation-engine.js taf.html taf-verification.js scripts/model_verification.py scripts/cloud_learning.py)
           if git diff --quiet -- "${paths[@]}"; then
             echo 'Central archive already up to date.'
             echo 'changed=false' >> "$GITHUB_OUTPUT"
