@@ -19,12 +19,12 @@
   const style = document.createElement('style');
   style.id = 'epirLegend11Style';
   style.textContent = `
-    .legend-dbz{font-size:7px!important;line-height:1.05!important;padding:4px 5px!important;min-width:82px!important;max-height:none!important;overflow:visible!important}
-    .legend-dbz>b{display:block;font-size:8px!important;margin-bottom:3px!important}
-    .legend-dbz .dbz-grid{display:grid!important;grid-template-columns:1fr!important;gap:1px!important}
-    .legend-dbz .dbz-row{display:flex!important;align-items:center!important;gap:3px!important;white-space:nowrap!important;margin:0!important}
+    .legend-dbz{display:inline-block!important;width:max-content!important;min-width:0!important;max-width:calc(100vw - 24px)!important;box-sizing:border-box!important;font-size:7px!important;line-height:1.05!important;padding:4px 5px!important;max-height:none!important;overflow:visible!important}
+    .legend-dbz>b{display:block;width:max-content!important;font-size:8px!important;margin-bottom:3px!important}
+    .legend-dbz .dbz-grid{display:inline-grid!important;width:max-content!important;grid-template-columns:max-content!important;gap:1px!important}
+    .legend-dbz .dbz-row{display:flex!important;width:max-content!important;align-items:center!important;gap:3px!important;white-space:nowrap!important;margin:0!important}
     .legend-dbz .sw{width:11px!important;height:6px!important;flex:0 0 11px!important;margin:0!important}
-    @media(max-width:560px){.legend-dbz{font-size:6.5px!important;padding:3px 4px!important;min-width:78px!important}.legend-dbz>b{font-size:7px!important}}
+    @media(max-width:560px){.legend-dbz{font-size:6.5px!important;padding:3px 4px!important;min-width:0!important}.legend-dbz>b{font-size:7px!important}}
   `;
   document.head.appendChild(style);
 
