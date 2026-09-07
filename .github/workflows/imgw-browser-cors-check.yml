@@ -1,0 +1,36 @@
+name: IMGW browser CORS check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/imgw-browser-cors-check.yml'
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check IMGW API CORS for GitHub Pages
+        run: |
+          URL='https://aviation-api.imgw.pl/data/last?params=metar,taf&format=json&count=4'
+          curl -fsS -D /tmp/headers.txt -o /tmp/body.json \
+            -H 'Origin: https://marster-org.github.io' \
+            -H 'Accept: application/json' "$URL"
+          echo '--- response headers ---'
+          cat /tmp/headers.txt
+          echo '--- CORS headers ---'
+          grep -i '^access-control-' /tmp/headers.txt || true
+          python3 - <<'PY'
+          import json
+          p=json.load(open('/tmp/body.json',encoding='utf-8'))
+          epir=(p or {}).get('EPIR') or {}
+          assert epir.get('metars'), 'EPIR.metars missing'
+          print('EPIR payload present: OK')
+          PY
+          if ! grep -Eqi '^access-control-allow-origin:[[:space:]]*(\*|https://marster-org\.github\.io)' /tmp/headers.txt; then
+            echo 'IMGW API does not authorize browser requests from GitHub Pages' >&2
+            exit 1
+          fi
+          echo 'Browser CORS for GitHub Pages: OK'
