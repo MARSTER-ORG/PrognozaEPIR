@@ -16,10 +16,7 @@ from pathlib import Path
 STATIONS = ("EPIR", "EPBY", "EPPW", "EPKS")
 OUT = Path("data/taf/neighbors.json")
 IMGW_URL = "https://awiacja.imgw.pl/metar-i-taf"
-AWC_URL = "https://aviationweather.gov/api/data/taf?" + urllib.parse.urlencode({
-    "ids": ",".join(STATIONS),
-    "format": "raw",
-})
+AWC_BASE = "https://aviationweather.gov/api/data/taf"
 PILOTHUB_PAGES = {
     "EPIR": (
         "https://pilothub.pl/lotniska/inowroclaw-latkowo-lotnisko-wojskowe",
@@ -169,7 +166,7 @@ def add_candidate(store: dict[str, list[dict]], station: str, raw: str, source: 
     raw = normalize_taf(raw)
     if not re.search(rf"\bTAF(?:\s+(?:AMD|COR))?\s+{re.escape(station)}\b", raw, re.I):
         return
-    if any(x["raw"] == raw for x in store[station]):
+    if any(x["raw"] == raw and x["source"] == source and x["source_url"] == url for x in store[station]):
         return
     store[station].append({
         "raw": raw,
@@ -190,8 +187,11 @@ def collect_candidates() -> dict[str, list[dict]]:
     for url in [f"{IMGW_URL}?aport={sid}" for sid in STATIONS] + [IMGW_URL]:
         jobs.append(("multi", None, url, "IMGW Awiacja", IMGW_URL))
 
-    # AWC independent fallback.
-    jobs.append(("multi", None, AWC_URL, "AWC", "https://aviationweather.gov/api/data/taf"))
+    # AWC independent fallback. Query stations separately: the endpoint may
+    # reject a mixed list when one military identifier has no current record.
+    for sid in STATIONS:
+        url = AWC_BASE + "?" + urllib.parse.urlencode({"ids": sid, "format": "raw"})
+        jobs.append(("multi", None, url, "AWC", AWC_BASE))
 
     # PilotHub exposes IMGW-fed TAFs and often has current military cycles when
     # a direct browser request is blocked by CORS.
@@ -226,10 +226,27 @@ def collect_candidates() -> dict[str, list[dict]]:
     return store
 
 
-def select_best(rows: list[dict]) -> dict | None:
+def source_url_rank(station: str, row: dict) -> int:
+    if row.get("source") != "PilotHub / IMGW":
+        return 0
+    pages = PILOTHUB_PAGES.get(station, ())
+    try:
+        # Earlier entries are intentionally the more station-specific pages.
+        return len(pages) - pages.index(row.get("source_url"))
+    except ValueError:
+        return 0
+
+
+def select_best(station: str, rows: list[dict]) -> dict | None:
     if not rows:
         return None
-    return max(rows, key=lambda x: (bool(x.get("current")), float(x.get("issue") or 0), int(x.get("priority") or 0)))
+    return max(rows, key=lambda x: (
+        bool(x.get("current")),
+        float(x.get("issue") or 0),
+        int(x.get("priority") or 0),
+        source_url_rank(station, x),
+        str(x.get("source_url") or ""),
+    ))
 
 
 def main() -> int:
@@ -240,7 +257,7 @@ def main() -> int:
     changed = False
 
     for sid in STATIONS:
-        best = select_best(candidates.get(sid, []))
+        best = select_best(sid, candidates.get(sid, []))
         prev = old_st.get(sid) or {}
         if best:
             raw = best["raw"]
