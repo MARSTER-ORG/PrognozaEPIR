@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: taf-cache
@@ -33,9 +34,11 @@ jobs:
           python3 -m json.tool data/taf/neighbors.json >/dev/null
 
       - name: Commit cache when changed
+        id: cache_commit
         run: |
           if git diff --quiet -- data/taf/neighbors.json; then
             echo "TAF cache unchanged"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git config user.name "github-actions[bot]"
@@ -44,3 +47,10 @@ jobs:
           git commit -m "data: refresh TAF cache"
           git pull --rebase origin main
           git push origin HEAD:main
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy refreshed cache to GitHub Pages
+        if: steps.cache_commit.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main
