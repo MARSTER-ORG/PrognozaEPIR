@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import calendar
 import html
 import json
 import re
+import time
 import urllib.parse
 import urllib.request
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,49 +20,57 @@ AWC_URL = "https://aviationweather.gov/api/data/taf?" + urllib.parse.urlencode({
     "ids": ",".join(STATIONS),
     "format": "raw",
 })
-# PilotHub exposes IMGW-fed aviation weather and is useful when a station is
-# absent from AWC or the direct IMGW page cannot be parsed. Several nearby
-# pages are tried because military TAFs are sometimes shown as the nearest
-# aerodrome rather than on a dedicated page.
 PILOTHUB_PAGES = {
     "EPIR": (
+        "https://pilothub.pl/lotniska/inowroclaw-latkowo-lotnisko-wojskowe",
         "https://pilothub.pl/lotniska/inowroclaw-szpital",
-        "https://pilothub.pl/lotniska/epwt",
-        "https://pilothub.pl/lotniska/epwk",
     ),
     "EPBY": (
         "https://pilothub.pl/lotniska/epby",
-        "https://pilothub.pl/lotniska/bydgoszcz-aeroklub-biedaszkowo-lotnisko-niekontrolowane",
     ),
     "EPPW": (
         "https://pilothub.pl/lotniska/eppw",
         "https://pilothub.pl/lotniska/epom",
-        "https://pilothub.pl/lotniska/szklarka-przygodzicka-ladowisko-nieewidencjonowane",
     ),
     "EPKS": (
-        "https://pilothub.pl/lotniska/epks",
+        "https://pilothub.pl/lotniska/poznan-krzesiny-lotnisko-wojskowe",
         "https://pilothub.pl/lotniska/epze",
-        "https://pilothub.pl/lotniska/eppb",
     ),
 }
-UA = "PrognozaEPIR/0.3 (+https://github.com/MARSTER-ORG/PrognozaEPIR)"
+SOURCE_PRIORITY = {"IMGW Awiacja": 30, "PilotHub / IMGW": 20, "AWC": 10}
+UA = "Mozilla/5.0 (compatible; PrognozaEPIR-TAF-Collector/0.4; +https://github.com/MARSTER-ORG/PrognozaEPIR)"
 
 
 def utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def fetch_text(url: str, accept: str = "text/plain") -> str:
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": UA,
-            "Accept": accept,
-            "Cache-Control": "no-cache",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=20) as r:
-        return r.read().decode("utf-8", errors="replace").strip()
+def with_cache_buster(url: str) -> str:
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}_={int(time.time() * 1000)}"
+
+
+def fetch_text(url: str, accept: str = "text/plain", retries: int = 1) -> str:
+    last: Exception | None = None
+    for attempt in range(retries):
+        req = urllib.request.Request(
+            with_cache_buster(url),
+            headers={
+                "User-Agent": UA,
+                "Accept": accept,
+                "Cache-Control": "no-cache, no-store, max-age=0",
+                "Pragma": "no-cache",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=8) as r:
+                return r.read().decode("utf-8", errors="replace").strip()
+        except Exception as exc:
+            last = exc
+            if attempt + 1 < retries:
+                time.sleep(1.2 * (attempt + 1))
+    assert last is not None
+    raise last
 
 
 def normalize_taf(raw: str) -> str:
@@ -80,42 +92,66 @@ def plain_text(page: str) -> str:
     return re.sub(r"\s+", " ", plain).strip()
 
 
-def split_tafs(text: str) -> dict[str, str]:
+def split_tafs(text: str) -> list[tuple[str, str]]:
     one = plain_text(text)
     ids = "|".join(map(re.escape, STATIONS))
     pat = re.compile(rf"\bTAF(?:\s+(?:AMD|COR))?\s+({ids})\b", re.I)
     matches = list(pat.finditer(one))
-    out: dict[str, str] = {}
+    out: list[tuple[str, str]] = []
     for i, m in enumerate(matches):
         end = matches[i + 1].start() if i + 1 < len(matches) else len(one)
         raw = normalize_taf(one[m.start():end])
-        # If the source contains unrelated prose after the TAF, stop at '='.
         if "=" in raw:
             raw = raw.split("=", 1)[0].strip() + "="
-        out[m.group(1).upper()] = raw
+        if raw:
+            out.append((m.group(1).upper(), raw))
     return out
 
 
-def extract_station_taf(page: str, station: str) -> str | None:
+def extract_station_tafs(page: str, station: str) -> list[str]:
     plain = plain_text(page)
-    m = re.search(
-        rf"\bTAF(?:\s+(?:AMD|COR))?\s+{re.escape(station)}\b.*?=",
+    matches = re.findall(
+        rf"\bTAF(?:\s+(?:AMD|COR))?\s+{re.escape(station)}\b.*?(?:=|(?=\bTAF\b)|$)",
         plain,
         flags=re.I | re.S,
     )
-    return normalize_taf(m.group(0)) if m else None
+    return [normalize_taf(x) for x in matches if x.strip()]
 
 
-def fetch_pilothub_taf(station: str) -> tuple[str | None, str | None]:
-    for url in PILOTHUB_PAGES.get(station, ()):
+def month_shift(year: int, month: int, delta: int) -> tuple[int, int]:
+    idx = year * 12 + (month - 1) + delta
+    return idx // 12, idx % 12 + 1
+
+
+def taf_issue_ts(raw: str, now: datetime | None = None) -> float:
+    m = re.search(r"\b(\d{2})(\d{2})(\d{2})Z\b", raw)
+    if not m:
+        return 0.0
+    now = now or datetime.now(timezone.utc)
+    day, hour, minute = map(int, m.groups())
+    best: datetime | None = None
+    best_delta = float("inf")
+    for dm in (-1, 0, 1):
+        year, month = month_shift(now.year, now.month, dm)
+        if day > calendar.monthrange(year, month)[1]:
+            continue
         try:
-            page = fetch_text(url, "text/html,*/*;q=0.8")
-            raw = extract_station_taf(page, station)
-            if raw:
-                return raw, url
-        except Exception as exc:
-            print(f"PilotHub {station} failed at {url}: {exc}")
-    return None, None
+            dt = datetime(year, month, day, hour, minute, tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        delta = abs((dt - now).total_seconds())
+        if delta < best_delta:
+            best, best_delta = dt, delta
+    return best.timestamp() if best else 0.0
+
+
+def is_current(raw: str, now: datetime | None = None) -> bool:
+    now = now or datetime.now(timezone.utc)
+    ts = taf_issue_ts(raw, now)
+    if not ts:
+        return False
+    age_h = (now.timestamp() - ts) / 3600.0
+    return -1.5 <= age_h <= 8.5
 
 
 def load_existing() -> dict:
@@ -127,83 +163,105 @@ def load_existing() -> dict:
         return {}
 
 
-def add_missing(
-    found: dict[str, str],
-    source_for: dict[str, str],
-    source_url_for: dict[str, str],
-    rows: dict[str, str],
-    source: str,
-    source_url: str,
-) -> None:
-    for sid, raw in rows.items():
-        if sid not in STATIONS or sid in found or not raw:
-            continue
-        found[sid] = raw
-        source_for[sid] = source
-        source_url_for[sid] = source_url
+def add_candidate(store: dict[str, list[dict]], station: str, raw: str, source: str, url: str) -> None:
+    if station not in STATIONS or not raw:
+        return
+    raw = normalize_taf(raw)
+    if not re.search(rf"\bTAF(?:\s+(?:AMD|COR))?\s+{re.escape(station)}\b", raw, re.I):
+        return
+    if any(x["raw"] == raw for x in store[station]):
+        return
+    store[station].append({
+        "raw": raw,
+        "source": source,
+        "source_url": url,
+        "issue": taf_issue_ts(raw),
+        "current": is_current(raw),
+        "priority": SOURCE_PRIORITY.get(source, 0),
+    })
+
+
+def collect_candidates() -> dict[str, list[dict]]:
+    store: dict[str, list[dict]] = defaultdict(list)
+    jobs: list[tuple[str, str | None, str, str, str]] = []
+
+    # Official IMGW. Try station-scoped URLs as well as the combined page.
+    # The station parameter helps avoid a stale cached fragment on the large page.
+    for url in [f"{IMGW_URL}?aport={sid}" for sid in STATIONS] + [IMGW_URL]:
+        jobs.append(("multi", None, url, "IMGW Awiacja", IMGW_URL))
+
+    # AWC independent fallback.
+    jobs.append(("multi", None, AWC_URL, "AWC", "https://aviationweather.gov/api/data/taf"))
+
+    # PilotHub exposes IMGW-fed TAFs and often has current military cycles when
+    # a direct browser request is blocked by CORS.
+    for sid in STATIONS:
+        for url in PILOTHUB_PAGES.get(sid, ()):
+            jobs.append(("station", sid, url, "PilotHub / IMGW", url))
+
+    def worker(job: tuple[str, str | None, str, str, str]):
+        mode, station, url, source, source_url = job
+        accept = "text/plain,*/*;q=0.8" if source == "AWC" else "text/html,*/*;q=0.8"
+        page = fetch_text(url, accept, retries=1)
+        if mode == "multi":
+            rows = split_tafs(page)
+        else:
+            assert station is not None
+            rows = [(station, raw) for raw in extract_station_tafs(page, station)]
+        return source, source_url, url, rows
+
+    # Parallel requests keep the scheduled job fast even when one fallback site
+    # is slow or unavailable. Candidate selection happens afterwards.
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        future_map = {pool.submit(worker, job): job for job in jobs}
+        for fut in as_completed(future_map):
+            job = future_map[fut]
+            try:
+                source, source_url, _url, rows = fut.result()
+                for sid, raw in rows:
+                    add_candidate(store, sid, raw, source, source_url)
+            except Exception as exc:
+                print(f"TAF source failed at {job[2]}: {exc}")
+
+    return store
+
+
+def select_best(rows: list[dict]) -> dict | None:
+    if not rows:
+        return None
+    return max(rows, key=lambda x: (bool(x.get("current")), float(x.get("issue") or 0), int(x.get("priority") or 0)))
 
 
 def main() -> int:
     old = load_existing()
-    found: dict[str, str] = {}
-    source_for: dict[str, str] = {}
-    source_url_for: dict[str, str] = {}
-
-    # 1) Official IMGW aviation page — preferred source.
-    try:
-        imgw_rows = split_tafs(fetch_text(IMGW_URL, "text/html,*/*;q=0.8"))
-        add_missing(found, source_for, source_url_for, imgw_rows, "IMGW Awiacja", IMGW_URL)
-    except Exception as exc:
-        print("IMGW aviation TAF request failed:", exc)
-
-    # 2) AWC — independent fallback, useful especially for EPBY.
-    try:
-        awc_rows = split_tafs(fetch_text(AWC_URL))
-        add_missing(
-            found,
-            source_for,
-            source_url_for,
-            awc_rows,
-            "AWC",
-            "https://aviationweather.gov/api/data/taf",
-        )
-    except Exception as exc:
-        print("AWC TAF request failed:", exc)
-
-    # 3) PilotHub/IMGW — station-by-station fallback.
-    for sid in STATIONS:
-        if sid in found:
-            continue
-        raw, url = fetch_pilothub_taf(sid)
-        if raw:
-            found[sid] = raw
-            source_for[sid] = "PilotHub / IMGW"
-            source_url_for[sid] = url or "https://pilothub.pl/"
-
-    if not found:
-        raise SystemExit("No matching TAFs from IMGW, AWC or PilotHub")
-
     old_st = old.get("stations") or {}
-    new_st = {}
+    candidates = collect_candidates()
+    new_st: dict[str, dict] = {}
     changed = False
+
     for sid in STATIONS:
-        raw = found.get(sid)
+        best = select_best(candidates.get(sid, []))
         prev = old_st.get(sid) or {}
-        if raw:
+        if best:
+            raw = best["raw"]
             prev_raw = prev.get("raw")
             stamp = prev.get("updated_at") if raw == prev_raw else utcnow_iso()
             new_st[sid] = {
                 "available": True,
                 "raw": raw,
                 "updated_at": stamp,
-                "source": source_for.get(sid),
-                "source_url": source_url_for.get(sid),
+                "source": best["source"],
+                "source_url": best["source_url"],
             }
-            changed |= raw != prev_raw or prev.get("source") != source_for.get(sid)
+            changed |= (
+                raw != prev_raw
+                or prev.get("source") != best["source"]
+                or prev.get("source_url") != best["source_url"]
+            )
         elif prev.get("raw"):
-            # Preserve the last successful message through a temporary outage.
-            # Its old updated_at is intentionally kept so the UI can reject it
-            # as stale instead of silently treating it as current.
+            # Preserve the last successful message during a total upstream
+            # outage. Its original timestamp remains, so the browser marks it
+            # as a stale cycle instead of treating it as current.
             new_st[sid] = prev
         else:
             new_st[sid] = {
@@ -215,26 +273,26 @@ def main() -> int:
             }
 
     payload = {
-        "schema": "prognozaepir-neighbor-tafs-v1",
-        "source": "IMGW Awiacja + AWC + PilotHub/IMGW fallback",
+        "schema": "prognozaepir-neighbor-tafs-v2",
+        "source": "IMGW Awiacja + AWC + PilotHub/IMGW; newest-current selection",
         "source_url": IMGW_URL,
         "stations": new_st,
         "updated_at": utcnow_iso() if changed or not old.get("updated_at") else old.get("updated_at"),
     }
 
-    if old:
-        comparable_old = {k: old.get(k) for k in ("schema", "source", "source_url", "stations")}
-        comparable_new = {k: payload.get(k) for k in ("schema", "source", "source_url", "stations")}
-        if comparable_old == comparable_new:
-            print("TAF cache unchanged")
-            return 0
+    comparable_old = {k: old.get(k) for k in ("schema", "source", "source_url", "stations")}
+    comparable_new = {k: payload.get(k) for k in ("schema", "source", "source_url", "stations")}
+    if old and comparable_old == comparable_new:
+        print("TAF cache unchanged")
+        return 0
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print("Updated", OUT)
     for sid in STATIONS:
         row = new_st[sid]
-        print(sid, row.get("source"), row.get("raw") or "NIL")
+        current = "CURRENT" if row.get("raw") and is_current(row["raw"]) else "STALE"
+        print(sid, current, row.get("source"), row.get("raw") or "NIL")
     return 0
 
 
