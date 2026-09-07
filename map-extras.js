@@ -97,7 +97,6 @@
   btn.setAttribute('aria-pressed','false');
   btn.addEventListener('click',() => btn.classList.contains('active') ? showRadarMap() : showBlitzortung());
 
-  // Any normal layer selection returns to the native Leaflet/POLRAD map.
   mapbar.addEventListener('click',e => {
     const other = e.target.closest('button');
     if (other && other !== btn && btn.classList.contains('active')) showRadarMap();
@@ -396,4 +395,14 @@
   },{capture:true});
 
   window.PrognozaEPIRCappi = {show:showCappi,hide:hideCappi,upgradeLegend};
+})();
+
+// Load the compact 11-step POLRAD legend after all legacy legend renderers.
+(() => {
+  if (document.getElementById('epirLegend11Loader')) return;
+  const s = document.createElement('script');
+  s.id = 'epirLegend11Loader';
+  s.src = 'legend-11.js';
+  s.defer = true;
+  document.head.appendChild(s);
 })();
