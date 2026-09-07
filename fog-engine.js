@@ -211,7 +211,7 @@
       .fog-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin-bottom:7px}
       .fog-card{background:var(--soft);border-left:3px solid var(--blueText);padding:6px 7px;min-width:0}
       .fog-card small{display:block;color:var(--muted);font-size:8px}.fog-card strong{display:block;font-size:12px;margin-top:1px}.fog-card em{display:block;color:var(--muted);font-style:normal;font-size:8px;margin-top:1px}
-      .fog-risk-low{border-left-color:#6f8b95}.fog-risk-mid{border-left-color:#d49a28}.fog-risk-high{border-left-color:#d86c2f}.fog-risk-vhigh{border-left-color:#d0503f}
+      .fog-risk-low{border-left-color:#2ea44f}.fog-risk-mid{border-left-color:#d49a28}.fog-risk-high{border-left-color:#d86c2f}.fog-risk-vhigh{border-left-color:#d0503f}
       .fog-strip{overflow-x:auto;border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin:6px 0;padding:5px 0}
       .fog-hours{display:flex;min-width:max-content;gap:4px}.fog-hour{width:96px;background:var(--soft);border:1px solid var(--border);border-radius:4px;padding:4px;text-align:center}
       .fog-hour b{display:block;font-size:9px}.fog-hour .p{font-size:11px;font-weight:700;margin:2px 0}.fog-hour small{display:block;color:var(--muted);font-size:8px}
