@@ -1,5 +1,12 @@
 'use strict';
 (() => {
+  // Final version badge guard for the RADAR page. This script is loaded last,
+  // after legacy radar addons that still rewrite the badge during deployment.
+  const radarVersion = document.querySelector('.brand small');
+  if (radarVersion && /RADAR\s*\/\s*SAT\s*\/\s*AI/i.test(radarVersion.textContent || '')) {
+    radarVersion.textContent = 'RADAR / SAT / AI v0.12.4';
+  }
+
   // PrognozaEPIR działa jako zwykła strona / skrót. Usuń pozostałości po wcześniejszym PWA/WebAPK.
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.getRegistrations()
