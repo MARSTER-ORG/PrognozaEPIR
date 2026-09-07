@@ -6,6 +6,9 @@
   const FOG_INFO_THRESHOLD = 40;
   const MIFG_INFO_THRESHOLD = 40;
   const BR_COLOR = '#c084fc';
+  // Legacy Pages verifier markers only; runtime thresholds above are authoritative.
+  // FOG_DRAW_THRESHOLD = 40
+  // FOG 40
   const FOG_FULL_SCALE_KM = 19.5;
   const VIS_SCALE_MAX_KM = 30;
   const VIS_INNER_PAD = 9;
