@@ -4,21 +4,59 @@
 
   const LEGEND_RIGHT_GAP = 30;
   const WIND_ARROW = '#ef4444';
+  const FOG_TOOLTIP_THRESHOLD = 40;
+  const MAX_RISK_MATCH_MS = 70 * 60e3;
 
   function mergeWindPanels() {
     if (typeof PANELS === 'undefined' || !Array.isArray(PANELS)) return;
     const wind = PANELS.find(p => p && p.id === 'wind');
-    const dir = PANELS.find(p => p && p.id === 'dir');
-    if (!wind || !dir) return;
+    if (wind) wind.h = 84;
 
-    // Kierunek wiatru nie jest osobnym panelem i nie zwiększa wysokości sekcji.
-    // Wiatr zachowuje pierwotną wysokość 84 px, więc oś 0 pozostaje dokładnie
-    // dolną granicą panelu, a poziome linie pomocnicze kończą się na osi 0.
-    wind.h = 84;
-    dir.h = 0;
+    // Usuń panel kierunku całkowicie, zamiast zostawiać go z wysokością 0.
+    // visual-style-fix.js szuka panelu "dir" w cv._meta i rysował w nim drugi,
+    // dolny zestaw strzałek nawet po wcześniejszym wyzerowaniu wysokości.
+    const dirIndex = PANELS.findIndex(p => p && p.id === 'dir');
+    if (dirIndex >= 0) PANELS.splice(dirIndex,1);
   }
 
   mergeWindPanels();
+
+  function nearestRiskRow(series,t) {
+    if (!Array.isArray(series) || !series.length || !finite(t)) return null;
+    let best = null;
+    let bestDiff = Infinity;
+    for (const row of series) {
+      if (!row || !finite(row.t) || !finite(row.score)) continue;
+      const diff = Math.abs(row.t - t);
+      if (diff < bestDiff) {
+        best = row;
+        bestDiff = diff;
+      }
+    }
+    return bestDiff <= MAX_RISK_MATCH_MS ? best : null;
+  }
+
+  function fogAt(t) {
+    return nearestRiskRow(window.PrognozaEPIRFogSeries,t);
+  }
+
+  function mifgAt(t) {
+    try {
+      const rows = window.PrognozaEPIRMIFG?.getSeries?.();
+      return nearestRiskRow(Array.isArray(rows) ? rows : [],t);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function appendRiskCell(values,label,score,datasetKey) {
+    if (!values || !finite(score) || score < FOG_TOOLTIP_THRESHOLD) return;
+    const cell = document.createElement('div');
+    cell.className = 'section-value';
+    cell.dataset[datasetKey] = '1';
+    cell.innerHTML = '<small>'+label+'</small><strong>'+Math.round(score)+'/100</strong>';
+    values.appendChild(cell);
+  }
 
   function drawWindDirectionForeground() {
     if (typeof cv === 'undefined' || typeof ctx === 'undefined') return;
@@ -50,8 +88,7 @@
       ctx.translate(x(z.t),cy);
       ctx.rotate((z.WD+180)*Math.PI/180);
 
-      // Jedyny zestaw strzałek kierunku: na pierwszym planie, dokładnie
-      // pośrodku właściwej sekcji Wiatr. Nie ma już dolnego pasa strzałek.
+      // Jedyny zestaw strzałek: na pierwszym planie, pośrodku sekcji Wiatr.
       ctx.strokeStyle = dark ? 'rgba(10,15,20,.94)' : 'rgba(255,255,255,.96)';
       ctx.lineWidth = 3.4;
       ctx.strokeText('↑',0,0);
@@ -60,6 +97,67 @@
       ctx.restore();
     }
     ctx.restore();
+  }
+
+  function installFogHoverTooltip() {
+    const canvas = document.getElementById('meteo');
+    if (!canvas || canvas.dataset.epirFogHoverInstalled === '1') return;
+    canvas.dataset.epirFogHoverInstalled = '1';
+
+    function appendHoverRow(tooltip,label,score,attr) {
+      if (!tooltip || !finite(score) || score < FOG_TOOLTIP_THRESHOLD) return;
+      const row = document.createElement('div');
+      row.setAttribute(attr,'1');
+      row.style.cssText = 'display:flex;gap:12px;justify-content:space-between;white-space:nowrap';
+      const key = document.createElement('span');
+      key.style.opacity = '.72';
+      key.textContent = label;
+      const val = document.createElement('b');
+      val.textContent = Math.round(score) + '/100';
+      row.append(key,val);
+      tooltip.appendChild(row);
+    }
+
+    function updateTooltip(clientX,clientY) {
+      const tooltip = document.getElementById('epirMeteogramTooltip');
+      const m = canvas._meta;
+      if (!tooltip || tooltip.style.display === 'none' || !m || !Array.isArray(m.data) || !m.data.length || !Array.isArray(m.panelYs)) return;
+
+      tooltip.querySelectorAll('[data-epir-fog-hover],[data-epir-mifg-hover]').forEach(el => el.remove());
+
+      const rect = canvas.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const sx = (clientX - rect.left) / rect.width * m.W;
+      const sy = (clientY - rect.top) / rect.height * m.H;
+      if (sx < m.x0 || sx > m.x1) return;
+
+      const panel = m.panelYs.find(p => p && p.h > 0 && sy >= p.y && sy <= p.y + p.h);
+      if (!panel || panel.id !== 'visfog') return;
+
+      const t = m.t0 + (sx - m.x0) / (m.x1 - m.x0) * (m.t1 - m.t0);
+      let best = m.data[0];
+      for (const z of m.data) {
+        if (Math.abs(z.t-t) < Math.abs(best.t-t)) best = z;
+      }
+
+      const fog = fogAt(best.t);
+      const mifg = mifgAt(best.t);
+      if (fog && fog.score >= FOG_TOOLTIP_THRESHOLD) {
+        appendHoverRow(tooltip,'Ryzyko mgły · FOG',fog.score,'data-epir-fog-hover');
+      }
+      if (mifg && mifg.score >= FOG_TOOLTIP_THRESHOLD) {
+        appendHoverRow(tooltip,'Niska mgła <2 m · MIFG',mifg.score,'data-epir-mifg-hover');
+      }
+    }
+
+    canvas.addEventListener('pointermove',e => {
+      if (e.pointerType !== 'mouse') return;
+      const x = e.clientX;
+      const y = e.clientY;
+      // Hover z visual-style-fix.js najpierw przebudowuje dymek. Mikrozadanie
+      // dopisuje ryzyka dopiero po zakończeniu wszystkich listenerów pointermove.
+      queueMicrotask(() => updateTooltip(x,y));
+    });
   }
 
   function lowestCloudInBand(profile,min,max) {
@@ -88,6 +186,26 @@
 
   const previousShowSectionInfo = showSectionInfo;
   showSectionInfo = function(z,panelId) {
+    if (panelId === 'visfog') {
+      previousShowSectionInfo(z,panelId);
+      const box = $('sectionInfo');
+      const values = box?.querySelector('.section-values');
+      if (!values) return;
+
+      // Usuń wartości dodane przez wcześniejsze wrappery i dodaj je ponownie
+      // wyłącznie od progu 40/100, zgodnie z meteogramem.
+      values.querySelectorAll('[data-fog-risk],[data-mifg-risk]').forEach(el => el.remove());
+      const fog = fogAt(z?.t);
+      const mifg = mifgAt(z?.t);
+      if (fog && fog.score >= FOG_TOOLTIP_THRESHOLD) {
+        appendRiskCell(values,'Ryzyko mgły · FOG ENGINE',fog.score,'fogRisk');
+      }
+      if (mifg && mifg.score >= FOG_TOOLTIP_THRESHOLD) {
+        appendRiskCell(values,'Niska mgła <2 m · MIFG',mifg.score,'mifgRisk');
+      }
+      return;
+    }
+
     if (panelId !== 'cloud') return previousShowSectionInfo(z,panelId);
 
     const box = $('sectionInfo');
@@ -147,8 +265,6 @@
     draw = function() {
       mergeWindPanels();
 
-      // Stary panel kierunku ma wysokość 0, więc nie rysujemy jego dawnej
-      // pionowej etykiety na granicy między Wiatrem i Widzialnością.
       const nativeFillText = ctx.fillText;
       ctx.fillText = function(text,...args) {
         if (text === 'Kierunek wiatru') return;
@@ -165,6 +281,8 @@
     };
     window.__epirMergedWindPanelWrapped = true;
   }
+
+  installFogHoverTooltip();
 
   requestAnimationFrame(()=>{
     mergeWindPanels();
