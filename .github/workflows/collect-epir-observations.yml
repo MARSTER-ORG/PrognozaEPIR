@@ -9,6 +9,7 @@ on:
       - 'scripts/supplement_synop_12342.py'
       - 'scripts/refresh_epir_metar.py'
       - 'scripts/live_metar_collector.py'
+      - 'scripts/metar_armored.py'
       - 'scripts/collect_neighbor_tafs.py'
       - 'scripts/archive_epir_taf.py'
       - 'scripts/organize_observation_archive.py'
@@ -78,10 +79,38 @@ jobs:
           python3 scripts/collect_epir_observations.py || echo "Primary EPIR collector unavailable; continuing"
           python3 scripts/supplement_synop_12342.py || echo "SYNOP supplement unavailable; continuing"
 
-          # Authoritative METAR path: official IMGW Aviation API used by the
-          # Awiacja frontend + PilotHub + OGIMET + CZAD. All returned EPIR
-          # METAR/SPECI reports are archived; only <=60 min may be marked fresh.
-          python3 scripts/live_metar_collector.py
+          # Armored METAR path: official IMGW + independent fallbacks, bounded
+          # retries, backfill and atomic persistence.
+          python3 scripts/metar_armored.py
+
+      - name: Persist observations before optional TAF work
+        id: obs_commit
+        run: |
+          # This is intentionally BEFORE TAF collection. A broken TAF provider
+          # must never again prevent a valid METAR/SYNOP from being saved.
+          if git diff --quiet -- data/observations/metar data/observations/synop; then
+            echo "No canonical observation change to persist early"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/observations
+          git commit -m "data: persist EPIR observations $(date -u +'%Y-%m-%d %H:%MZ')"
+
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            if git rebase origin/main && git push origin HEAD:main; then
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            git rebase --abort 2>/dev/null || true
+            echo "Observation push attempt ${attempt} failed; retrying..."
+            sleep $((attempt * 4))
+          done
+          echo "Failed to persist EPIR observations before TAF work" >&2
+          exit 1
 
       - name: Collect and archive TAFs
         run: |
@@ -93,7 +122,7 @@ jobs:
 
       - name: Refresh verification for new observations
         run: |
-          if git diff --quiet -- data/observations; then
+          if [ "${{ steps.obs_commit.outputs.changed }}" != "true" ] && git diff --quiet -- data/observations; then
             echo "No new observation; verification unchanged"
           else
             # Never fetch a new forecast here: verification must use forecasts
@@ -168,32 +197,30 @@ jobs:
           print('TAF EPIR latest:', tr.get('issue_time'), tr.get('source'), tr.get('raw'))
           PY
 
-      - name: Commit new observations verification and TAF archive
+      - name: Commit new verification and TAF archive
         id: commit
         run: |
           if git diff --quiet -- data/observations data/learning data/taf; then
-            echo "No new observation or TAF to archive"
+            echo "No new post-observation data to archive"
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/observations data/learning data/taf
-          git commit -m "data: archive EPIR observations and TAFs $(date -u +'%Y-%m-%d %H:%MZ')"
+          git commit -m "data: archive EPIR verification and TAFs $(date -u +'%Y-%m-%d %H:%MZ')"
 
-          # A Pages/data commit can land while this collector is running.
-          # Rebase and retry instead of losing the observation on a rejected push.
           for attempt in 1 2 3 4; do
             git fetch origin main
-            git rebase origin/main
-            if git push origin HEAD:main; then
+            if git rebase origin/main && git push origin HEAD:main; then
               echo "changed=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
+            git rebase --abort 2>/dev/null || true
             echo "Push attempt ${attempt} failed; retrying..."
             sleep $((attempt * 5))
           done
-          echo "Failed to push EPIR data after retries" >&2
+          echo "Failed to push EPIR post-observation data after retries" >&2
           exit 1
 
       - name: Redeploy updated observations
