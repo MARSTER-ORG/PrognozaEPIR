@@ -18,9 +18,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "data" / "runtime" / "models-latest.json"
 API = "https://api.open-meteo.com/v1/forecast"
-LAT = 52.7989
-LON = 18.2639
-USER_AGENT = "PrognozaEPIR-ModelSnapshot/1.0"
+LAT = 52.8275
+LON = 18.3175
+USER_AGENT = "PrognozaEPIR-ModelSnapshot/1.1"
 
 MODELS = [
     ("ecmwf_ifs", "ECMWF", 0.17),
@@ -41,6 +41,7 @@ CORE = [
     "wind_speed_10m", "wind_direction_10m", "wind_gusts_10m",
     "weather_code", "cloud_cover", "cloud_cover_low",
     "cloud_cover_mid", "cloud_cover_high",
+    "cape", "lifted_index", "convective_inhibition", "freezing_level_height",
 ]
 COMMON_LEVELS = [1000, 925, 850, 700, 500, 300, 200]
 ALADIN_LEVELS = [1000, 950, 925, 850, 700, 500, 300, 250, 200]
