@@ -1,0 +1,65 @@
+name: One-shot default TAF proxy
+
+on:
+  push:
+    paths:
+      - '.github/workflows/one-shot-default-taf-proxy.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Set Vercel proxy as default
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          URL = 'https://prognozaepir-taf-proxy-matmobilny-9204.vercel.app/api/taf-proxy'
+          files = [Path('taf.html'), Path('taf-multisource.js')]
+
+          for p in files:
+              if not p.exists():
+                  continue
+              s = p.read_text(encoding='utf-8')
+
+              key = "const PROXY_KEY = 'prognozaepir-taf-proxy-url';"
+              if "const DEFAULT_PROXY_URL =" not in s:
+                  if key not in s:
+                      raise SystemExit(f'{p}: PROXY_KEY marker not found')
+                  s = s.replace(key, key + "\n  const DEFAULT_PROXY_URL = '" + URL + "';", 1)
+
+              old = "let urls=[];try{const x=localStorage.getItem(PROXY_KEY);if(x)urls.push(x)}catch(_){ }\n    if(!location.hostname.includes('github.io')) urls.push('/api/taf-proxy');"
+              new = "let urls=[];try{const x=localStorage.getItem(PROXY_KEY);if(x)urls.push(x)}catch(_){ }\n    urls.push(DEFAULT_PROXY_URL);\n    if(!location.hostname.includes('github.io')) urls.push('/api/taf-proxy');"
+              if old in s:
+                  s = s.replace(old, new, 1)
+              elif 'urls.push(DEFAULT_PROXY_URL);' not in s:
+                  raise SystemExit(f'{p}: fromProxy marker not found')
+
+              s = s.replace('placeholder="https://twoj-projekt.vercel.app/api/taf-proxy"', f'placeholder="{URL}"')
+              old_ui = "document.getElementById('tafProxyUrl').value=localStorage.getItem(PROXY_KEY)||''"
+              new_ui = "document.getElementById('tafProxyUrl').value=localStorage.getItem(PROXY_KEY)||DEFAULT_PROXY_URL"
+              if old_ui in s:
+                  s = s.replace(old_ui, new_ui, 1)
+
+              p.write_text(s, encoding='utf-8')
+
+          # Validate the effective inline generator wiring.
+          t = Path('taf.html').read_text(encoding='utf-8')
+          assert URL in t
+          assert "urls.push(DEFAULT_PROXY_URL);" in t
+          assert "localStorage.getItem(PROXY_KEY)||DEFAULT_PROXY_URL" in t
+          PY
+      - name: Commit patch and remove one-shot workflow
+        run: |
+          rm -f .github/workflows/one-shot-default-taf-proxy.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add taf.html taf-multisource.js .github/workflows/one-shot-default-taf-proxy.yml
+          git commit -m 'Use deployed Vercel TAF proxy by default'
+          git push origin HEAD:main
