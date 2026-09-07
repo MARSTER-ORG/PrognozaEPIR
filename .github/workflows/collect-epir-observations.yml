@@ -9,7 +9,6 @@ on:
       - 'scripts/supplement_synop_12342.py'
       - 'scripts/refresh_epir_metar.py'
       - 'scripts/live_metar_collector.py'
-      - 'scripts/diagnose_imgw_frontend.py'
       - 'scripts/collect_neighbor_tafs.py'
       - 'scripts/archive_epir_taf.py'
       - 'scripts/organize_observation_archive.py'
@@ -18,6 +17,9 @@ on:
       - 'scripts/embed_model_verification.py'
       - '.github/workflows/collect-epir-observations.yml'
   schedule:
+    # EPIR routine METAR is normally issued at :00 and :30. Four polls per hour
+    # provide two chances after each routine issue while IMGW's four-report
+    # history gives roughly 90 minutes of automatic gap repair.
     - cron: '7,22,37,52 * * * *'
   workflow_dispatch:
 
@@ -62,13 +64,15 @@ jobs:
           print('multi-report parser: OK, reports=', len(rows))
           PY
 
-      - name: Diagnose IMGW frontend endpoint
-        run: python3 scripts/diagnose_imgw_frontend.py
-
       - name: Collect METAR EPIR and SYNOP 12342
         run: |
+          # Legacy source path stays independent as a fallback.
           python3 scripts/collect_epir_observations.py || echo "Primary EPIR collector unavailable; continuing"
           python3 scripts/supplement_synop_12342.py || echo "SYNOP supplement unavailable; continuing"
+
+          # Authoritative METAR path: official IMGW Aviation API used by the
+          # Awiacja frontend + PilotHub + OGIMET + CZAD. All returned EPIR
+          # METAR/SPECI reports are archived; only <=60 min may be marked fresh.
           python3 scripts/live_metar_collector.py
 
       - name: Collect and archive TAFs
@@ -84,6 +88,8 @@ jobs:
           if git diff --quiet -- data/observations; then
             echo "No new observation; verification unchanged"
           else
+            # Never fetch a new forecast here: verification must use forecasts
+            # archived before the observation valid time.
             python3 scripts/model_verification_realtime.py --summary-only
             python3 scripts/embed_model_verification.py
           fi
@@ -122,8 +128,7 @@ jobs:
           assert str(tr.get('raw') or '').startswith('TAF EPIR ')
           issue=tr.get('issue_time')
           assert issue
-          dt=issue
-          y,mo,d=dt[0:4],dt[5:7],dt[8:10]
+          y,mo,d=issue[0:4],issue[5:7],issue[8:10]
           taf_archive=Path('data/taf/epir')/y/mo/f'{d}.jsonl'
           assert taf_archive.exists(), f'missing EPIR TAF archive: {taf_archive}'
           archived=[]
