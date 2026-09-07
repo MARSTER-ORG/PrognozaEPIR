@@ -7,6 +7,7 @@ on:
       - scripts/embed_taf_verification.py
       - scripts/integrate_taf_mifg.py
       - scripts/fix_taf_validity_codes.py
+      - scripts/finalize_central_message_architecture.py
       - .github/workflows/sync-taf-verification.yml
   workflow_dispatch:
 permissions:
@@ -27,16 +28,22 @@ jobs:
           python3 scripts/fix_taf_validity_codes.py
           python3 scripts/embed_taf_verification.py
           python3 scripts/apply_central_archive_cutover.py
+          python3 scripts/finalize_central_message_architecture.py
           node --check taf-verification.js
           node --check taf-archive-source.js
-          grep -F 'src="taf-archive-source.js"' taf.html
-          ! grep -F 'function fromProxy(' taf.html
+          grep -F 'PrognozaEPIRMessageArchive' taf.html
+          grep -F 'loadNeighborArchive' taf.html
+          ! grep -F 'loadImgwLive(' taf.html
+          ! grep -F 'awiacja.imgw.pl' taf.html
+          ! grep -F 'data/observations/metar/' taf-verification.js
+          ! grep -F 'data/taf/epir/' taf-verification.js
+          ! grep -F 'window.fetch=' taf-archive-source.js
       - name: Commit synchronized page
         run: |
-          if git diff --quiet -- taf.html taf-verification.js; then exit 0; fi
+          if git diff --quiet -- taf.html taf-verification.js data/messages; then exit 0; fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add taf.html taf-verification.js
-          git commit -m 'taf: keep verifier on central message archive'
+          git add taf.html taf-verification.js data/messages
+          git commit -m 'taf: keep verifier on native central message archive'
           git pull --rebase origin main
           git push
