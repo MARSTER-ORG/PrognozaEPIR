@@ -10,6 +10,7 @@ on:
       - 'scripts/refresh_epir_metar.py'
       - 'scripts/live_metar_collector.py'
       - 'scripts/collect_neighbor_tafs.py'
+      - 'scripts/archive_epir_taf.py'
       - 'scripts/organize_observation_archive.py'
       - 'scripts/model_verification.py'
       - 'scripts/model_verification_realtime.py'
@@ -52,11 +53,13 @@ jobs:
           # EPIR report and selects the newest DDHHMMZ timestamp.
           python3 scripts/live_metar_collector.py
 
-      - name: Collect upstream TAFs EPBY EPPW EPKS
+      - name: Collect and archive TAFs
         run: |
-          # AWC Data API is queried server-side because the service does not
-          # allow browser CORS. The collector writes only when the raw TAF changes.
-          python3 scripts/collect_neighbor_tafs.py || echo "Neighbor TAF collector unavailable; keeping previous cache"
+          # Fetch EPIR together with the upstream stations. neighbors.json stays
+          # the live cache, while archive_epir_taf.py preserves every unique
+          # official EPIR TAF cycle under data/taf/epir/YYYY/MM/DD.jsonl.
+          python3 scripts/collect_neighbor_tafs.py || echo "TAF collector unavailable; keeping previous cache"
+          python3 scripts/archive_epir_taf.py
 
       - name: Organize long-term observation archive
         run: python3 scripts/organize_observation_archive.py
@@ -72,12 +75,13 @@ jobs:
             python3 scripts/embed_model_verification.py
           fi
 
-      - name: Validate observation and verification data
+      - name: Validate observation verification and TAF data
         run: |
           python3 -m json.tool data/observations/latest.json >/dev/null
           python3 -m json.tool data/observations/recent.json >/dev/null
           python3 -m json.tool data/learning/model-verification.json >/dev/null
           python3 -m json.tool data/taf/neighbors.json >/dev/null
+          python3 -m json.tool data/taf/latest.json >/dev/null
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -92,7 +96,23 @@ jobs:
 
           n=json.load(open('data/taf/neighbors.json',encoding='utf-8'))
           assert n.get('schema')=='prognozaepir-neighbor-tafs-v1'
-          assert set(('EPBY','EPPW','EPKS')).issubset((n.get('stations') or {}).keys())
+          assert set(('EPIR','EPBY','EPPW','EPKS')).issubset((n.get('stations') or {}).keys())
+
+          lt=json.load(open('data/taf/latest.json',encoding='utf-8'))
+          assert lt.get('schema')=='prognozaepir-epir-taf-latest-v1'
+          tr=lt.get('taf') or {}
+          assert tr.get('station')=='EPIR'
+          assert str(tr.get('raw') or '').startswith('TAF EPIR ')
+          issue=tr.get('issue_time')
+          assert issue
+          dt=issue
+          y,mo,d=dt[0:4],dt[5:7],dt[8:10]
+          taf_archive=Path('data/taf/epir')/y/mo/f'{d}.jsonl'
+          assert taf_archive.exists(), f'missing EPIR TAF archive: {taf_archive}'
+          archived=[]
+          for line in taf_archive.read_text(encoding='utf-8').splitlines():
+              if line.strip(): archived.append(json.loads(line))
+          assert any(x.get('raw')==tr.get('raw') for x in archived), 'latest EPIR TAF is not in archive'
 
           # SYNOP has priority for exact visibility only in a fused record that
           # actually contains that SYNOP observation. A newer standalone METAR
@@ -119,10 +139,11 @@ jobs:
           print('METAR:', m.get('obs_time'), m.get('source'), m.get('raw'))
           print('SYNOP:', s.get('obs_time'), s.get('source'), s.get('raw'))
           print('VIS:', f.get('visibility_m'), f.get('visibility_source'))
-          print('TAF upstream:', {k:(v or {}).get('available') for k,v in n.get('stations',{}).items()})
+          print('TAF cache:', {k:(v or {}).get('available') for k,v in n.get('stations',{}).items()})
+          print('TAF EPIR latest:', tr.get('issue_time'), tr.get('source'), tr.get('raw'))
           PY
 
-      - name: Commit new observations verification and TAF cache
+      - name: Commit new observations verification and TAF archive
         id: commit
         run: |
           if git diff --quiet -- data/observations data/learning data/taf; then
@@ -133,7 +154,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/observations data/learning data/taf
-          git commit -m "data: archive EPIR observations and upstream TAFs $(date -u +'%Y-%m-%d %H:%MZ')"
+          git commit -m "data: archive EPIR observations and TAFs $(date -u +'%Y-%m-%d %H:%MZ')"
           git pull --rebase origin main
           git push origin HEAD:main
           echo "changed=true" >> "$GITHUB_OUTPUT"
