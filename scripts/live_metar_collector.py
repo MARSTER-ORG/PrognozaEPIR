@@ -13,6 +13,7 @@ time always wins; source priority only breaks ties for the same report.
 from __future__ import annotations
 
 import json
+import time
 
 import refresh_epir_metar as refresh
 import supplement_metar_pilothub as pilothub
@@ -47,10 +48,17 @@ def _walk_message_records(value):
             yield from _walk_message_records(child)
 
 
+def _fresh_imgw_api_url() -> str:
+    # The browser frontend can already show a new :00/:30 report while a shared
+    # intermediary still serves an older `last` response. A harmless query
+    # nonce makes every collector pass a fresh request to the same IMGW API.
+    return f'{IMGW_API_URL}&_={int(time.time() * 1000)}'
+
+
 def fetch_imgw_api_reports():
     """Fetch all EPIR METAR/SPECI messages exposed by the official IMGW frontend API."""
     try:
-        payload = json.loads(refresh.c.get_text(IMGW_API_URL, timeout=20))
+        payload = json.loads(refresh.c.get_text(_fresh_imgw_api_url(), timeout=20))
     except Exception as exc:
         print('IMGW Aviation API warning:', exc)
         return []
