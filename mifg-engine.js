@@ -182,7 +182,12 @@
 
   async function refresh(){
     if(busy)return;busy=true;
-    try{await fetchObs();await fetchModel();render();}
+    try{
+      await fetchObs();
+      await fetchModel();
+      render();
+      window.dispatchEvent(new CustomEvent('prognozaepir:mifg-series-updated',{detail:{count:series.length}}));
+    }
     catch(e){console.warn('EPIR MIFG engine:',e);}
     finally{busy=false;}
   }
