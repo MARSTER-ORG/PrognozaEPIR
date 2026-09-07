@@ -266,8 +266,7 @@
       mergeWindPanels();
 
       // Bazowy meteogram nadal zawiera techniczny panel dir. Wyłączamy jego
-      // stare strzałki i etykietę podczas rysowania bazowego, po czym dodajemy
-      // jeden właściwy zestaw strzałek w sekcji Wiatr.
+      // stare strzałki i etykietę wyłącznie na czas rysowania bazowego.
       const nativeFillText = ctx.fillText;
       const nativeStrokeText = ctx.strokeText;
       ctx.fillText = function(text,...args) {
@@ -279,14 +278,18 @@
         return nativeStrokeText.call(this,text,...args);
       };
 
+      let out;
       try {
-        const out = baseDraw.apply(this,arguments);
-        drawWindDirectionForeground();
-        return out;
+        out = baseDraw.apply(this,arguments);
       } finally {
         ctx.fillText = nativeFillText;
         ctx.strokeText = nativeStrokeText;
       }
+
+      // Po przywróceniu natywnych metod rysujemy tylko jeden zestaw strzałek
+      // na pierwszym planie, pośrodku sekcji Wiatr.
+      drawWindDirectionForeground();
+      return out;
     };
     window.__epirMergedWindPanelWrapped = true;
   }
