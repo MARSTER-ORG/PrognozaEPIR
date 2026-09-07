@@ -1,12 +1,17 @@
 'use strict';
 (() => {
-  const FOG_DRAW_THRESHOLD = 40;
-  const MIFG_DRAW_THRESHOLD = 40;
+  const FOG_DRAW_THRESHOLD = 60;
+  const MIFG_DRAW_THRESHOLD = 60;
+  const BR_DRAW_THRESHOLD = 60;
+  const FOG_INFO_THRESHOLD = 40;
+  const MIFG_INFO_THRESHOLD = 40;
+  const BR_COLOR = '#c084fc';
   const FOG_FULL_SCALE_KM = 19.5;
   const VIS_SCALE_MAX_KM = 30;
   const VIS_INNER_PAD = 9;
   const PRESSURE_INNER_PAD = 9;
   const MAX_MATCH_MS = 70 * 60e3;
+  const HOUR = 3600e3;
 
   const finite = Number.isFinite;
   const clip = (v,a,b) => Math.max(a,Math.min(b,v));
@@ -44,6 +49,73 @@
     return bestDiff <= MAX_MATCH_MS ? best : null;
   }
 
+  function weightedScore(parts) {
+    let sum = 0, weight = 0;
+    for (const part of parts) {
+      if (!part || !finite(part.v) || !finite(part.w) || part.w <= 0) continue;
+      sum += part.v * part.w;
+      weight += part.w;
+    }
+    return weight ? sum / weight : null;
+  }
+
+  // BR (zamglenie) jest liczone osobno od FOG. Rdzeniem jest udział modeli
+  // z widzialnością 1–5 km; wilgotność/saturacja i FOG ENGINE są wsparciem.
+  // Świeża obserwacja BR podnosi nowcast, a FG/FZFG nie jest traktowane jak BR.
+  function brScoreForFogRow(row) {
+    if (!row) return null;
+    const visModels = Array.isArray(row.models)
+      ? row.models.map(m => Number(m?.VIS)).filter(finite)
+      : [];
+    const band = visModels.length
+      ? 100 * visModels.filter(v => v >= 1000 && v < 5000).length / visModels.length
+      : null;
+    const below5 = visModels.length
+      ? 100 * visModels.filter(v => v < 5000).length / visModels.length
+      : null;
+    const sat = finite(row.sat) ? row.sat : null;
+    const fog = finite(row.score) ? row.score : null;
+    const phen = String(row.obsPhenomenon || '').toUpperCase();
+    let obs = null;
+    if (row.obsUsed) {
+      if (phen === 'BR') obs = 100;
+      else if (phen === 'FG' || phen === 'FZFG') obs = 20;
+      else if (phen.includes('BEZ FG/BR')) obs = 0;
+    }
+    let score = weightedScore([
+      {v:band,w:.50},
+      {v:below5,w:.10},
+      {v:sat,w:.15},
+      {v:fog,w:.15},
+      {v:obs,w:.10}
+    ]);
+    if (!finite(score)) return null;
+
+    // Jeśli świeży METAR/SYNOP podaje BR, utrzymuj mocny sygnał tylko w
+    // krótkim nowcaście; dalej decydują modele.
+    if (phen === 'BR' && row.obsUsed) {
+      const lead = Math.max(0, Number(row.lead) || 0);
+      score = Math.max(score, 75 * Math.exp(-lead / 4));
+    }
+    return clip(score,0,100);
+  }
+
+  function brAt(t) {
+    const fog = fogAt(t);
+    if (!fog) return null;
+    const score = brScoreForFogRow(fog);
+    return finite(score) ? {...fog,score} : null;
+  }
+
+  function brSeries() {
+    const rows = window.PrognozaEPIRFogSeries;
+    if (!Array.isArray(rows)) return [];
+    return rows.map(row => {
+      const score = brScoreForFogRow(row);
+      return finite(score) ? {...row,score} : null;
+    }).filter(Boolean);
+  }
+
   function fogColor(score) {
     if (score >= 75) return 'rgba(208,80,63,.62)';
     if (score >= 60) return 'rgba(216,108,47,.57)';
@@ -56,9 +128,8 @@
     return p.y+p.h-pad-(clip(km,0,VIS_SCALE_MAX_KM)/VIS_SCALE_MAX_KM)*usable;
   }
 
-  // MIFG is an independent 0–100 shallow-fog score. Use the same vertical
-  // extent as the FOG overlay, but keep it as labelled points rather than bars.
-  function yOnMifgScale(score,p) {
+  // FOG/MIFG/BR use a shared 0–100 risk scale inside the visibility panel.
+  function yOnRiskScale(score,p) {
     return yOnVisibilityScale(FOG_FULL_SCALE_KM * clip(score,0,100) / 100,p);
   }
 
@@ -202,7 +273,7 @@
       ctx.fillRect(xx - barW / 2, baseY - h, barW, h);
     }
 
-    // Shallow fog / MIFG: show only operationally relevant values >= 40.
+    // Shallow fog / MIFG: draw only operationally relevant values >= 60.
     // Points are intentionally not connected; the numeric label is the exact score.
     const mifg = mifgSeries().filter(row => row && finite(row.t) && finite(row.score) && row.score >= MIFG_DRAW_THRESHOLD && row.t >= m.t0 && row.t <= m.t1);
     ctx.font = 'bold 7.5px Arial';
@@ -210,7 +281,7 @@
     ctx.textBaseline = 'bottom';
     for (const row of mifg) {
       const xx = x(row.t);
-      const yy = yOnMifgScale(row.score,p);
+      const yy = yOnRiskScale(row.score,p);
       ctx.beginPath();
       ctx.arc(xx,yy,3.2,0,Math.PI*2);
       ctx.fillStyle = 'rgba(214,52,52,.98)';
@@ -222,6 +293,28 @@
       ctx.fillText(String(Math.round(row.score)),xx,yy-5);
     }
 
+    // Zamglenie BR: osobny score; rysujemy tylko fragmenty >= 60/100.
+    const br = brSeries().filter(row => row.t >= m.t0 && row.t <= m.t1);
+    ctx.strokeStyle = BR_COLOR;
+    ctx.lineWidth = 2.1;
+    ctx.setLineDash([6,3]);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    let brStarted = false;
+    for (const row of br) {
+      if (!finite(row.t) || !finite(row.score) || row.score < BR_DRAW_THRESHOLD) {
+        brStarted = false;
+        continue;
+      }
+      const xx = x(row.t);
+      const yy = yOnRiskScale(row.score,p);
+      if (!brStarted) { ctx.moveTo(xx,yy); brStarted = true; }
+      else ctx.lineTo(xx,yy);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+
     const cp = typeof canvasPalette === 'function' ? canvasPalette() : {muted:'#666',grid2:'#999'};
     ctx.strokeStyle = cp.grid2 || '#999';
     ctx.globalAlpha = .52;
@@ -232,14 +325,14 @@
     ctx.setLineDash([]);
     ctx.restore();
 
-    // Put FOG 40 immediately before the 0 km axis label and FOG 100 before 20 km.
+    // Put FOG 60 immediately before the 0 km axis label and FOG 100 before 20 km.
     ctx.save();
     ctx.globalAlpha = .96;
     ctx.fillStyle = cp.muted || '#666';
     ctx.font = 'bold 8px Arial';
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'right';
-    ctx.fillText('FOG 40',x0-24,baseY);
+    ctx.fillText('FOG 60',x0-24,baseY);
     ctx.fillText('FOG 100',x0-24,fog100LabelY);
     ctx.restore();
   }
@@ -253,22 +346,32 @@
     if (panelId !== 'visfog') return;
     const fog = fogAt(z?.t);
     const mifg = mifgAt(z?.t);
+    const br = brAt(z?.t);
     const box = document.getElementById('sectionInfo');
-    if (!box || (!fog && !mifg)) return;
+    if (!box || (!fog && !mifg && !br)) return;
     const values = box.querySelector('.section-values');
     if (!values) return;
-    if (fog && !values.querySelector('[data-fog-risk="1"]')) {
+    const help = box.querySelector('.section-help');
+    if (help) help.textContent = 'Pomarańczowa linia pokazuje widzialność konsensusu. Na meteogramie FOG, MIFG i BR są rysowane dopiero od 60/100; wartości w informacji godziny pozostają dostępne także poniżej progu rysowania.';
+    if (fog && fog.score >= FOG_INFO_THRESHOLD && !values.querySelector('[data-fog-risk="1"]')) {
       const cell = document.createElement('div');
       cell.className = 'section-value';
       cell.dataset.fogRisk = '1';
       cell.innerHTML = '<small>Ryzyko mgły · FOG ENGINE</small><strong>' + fogRiskText(fog) + '</strong>';
       values.appendChild(cell);
     }
-    if (mifg && !values.querySelector('[data-mifg-risk="1"]')) {
+    if (mifg && mifg.score >= MIFG_INFO_THRESHOLD && !values.querySelector('[data-mifg-risk="1"]')) {
       const cell = document.createElement('div');
       cell.className = 'section-value';
       cell.dataset.mifgRisk = '1';
       cell.innerHTML = '<small>Niska mgła &lt;2 m · MIFG</small><strong>' + Math.round(mifg.score) + '/100</strong>';
+      values.appendChild(cell);
+    }
+    if (br && !values.querySelector('[data-br-risk="1"]')) {
+      const cell = document.createElement('div');
+      cell.className = 'section-value';
+      cell.dataset.brRisk = '1';
+      cell.innerHTML = '<small>Zamglenie · BR</small><strong>' + Math.round(br.score) + '/100</strong>';
       values.appendChild(cell);
     }
   }
@@ -285,13 +388,97 @@
     el.innerHTML =
       '<b>Widzialność / mgła:</b>' +
       '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:16px;height:3px;border-radius:2px;background:#d97706"></i>linia = widzialność konsensusu</span>' +
-      '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:8px;height:12px;border-radius:1px;background:rgba(216,108,47,.72)"></i>słupki = FOG ENGINE, od 40/100</span>' +
-      '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#d63434;border:1px solid #ffdede"></i>czerwone punkty = niska mgła MIFG &lt;2 m, od 40/100; liczba = wynik MIFG</span>';
+      '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:8px;height:12px;border-radius:1px;background:rgba(216,108,47,.72)"></i>słupki = FOG ENGINE, od 60/100</span>' +
+      '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#d63434;border:1px solid #ffdede"></i>czerwone punkty = niska mgła MIFG &lt;2 m, od 60/100; liczba = wynik MIFG</span>' +
+      '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:16px;height:0;border-top:2px dashed '+BR_COLOR+'"></i>linia BR = zamglenie, od 60/100</span>';
     legend.appendChild(el);
+  }
+
+  function brRiskText(score) {
+    if (!finite(score)) return 'brak danych';
+    if (score >= 80) return 'bardzo wysokie';
+    if (score >= 60) return 'wysokie';
+    if (score >= 40) return 'umiarkowane';
+    if (score >= 20) return 'małe';
+    return 'bardzo małe';
+  }
+
+  function localHour(t) {
+    try {
+      const tz = (typeof PLACE !== 'undefined' && PLACE?.tz) ? PLACE.tz : 'Europe/Warsaw';
+      return new Intl.DateTimeFormat('pl-PL',{timeZone:tz,hour:'2-digit',minute:'2-digit'}).format(new Date(t));
+    } catch (_) {
+      return new Date(t).toLocaleTimeString('pl-PL',{hour:'2-digit',minute:'2-digit'});
+    }
+  }
+
+  function renderBrCard() {
+    const summary = document.getElementById('fogSummary');
+    const rows = brSeries();
+    if (!summary || !rows.length) return;
+    document.getElementById('brCard')?.remove();
+    const now = Date.now();
+    const current = rows.reduce((a,b) => Math.abs(b.t-now) < Math.abs(a.t-now) ? b : a, rows[0]);
+    const future = rows.filter(row => row.t >= now-HOUR && row.t <= now+12*HOUR);
+    const peak = future.reduce((a,b) => !a || b.score > a.score ? b : a, null) || current;
+    const card = document.createElement('div');
+    card.id = 'brCard';
+    card.className = 'fog-card ' + (current.score >= 75 ? 'fog-risk-vhigh' : current.score >= 60 ? 'fog-risk-high' : current.score >= 40 ? 'fog-risk-mid' : 'fog-risk-low');
+    card.innerHTML = '<small>Zamglenie · BR</small><strong>' + Math.round(current.score) + '/100</strong>' +
+      '<em>' + brRiskText(current.score) + ' · szczyt ' + Math.round(peak.score) + '/100 ' + localHour(peak.t) + '</em>';
+    summary.appendChild(card);
+  }
+
+  function installBrHoverTooltip() {
+    const canvas = document.getElementById('meteo');
+    if (!canvas || canvas.dataset.epirBrHoverInstalled === '1') return;
+    canvas.dataset.epirBrHoverInstalled = '1';
+    canvas.addEventListener('pointermove', e => {
+      if (e.pointerType !== 'mouse') return;
+      const clientX=e.clientX, clientY=e.clientY;
+      queueMicrotask(() => {
+        const tooltip=document.getElementById('epirMeteogramTooltip');
+        const m=canvas._meta;
+        if (!tooltip || tooltip.style.display==='none' || !m || !Array.isArray(m.data) || !m.data.length || !Array.isArray(m.panelYs)) return;
+        tooltip.querySelectorAll('[data-epir-br-hover]').forEach(el=>el.remove());
+        const rect=canvas.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        const sx=(clientX-rect.left)/rect.width*m.W;
+        const sy=(clientY-rect.top)/rect.height*m.H;
+        if (sx<m.x0 || sx>m.x1) return;
+        const panel=m.panelYs.find(p=>p&&p.h>0&&sy>=p.y&&sy<=p.y+p.h);
+        if (!panel || panel.id!=='visfog') return;
+        const t=m.t0+(sx-m.x0)/(m.x1-m.x0)*(m.t1-m.t0);
+        const br=brAt(t);
+        if (!br || !finite(br.score)) return;
+        const row=document.createElement('div');
+        row.setAttribute('data-epir-br-hover','1');
+        row.style.cssText='display:flex;gap:12px;justify-content:space-between;white-space:nowrap';
+        const key=document.createElement('span');key.style.opacity='.72';key.textContent='Zamglenie · BR';
+        const val=document.createElement('b');val.textContent=Math.round(br.score)+'/100';
+        row.append(key,val);tooltip.appendChild(row);
+      });
+    });
+  }
+
+  function installCanvasLegendThresholdPatch() {
+    if (window.__epirFogLegend60Wrapped || typeof drawLegend !== 'function' || typeof ctx === 'undefined') return;
+    const baseLegend = drawLegend;
+    drawLegend = function() {
+      const nativeFillText = ctx.fillText;
+      ctx.fillText = function(text,...args) {
+        if (text === 'FOG ENGINE ≥40/100') text = 'FOG ENGINE ≥60/100';
+        return nativeFillText.call(this,text,...args);
+      };
+      try { return baseLegend.apply(this,arguments); }
+      finally { ctx.fillText = nativeFillText; }
+    };
+    window.__epirFogLegend60Wrapped = true;
   }
 
   function install() {
     if (typeof draw !== 'function' || typeof showSectionInfo !== 'function') return false;
+    installCanvasLegendThresholdPatch();
     if (!window.__epirFogMeteogramDrawWrapped) {
       const baseDraw = draw;
       draw = function() {
@@ -310,6 +497,8 @@
       window.__epirFogMeteogramInfoWrapped = true;
     }
     installLegendNote();
+    installBrHoverTooltip();
+    queueMicrotask(renderBrCard);
     return true;
   }
 
@@ -320,8 +509,9 @@
     } catch (_) { }
   }
 
-  window.addEventListener('prognozaepir:fog-series-updated', redraw);
-  window.addEventListener('prognozaepir:mifg-series-updated', redraw);
+  window.addEventListener('prognozaepir:fog-series-updated', () => { redraw(); queueMicrotask(renderBrCard); });
+  window.addEventListener('prognozaepir:mifg-series-updated', () => { redraw(); queueMicrotask(renderBrCard); });
+  setInterval(renderBrCard,90*1000);
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => { install(); installLegendNote(); }, {once:true});
   } else {
