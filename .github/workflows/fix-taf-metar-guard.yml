@@ -1,0 +1,159 @@
+name: Fix TAF METAR guard
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-taf-metar-guard.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Harden METAR parsing
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def patch_multisource(s: str) -> str:
+              s=s.replace("const VERSION = 'TAF Sources v0.3.0';", "const VERSION = 'TAF Sources v0.3.1';")
+              old="""  function metars(text){
+    const one=String(text||'').replace(/\\s+/g,' ').trim();
+    const re=/\\b(?:METAR|SPECI)?\\s*EPIR\\s+\\d{6}Z\\b[\\s\\S]*?(?==|(?=\\b(?:METAR|SPECI|TAF)\\b)|$)/gi;
+    const out=[]; let m;
+    while((m=re.exec(one))){let raw=m[0].replace(/\\s+/g,' ').trim();if(raw&&!raw.endsWith('='))raw+='=';out.push(raw)}
+    return out;
+  }
+"""
+              new="""  function isMetarEpir(raw){
+    const s=String(raw||'').replace(/\\s+/g,' ').trim();
+    if(!/\\bEPIR\\s+\\d{6}Z\\b/i.test(s)) return false;
+    if(/\\bTAF\\b/i.test(s)||/\\b\\d{4}\\/\\d{4}\\b/.test(s)) return false;
+    if(/\\b(?:BECMG|TEMPO|PROB30|PROB40|FM\\d{6})\\b/i.test(s)) return false;
+    const wind=/\\b(?:\\d{3}|VRB)\\d{2,3}(?:G\\d{2,3})?KT\\b/i.test(s);
+    const vis=/\\bCAVOK\\b/i.test(s)||/\\b(?:9999|\\d{4})\\b/.test(s);
+    return wind&&vis;
+  }
+
+  function metars(text){
+    const one=String(text||'').replace(/\\s+/g,' ').trim();
+    const re=/\\b(?:METAR|SPECI)?\\s*EPIR\\s+\\d{6}Z\\b[\\s\\S]*?(?==|(?=\\b(?:METAR|SPECI|TAF)\\b)|$)/gi;
+    const out=[]; let m;
+    while((m=re.exec(one))){let raw=m[0].replace(/\\s+/g,' ').trim();if(raw&&!raw.endsWith('='))raw+='=';if(isMetarEpir(raw))out.push(raw)}
+    return out;
+  }
+"""
+              if old not in s:
+                  raise SystemExit('multisource metars block not found')
+              s=s.replace(old,new,1)
+              s=s.replace("if(j?.metar_epir?.raw) metar.push({raw:j.metar_epir.raw,source:`Proxy · ${j.metar_epir.source||'multi-source'}`,t:Date.parse(j.metar_epir.obs_time||0)||0});",
+                          "if(j?.metar_epir?.raw&&isMetarEpir(j.metar_epir.raw)) metar.push({raw:j.metar_epir.raw,source:`Proxy · ${j.metar_epir.source||'multi-source'}`,t:Date.parse(j.metar_epir.obs_time||0)||0});")
+              old_syn="""    if(bundle.metar?.raw) lines.push(bundle.metar.raw);
+"""
+              new_syn="""    if(bundle.metar?.raw&&isMetarEpir(bundle.metar.raw)){
+      const mr=String(bundle.metar.raw).trim();
+      lines.push(/^(?:METAR|SPECI)\\b/i.test(mr)?mr:'METAR '+mr);
+    }
+"""
+              if old_syn not in s:
+                  raise SystemExit('multisource synthetic METAR hook not found')
+              s=s.replace(old_syn,new_syn,1)
+              return s
+
+          p=Path('taf-multisource.js')
+          s=p.read_text(encoding='utf-8')
+          p.write_text(patch_multisource(s),encoding='utf-8')
+
+          p=Path('taf.html')
+          s=p.read_text(encoding='utf-8')
+          s=patch_multisource(s)
+          old="""function latestStationReport(text,station,kind){let re=kind==='TAF'?new RegExp(`\\\\bTAF(?:\\\\s+(?:AMD|COR))?\\\\s+${station}\\\\b[\\\\s\\\\S]*?=`, 'gi'):new RegExp(`\\\\b(?:METAR|SPECI)?\\\\s*${station}\\\\s+\\\\d{6}Z\\\\b[\\\\s\\\\S]*?=`, 'gi'),m,best=null,bestT=-Infinity;while((m=re.exec(text))){let raw=m[0].replace(/\\s+/g,' ').trim(),tm=raw.match(/\\b(\\d{6})Z\\b/);if(!tm)continue;let t=monthTime(tm[1],Date.now(),true);if(t>bestT){bestT=t;best=raw}}return best}
+"""
+          new="""function latestStationReport(text,station,kind){let re=kind==='TAF'?new RegExp(`\\\\bTAF(?:\\\\s+(?:AMD|COR))?\\\\s+${station}\\\\b[\\\\s\\\\S]*?=`, 'gi'):new RegExp(`\\\\b(?:METAR|SPECI)\\\\s+${station}\\\\s+\\\\d{6}Z\\\\b[\\\\s\\\\S]*?=`, 'gi'),m,best=null,bestT=-Infinity;while((m=re.exec(text))){let raw=m[0].replace(/\\s+/g,' ').trim(),tm=raw.match(/\\b(\\d{6})Z\\b/);if(!tm)continue;if(kind!=='TAF'&&(/\\b\\d{4}\\/\\d{4}\\b/.test(raw)||/\\b(?:TAF|BECMG|TEMPO|PROB30|PROB40|FM\\d{6})\\b/i.test(raw)))continue;let t=monthTime(tm[1],Date.now(),true);if(t>bestT){bestT=t;best=raw}}return best}
+"""
+          if old not in s:
+              raise SystemExit('taf.html latestStationReport block not found')
+          s=s.replace(old,new,1)
+          old_dec="""function decodeMetarLive(raw){if(!raw)return null;raw=raw.replace(/^METAR\\s+/i,'').replace(/^SPECI\\s+/i,'').replace(/\\s+/g,' ').trim();let tm=raw.match(/\\b(\\d{6})Z\\b/),w=raw.match(/\\b(\\d{3}|VRB)(\\d{2,3})(?:G(\\d{2,3}))?KT\\b/),tt=raw.match(/\\b(M?\\d{2})\\/(M?\\d{2})\\b/),q=raw.match(/\\bQ(\\d{4})\\b/),vis=raw.match(/\\b(9999|\\d{4})\\b/),cv=[...raw.matchAll(/\\b(FEW|SCT|BKN|OVC)(\\d{3})/g)].map(x=>({cover:x[1],base_ft_agl:+x[2]*100,base_m_agl:Math.round(+x[2]*100*.3048)})),temp=x=>x?((x[0]==='M'?-1:1)*parseInt(x.replace('M',''),10)):null,T=tt?temp(tt[1]):null,Td=tt?temp(tt[2]):null,rh=(T!=null&&Td!=null)?Math.max(0,Math.min(100,100*Math.exp(17.625*Td/(243.04+Td)-17.625*T/(243.04+T)))):null;return{source:'IMGW_AVIATION_LIVE',station:'EPIR',obs_time:tm?new Date(monthTime(tm[1],Date.now(),true)).toISOString():null,temperature_c:T,dew_point_c:Td,relative_humidity_pct:rh,visibility_m:vis?(vis[1]==='9999'?10000:+vis[1]):(/\\bCAVOK\\b/.test(raw)?10000:null),wind_direction_deg:w&&w[1]!=='VRB'?+w[1]:null,wind_speed_ms:w?+w[2]*.514444:null,wind_gust_ms:w&&w[3]?+w[3]*.514444:null,pressure_hpa:q?+q[1]:null,clouds:cv,ceiling_m_agl:(cv.find(x=>x.cover==='BKN'||x.cover==='OVC')||{}).base_m_agl||null,raw}}
+"""
+          new_dec="""function decodeMetarLive(raw){if(!raw)return null;if(/\\b\\d{4}\\/\\d{4}\\b/.test(raw)||/\\b(?:TAF|BECMG|TEMPO|PROB30|PROB40|FM\\d{6})\\b/i.test(raw))return null;raw=raw.replace(/^METAR\\s+/i,'').replace(/^SPECI\\s+/i,'').replace(/\\s+/g,' ').trim();let tm=raw.match(/\\b(\\d{6})Z\\b/),w=raw.match(/\\b(\\d{3}|VRB)(\\d{2,3})(?:G(\\d{2,3}))?KT\\b/),tt=raw.match(/\\b(M?\\d{2})\\/(M?\\d{2})\\b/),q=raw.match(/\\bQ(\\d{4})\\b/),vis=raw.match(/\\b(9999|\\d{4})\\b/),cv=[...raw.matchAll(/\\b(FEW|SCT|BKN|OVC)(\\d{3})/g)].map(x=>({cover:x[1],base_ft_agl:+x[2]*100,base_m_agl:Math.round(+x[2]*100*.3048)})),temp=x=>x?((x[0]==='M'?-1:1)*parseInt(x.replace('M',''),10)):null,T=tt?temp(tt[1]):null,Td=tt?temp(tt[2]):null,rh=(T!=null&&Td!=null)?Math.max(0,Math.min(100,100*Math.exp(17.625*Td/(243.04+Td)-17.625*T/(243.04+T)))):null;if(!tm||!w||(!vis&&!/\\bCAVOK\\b/.test(raw)))return null;return{source:'IMGW_AVIATION_LIVE',station:'EPIR',obs_time:new Date(monthTime(tm[1],Date.now(),true)).toISOString(),temperature_c:T,dew_point_c:Td,relative_humidity_pct:rh,visibility_m:vis?(vis[1]==='9999'?10000:+vis[1]):10000,wind_direction_deg:w[1]!=='VRB'?+w[1]:null,wind_speed_ms:+w[2]*.514444,wind_gust_ms:w[3]?+w[3]*.514444:null,pressure_hpa:q?+q[1]:null,clouds:cv,ceiling_m_agl:(cv.find(x=>x.cover==='BKN'||x.cover==='OVC')||{}).base_m_agl||null,raw}}
+"""
+          if old_dec not in s:
+              raise SystemExit('taf.html decodeMetarLive block not found')
+          s=s.replace(old_dec,new_dec,1)
+          p.write_text(s,encoding='utf-8')
+
+          p=Path('api/taf-proxy.js')
+          s=p.read_text(encoding='utf-8')
+          old_meta="""function metarMeta(raw, now = Date.now()) {
+  const s = normalizeReport(raw).replace(/^TAF\\s+/i, '');
+  const tm = s.match(/\\b(\\d{6})Z\\b/);
+  if (!tm) return null;
+  const issue = resolveDayTime(tm[1], now, true);
+"""
+          new_meta="""function looksLikeMetarEpir(raw) {
+  const s = normalizeReport(raw);
+  if (!/\\bEPIR\\s+\\d{6}Z\\b/i.test(s)) return false;
+  if (/\\bTAF\\b/i.test(s) || /\\b\\d{4}\\/\\d{4}\\b/.test(s)) return false;
+  if (/\\b(?:BECMG|TEMPO|PROB30|PROB40|FM\\d{6})\\b/i.test(s)) return false;
+  const wind = /\\b(?:\\d{3}|VRB)\\d{2,3}(?:G\\d{2,3})?KT\\b/i.test(s);
+  const vis = /\\bCAVOK\\b/i.test(s) || /\\b(?:9999|\\d{4})\\b/.test(s);
+  return wind && vis;
+}
+
+function metarMeta(raw, now = Date.now()) {
+  const s = normalizeReport(raw);
+  if (!looksLikeMetarEpir(s)) return null;
+  const tm = s.match(/\\b(\\d{6})Z\\b/);
+  if (!tm) return null;
+  const issue = resolveDayTime(tm[1], now, true);
+"""
+          if old_meta not in s:
+              raise SystemExit('proxy metarMeta block not found')
+          s=s.replace(old_meta,new_meta,1)
+          old_push="""    const raw = normalizeReport(m[0]);
+    const meta = metarMeta(raw);
+    if (meta) out.push(meta);
+"""
+          new_push="""    const raw = normalizeReport(m[0]);
+    if (!looksLikeMetarEpir(raw)) continue;
+    const meta = metarMeta(raw);
+    if (meta) out.push(meta);
+"""
+          if old_push not in s:
+              raise SystemExit('proxy extractMetarEpir block not found')
+          s=s.replace(old_push,new_push,1)
+          p.write_text(s,encoding='utf-8')
+          PY
+
+          node --check taf-multisource.js
+          node --check api/taf-proxy.js
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('taf.html').read_text(encoding='utf-8')
+          js=s.split('<script>',1)[1].split('</script>',1)[0]
+          Path('/tmp/taf-first.js').write_text(js,encoding='utf-8')
+          js2=s.rsplit('<script>',1)[1].split('</script>',1)[0]
+          Path('/tmp/taf-second.js').write_text(js2,encoding='utf-8')
+          PY
+          node --check /tmp/taf-first.js
+          node --check /tmp/taf-second.js
+          grep -F "TAF Sources v0.3.1" taf.html
+          grep -F "function looksLikeMetarEpir" api/taf-proxy.js
+          grep -F "(?:METAR|SPECI)\\\\s+" taf.html
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add taf.html taf-multisource.js api/taf-proxy.js
+          git commit -m "fix: prevent TAF from being parsed as METAR"
+          git pull --rebase origin main
+          git push origin HEAD:main
