@@ -1,13 +1,110 @@
-name: Legacy METAR heartbeat redirect
+name: Armored EPIR METAR SPECI heartbeat
+
 on:
+  schedule:
+    # Independent clock, offset from the central archive cron.
+    - cron: '1-56/5 * * * *'
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/metar_armored.py'
+      - 'scripts/live_metar_collector.py'
+      - 'scripts/refresh_epir_metar.py'
+      - 'scripts/check_epir_archive_freshness.py'
+      - '.github/workflows/metar-heartbeat.yml'
+
 permissions:
-  contents: read
+  contents: write
   actions: write
+
+# Share the lock with the full central importer so two archive writers never
+# push over each other.
+concurrency:
+  group: prognozaepir-central-message-archive
+  cancel-in-progress: false
+
 jobs:
-  redirect:
+  heartbeat:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - env:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate armored collector
+        run: |
+          python3 -m py_compile \
+            scripts/metar_armored.py \
+            scripts/live_metar_collector.py \
+            scripts/refresh_epir_metar.py \
+            scripts/message_archive.py \
+            scripts/check_epir_archive_freshness.py
+
+      - name: Acquire METAR SPECI and enforce expected slot
+        shell: bash
+        run: |
+          set -euo pipefail
+          ok=0
+          for attempt in 1 2 3; do
+            echo "=== armored METAR/SPECI attempt ${attempt}/3 ==="
+            # A provider may fail while another one succeeds. Freshness below is
+            # the authority: a stale archive is never accepted as a good run.
+            python3 scripts/metar_armored.py || true
+            python3 scripts/message_archive.py
+            if python3 scripts/check_epir_archive_freshness.py --metar-only; then
+              ok=1
+              break
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              sleep $((attempt * 20))
+            fi
+          done
+          test "$ok" = 1
+          python3 scripts/message_archive.py --validate-only
+
+      - name: Drop temporary staging changes
+        run: |
+          git restore --worktree -- data/observations data/taf 2>/dev/null || true
+          git clean -fd -- data/observations data/taf >/dev/null 2>&1 || true
+          python3 scripts/check_epir_archive_freshness.py --metar-only
+          python3 scripts/message_archive.py --validate-only
+
+      - name: Commit authoritative METAR SPECI archive
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- data/messages; then
+            echo 'METAR/SPECI central archive already up to date.'
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/messages
+          git commit -m 'weather: heartbeat METAR SPECI archive'
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            if git rebase origin/main && git push origin HEAD:main; then
+              echo 'changed=true' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            git rebase --abort 2>/dev/null || true
+            sleep $((attempt * 3))
+          done
+          exit 1
+
+      - name: Refresh Pages after new observation
+        if: steps.publish.outputs.changed == 'true'
+        env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run message-archive.yml --repo "${{ github.repository }}" --ref main
+        run: gh workflow run pages.yml --repo "${{ github.repository }}" --ref main
