@@ -38,14 +38,17 @@ def patch_taf_html() -> bool:
     if pos>=0:
         a=s.rfind('<script>',0,pos); b=s.find('</script>',pos)
         if a<0 or b<0: raise SystemExit('cannot isolate old TAF multi-source script')
-        s=s[:a]+'<script src="message-archive-client.js"></script>\n<script src="taf-archive-source.js"></script>'+s[b+9:]
-    elif 'src="taf-archive-source.js"' not in s: raise SystemExit('TAF central source loader not found')
+        s=s[:a]+'<script src="message-archive-client.js"></script>'+s[b+9:]
+    elif 'src="message-archive-client.js"' not in s:
+        raise SystemExit('TAF MessageArchive client loader not found')
+    s=s.replace('<script src="taf-archive-source.js"></script>\n','').replace('\n<script src="taf-archive-source.js"></script>','')
     s=s.replace("json('data/observations/latest.json')","json('data/messages/latest.json')")
     s=s.replace("json('data/observations/recent.json')","json('data/messages/recent.json')")
     s=s.replace('TAF-y zostaną pobrane bezpośrednio z IMGW po kliknięciu „Odśwież i generuj”.','TAF-y są odczytywane wyłącznie z centralnego archiwum depesz.')
     s=s.replace('Generator po kliknięciu „Odśwież i generuj” scala TAF z IMGW, AWC, PilotHub przez proxy, cache i źródeł ręcznych, a następnie korzysta z SYNOP, silnika multimodelowego, Cloud Learning oraz kierunkowych TAF EPBY / EPPW / EPKS.','Generator po kliknięciu „Odśwież i generuj” odczytuje METAR/SPECI, SYNOP i TAF wyłącznie z centralnego archiwum depesz, a następnie korzysta z silnika multimodelowego, Cloud Learning oraz kierunkowych TAF EPBY / EPPW / EPKS.')
     if marker in s or 'function fromProxy(' in s or 'function fromImgw(' in s or 'function fromAwc(' in s: raise SystemExit('old browser-side TAF acquisition survived cutover')
     if 'data/observations/latest.json' in s or 'data/observations/recent.json' in s: raise SystemExit('legacy observation path survived TAF cutover')
+    if 'taf-archive-source.js' in s: raise SystemExit('TAF compatibility source survived native cutover')
     if s!=before: p.write_text(s,encoding='utf-8'); return True
     return False
 
@@ -67,11 +70,12 @@ def patch_model_verification() -> bool:
 def patch_cloud_learning() -> bool:
     p=ROOT/'scripts/cloud_learning.py'; s=p.read_text(encoding='utf-8'); before=s
     old='METAR_DIR = ROOT / "data" / "observations" / "metar"'; new='METAR_DIR = ROOT / "data" / "messages" / "metar"\nSPECI_DIR = ROOT / "data" / "messages" / "speci"'
-    if old in s: s=s.replace(old,new,1)
-    elif new not in s: raise SystemExit('cloud learning archive constant anchor missing')
-    old='metars = all_jsonl(METAR_DIR)'; new='metars = all_jsonl(METAR_DIR) + all_jsonl(SPECI_DIR)'
-    if old in s: s=s.replace(old,new,1)
-    elif new not in s: raise SystemExit('cloud learning METAR/SPECI reader anchor missing')
+    if new not in s:
+        if old in s: s=s.replace(old,new,1)
+        else: raise SystemExit('cloud learning archive constant anchor missing')
+    canonical='metars = all_jsonl(METAR_DIR) + all_jsonl(SPECI_DIR)'
+    s=re.sub(r'metars = all_jsonl\(METAR_DIR\)(?: \+ all_jsonl\(SPECI_DIR\))+',canonical,s,count=1)
+    if canonical not in s: raise SystemExit('cloud learning METAR/SPECI reader anchor missing')
     if 'data" / "observations"' in s: raise SystemExit('legacy observation directory survived cloud learning cutover')
     if s!=before: p.write_text(s,encoding='utf-8'); return True
     return False
@@ -89,7 +93,7 @@ def patch_pages_workflow() -> bool:
     s=s.replace('          python3 -m json.tool _site/data/taf/neighbors.json >/dev/null\n','')
     s=s.replace('          grep -F "data/observations/recent.json" _site/observation-engine.js','          grep -F "data/messages/recent.json" _site/observation-engine.js')
     if '_site/data/observations' in s or '_site/data/taf' in s: raise SystemExit('legacy bulletin trees survived Pages cutover')
-    if 'message-archive-client.js' not in s or 'taf-archive-source.js' not in s or '_site/data/messages' not in s: raise SystemExit('central archive assets missing from Pages workflow')
+    if 'message-archive-client.js' not in s or '_site/data/messages' not in s: raise SystemExit('central archive assets missing from Pages workflow')
     if s!=before: p.write_text(s,encoding='utf-8'); return True
     return False
 
