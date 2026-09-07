@@ -4,12 +4,13 @@ from __future__ import annotations
 import calendar
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 CACHE = Path("data/taf/neighbors.json")
 LATEST = Path("data/taf/latest.json")
 ARCHIVE_ROOT = Path("data/taf/epir")
+BULK_ARCHIVE_ROOT = Path("data/taf/archive")
 
 
 def utcnow() -> datetime:
@@ -53,8 +54,8 @@ def parse_times(raw: str, ref: datetime) -> tuple[datetime, datetime | None, dat
     valid_start = resolve_group(valid_match.group(1), issue)
     valid_end = resolve_group(valid_match.group(2), valid_start)
     if valid_end <= valid_start:
-        # Re-resolve the end group against a reference safely inside the next day/month.
-        valid_end = resolve_group(valid_match.group(2), valid_start.replace(hour=12) + __import__('datetime').timedelta(hours=18))
+        # Re-resolve the end group safely inside the following day/month.
+        valid_end = resolve_group(valid_match.group(2), valid_start.replace(hour=12) + timedelta(hours=18))
     return issue, valid_start, valid_end
 
 
@@ -67,13 +68,17 @@ def read_json(path: Path) -> dict:
         return {}
 
 
-def make_record(row: dict) -> dict:
-    raw = re.sub(r"\s+", " ", str(row.get("raw") or "")).strip()
+def normalize_raw(value: object) -> str:
+    raw = re.sub(r"\s+", " ", str(value or "")).strip()
     if not re.match(r"^TAF(?:\s+(?:AMD|COR))?\s+EPIR\b", raw, flags=re.I):
-        raise ValueError("cache does not contain a valid EPIR TAF")
+        raise ValueError("record does not contain a valid EPIR TAF")
     if not raw.endswith("="):
         raw += "="
+    return raw
 
+
+def make_record(row: dict) -> dict:
+    raw = normalize_raw(row.get("raw"))
     source_updated = row.get("updated_at")
     try:
         ref = datetime.fromisoformat(str(source_updated).replace("Z", "+00:00")) if source_updated else utcnow()
@@ -95,6 +100,34 @@ def make_record(row: dict) -> dict:
     }
 
 
+def record_from_bulk(row: dict) -> dict | None:
+    if str(row.get("station") or "").upper() != "EPIR" or not row.get("raw"):
+        return None
+    try:
+        raw = normalize_raw(row.get("raw"))
+    except ValueError:
+        return None
+
+    issue = row.get("issue_time")
+    valid_start = row.get("valid_from") or row.get("valid_start")
+    valid_end = row.get("valid_to") or row.get("valid_end")
+    if not issue:
+        return None
+
+    return {
+        "schema": "prognozaepir-epir-taf-record-v1",
+        "station": "EPIR",
+        "kind": "official",
+        "raw": raw,
+        "source": row.get("source") or "EPIR archive",
+        "source_url": row.get("source_url"),
+        "source_updated_at": row.get("source_updated_at"),
+        "issue_time": issue,
+        "valid_start": valid_start,
+        "valid_end": valid_end,
+    }
+
+
 def write_latest(record: dict) -> bool:
     payload = {
         "schema": "prognozaepir-epir-taf-latest-v1",
@@ -110,7 +143,7 @@ def write_latest(record: dict) -> bool:
 
 
 def append_archive(record: dict) -> tuple[bool, Path]:
-    issue = datetime.fromisoformat(record["issue_time"].replace("Z", "+00:00"))
+    issue = datetime.fromisoformat(str(record["issue_time"]).replace("Z", "+00:00"))
     path = ARCHIVE_ROOT / f"{issue:%Y}" / f"{issue:%m}" / f"{issue:%d}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -131,17 +164,51 @@ def append_archive(record: dict) -> tuple[bool, Path]:
     return True, path
 
 
+def sync_recent_bulk_archive() -> int:
+    """Bring today/yesterday bulk TAFs into the live verification archive.
+
+    This closes gaps when a TAF arrived through a bulk/import path before the
+    five-minute live cache archiver saw it. Yesterday is included for TAFs
+    crossing 00 UTC.
+    """
+    added = 0
+    now = utcnow()
+    for delta in (1, 0):
+        day = now - timedelta(days=delta)
+        source = BULK_ARCHIVE_ROOT / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.jsonl"
+        if not source.exists():
+            continue
+        for line in source.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except Exception:
+                continue
+            record = record_from_bulk(row)
+            if not record:
+                continue
+            changed, _ = append_archive(record)
+            if changed:
+                added += 1
+    return added
+
+
 def main() -> int:
+    bulk_added = sync_recent_bulk_archive()
+
     cache = read_json(CACHE)
     row = (cache.get("stations") or {}).get("EPIR") or {}
     if not row.get("raw"):
-        print("No EPIR TAF in data/taf/neighbors.json; archive unchanged")
+        print("bulk archive sync:", bulk_added, "appended")
+        print("No EPIR TAF in data/taf/neighbors.json; live archive unchanged")
         return 0
 
     record = make_record(row)
     latest_changed = write_latest(record)
     archive_changed, archive_path = append_archive(record)
 
+    print("bulk archive sync:", bulk_added, "appended")
     print("EPIR TAF:", record["raw"])
     print("latest:", "updated" if latest_changed else "unchanged", LATEST)
     print("archive:", "appended" if archive_changed else "already present", archive_path)
