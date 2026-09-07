@@ -12,6 +12,7 @@ on:
       - 'scripts/message_archive.py'
       - 'scripts/apply_central_archive_cutover.py'
       - 'scripts/finalize_central_message_architecture.py'
+      - 'scripts/ensure_taf_native_archive.py'
       - '.github/workflows/message-archive.yml'
 
 permissions:
@@ -35,7 +36,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Validate code
-        run: python3 -m py_compile scripts/message_archive.py scripts/apply_central_archive_cutover.py scripts/finalize_central_message_architecture.py
+        run: python3 -m py_compile scripts/message_archive.py scripts/apply_central_archive_cutover.py scripts/finalize_central_message_architecture.py scripts/ensure_taf_native_archive.py
       - name: Acquire bulletins into temporary staging
         shell: bash
         run: |
@@ -52,8 +53,9 @@ jobs:
           python3 scripts/message_archive.py --validate-only
           python3 scripts/apply_central_archive_cutover.py
           python3 scripts/finalize_central_message_architecture.py
+          python3 scripts/ensure_taf_native_archive.py
           python3 scripts/message_archive.py --validate-only
-          python3 -m py_compile scripts/model_verification.py scripts/cloud_learning.py scripts/finalize_central_message_architecture.py
+          python3 -m py_compile scripts/model_verification.py scripts/cloud_learning.py scripts/finalize_central_message_architecture.py scripts/ensure_taf_native_archive.py
           node --check taf-verification.js
       - name: Drop legacy staging changes
         run: |
@@ -68,13 +70,15 @@ jobs:
           grep -F "data/messages/latest.json" observation-engine.js
           grep -F 'PrognozaEPIRMessageArchive' taf.html
           grep -F 'loadNeighborArchive' taf.html
-          grep -F 'src="taf-archive-source.js"' taf.html
+          ! grep -F 'taf-archive-source.js' taf.html
           grep -F 'ROOT / "data" / "messages" / "metar"' scripts/model_verification.py
           grep -F 'SPECI_DIR = ROOT / "data" / "messages" / "speci"' scripts/cloud_learning.py
           ! grep -F "aviation-api.imgw.pl" observation-engine.js
           ! grep -F "function fromProxy(" taf.html
           ! grep -F "loadImgwLive(" taf.html
           ! grep -F "awiacja.imgw.pl" taf.html
+          ! grep -F "aviationweather.gov" taf.html
+          ! grep -F "/api/taf-proxy" taf.html
           ! grep -F "data/observations/metar/" taf-verification.js
           ! grep -F "data/taf/epir/" taf-verification.js
           python3 - <<'PY'
