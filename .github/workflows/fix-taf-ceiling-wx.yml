@@ -1,0 +1,82 @@
+name: Fix TAF ceiling and WX
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-taf-ceiling-wx.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Align cloud ceiling logic and clarify WX
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path('index.html')
+          s=p.read_text(encoding='utf-8')
+
+          old="function toOkta(p){return finite(p)?clamp(Math.round(p/12.5),0,8):null}"
+          new="function toOkta(p){if(!finite(p))return null;let o=clamp(Math.round(p/12.5),0,8);if(o>=5&&p<62.5)o=4;return o}"
+          if old not in s and new not in s:
+              raise SystemExit('index.html: toOkta anchor not found')
+          s=s.replace(old,new,1)
+
+          old="const threshold=Math.max(6.25,(okta-.5)*12.5);"
+          new="const threshold=okta>=5?Math.max(62.5,(okta-.5)*12.5):Math.max(6.25,(okta-.5)*12.5);"
+          if old not in s and new not in s:
+              raise SystemExit('index.html: bandHeight threshold anchor not found')
+          s=s.replace(old,new,1)
+          p.write_text(s,encoding='utf-8')
+
+          p=Path('taf.html')
+          s=p.read_text(encoding='utf-8')
+          s=s.replace('<th>WX</th>','<th title="Weather — zjawiska pogodowe">Pogoda (WX)</th>',1)
+
+          old="function cg(z){let a=[];if(z.oktaL>0&&fin(z.lowH))a.push({o:z.oktaL,h:z.lowH});if(z.oktaM>=3&&fin(z.midH))a.push({o:z.oktaM,h:z.midH});if(z.oktaH>=5&&fin(z.highH))a.push({o:z.oktaH,h:z.highH});a.sort((x,y)=>x.h-y.h);return a.slice(0,3).map(x=>(x.o<=2?'FEW':x.o<=4?'SCT':x.o<=7?'BKN':'OVC')+pad(Math.min(999,Math.round(ft(x.h)/100)),3)).join(' ')||'NSC'}"
+          new="function cg(z){let a=[];if(z.oktaL>0&&fin(z.lowH))a.push({o:z.oktaL,h:z.lowH});if(z.oktaM>=3&&fin(z.midH))a.push({o:z.oktaM,h:z.midH});if(z.oktaH>=5&&fin(z.highH))a.push({o:z.oktaH,h:z.highH});a.sort((x,y)=>x.h-y.h);let ceilingUsed=false;return a.slice(0,3).map(x=>{let h=x.h;if(!ceilingUsed&&x.o>=5&&fin(z.ceiling)){h=z.ceiling;ceilingUsed=true}return(x.o<=2?'FEW':x.o<=4?'SCT':x.o<=7?'BKN':'OVC')+pad(Math.min(999,Math.round(ft(h)/100)),3)}).join(' ')||'NSC'}"
+          if old not in s and new not in s:
+              raise SystemExit('taf.html: cg anchor not found')
+          s=s.replace(old,new,1)
+          p.write_text(s,encoding='utf-8')
+          PY
+
+      - name: Validate
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('taf.html').read_text(encoding='utf-8')
+          parts=s.split('<script>')
+          assert len(parts) >= 3
+          Path('/tmp/taf-source.js').write_text(parts[1].split('</script>',1)[0],encoding='utf-8')
+          Path('/tmp/taf-generator.js').write_text(parts[2].split('</script>',1)[0],encoding='utf-8')
+          i=Path('index.html').read_text(encoding='utf-8')
+          Path('/tmp/index-inline.js').write_text(i.split('<script>',1)[1].split('</script>',1)[0],encoding='utf-8')
+          assert "if(o>=5&&p<62.5)o=4" in i
+          assert "okta>=5?Math.max(62.5" in i
+          assert 'Pogoda (WX)' in s
+          assert 'ceilingUsed=false' in s
+          PY
+          node --check /tmp/taf-source.js
+          node --check /tmp/taf-generator.js
+          node --check /tmp/index-inline.js
+
+      - name: Commit fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html taf.html
+          git commit -m "fix: align TAF ceiling with 5/8 cloud threshold"
+          git pull --rebase origin main
+          git push origin HEAD:main
