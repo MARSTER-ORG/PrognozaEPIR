@@ -20,10 +20,12 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Fix and validate nowcast source
+      - name: Fix nowcast source and embed in radar page
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
+
           p=Path('radar-nowcast.js')
           s=p.read_text(encoding='utf-8')
 
@@ -31,12 +33,12 @@ jobs:
           new="const all=rasters.map(r=>gridForRaster(r,p));const grids=all.filter((g,i)=>g.active>=2||i===all.length-1);return{grids};"
           if old in s:
               s=s.replace(old,new,1)
-
           s=s.replace("async function loadModelSupport(p,etaMin,preds){", "async function loadModelSupport(p,etaMin,preds,source){")
           s=s.replace("const radarWet=Object.values(preds).some(v=>Number.isFinite(v)&&v>=27);", "const radarWet=Object.values(preds).some(v=>Number.isFinite(v)&&v>=ECHO_THRESHOLD[source]);")
           s=s.replace("function combinedLabel(conf,models,approach,preds){", "function combinedLabel(conf,models,approach,preds,source){")
           s=s.replace("const radarSignal=Object.values(preds).some(v=>Number.isFinite(v)&&v>=27)||!!approach;", "const radarSignal=Object.values(preds).some(v=>Number.isFinite(v)&&v>=ECHO_THRESHOLD[source])||!!approach;")
           s=s.replace("models=await loadModelSupport(p,eta,preds),combined=combinedLabel(conf,models,approach,preds);", "models=await loadModelSupport(p,eta,preds,source),combined=combinedLabel(conf,models,approach,preds,source);")
+          s=s.replace("`${x.name} ${x.rain.toFixed(1)} mm/h`", "`${x.name} ${x.rain.toFixed(1)} mm/1h`")
 
           required=[
               'const all=rasters.map(r=>gridForRaster(r,p))',
@@ -48,49 +50,30 @@ jobs:
           if missing:
               raise SystemExit('nowcast source patch failed: '+repr(missing))
           p.write_text(s,encoding='utf-8')
-          PY
-          node --check radar-nowcast.js
 
-      - name: Wire module into Pages build
-        run: |
+          hp=Path('radar.html')
+          h=hp.read_text(encoding='utf-8')
+          start='<!-- RADAR_NOWCAST_INLINE_START -->'
+          end='<!-- RADAR_NOWCAST_INLINE_END -->'
+          h=re.sub(re.escape(start)+r'.*?'+re.escape(end)+r'\s*','',h,flags=re.S)
+          block=start+'\n<script>\n'+s+'\n</script>\n'+end+'\n'
+          if '</body>' not in h:
+              raise SystemExit('radar.html has no </body>')
+          h=h.replace('</body>',block+'</body>',1)
+          hp.write_text(h,encoding='utf-8')
+          PY
+
+          node --check radar-nowcast.js
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('.github/workflows/pages.yml')
-          s=p.read_text(encoding='utf-8')
-
-          s=s.replace('analysis-plus.js range-rings-reset.js _site/',
-                      'analysis-plus.js radar-nowcast.js range-rings-reset.js _site/')
-          s=s.replace("              '<script src=\"analysis-plus.js\"></script>',\n              '<script src=\"range-rings-reset.js\"></script>',",
-                      "              '<script src=\"analysis-plus.js\"></script>',\n              '<script src=\"radar-nowcast.js\"></script>',\n              '<script src=\"range-rings-reset.js\"></script>',")
-          s=s.replace("'analysis-plus.js','range-rings-reset.js'):",
-                      "'analysis-plus.js','radar-nowcast.js','range-rings-reset.js'):")
-          s=s.replace('analysis-plus.js range-rings-reset.js; do',
-                      'analysis-plus.js radar-nowcast.js range-rings-reset.js; do')
-
-          marker='          test -s _site/cloud-learning-client.js\n'
-          if 'test -s _site/radar-nowcast.js' not in s:
-              s=s.replace(marker,marker+'          test -s _site/radar-nowcast.js\n',1)
-
-          marker2="          grep -F '<script src=\"cloud-learning-client.js\"></script>' _site/index.html\n"
-          if "grep -F '<script src=\"radar-nowcast.js\"></script>' _site/radar.html" not in s:
-              s=s.replace(marker2,marker2+"          grep -F '<script src=\"radar-nowcast.js\"></script>' _site/radar.html\n",1)
-
-          s=s.replace('RADAR / SAT / AI v0.12.3','RADAR / SAT / AI v0.13.0')
-
-          required=[
-              'radar-nowcast.js range-rings-reset.js _site/',
-              "'<script src=\"radar-nowcast.js\"></script>'",
-              "'analysis-plus.js','radar-nowcast.js','range-rings-reset.js'):",
-              'analysis-plus.js radar-nowcast.js range-rings-reset.js; do',
-              'test -s _site/radar-nowcast.js',
-              "grep -F '<script src=\"radar-nowcast.js\"></script>' _site/radar.html",
-              'RADAR / SAT / AI v0.13.0',
-          ]
-          missing=[x for x in required if x not in s]
-          if missing:
-              raise SystemExit('Pages wiring failed, missing: '+repr(missing))
-          p.write_text(s,encoding='utf-8')
+          import re
+          s=Path('radar.html').read_text(encoding='utf-8')
+          assert s.count('RADAR_NOWCAST_INLINE_START') == 1
+          block=s.split('<!-- RADAR_NOWCAST_INLINE_START -->',1)[1].split('<!-- RADAR_NOWCAST_INLINE_END -->',1)[0]
+          js=block.split('<script>',1)[1].rsplit('</script>',1)[0]
+          Path('/tmp/radar-nowcast-inline.js').write_text(js,encoding='utf-8')
           PY
+          node --check /tmp/radar-nowcast-inline.js
 
       - name: Smoke-test live POLRAD metadata and image CORS
         run: |
@@ -104,17 +87,15 @@ jobs:
           print(rows[-1]['url'].replace('http://','https://'))
           PY
           FRAME_URL="$(tail -n1 /tmp/frame_url.txt)"
-          echo "Testing $FRAME_URL"
           curl -fsSI -H 'Origin: https://marster-org.github.io' "$FRAME_URL" >/tmp/polrad_headers.txt
-          cat /tmp/polrad_headers.txt
           grep -Eqi '^access-control-allow-origin:[[:space:]]*(\*|https://marster-org\.github\.io)' /tmp/polrad_headers.txt
+          echo "POLRAD history/image CORS: OK"
 
-      - name: Commit implementation
+      - name: Commit nowcast source and radar page
         run: |
-          rm -f .github/workflows/install-radar-nowcast.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add radar-nowcast.js .github/workflows/pages.yml .github/workflows/install-radar-nowcast.yml
-          git commit -m 'feat: deploy POLRAD radar nowcast 0-3h'
+          git add radar-nowcast.js radar.html
+          git commit -m 'feat: enable POLRAD radar nowcast 0-3h'
           git pull --rebase origin main
           git push origin HEAD:main
