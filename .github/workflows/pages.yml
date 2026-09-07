@@ -29,16 +29,15 @@ jobs:
 
       - name: Prepare site
         run: |
-          mkdir -p _site/data/observations _site/data/learning _site/data/taf
+          mkdir -p _site/data/messages _site/data/learning
           cp index.html radar.html taf.html epir-icon.svg epir-icon-192.png epir-icon-512.png \
              index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js meteogram-visfog-split.js meteogram-visfog-cleanup.js \
              rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js shortcut-mode.js \
-             cloud-learning-client.js \
+             cloud-learning-client.js message-archive-client.js taf-archive-source.js \
              radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js \
              lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
-          cp data/observations/latest.json data/observations/recent.json _site/data/observations/
+          cp -R data/messages/. _site/data/messages/
           cp data/learning/cloud-skill.json _site/data/learning/
-          cp data/taf/neighbors.json _site/data/taf/
           python3 - <<'PY'
           from pathlib import Path
           import os
@@ -181,7 +180,7 @@ jobs:
 
       - name: Validate JavaScript
         run: |
-          for f in index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js meteogram-visfog-split.js meteogram-visfog-cleanup.js rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js shortcut-mode.js cloud-learning-client.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js; do
+          for f in index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js meteogram-visfog-split.js meteogram-visfog-cleanup.js rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js shortcut-mode.js cloud-learning-client.js message-archive-client.js taf-archive-source.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js; do
             node --check "$f"
           done
           node --check _site/meteogram-visfog-split.js
@@ -191,6 +190,8 @@ jobs:
           node --check _site/fog-meteogram-overlay.js
           node --check _site/mifg-engine.js
           node --check _site/cloud-learning-client.js
+          node --check _site/message-archive-client.js
+          node --check _site/taf-archive-source.js
           python3 - <<'PY'
           from pathlib import Path
           s=Path('_site/taf.html').read_text(encoding='utf-8')
@@ -211,18 +212,21 @@ jobs:
           test -s _site/meteogram-visfog-split.js
           test -s _site/meteogram-visfog-cleanup.js
           test -s _site/cloud-learning-client.js
-          test -s _site/data/observations/latest.json
-          test -s _site/data/observations/recent.json
+          test -s _site/message-archive-client.js
+          test -s _site/taf-archive-source.js
+          test -s _site/data/messages/latest.json
+          test -s _site/data/messages/recent.json
+          test -s _site/data/messages/status.json
           test -s _site/data/learning/cloud-skill.json
-          test -s _site/data/taf/neighbors.json
-          python3 -m json.tool _site/data/observations/latest.json >/dev/null
-          python3 -m json.tool _site/data/observations/recent.json >/dev/null
+          python3 -m json.tool _site/data/messages/latest.json >/dev/null
+          python3 -m json.tool _site/data/messages/recent.json >/dev/null
+          python3 -m json.tool _site/data/messages/status.json >/dev/null
           python3 -m json.tool _site/data/learning/cloud-skill.json >/dev/null
-          python3 -m json.tool _site/data/taf/neighbors.json >/dev/null
           grep -F '<a class="control-link" href="taf.html">GENERATOR TAF</a>' _site/index.html
           grep -F 'GENERATOR TAF v0.2.0' _site/taf.html
           grep -F 'TAF EPBY/EPPW/EPKS' _site/taf.html
           grep -F 'PROB40 wyłączone' _site/taf.html
+          grep -F 'src="taf-archive-source.js"' _site/taf.html
           grep -F '<script src="meteogram-visfog-split.js"></script>' _site/index.html
           grep -F '<script src="meteogram-visfog-cleanup.js"></script>' _site/index.html
           grep -F '<script src="observation-engine.js"></script>' _site/index.html
@@ -243,7 +247,7 @@ jobs:
           grep -F "automatic-epir-metar-synop" _site/observation-engine.js
           grep -F "shallowFog" _site/observation-engine.js
           grep -F "SYNOP ma pierwszeństwo" _site/observation-engine.js
-          grep -F "data/observations/recent.json" _site/observation-engine.js
+          grep -F "data/messages/recent.json" _site/observation-engine.js
           grep -F "MIFG &lt;2 m" _site/mifg-engine.js
           grep -F "surface_temperature" _site/mifg-engine.js
           grep -F "EPIR FOG ENGINE v1.1" _site/fog-engine.js
