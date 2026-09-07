@@ -1,0 +1,94 @@
+name: EPIR METAR Heartbeat
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/live_metar_collector.py'
+      - 'scripts/refresh_epir_metar.py'
+      - '.github/workflows/metar-heartbeat.yml'
+  schedule:
+    # Lightweight independent METAR path. It is intentionally separate from
+    # the heavier METAR+SYNOP+TAF+verification workflow.
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: epir-metar-heartbeat
+  cancel-in-progress: true
+
+jobs:
+  metar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Fetch live EPIR METAR and repair recent gaps
+        run: python3 scripts/live_metar_collector.py
+
+      - name: Validate live result
+        run: |
+          python3 - <<'PY'
+          import json
+          from datetime import datetime, timezone
+
+          p=json.load(open('data/observations/latest.json',encoding='utf-8'))
+          m=p.get('metar') or {}
+          assert m.get('station')=='EPIR', m
+          assert m.get('obs_time'), m
+          assert m.get('raw'), m
+          t=datetime.fromisoformat(m['obs_time'].replace('Z','+00:00'))
+          age=(datetime.now(timezone.utc)-t).total_seconds()/60
+          print('EPIR METAR:',m.get('obs_time'),m.get('source'),m.get('raw'))
+          print('METAR age minutes:',round(age,1))
+          print('Missing routine slots:',(p.get('metar_freshness') or {}).get('missing_routine_slots'))
+          # Do not silently publish a very old report as live. The collector may
+          # keep a stale record for transparency, but the heartbeat flags it.
+          if age > 90:
+              raise SystemExit(f'EPIR METAR is stale: {age:.1f} min')
+          PY
+
+      - name: Commit only when a METAR/backfill really changed
+        id: commit
+        run: |
+          # live_metar_collector updates collected_at/freshness on every poll.
+          # Do not create a repository commit every 5 minutes unless the
+          # canonical METAR archive actually gained/changed a report.
+          if git diff --quiet -- data/observations/metar; then
+            echo "No new METAR or source upgrade to archive"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/observations/metar data/observations/latest.json data/observations/recent.json
+          git commit -m "data: EPIR METAR heartbeat $(date -u +'%Y-%m-%d %H:%MZ')"
+
+          for attempt in 1 2 3 4; do
+            git fetch origin main
+            git rebase origin/main
+            if git push origin HEAD:main; then
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Push attempt ${attempt} failed; retrying..."
+            sleep $((attempt * 4))
+          done
+          echo "Failed to push EPIR METAR heartbeat data" >&2
+          exit 1
+
+      - name: Redeploy current METAR to GitHub Pages
+        if: steps.commit.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main
