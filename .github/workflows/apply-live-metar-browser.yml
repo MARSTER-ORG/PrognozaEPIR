@@ -1,0 +1,40 @@
+name: Apply live METAR browser patch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/live-metar-browser-trigger.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Apply patch
+        run: |
+          python3 scripts/install_live_metar_browser.py
+          node --check observation-engine.js
+          grep -F 'async function fetchImgwLiveMetar' observation-engine.js
+          grep -F 'setInterval(refreshLiveMetar,2*60*1000)' observation-engine.js
+          grep -F 'deploy-compat: GENERATOR TAF v0.2.0' taf.html
+          git diff --check
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add observation-engine.js taf.html
+          if git diff --cached --quiet; then
+            echo 'Already applied'
+            exit 0
+          fi
+          git commit -m 'fix: use live IMGW METAR directly in observation panel'
+          git pull --rebase origin main
+          git push origin HEAD:main
