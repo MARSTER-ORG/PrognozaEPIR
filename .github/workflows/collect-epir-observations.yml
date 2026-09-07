@@ -1,49 +1,29 @@
-name: Collect EPIR METAR and SYNOP
+name: Verify EPIR observations
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
-      - 'scripts/collect_epir_observations.py'
-      - 'scripts/supplement_metar_pilothub.py'
-      - 'scripts/supplement_synop_12342.py'
-      - 'scripts/refresh_epir_metar.py'
-      - 'scripts/live_metar_collector.py'
-      - 'scripts/metar_armored.py'
-      - 'scripts/collect_neighbor_tafs.py'
-      - 'scripts/archive_epir_taf.py'
-      - 'scripts/organize_observation_archive.py'
       - 'scripts/model_verification.py'
       - 'scripts/model_verification_realtime.py'
       - 'scripts/embed_model_verification.py'
+      - 'scripts/organize_observation_archive.py'
       - '.github/workflows/collect-epir-observations.yml'
-  schedule:
-    # Primary polls stay on the requested 15-minute pattern (:07/:22/:37/:52).
-    # Each primary slot gets one retry 5 minutes later. GitHub scheduled jobs can
-    # occasionally start late or be skipped under service load; the retry slot
-    # prevents one missed cron event from leaving a 30+ minute hole in EPIR data.
-    - cron: '7 * * * *'
-    - cron: '12 * * * *'
-    - cron: '22 * * * *'
-    - cron: '27 * * * *'
-    - cron: '37 * * * *'
-    - cron: '42 * * * *'
-    - cron: '52 * * * *'
-    - cron: '57 * * * *'
-  workflow_dispatch:
 
 permissions:
   contents: write
-  actions: write
 
+# This workflow is deliberately NOT a live data clock. Live METAR/SYNOP are
+# owned exclusively by metar-heartbeat.yml + observation-watchdog.yml.
 concurrency:
-  group: epir-observation-collector
+  group: epir-observation-verification
   cancel-in-progress: false
 
 jobs:
-  collect:
+  verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 8
     steps:
       - name: Checkout main
         uses: actions/checkout@v4
@@ -51,180 +31,52 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Validate METAR multi-report parser
-        run: |
-          python3 - <<'PY'
-          import sys
-          sys.path.insert(0, 'scripts')
-          import refresh_epir_metar as r
-          sample = '''
-          METAR EPIR 070800Z 16004KT CAVOK 16/11 Q1025=
-          METAR EPIR 070730Z 16002KT CAVOK 15/11 Q1025=
-          SPECI EPIR 070715Z 15003KT 5000 BR NSC 14/11 Q1025=
-          METAR EPIR 070700Z 16004KT CAVOK 14/11 Q1025=
-          METAR EPIR 070630Z 16004KT CAVOK 12/11 Q1025=
-          '''
-          rows = r.extract_epir_reports(sample, 'IMGW_AVIATION_METAR')
-          assert len(rows) == 5, rows
-          assert sum(x.get('report_type') == 'SPECI' for x in rows) == 1, rows
-          assert len({x.get('obs_time') for x in rows}) == 5, rows
-          assert r.LATEST_MAX_AGE_MIN == 60
-          assert r.BACKFILL_MAX_AGE_MIN >= 90
-          print('multi-report parser: OK, reports=', len(rows))
-          PY
-
-      - name: Collect METAR EPIR and SYNOP 12342
-        run: |
-          # Legacy source path stays independent as a fallback.
-          python3 scripts/collect_epir_observations.py || echo "Primary EPIR collector unavailable; continuing"
-          python3 scripts/supplement_synop_12342.py || echo "SYNOP supplement unavailable; continuing"
-
-          # Armored METAR path: official IMGW + independent fallbacks, bounded
-          # retries, backfill and atomic persistence.
-          python3 scripts/metar_armored.py
-
-      - name: Persist observations before optional TAF work
-        id: obs_commit
-        run: |
-          # This is intentionally BEFORE TAF collection. A broken TAF provider
-          # must never again prevent a valid METAR/SYNOP from being saved.
-          if git diff --quiet -- data/observations/metar data/observations/synop; then
-            echo "No canonical observation change to persist early"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/observations
-          git commit -m "data: persist EPIR observations $(date -u +'%Y-%m-%d %H:%MZ')"
-
-          for attempt in 1 2 3 4 5; do
-            git fetch origin main
-            if git rebase origin/main && git push origin HEAD:main; then
-              echo "changed=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            git rebase --abort 2>/dev/null || true
-            echo "Observation push attempt ${attempt} failed; retrying..."
-            sleep $((attempt * 4))
-          done
-          echo "Failed to persist EPIR observations before TAF work" >&2
-          exit 1
-
-      - name: Collect and archive TAFs
-        run: |
-          python3 scripts/collect_neighbor_tafs.py || echo "TAF collector unavailable; keeping previous cache"
-          python3 scripts/archive_epir_taf.py
-
-      - name: Organize long-term observation archive
+      - name: Organize observation archive
         run: python3 scripts/organize_observation_archive.py
 
-      - name: Refresh verification for new observations
+      - name: Refresh model verification from already archived forecasts
         run: |
-          if [ "${{ steps.obs_commit.outputs.changed }}" != "true" ] && git diff --quiet -- data/observations; then
-            echo "No new observation; verification unchanged"
-          else
-            # Never fetch a new forecast here: verification must use forecasts
-            # archived before the observation valid time.
-            python3 scripts/model_verification_realtime.py --summary-only
-            python3 scripts/embed_model_verification.py
-          fi
+          python3 scripts/model_verification_realtime.py --summary-only
+          python3 scripts/embed_model_verification.py
 
-      - name: Validate observation verification and TAF data
+      - name: Validate observation and verification data
         run: |
           python3 -m json.tool data/observations/latest.json >/dev/null
           python3 -m json.tool data/observations/recent.json >/dev/null
           python3 -m json.tool data/learning/model-verification.json >/dev/null
-          python3 -m json.tool data/taf/neighbors.json >/dev/null
-          python3 -m json.tool data/taf/latest.json >/dev/null
           python3 - <<'PY'
           import json
           from pathlib import Path
+
           p=json.load(open('data/observations/latest.json',encoding='utf-8'))
           assert p['station']['icao']=='EPIR'
           assert p['station']['synop']=='12342'
-          assert p['station']['wigos']=='0-20000-0-12342'
           assert p.get('metar') or p.get('synop')
           m=p.get('metar') or {}
-          s=p.get('synop') or {}
-          f=p.get('fused') or {}
-          fr=p.get('metar_freshness') or {}
-          assert fr.get('fresh_limit_min')==60, fr
-          assert (fr.get('backfill_limit_min') or 0)>=90, fr
-          assert fr.get('status') in ('ok','stale'), fr
-
-          n=json.load(open('data/taf/neighbors.json',encoding='utf-8'))
-          assert n.get('schema')=='prognozaepir-neighbor-tafs-v1'
-          assert set(('EPIR','EPBY','EPPW','EPKS')).issubset((n.get('stations') or {}).keys())
-
-          lt=json.load(open('data/taf/latest.json',encoding='utf-8'))
-          assert lt.get('schema')=='prognozaepir-epir-taf-latest-v1'
-          tr=lt.get('taf') or {}
-          assert tr.get('station')=='EPIR'
-          assert str(tr.get('raw') or '').startswith('TAF EPIR ')
-          issue=tr.get('issue_time')
-          assert issue
-          y,mo,d=issue[0:4],issue[5:7],issue[8:10]
-          taf_archive=Path('data/taf/epir')/y/mo/f'{d}.jsonl'
-          assert taf_archive.exists(), f'missing EPIR TAF archive: {taf_archive}'
-          archived=[]
-          for line in taf_archive.read_text(encoding='utf-8').splitlines():
-              if line.strip(): archived.append(json.loads(line))
-          assert any(x.get('raw')==tr.get('raw') for x in archived), 'latest EPIR TAF is not in archive'
-
-          if (s.get('visibility_m') is not None and f.get('synop_obs_time') == s.get('obs_time')):
-              assert f.get('visibility_source')==s.get('source'), (f.get('visibility_source'),s.get('source'))
-          if m.get('visibility_report') in ('9999','CAVOK'):
-              assert m.get('visibility_lower_bound') is True
-          for kind,row in (('metar',m),('synop',s)):
-              if row.get('obs_time'):
-                  dt=row['obs_time']
-                  y,mo,d=dt[0:4],dt[5:7],dt[8:10]
-                  canonical=Path('data/observations')/kind/y/mo/f'{d}.jsonl'
-                  assert canonical.exists(), f'missing canonical archive: {canonical}'
-
-          import sys
-          sys.path.insert(0,'scripts')
-          import model_verification as mv
-          assert mv.visibility_score(10000,10000,True)==100.0
-          assert mv.visibility_score(25000,10000,True)==100.0
-          print('METAR:', m.get('obs_time'), m.get('source'), m.get('raw'))
-          print('FRESHNESS:', fr)
-          print('SYNOP:', s.get('obs_time'), s.get('source'), s.get('raw'))
-          print('VIS:', f.get('visibility_m'), f.get('visibility_source'))
-          print('TAF cache:', {k:(v or {}).get('available') for k,v in n.get('stations',{}).items()})
-          print('TAF EPIR latest:', tr.get('issue_time'), tr.get('source'), tr.get('raw'))
+          if m.get('obs_time'):
+              dt=m['obs_time']
+              canonical=Path('data/observations/metar')/dt[0:4]/dt[5:7]/f'{dt[8:10]}.jsonl'
+              assert canonical.exists(), canonical
+          print('Verified METAR:',m.get('obs_time'),m.get('source'),m.get('raw'))
+          print('Verified SYNOP:',(p.get('synop') or {}).get('obs_time'),(p.get('synop') or {}).get('source'))
           PY
 
-      - name: Commit new verification and TAF archive
-        id: commit
+      - name: Commit verification/archive maintenance
         run: |
-          if git diff --quiet -- data/observations data/learning data/taf; then
-            echo "No new post-observation data to archive"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
+          if git diff --quiet -- data/observations data/learning; then
+            echo "No verification/archive maintenance change"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/observations data/learning data/taf
-          git commit -m "data: archive EPIR verification and TAFs $(date -u +'%Y-%m-%d %H:%MZ')"
-
+          git add data/observations data/learning
+          git commit -m "data: verify EPIR observations"
           for attempt in 1 2 3 4; do
             git fetch origin main
             if git rebase origin/main && git push origin HEAD:main; then
-              echo "changed=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
             git rebase --abort 2>/dev/null || true
-            echo "Push attempt ${attempt} failed; retrying..."
-            sleep $((attempt * 5))
+            sleep $((attempt * 4))
           done
-          echo "Failed to push EPIR post-observation data after retries" >&2
           exit 1
-
-      - name: Redeploy updated observations
-        if: steps.commit.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run pages.yml --ref main
