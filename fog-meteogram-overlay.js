@@ -1,6 +1,7 @@
 'use strict';
 (() => {
   const FOG_DRAW_THRESHOLD = 40;
+  const MIFG_DRAW_THRESHOLD = 40;
   const FOG_FULL_SCALE_KM = 19.5;
   const VIS_SCALE_MAX_KM = 30;
   const VIS_INNER_PAD = 9;
@@ -91,9 +92,9 @@
       ctx.fillRect(xx - barW / 2, baseY - h, barW, h);
     }
 
-    // Shallow fog / MIFG: one independent point for each model hour. Points are
-    // intentionally not connected; the numeric label is the exact 0–100 score.
-    const mifg = mifgSeries().filter(row => row && finite(row.t) && finite(row.score) && row.t >= m.t0 && row.t <= m.t1);
+    // Shallow fog / MIFG: show only operationally relevant values >= 40.
+    // Points are intentionally not connected; the numeric label is the exact score.
+    const mifg = mifgSeries().filter(row => row && finite(row.t) && finite(row.score) && row.score >= MIFG_DRAW_THRESHOLD && row.t >= m.t0 && row.t <= m.t1);
     ctx.font = 'bold 7.5px Arial';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
@@ -101,13 +102,13 @@
       const xx = x(row.t);
       const yy = yOnMifgScale(row.score,p);
       ctx.beginPath();
-      ctx.arc(xx,yy,3.1,0,Math.PI*2);
-      ctx.fillStyle = 'rgba(95,125,255,.96)';
+      ctx.arc(xx,yy,3.2,0,Math.PI*2);
+      ctx.fillStyle = 'rgba(214,52,52,.98)';
       ctx.fill();
       ctx.lineWidth = 1;
-      ctx.strokeStyle = 'rgba(235,240,255,.9)';
+      ctx.strokeStyle = 'rgba(255,235,235,.95)';
       ctx.stroke();
-      ctx.fillStyle = 'rgba(185,198,255,.98)';
+      ctx.fillStyle = 'rgba(205,38,38,.99)';
       ctx.fillText(String(Math.round(row.score)),xx,yy-5);
     }
 
@@ -167,7 +168,15 @@
     if (!legend || document.getElementById('fogMeteogramLegend')) return;
     const el = document.createElement('span');
     el.id = 'fogMeteogramLegend';
-    el.innerHTML = '<b>Widzialność / mgła:</b> FOG = słupki od 40/100; MIFG = punkty z wartością 0–100.';
+    el.style.display = 'inline-flex';
+    el.style.flexWrap = 'wrap';
+    el.style.gap = '8px';
+    el.style.alignItems = 'center';
+    el.innerHTML =
+      '<b>Widzialność / mgła:</b>' +
+      '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:16px;height:3px;border-radius:2px;background:#d97706"></i>linia = widzialność konsensusu</span>' +
+      '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:8px;height:12px;border-radius:1px;background:rgba(216,108,47,.72)"></i>słupki = FOG ENGINE, od 40/100</span>' +
+      '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#d63434;border:1px solid #ffdede"></i>czerwone punkty = niska mgła MIFG &lt;2 m, od 40/100; liczba = wynik MIFG</span>';
     legend.appendChild(el);
   }
 
