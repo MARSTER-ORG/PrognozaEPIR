@@ -9,6 +9,7 @@ on:
       - 'scripts/supplement_synop_12342.py'
       - 'scripts/refresh_epir_metar.py'
       - 'scripts/live_metar_collector.py'
+      - 'scripts/diagnose_imgw_frontend.py'
       - 'scripts/collect_neighbor_tafs.py'
       - 'scripts/archive_epir_taf.py'
       - 'scripts/organize_observation_archive.py'
@@ -17,9 +18,6 @@ on:
       - 'scripts/embed_model_verification.py'
       - '.github/workflows/collect-epir-observations.yml'
   schedule:
-    # EPIR routine METAR is normally issued at :00 and :30. Poll 7 and 22
-    # minutes after each half-hour boundary so delayed GitHub schedules still
-    # have a second chance before the next routine report.
     - cron: '7,22,37,52 * * * *'
   workflow_dispatch:
 
@@ -48,7 +46,6 @@ jobs:
           import sys
           sys.path.insert(0, 'scripts')
           import refresh_epir_metar as r
-
           sample = '''
           METAR EPIR 070800Z 16004KT CAVOK 16/11 Q1025=
           METAR EPIR 070730Z 16002KT CAVOK 15/11 Q1025=
@@ -65,23 +62,17 @@ jobs:
           print('multi-report parser: OK, reports=', len(rows))
           PY
 
+      - name: Diagnose IMGW frontend endpoint
+        run: python3 scripts/diagnose_imgw_frontend.py
+
       - name: Collect METAR EPIR and SYNOP 12342
         run: |
-          # Keep the legacy collector as one independent source path. The final
-          # live collector below is authoritative and compares all timestamps.
           python3 scripts/collect_epir_observations.py || echo "Primary EPIR collector unavailable; continuing"
           python3 scripts/supplement_synop_12342.py || echo "SYNOP supplement unavailable; continuing"
-
-          # Authoritative METAR path: official IMGW module/endpoints + PilotHub
-          # + OGIMET + CZAD. Every visible EPIR METAR/SPECI inside the backfill
-          # window is archived; only a <=60 min report is marked fresh.
           python3 scripts/live_metar_collector.py
 
       - name: Collect and archive TAFs
         run: |
-          # Fetch EPIR together with the upstream stations. neighbors.json stays
-          # the live cache, while archive_epir_taf.py preserves every unique
-          # official EPIR TAF cycle under data/taf/epir/YYYY/MM/DD.jsonl.
           python3 scripts/collect_neighbor_tafs.py || echo "TAF collector unavailable; keeping previous cache"
           python3 scripts/archive_epir_taf.py
 
@@ -93,8 +84,6 @@ jobs:
           if git diff --quiet -- data/observations; then
             echo "No new observation; verification unchanged"
           else
-            # Recompute against forecasts archived before the observation valid time.
-            # Do not fetch a new forecast here: that would contaminate verification.
             python3 scripts/model_verification_realtime.py --summary-only
             python3 scripts/embed_model_verification.py
           fi
@@ -142,11 +131,7 @@ jobs:
               if line.strip(): archived.append(json.loads(line))
           assert any(x.get('raw')==tr.get('raw') for x in archived), 'latest EPIR TAF is not in archive'
 
-          # SYNOP has priority for exact visibility only in a fused record that
-          # actually contains that SYNOP observation. A newer standalone METAR
-          # must not be rejected merely because latest.synop is older.
-          if (s.get('visibility_m') is not None
-                  and f.get('synop_obs_time') == s.get('obs_time')):
+          if (s.get('visibility_m') is not None and f.get('synop_obs_time') == s.get('obs_time')):
               assert f.get('visibility_source')==s.get('source'), (f.get('visibility_source'),s.get('source'))
           if m.get('visibility_report') in ('9999','CAVOK'):
               assert m.get('visibility_lower_bound') is True
@@ -157,8 +142,6 @@ jobs:
                   canonical=Path('data/observations')/kind/y/mo/f'{d}.jsonl'
                   assert canonical.exists(), f'missing canonical archive: {canonical}'
 
-          # A METAR 9999/CAVOK is a lower bound of 10 km, therefore a model
-          # prediction >=10 km must score 100 for that sample.
           import sys
           sys.path.insert(0,'scripts')
           import model_verification as mv
