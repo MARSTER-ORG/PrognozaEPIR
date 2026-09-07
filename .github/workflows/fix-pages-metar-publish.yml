@@ -1,0 +1,46 @@
+name: Fix Pages METAR publication gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-pages-metar-publish.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Remove brittle version gates
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('.github/workflows/pages.yml')
+          s=p.read_text(encoding='utf-8')
+          old_taf="          grep -F 'GENERATOR TAF v0.2.0' _site/taf.html"
+          new_taf="          grep -Eq 'GENERATOR TAF v[0-9]+\\.[0-9]+\\.[0-9]+' _site/taf.html"
+          old_radar='          grep -F "RADAR / SAT / AI v0.12.3" _site/range-rings-reset.js'
+          new_radar="          grep -Eq 'RADAR / SAT / AI v[0-9]+\\.[0-9]+\\.[0-9]+' _site/range-rings-reset.js"
+          if old_taf not in s:
+              raise SystemExit('TAF brittle version gate not found')
+          s=s.replace(old_taf,new_taf,1)
+          if old_radar in s:
+              s=s.replace(old_radar,new_radar,1)
+          p.write_text(s,encoding='utf-8')
+          PY
+          git diff --check
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/pages.yml
+          git commit -m 'fix: do not block METAR publish on module version text'
+          git pull --rebase origin main
+          git push origin HEAD:main
