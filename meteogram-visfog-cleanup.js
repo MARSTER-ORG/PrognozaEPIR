@@ -75,8 +75,8 @@
     ctx.rect(x0,p.y,plotW,p.h);
     ctx.clip();
 
-    // Przerysuj cały panel od zera, aby żadna stara warstwa kierunku
-    // ani poprzednie linie skali nie mogły zostać pod spodem.
+    // Cały panel jest budowany od nowa. Dzięki temu żadne stare strzałki
+    // ani pomocniczy techniczny panel kierunku nie mogą pozostać na wykresie.
     ctx.fillStyle = cp.panel;
     ctx.fillRect(x0,p.y,plotW,p.h);
 
@@ -92,11 +92,8 @@
       ctx.restore();
     }
 
-    // Skala wiatru bez wewnętrznego marginesu: 0 dokładnie na dolnej
-    // krawędzi sekcji, maksimum dokładnie na górnej krawędzi.
-    ctx.font='9px Arial';
-    ctx.textAlign='right';
-    ctx.textBaseline='middle';
+    // Skala wiatru bez marginesu wewnętrznego: 0 jest dokładnie dolną
+    // krawędzią sekcji, a maksimum dokładnie górną krawędzią.
     for (let i=0;i<=4;i++) {
       const value=windMax*i/4;
       const yy=y(value);
@@ -106,11 +103,6 @@
       ctx.lineWidth=.8;
       ctx.beginPath();ctx.moveTo(x0,yy);ctx.lineTo(x1,yy);ctx.stroke();
       ctx.restore();
-      ctx.fillStyle=cp.muted;
-      ctx.globalAlpha=.98;
-      const label=Math.abs(value-Math.round(value))<.05?String(Math.round(value)):value.toFixed(1);
-      ctx.fillText(label,x0-8,yy);
-      ctx.globalAlpha=1;
     }
 
     function drawSeries(key,color,width,dash=[]) {
@@ -157,6 +149,23 @@
       ctx.restore();
     }
 
+    ctx.restore();
+
+    // Usuń stare liczby skali z wersji z wewnętrznym paddingiem i narysuj
+    // je ponownie dokładnie na tych samych wysokościach co nowe linie.
+    ctx.save();
+    ctx.fillStyle=cp.bg;
+    ctx.fillRect(x0-44,p.y-2,43,p.h+4);
+    ctx.fillStyle=cp.muted;
+    ctx.font='9px Arial';
+    ctx.textAlign='right';
+    ctx.textBaseline='middle';
+    for (let i=0;i<=4;i++) {
+      const value=windMax*i/4;
+      const yy=y(value);
+      const label=Math.abs(value-Math.round(value))<.05?String(Math.round(value)):value.toFixed(1);
+      ctx.fillText(label,x0-8,yy);
+    }
     ctx.restore();
 
     ctx.save();
