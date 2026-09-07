@@ -5,9 +5,9 @@ on:
     paths:
       - taf-verification.js
       - scripts/embed_taf_verification.py
-      - scripts/integrate_taf_mifg.py
-      - scripts/fix_taf_validity_codes.py
+      - scripts/apply_central_archive_cutover.py
       - scripts/finalize_central_message_architecture.py
+      - scripts/ensure_taf_native_archive.py
       - .github/workflows/sync-taf-verification.yml
   workflow_dispatch:
 permissions:
@@ -22,22 +22,22 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Integrate verifier and retain central source
+      - name: Embed verifier and enforce native central archive
         run: |
-          python3 scripts/integrate_taf_mifg.py
-          python3 scripts/fix_taf_validity_codes.py
           python3 scripts/embed_taf_verification.py
           python3 scripts/apply_central_archive_cutover.py
           python3 scripts/finalize_central_message_architecture.py
+          python3 scripts/ensure_taf_native_archive.py
           node --check taf-verification.js
-          node --check taf-archive-source.js
           grep -F 'PrognozaEPIRMessageArchive' taf.html
           grep -F 'loadNeighborArchive' taf.html
+          ! grep -F 'taf-archive-source.js' taf.html
           ! grep -F 'loadImgwLive(' taf.html
           ! grep -F 'awiacja.imgw.pl' taf.html
+          ! grep -F 'aviationweather.gov' taf.html
+          ! grep -F '/api/taf-proxy' taf.html
           ! grep -F 'data/observations/metar/' taf-verification.js
           ! grep -F 'data/taf/epir/' taf-verification.js
-          ! grep -F 'window.fetch=' taf-archive-source.js
       - name: Commit synchronized page
         run: |
           if git diff --quiet -- taf.html taf-verification.js data/messages; then exit 0; fi
