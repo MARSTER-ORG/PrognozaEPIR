@@ -12,10 +12,9 @@ on:
       - 'scripts/supplement_synop_12342.py'
       - '.github/workflows/metar-heartbeat.yml'
   schedule:
-    # Primary clock. IMGW returns the four latest METAR/SPECI records, so every
-    # run also backfills preceding reports. Four attempts per hour are enough
-    # to keep a ~90 min recovery buffer without flooding the GitHub scheduler.
-    - cron: '7,22,37,52 * * * *'
+    # Primary clock: poll every 5 minutes. IMGW returns several latest
+    # METAR/SPECI records, so each run also repairs recent missed slots.
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 permissions:
