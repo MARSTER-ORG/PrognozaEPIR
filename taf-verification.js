@@ -179,6 +179,13 @@
       `${CENTRAL_RAW_BASE}${kind}/${y}/${m}/${d}.jsonl?raw=${Date.now()}`
     ];
   }
+  function centralDayUrls(kind,day){
+    const [y,m,d]=day.split('-');
+    return [
+      `data/messages/${kind}/${y}/${m}/${d}.jsonl?_=${Date.now()}`,
+      `${CENTRAL_RAW_BASE}${kind}/${y}/${m}/${d}.jsonl?raw=${Date.now()}`
+    ];
+  }
   async function fetchMetarDay(day){
     const [metar,speci]=await Promise.all([
       fetchJsonl(centralDayUrls('metar',day)),

@@ -247,7 +247,7 @@ def observed_bands_from_metar(m):
 
 def verify_new():
     forecasts = all_jsonl(FORECAST_DIR)
-    metars = all_jsonl(METAR_DIR) + all_jsonl(SPECI_DIR) + all_jsonl(SPECI_DIR) + all_jsonl(SPECI_DIR) + all_jsonl(SPECI_DIR)
+    metars = all_jsonl(METAR_DIR) + all_jsonl(SPECI_DIR)
     if not forecasts or not metars:
         return
     existing = all_jsonl(VERIFY_DIR)
