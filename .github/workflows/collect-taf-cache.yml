@@ -1,0 +1,41 @@
+name: Update TAF cache
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: taf-cache
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Collect current TAFs
+        run: |
+          python3 scripts/collect_neighbor_tafs.py
+          python3 -m json.tool data/taf/neighbors.json >/dev/null
+
+      - name: Commit cache when changed
+        run: |
+          if git diff --quiet -- data/taf/neighbors.json; then
+            echo "TAF cache unchanged"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/taf/neighbors.json
+          git commit -m "data: refresh TAF cache"
+          git pull --rebase origin main
+          git push origin HEAD:main
