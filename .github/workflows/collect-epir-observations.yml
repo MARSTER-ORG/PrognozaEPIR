@@ -17,14 +17,18 @@ on:
       - 'scripts/embed_model_verification.py'
       - '.github/workflows/collect-epir-observations.yml'
   schedule:
-    # EPIR routine METAR is normally issued at :00 and :30. Keep the four
-    # quarter-hour polls as separate schedules. This also forces GitHub to
-    # register each scheduled event independently instead of relying on one
-    # comma-list expression.
+    # Primary polls stay on the requested 15-minute pattern (:07/:22/:37/:52).
+    # Each primary slot gets one retry 5 minutes later. GitHub scheduled jobs can
+    # occasionally start late or be skipped under service load; the retry slot
+    # prevents one missed cron event from leaving a 30+ minute hole in EPIR data.
     - cron: '7 * * * *'
+    - cron: '12 * * * *'
     - cron: '22 * * * *'
+    - cron: '27 * * * *'
     - cron: '37 * * * *'
+    - cron: '42 * * * *'
     - cron: '52 * * * *'
+    - cron: '57 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -176,9 +180,21 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/observations data/learning data/taf
           git commit -m "data: archive EPIR observations and TAFs $(date -u +'%Y-%m-%d %H:%MZ')"
-          git pull --rebase origin main
-          git push origin HEAD:main
-          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+          # A Pages/data commit can land while this collector is running.
+          # Rebase and retry instead of losing the observation on a rejected push.
+          for attempt in 1 2 3 4; do
+            git fetch origin main
+            git rebase origin/main
+            if git push origin HEAD:main; then
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Push attempt ${attempt} failed; retrying..."
+            sleep $((attempt * 5))
+          done
+          echo "Failed to push EPIR data after retries" >&2
+          exit 1
 
       - name: Redeploy updated observations
         if: steps.commit.outputs.changed == 'true'
