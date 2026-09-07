@@ -280,3 +280,133 @@
     install();
   }
 })();
+
+// RADAR: compact POLRAD legend + exact discrete CMAX palette reader ---------
+(() => {
+  if (typeof L === 'undefined' || typeof map === 'undefined' || !map) return;
+  if (window.__epirCmaxPaletteFix) return;
+  window.__epirCmaxPaletteFix = true;
+
+  const $ = id => document.getElementById(id);
+  const mapEl = $('map');
+  if (!mapEl) return;
+
+  const DBZ = [
+    [62,'#f58cff'],[59,'#f344f4'],[56,'#ff19cc'],[53,'#f00094'],[50,'#e60059'],
+    [47,'#d80000'],[44,'#ff1600'],[41,'#ff4800'],[38,'#ff8800'],[35,'#ffbf00'],
+    [32,'#fff200'],[29,'#fff69b'],[26,'#fffbd8'],[23,'#f3ffff'],[20,'#b8f4f1'],
+    [17,'#53e8ef'],[14,'#1bc8f0'],[11,'#007ae5'],[8,'#0033e8'],[5,'#0000cc'],[0,'#0000aa']
+  ];
+  const PALETTE = DBZ.map(([z,hex]) => [z,parseInt(hex.slice(1,3),16),parseInt(hex.slice(3,5),16),parseInt(hex.slice(5,7),16)]);
+
+  const style = document.createElement('style');
+  style.id = 'epirCmaxPaletteFixStyle';
+  style.textContent = `
+    .legend-dbz{font-size:6.8px!important;line-height:1!important;padding:4px 5px!important;min-width:108px!important;max-height:none!important;overflow:visible!important}
+    .legend-dbz>b{display:block;font-size:8px;margin-bottom:3px}
+    .legend-dbz .dbz-grid{display:grid;grid-template-columns:repeat(2,minmax(46px,1fr));gap:1px 5px}
+    .legend-dbz .dbz-row{display:flex;align-items:center;gap:2px;white-space:nowrap;margin:0!important}
+    .legend-dbz .sw{width:10px!important;height:5px!important;flex:0 0 10px!important;margin:0!important}
+    @media(max-width:560px){.legend-dbz{font-size:6.2px!important;padding:3px 4px!important;min-width:100px!important}.legend-dbz>b{font-size:7px}}
+  `;
+  document.head.appendChild(style);
+
+  function compactLegend(){
+    const legend = document.querySelector('.legend-dbz');
+    if (!legend) return;
+    legend.dataset.fullScale = '1';
+    legend.innerHTML = '<b>POLRAD dBZ</b><div class="dbz-grid">' + DBZ.map(([z,color]) =>
+      '<div class="dbz-row"><span class="sw" style="background:'+color+'"></span><span>'+(z===62?'≥62':z)+'</span></div>'
+    ).join('') + '</div>';
+  }
+  compactLegend();
+  setTimeout(compactLegend,400);
+  setTimeout(compactLegend,1200);
+
+  function nearestDbz(r,g,b,a){
+    if (a < 55) return null;
+    let best = null, bestD = Infinity;
+    for (const [z,pr,pg,pb] of PALETTE) {
+      const dr=r-pr,dg=g-pg,db=b-pb,d=dr*dr+dg*dg+db*db;
+      if (d < bestD) { bestD=d; best=z; }
+    }
+    return bestD <= 18000 ? best : null;
+  }
+
+  function cmaxImage(){
+    return [...map.getContainer().querySelectorAll('.leaflet-overlay-pane img.leaflet-image-layer')].find(img => {
+      if (!img.complete || img.naturalWidth < 2 || getComputedStyle(img).display === 'none') return false;
+      const src=(img.currentSrc||img.src||'').toLowerCase();
+      return src.includes('/cmax/') || src.includes('_cmax.') || src.includes('/cmax.');
+    }) || null;
+  }
+
+  let cache = null;
+  function raster(){
+    const img = cmaxImage();
+    if (!img) return null;
+    const key=(img.currentSrc||img.src)+'|'+img.naturalWidth+'x'+img.naturalHeight;
+    const ir=img.getBoundingClientRect(),mr=map.getContainer().getBoundingClientRect();
+    if (ir.width < 2 || ir.height < 2) return null;
+    if (cache?.key === key) { cache.ir=ir; cache.mr=mr; return cache; }
+    const c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;
+    const ctx=c.getContext('2d',{willReadFrequently:true});ctx.drawImage(img,0,0);
+    try {
+      cache={key,width:c.width,height:c.height,rgba:ctx.getImageData(0,0,c.width,c.height).data,ir,mr};
+      return cache;
+    } catch (_) { return null; }
+  }
+
+  function valueAt(ll){
+    const r=raster(); if(!r) return null;
+    const cp=map.latLngToContainerPoint(ll),cx=r.mr.left+cp.x,cy=r.mr.top+cp.y;
+    const px=(cx-r.ir.left)/r.ir.width*r.width,py=(cy-r.ir.top)/r.ir.height*r.height;
+    const vals=[];
+    for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++) {
+      const x=Math.round(px+dx),y=Math.round(py+dy);
+      if(x<0||y<0||x>=r.width||y>=r.height) continue;
+      const i=(y*r.width+x)*4,v=nearestDbz(r.rgba[i],r.rgba[i+1],r.rgba[i+2],r.rgba[i+3]);
+      if(Number.isFinite(v)) vals.push(v);
+    }
+    if(!vals.length) return null;
+    vals.sort((a,b)=>a-b);
+    return vals[Math.floor(vals.length/2)];
+  }
+
+  const cmaxActive = () => $('polrad_cmax')?.classList.contains('active');
+  function correctedPopup(ll){
+    if(!cmaxActive()) return;
+    const v=valueAt(ll);
+    const text=Number.isFinite(v)?'~'+v+' dBZ':'brak sygnału';
+    const label=($('radarTime')?.textContent||'aktualna klatka').trim();
+    L.popup({closeButton:true,autoPan:true}).setLatLng(ll).setContent(
+      '<div class="radar-click-popup"><b>'+text+'</b><br>POLRAD CMAX · '+label+'<br><small>'+ll.lat.toFixed(4)+', '+ll.lng.toFixed(4)+'</small></div>'
+    ).openOn(map);
+  }
+
+  map.on('click',e => {
+    if(!cmaxActive()) return;
+    setTimeout(()=>correctedPopup(e.latlng),45);
+  });
+
+  let pointBusy=false;
+  function correctPointCard(){
+    if(pointBusy || !cmaxActive() || typeof point==='undefined') return;
+    pointBusy=true;
+    try {
+      const v=valueAt({lat:Number(point.lat),lng:Number(point.lon)}), el=$('dbz');
+      if(el) {
+        const next=Number.isFinite(v)?'~'+v+' dBZ':'brak sygnału';
+        if(el.textContent!==next) el.textContent=next;
+      }
+    } finally { pointBusy=false; }
+  }
+
+  const dbz=$('dbz');
+  if(dbz) new MutationObserver(()=>setTimeout(correctPointCard,20)).observe(dbz,{childList:true,characterData:true,subtree:true});
+  for(const id of ['polrad_cmax','apply','resetPoint']) $(id)?.addEventListener('click',()=>{cache=null;setTimeout(correctPointCard,300)});
+  $('radarFrame')?.addEventListener('input',()=>{cache=null;setTimeout(correctPointCard,180)});
+  setTimeout(correctPointCard,900);
+
+  window.PrognozaEPIRCMAXPalette = {values:DBZ.slice(),nearestDbz,valueAt,compactLegend};
+})();
