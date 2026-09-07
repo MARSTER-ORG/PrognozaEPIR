@@ -1,82 +1,38 @@
-name: Verify EPIR observations
-
+name: Verify EPIR observations from central archive
 on:
   workflow_dispatch:
   push:
     branches: [main]
     paths:
+      - 'data/messages/**'
       - 'scripts/model_verification.py'
       - 'scripts/model_verification_realtime.py'
-      - 'scripts/embed_model_verification.py'
-      - 'scripts/organize_observation_archive.py'
       - '.github/workflows/collect-epir-observations.yml'
-
 permissions:
   contents: write
-
-# This workflow is deliberately NOT a live data clock. Live METAR/SYNOP are
-# owned exclusively by metar-heartbeat.yml + observation-watchdog.yml.
 concurrency:
-  group: epir-observation-verification
+  group: epir-central-observation-verification
   cancel-in-progress: false
-
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
     steps:
-      - name: Checkout main
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
-
-      - name: Organize observation archive
-        run: python3 scripts/organize_observation_archive.py
-
-      - name: Refresh model verification from already archived forecasts
+      - name: Verify only from central archive
         run: |
+          python3 scripts/message_archive.py --validate-only
+          grep -F 'SPECI_DIR = ROOT / "data" / "messages" / "speci"' scripts/model_verification.py
           python3 scripts/model_verification_realtime.py --summary-only
           python3 scripts/embed_model_verification.py
-
-      - name: Validate observation and verification data
+      - name: Commit verification data
         run: |
-          python3 -m json.tool data/observations/latest.json >/dev/null
-          python3 -m json.tool data/observations/recent.json >/dev/null
-          python3 -m json.tool data/learning/model-verification.json >/dev/null
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-
-          p=json.load(open('data/observations/latest.json',encoding='utf-8'))
-          assert p['station']['icao']=='EPIR'
-          assert p['station']['synop']=='12342'
-          assert p.get('metar') or p.get('synop')
-          m=p.get('metar') or {}
-          if m.get('obs_time'):
-              dt=m['obs_time']
-              canonical=Path('data/observations/metar')/dt[0:4]/dt[5:7]/f'{dt[8:10]}.jsonl'
-              assert canonical.exists(), canonical
-          print('Verified METAR:',m.get('obs_time'),m.get('source'),m.get('raw'))
-          print('Verified SYNOP:',(p.get('synop') or {}).get('obs_time'),(p.get('synop') or {}).get('source'))
-          PY
-
-      - name: Commit verification/archive maintenance
-        run: |
-          if git diff --quiet -- data/observations data/learning; then
-            echo "No verification/archive maintenance change"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/observations data/learning
-          git commit -m "data: verify EPIR observations"
-          for attempt in 1 2 3 4; do
-            git fetch origin main
-            if git rebase origin/main && git push origin HEAD:main; then
-              exit 0
-            fi
-            git rebase --abort 2>/dev/null || true
-            sleep $((attempt * 4))
-          done
-          exit 1
+          if git diff --quiet -- data/learning; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/learning
+          git commit -m 'data: verify models against central observations'
+          git pull --rebase origin main
+          git push origin HEAD:main

@@ -1,0 +1,82 @@
+name: Central METAR SPECI TAF SYNOP archive
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'data/import/**'
+      - 'data/observations/manual/**'
+      - 'scripts/message_archive.py'
+      - 'scripts/apply_central_archive_cutover.py'
+      - '.github/workflows/message-archive.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: prognozaepir-central-message-archive
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate code
+        run: python3 -m py_compile scripts/message_archive.py scripts/apply_central_archive_cutover.py
+      - name: Acquire bulletins into temporary staging
+        shell: bash
+        run: |
+          set +e
+          python3 scripts/collect_epir_observations.py; echo "observations=$?"
+          python3 scripts/supplement_synop_12342.py; echo "synop=$?"
+          python3 scripts/metar_armored.py; echo "metar-armored=$?"
+          python3 scripts/collect_neighbor_tafs.py; echo "taf-neighbors=$?"
+          python3 scripts/sanitize_neighbor_tafs.py; echo "taf-sanitize=$?"
+          exit 0
+      - name: Normalize deduplicate migrate and cut over consumers
+        run: |
+          python3 scripts/message_archive.py
+          python3 scripts/message_archive.py --validate-only
+          python3 scripts/apply_central_archive_cutover.py
+          python3 -m py_compile scripts/model_verification.py scripts/cloud_learning.py
+      - name: Drop legacy staging changes
+        run: |
+          git restore --worktree -- data/observations data/taf 2>/dev/null || true
+          git clean -fd -- data/observations data/taf >/dev/null 2>&1 || true
+          test -s data/messages/latest.json
+          test -s data/messages/recent.json
+          test -s data/messages/status.json
+          python3 scripts/message_archive.py --validate-only
+          grep -F "data/messages/latest.json" observation-engine.js
+          grep -F 'src="taf-archive-source.js"' taf.html
+          grep -F 'ROOT / "data" / "messages" / "metar"' scripts/model_verification.py
+          grep -F 'SPECI_DIR = ROOT / "data" / "messages" / "speci"' scripts/cloud_learning.py
+          ! grep -F "aviation-api.imgw.pl" observation-engine.js
+          ! grep -F "function fromProxy(" taf.html
+      - name: Commit authoritative archive
+        run: |
+          set -euo pipefail
+          paths=(data/messages observation-engine.js taf.html scripts/model_verification.py scripts/cloud_learning.py .github/workflows/pages.yml)
+          if git diff --quiet -- "${paths[@]}"; then echo 'Central archive already up to date.'; exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "${paths[@]}"
+          git commit -m 'weather: centralize METAR SPECI TAF SYNOP archive'
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            if git rebase origin/main && git push origin HEAD:main; then exit 0; fi
+            git rebase --abort 2>/dev/null || true
+            sleep $((attempt*3))
+          done
+          exit 1

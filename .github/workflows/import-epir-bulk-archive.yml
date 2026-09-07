@@ -1,74 +1,13 @@
-name: Import EPIR bulk archive
-
+name: Legacy EPIR bulk import redirect
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'data/import/epir/**'
-      - 'scripts/import_epir_bulk_archive.py'
-      - 'scripts/collect_epir_observations.py'
-      - '.github/workflows/import-epir-bulk-archive.yml'
-
 permissions:
-  contents: write
-
-concurrency:
-  group: import-epir-bulk-archive
-  cancel-in-progress: false
-
+  contents: read
+  actions: write
 jobs:
-  import:
+  redirect:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Import EPIR archive
-        run: python scripts/import_epir_bulk_archive.py --strict
-
-      - name: Validate generated JSONL
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          roots = [
-              Path('data/observations/metar'),
-              Path('data/observations/synop'),
-              Path('data/taf/archive'),
-          ]
-          files = []
-          rows = 0
-          for root in roots:
-              if root.exists():
-                  files.extend(root.rglob('*.jsonl'))
-          for path in files:
-              for n, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
-                  if not line.strip():
-                      continue
-                  value = json.loads(line)
-                  if not isinstance(value, dict):
-                      raise TypeError(f'{path}:{n}: JSONL row is not an object')
-                  rows += 1
-          print(f'Validated {len(files)} JSONL files, {rows} rows')
-          PY
-
-      - name: Commit imported archive
-        run: |
-          if git diff --quiet -- data/observations/metar data/observations/synop data/taf/archive; then
-            echo 'Archive already up to date.'
-            exit 0
-          fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add data/observations/metar data/observations/synop data/taf/archive
-          git commit -m 'data: import EPIR METAR SYNOP TAF archive'
-          git pull --rebase origin main
-          git push origin HEAD:main
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run message-archive.yml --repo "${{ github.repository }}" --ref main

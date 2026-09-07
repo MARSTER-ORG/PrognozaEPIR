@@ -1,73 +1,13 @@
-name: Update TAF cache
-
+name: Legacy TAF cache redirect
 on:
-  schedule:
-    - cron: '*/5 * * * *'
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'scripts/collect_neighbor_tafs.py'
-      - 'scripts/sanitize_neighbor_tafs.py'
-      - 'scripts/archive_epir_taf.py'
-      - '.github/workflows/collect-taf-cache.yml'
-
 permissions:
-  contents: write
+  contents: read
   actions: write
-
-concurrency:
-  group: taf-cache
-  cancel-in-progress: false
-
 jobs:
-  update:
+  redirect:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Collect, sanitize and archive current TAFs
-        run: |
-          python3 scripts/collect_neighbor_tafs.py
-          python3 scripts/sanitize_neighbor_tafs.py
-          python3 scripts/archive_epir_taf.py
-          python3 -m json.tool data/taf/neighbors.json >/dev/null
-          python3 -m json.tool data/taf/latest.json >/dev/null
-          python3 - <<'PY'
-          import json, re
-          from pathlib import Path
-          p=json.loads(Path('data/taf/neighbors.json').read_text())
-          for sid,row in (p.get('stations') or {}).items():
-              raw=row.get('raw')
-              if not raw:
-                  continue
-              assert len(raw) <= 1600, (sid, len(raw))
-              assert raw.endswith('='), (sid, raw[-80:])
-              assert re.match(rf'^TAF(?:\s+(?:AMD|COR))?\s+{re.escape(sid)}\b', raw), (sid, raw[:80])
-          PY
-
-      - name: Commit cache and archive when changed
-        id: cache_commit
-        run: |
-          if git diff --quiet -- data/taf; then
-            echo "TAF cache/archive unchanged"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/taf
-          git commit -m "data: refresh and archive EPIR TAF"
-          git pull --rebase origin main
-          git push origin HEAD:main
-          echo "changed=true" >> "$GITHUB_OUTPUT"
-
-      - name: Deploy refreshed TAF data to GitHub Pages
-        if: steps.cache_commit.outputs.changed == 'true'
-        env:
+      - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run pages.yml --ref main
+        run: gh workflow run message-archive.yml --repo "${{ github.repository }}" --ref main
