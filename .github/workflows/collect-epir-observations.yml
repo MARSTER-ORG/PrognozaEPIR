@@ -17,10 +17,14 @@ on:
       - 'scripts/embed_model_verification.py'
       - '.github/workflows/collect-epir-observations.yml'
   schedule:
-    # EPIR routine METAR is normally issued at :00 and :30. Four polls per hour
-    # provide two chances after each routine issue while IMGW's four-report
-    # history gives roughly 90 minutes of automatic gap repair.
-    - cron: '7,22,37,52 * * * *'
+    # EPIR routine METAR is normally issued at :00 and :30. Keep the four
+    # quarter-hour polls as separate schedules. This also forces GitHub to
+    # register each scheduled event independently instead of relying on one
+    # comma-list expression.
+    - cron: '7 * * * *'
+    - cron: '22 * * * *'
+    - cron: '37 * * * *'
+    - cron: '52 * * * *'
   workflow_dispatch:
 
 permissions:
