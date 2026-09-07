@@ -30,7 +30,7 @@ jobs:
       - name: Prepare site
         run: |
           mkdir -p _site/data/observations _site/data/learning
-          cp index.html radar.html epir-icon.svg epir-icon-192.png epir-icon-512.png \
+          cp index.html radar.html taf.html epir-icon.svg epir-icon-192.png epir-icon-512.png \
              index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js meteogram-visfog-split.js meteogram-visfog-cleanup.js \
              rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js shortcut-mode.js \
              cloud-learning-client.js \
@@ -60,8 +60,14 @@ jobs:
                       'function timeline(){const now=Date.now(),t0=Math.floor(now/3600e3)*3600e3')
           icm='<a class="control-link" href="https://www.meteo.pl/um/php/meteorogram_id_um.php?ntype=0n&amp;id=2077" target="_blank" rel="noopener noreferrer">ICM UM meteogram ↗</a>'
           radar='<a class="control-link" href="radar.html">RADAR / SAT / AI</a>'
+          taf='<a class="control-link" href="taf.html">GENERATOR TAF</a>'
           if radar not in s and icm in s:
               s=s.replace(icm,radar+'\n    '+icm,1)
+          if taf not in s:
+              if radar in s:
+                  s=s.replace(radar,radar+'\n    '+taf,1)
+              elif icm in s:
+                  s=s.replace(icm,taf+'\n    '+icm,1)
           s=s.replace("{id:'icon_global',name:'ICON',w:.05,provider:'openmeteo'},",
                       "{id:'icon_global',name:'ICON',w:.05,provider:'openmeteo',surfaceExclude:['visibility']},")
           s=s.replace("const vars=prof?profileVarsFor(model):SURFACE;",
@@ -175,11 +181,19 @@ jobs:
           node --check _site/fog-meteogram-overlay.js
           node --check _site/mifg-engine.js
           node --check _site/cloud-learning-client.js
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('_site/taf.html').read_text(encoding='utf-8')
+          js=s.split('<script>',1)[1].split('</script>',1)[0]
+          Path('/tmp/taf-inline.js').write_text(js,encoding='utf-8')
+          PY
+          node --check /tmp/taf-inline.js
 
       - name: Verify deployed features
         run: |
           test -s _site/epir-icon-192.png
           test -s _site/epir-icon-512.png
+          test -s _site/taf.html
           test -s _site/fog-engine.js
           test -s _site/observation-engine.js
           test -s _site/mifg-engine.js
@@ -193,6 +207,9 @@ jobs:
           python3 -m json.tool _site/data/observations/latest.json >/dev/null
           python3 -m json.tool _site/data/observations/recent.json >/dev/null
           python3 -m json.tool _site/data/learning/cloud-skill.json >/dev/null
+          grep -F '<a class="control-link" href="taf.html">GENERATOR TAF</a>' _site/index.html
+          grep -F 'GENERATOR TAF v0.1.0' _site/taf.html
+          grep -F 'PROB40 wyłączone' _site/taf.html
           grep -F '<script src="meteogram-visfog-split.js"></script>' _site/index.html
           grep -F '<script src="meteogram-visfog-cleanup.js"></script>' _site/index.html
           grep -F '<script src="observation-engine.js"></script>' _site/index.html
