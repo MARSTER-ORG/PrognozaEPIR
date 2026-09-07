@@ -7,6 +7,7 @@ on:
       - fix/model-snapshot-adaptive
     paths:
       - 'scripts/apply_adaptive_runtime_patch.py'
+      - 'scripts/apply_adaptive_runtime_patch_v2.py'
       - 'scripts/build_model_snapshot.py'
       - 'scripts/build_adaptive_weights.py'
       - 'scripts/cloud_learning_backfill.py'
@@ -32,12 +33,13 @@ jobs:
           fetch-depth: 0
 
       - name: Apply frontend/runtime patch
-        run: python3 scripts/apply_adaptive_runtime_patch.py
+        run: python3 scripts/apply_adaptive_runtime_patch_v2.py
 
       - name: Validate Python syntax
         run: |
           python3 -m py_compile \
             scripts/apply_adaptive_runtime_patch.py \
+            scripts/apply_adaptive_runtime_patch_v2.py \
             scripts/build_model_snapshot.py \
             scripts/build_adaptive_weights.py \
             scripts/cloud_learning_backfill.py \
@@ -91,6 +93,7 @@ jobs:
             'relativeFactor',
             'band(pr,2000,6000)',
             'band(pr,6000,13001)',
+            'if(row)items.push({model:m,row,w:m.w,elevation:ds.elevation})',
           ]
           for marker in required:
               assert marker in s, marker
@@ -104,11 +107,18 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
+          rm -rf scripts/__pycache__
+          git add \
+            index.html rh-axis-fix.js cloud-learning-client.js \
+            scripts/cloud_learning.py \
+            data/runtime \
+            data/learning
           if git diff --cached --quiet; then
             echo "No rollout changes"
           else
             git commit -m "weather: activate server snapshot and adaptive model weighting"
+            git reset --hard HEAD
+            git clean -fd
             for attempt in 1 2 3 4; do
               git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin HEAD:"${GITHUB_REF_NAME}" && exit 0
               echo "rollout push retry $attempt"
