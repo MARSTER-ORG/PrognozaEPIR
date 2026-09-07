@@ -17,6 +17,7 @@
 
   const DESKTOP_MIN = 701;
   const byId = id => document.getElementById(id);
+  let exactFitActive = false;
 
   function installDesktopZoomStyle() {
     if (byId('desktopZoomControlsStyle')) return;
@@ -82,7 +83,64 @@
     dst.textContent = txt && /%/.test(txt) ? txt : '100%';
   }
 
+  // Dokładne dopasowanie do wewnętrznej szerokości ramki meteogramu.
+  // Oryginalny fitWidth odejmował 2 px, przez co po dopasowaniu zostawała szczelina.
+  function exactFitToFrame() {
+    const viewport = byId('canvasViewport');
+    const canvas = byId('meteo');
+    const reset = byId('zoomReset');
+    if (!viewport || !canvas || typeof window.setZoom !== 'function') return false;
+
+    // Najpierw zerujemy wcześniejszy pan i zoom, żeby dopasowanie było deterministyczne.
+    if (reset) reset.click();
+
+    requestAnimationFrame(() => {
+      const naturalWidth = parseFloat(canvas.style.width) || canvas.offsetWidth;
+      const viewportWidth = viewport.getBoundingClientRect().width;
+      if (!(naturalWidth > 0) || !(viewportWidth > 0)) return;
+
+      // Bez marginesu bezpieczeństwa: transformed canvas ma mieć dokładnie szerokość viewportu.
+      const targetZoom = viewportWidth / naturalWidth;
+      window.setZoom(targetZoom);
+      exactFitActive = true;
+
+      // Drugi pomiar po transformacji eliminuje różnicę wynikającą z ułamkowych pikseli/CSS zoomu przeglądarki.
+      requestAnimationFrame(() => {
+        const stage = byId('canvasStage');
+        if (!stage || !exactFitActive) return;
+        const currentWidth = stage.getBoundingClientRect().width;
+        const finalViewportWidth = viewport.getBoundingClientRect().width;
+        if (!(currentWidth > 0) || !(finalViewportWidth > 0)) return;
+        const error = finalViewportWidth - currentWidth;
+        if (Math.abs(error) > 0.35) {
+          const correctedZoom = targetZoom * finalViewportWidth / currentWidth;
+          window.setZoom(correctedZoom);
+        }
+        setTimeout(syncDesktopZoomValue, 0);
+      });
+    });
+    return true;
+  }
+
+  function installExactFitOverride() {
+    const fit = byId('zoomFit');
+    if (!fit || fit.dataset.exactFitInstalled === '1') return;
+    fit.dataset.exactFitInstalled = '1';
+    fit.title = 'Dopasuj meteogram dokładnie do ramki';
+    fit.addEventListener('click', e => {
+      // Listener capture blokuje starszy fitWidth() z (viewportWidth - 2 px).
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      exactFitToFrame();
+    }, true);
+
+    ['zoomOut','zoomIn','zoomReset'].forEach(id => {
+      byId(id)?.addEventListener('click', () => { exactFitActive = false; }, true);
+    });
+  }
+
   function installDesktopZoomControls() {
+    installExactFitOverride();
     if (byId('desktopZoomControls')) {
       syncDesktopZoomValue();
       return;
@@ -100,24 +158,26 @@
       '<button id="desktopZoomOut" type="button" title="Pomniejsz meteogram">−</button>' +
       '<button id="desktopZoomValue" class="desktop-zoom-value" type="button" title="Przywróć skalę 100%">100%</button>' +
       '<button id="desktopZoomIn" type="button" title="Powiększ meteogram">+</button>' +
-      '<button id="desktopZoomFit" class="desktop-zoom-fit" type="button" title="Dopasuj meteogram do szerokości ekranu">Dopasuj do ekranu</button>';
+      '<button id="desktopZoomFit" class="desktop-zoom-fit" type="button" title="Dopasuj meteogram dokładnie do ramki">Dopasuj do ramki</button>';
     wrap.parentNode.insertBefore(bar, wrap);
 
     byId('desktopZoomOut')?.addEventListener('click', () => {
+      exactFitActive = false;
       forwardZoom('zoomOut');
       setTimeout(syncDesktopZoomValue, 0);
     });
     byId('desktopZoomValue')?.addEventListener('click', () => {
+      exactFitActive = false;
       forwardZoom('zoomReset');
       setTimeout(syncDesktopZoomValue, 0);
     });
     byId('desktopZoomIn')?.addEventListener('click', () => {
+      exactFitActive = false;
       forwardZoom('zoomIn');
       setTimeout(syncDesktopZoomValue, 0);
     });
     byId('desktopZoomFit')?.addEventListener('click', () => {
-      forwardZoom('zoomFit');
-      setTimeout(syncDesktopZoomValue, 0);
+      exactFitToFrame();
     });
 
     const src = byId('zoomReset');
@@ -125,7 +185,15 @@
       new MutationObserver(syncDesktopZoomValue)
         .observe(src, {childList:true,characterData:true,subtree:true});
     }
-    window.addEventListener('resize', () => setTimeout(syncDesktopZoomValue, 0), {passive:true});
+
+    let resizeTimer = 0;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        if (exactFitActive) exactFitToFrame();
+        else syncDesktopZoomValue();
+      }, 100);
+    }, {passive:true});
     syncDesktopZoomValue();
   }
 
