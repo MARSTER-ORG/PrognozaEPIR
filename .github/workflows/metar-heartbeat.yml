@@ -12,10 +12,10 @@ on:
       - 'scripts/supplement_synop_12342.py'
       - '.github/workflows/metar-heartbeat.yml'
   schedule:
-    # Primary observation clock. It is intentionally independent from every
-    # TAF/model workflow. Multiple polls give several chances to capture each
-    # routine EPIR report and every SPECI.
-    - cron: '2,7,12,17,22,27,32,37,42,47,52,57 * * * *'
+    # Primary clock. IMGW returns the four latest METAR/SPECI records, so every
+    # run also backfills preceding reports. Four attempts per hour are enough
+    # to keep a ~90 min recovery buffer without flooding the GitHub scheduler.
+    - cron: '7,22,37,52 * * * *'
   workflow_dispatch:
 
 permissions:
