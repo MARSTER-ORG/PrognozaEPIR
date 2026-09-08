@@ -10,7 +10,7 @@ import urllib.parse
 import urllib.request
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 STATIONS = ("EPIR", "EPBY", "EPPW", "EPKS")
@@ -203,13 +203,18 @@ def resolve_ddhh(code: str, ref: datetime) -> datetime | None:
     if not re.fullmatch(r"\d{4}", code):
         return None
     day, hour = int(code[:2]), int(code[2:])
+    if hour > 24:
+        return None
     candidates: list[datetime] = []
     for dm in (-1, 0, 1):
         year, month = month_shift(ref.year, ref.month, dm)
         if day > calendar.monthrange(year, month)[1]:
             continue
         try:
-            candidates.append(datetime(year, month, day, hour, tzinfo=timezone.utc))
+            # TAF validity groups legally use HH=24 to mean 00 UTC on the
+            # following day, e.g. 0812/0824 == 08 12Z -> 09 00Z.
+            base = datetime(year, month, day, 0, tzinfo=timezone.utc)
+            candidates.append(base + timedelta(hours=hour))
         except ValueError:
             pass
     return min(candidates, key=lambda x: abs((x - ref).total_seconds())) if candidates else None
@@ -297,24 +302,41 @@ def persist_epir_current(row: dict) -> bool:
     day_path = EPIR_HISTORY / f"{issue:%Y}" / f"{issue:%m}" / f"{issue:%d}.jsonl"
     rows = read_jsonl(day_path)
     changed = False
-    if not any(normalize_taf(x.get("raw") or "") == record["raw"] for x in rows):
+
+    # Exact raw duplication is still forbidden, but an existing row may need
+    # metadata repair (notably valid_end for DD24 validity groups). Enrich that
+    # row in place instead of requiring a new bulletin to arrive.
+    match = next((i for i, x in enumerate(rows) if normalize_taf(x.get("raw") or "") == record["raw"]), None)
+    if match is None:
         rows.append(record)
+        changed = True
+        print("Archived current EPIR TAF staging:", record["issue_time"], record["raw"])
+    else:
+        merged = dict(rows[match])
+        for key, value in record.items():
+            if value not in (None, "") and merged.get(key) != value:
+                merged[key] = value
+        if merged != rows[match]:
+            rows[match] = merged
+            changed = True
+            print("Repaired current EPIR TAF staging metadata:", record["issue_time"], record["raw"])
+
+    if changed:
         rows.sort(key=lambda x: (x.get("issue_time") or "", x.get("raw") or ""))
         day_path.parent.mkdir(parents=True, exist_ok=True)
         day_path.write_text(
             "".join(json.dumps(x, ensure_ascii=False, separators=(",", ":")) + "\n" for x in rows),
             encoding="utf-8",
         )
-        changed = True
-        print("Archived current EPIR TAF staging:", record["issue_time"], record["raw"])
 
     old_latest = {}
     try:
         old_latest = json.loads(EPIR_LATEST.read_text(encoding="utf-8"))
     except Exception:
         pass
-    old_issue = str((old_latest.get("taf") or {}).get("issue_time") or "")
-    if record["issue_time"] >= old_issue and (old_latest.get("taf") or {}).get("raw") != record["raw"]:
+    old_taf = old_latest.get("taf") or {}
+    old_issue = str(old_taf.get("issue_time") or "")
+    if record["issue_time"] >= old_issue and old_taf != record:
         EPIR_LATEST.parent.mkdir(parents=True, exist_ok=True)
         EPIR_LATEST.write_text(json.dumps({
             "schema": "prognozaepir-epir-taf-latest-v1",
