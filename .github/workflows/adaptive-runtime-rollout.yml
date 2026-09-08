@@ -9,6 +9,8 @@ on:
       - 'scripts/apply_adaptive_runtime_patch.py'
       - 'scripts/apply_adaptive_runtime_patch_v2.py'
       - 'scripts/apply_fog_learning_upgrade.py'
+      - 'scripts/apply_fog_event_skill_patch.py'
+      - 'scripts/build_fog_event_learning.py'
       - 'scripts/build_model_snapshot.py'
       - 'scripts/build_adaptive_weights.py'
       - 'scripts/cloud_learning_backfill.py'
@@ -42,6 +44,8 @@ jobs:
             scripts/apply_adaptive_runtime_patch.py \
             scripts/apply_adaptive_runtime_patch_v2.py \
             scripts/apply_fog_learning_upgrade.py \
+            scripts/apply_fog_event_skill_patch.py \
+            scripts/build_fog_event_learning.py \
             scripts/build_model_snapshot.py \
             scripts/build_adaptive_weights.py \
             scripts/cloud_learning_backfill.py \
@@ -53,6 +57,7 @@ jobs:
           python3 scripts/model_verification.py
           python3 scripts/cloud_learning_backfill.py
           python3 scripts/build_adaptive_weights.py
+          python3 scripts/build_fog_event_learning.py
           python3 scripts/embed_model_verification.py
 
       - name: Build server-side model snapshot
@@ -63,22 +68,27 @@ jobs:
           python3 -m json.tool data/runtime/models-latest.json >/dev/null
           python3 -m json.tool data/learning/cloud-skill.json >/dev/null
           python3 -m json.tool data/learning/adaptive-weights.json >/dev/null
+          python3 -m json.tool data/learning/fog-event-skill.json >/dev/null
           python3 -m json.tool data/learning/model-verification.json >/dev/null
           python3 - <<'PY'
           import json
           from pathlib import Path
           snap=json.loads(Path('data/runtime/models-latest.json').read_text(encoding='utf-8'))
           weights=json.loads(Path('data/learning/adaptive-weights.json').read_text(encoding='utf-8'))
+          fog=json.loads(Path('data/learning/fog-event-skill.json').read_text(encoding='utf-8'))
           cloud=json.loads(Path('data/learning/cloud-skill.json').read_text(encoding='utf-8'))
           assert snap.get('schema') == 'prognozaepir-model-snapshot-v1'
           assert len(snap.get('models') or {}) >= 3, snap.get('failures')
           assert weights.get('schema') == 'prognozaepir-adaptive-weights-v1'
           assert len(weights.get('models') or {}) >= 8
+          assert fog.get('schema') == 'prognozaepir-fog-event-skill-v1'
+          assert fog.get('observation_inventory',{}).get('speci',0) >= 1
           assert cloud.get('schema') == 'prognozaepir-cloud-learning-v1'
           cloud_samples=sum((b.get('n') or 0) for m in cloud.get('models',{}).values() for b in (m.get('lead_buckets') or {}).values())
           assert cloud_samples >= 100, cloud_samples
           print('snapshot models:', len(snap.get('models') or {}))
           print('cloud learning samples:', cloud_samples)
+          print('fog observation inventory:', fog.get('observation_inventory'))
           PY
 
       - name: Validate frontend JavaScript
@@ -107,6 +117,8 @@ jobs:
           assert "KNMI_MODEL = 'knmi_harmonie_arome_europe'" in fog
           assert 'fogModelWeight' in fog
           assert 'directFog' in fog
+          assert 'FOG_EVENT_SKILL_URL' in fog
+          assert 'fogEventSkill' in fog
           PY
           node --check /tmp/index-inline.js
 
@@ -123,7 +135,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "No rollout changes"
           else
-            git commit -m "weather: activate robust consensus and fog ensemble learning"
+            git commit -m "weather: activate robust consensus and SPECI fog learning"
             git reset --hard HEAD
             git clean -fd
             for attempt in 1 2 3 4; do
