@@ -16,34 +16,34 @@ LIVE_BASE = "https://central-ingestor-production.up.railway.app/data/messages/"
 RAW_BASE = "https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/messages/"
 
 
+def replace_section(text: str, start_marker: str, end_marker: str, replacement: str, name: str) -> str:
+    start = text.find(start_marker)
+    if start < 0:
+        raise SystemExit(f"TAF verification section missing: {name} start")
+    end = text.find(end_marker, start)
+    if end < 0:
+        raise SystemExit(f"TAF verification section missing: {name} end")
+    return text[:start] + replacement + text[end:]
+
+
 def main() -> int:
     s = TARGET.read_text(encoding="utf-8")
     before = s
 
-    # Keep both bases explicit: Railway is live/authoritative transport, raw
-    # GitHub is only a last-resort historical fallback.
-    s = re.sub(
-        r"  const CENTRAL_RAW_BASE='[^']*';",
-        "  const LIVE_ARCHIVE_BASE='" + LIVE_BASE + "';\n"
-        "  const CENTRAL_RAW_BASE='" + RAW_BASE + "';",
-        s,
-        count=1,
-    )
-    if "const LIVE_ARCHIVE_BASE=" not in s:
-        raise SystemExit("TAF verification archive base anchor missing")
+    # Keep both archive bases deterministic and never duplicate their constants
+    # when this fixer runs repeatedly from GitHub Actions.
+    live_line = f"  const LIVE_ARCHIVE_BASE='{LIVE_BASE}';"
+    raw_line = f"  const CENTRAL_RAW_BASE='{RAW_BASE}';"
+    if "const LIVE_ARCHIVE_BASE=" in s:
+        s = re.sub(r"  const LIVE_ARCHIVE_BASE='[^']*';", live_line, s, count=1)
+    else:
+        anchor = re.search(r"  const CENTRAL_RAW_BASE='[^']*';", s)
+        if not anchor:
+            raise SystemExit("TAF verification archive base anchor missing")
+        s = s[:anchor.start()] + live_line + "\n" + s[anchor.start():]
+    s = re.sub(r"  const CENTRAL_RAW_BASE='[^']*';", raw_line, s, count=1)
 
-    # Older patch passes accidentally duplicated this function many times.
-    # Replace the whole consecutive block with one deterministic implementation.
-    block = re.compile(
-        r"(?:  function centralDayUrls\(kind,day\)\{\n"
-        r"    const \[y,m,d\]=day\.split\('-'\);\n"
-        r"    return \[\n"
-        r".*?"
-        r"    \];\n"
-        r"  \}\n)+",
-        re.S,
-    )
-    canonical = """  function centralDayUrls(kind,day){
+    canonical_urls = """  function centralDayUrls(kind,day){
     const [y,m,d]=day.split('-'),stamp=Date.now();
     return [
       `${LIVE_ARCHIVE_BASE}${kind}/${y}/${m}/${d}.jsonl?live=${stamp}`,
@@ -52,9 +52,16 @@ def main() -> int:
     ];
   }
 """
-    s, replaced = block.subn(lambda _m: canonical, s, count=1)
-    if replaced != 1:
-        raise SystemExit("TAF verification centralDayUrls block missing")
+    # Everything between the first centralDayUrls and fetchMetarDay belongs to
+    # old/duplicated URL helper copies. Replacing the whole section makes the
+    # operation idempotent regardless of which older patch produced the file.
+    s = replace_section(
+        s,
+        "  function centralDayUrls(kind,day){\n",
+        "  async function fetchMetarDay(day){\n",
+        canonical_urls,
+        "centralDayUrls",
+    )
 
     current_reader = """  async function fetchCurrentTaf(){
     try{
@@ -71,10 +78,8 @@ def main() -> int:
             raise SystemExit("TAF verification normalizeRecord anchor missing")
         s = s.replace(anchor, current_reader + anchor, 1)
 
-    # A missing archive validity field must never overwrite the validity parsed
-    # from the raw TAF. Date.parse(null || 0) is dangerous in JavaScript because
-    # the numeric/string fallback can become a finite historical date, causing a
-    # perfectly valid current TAF to be filtered out before rendering.
+    # Missing metadata must not overwrite validity already parsed from raw TAF.
+    # In particular this protects DD24 groups such as 0812/0824.
     old_dates = "    const issue=Date.parse(r.issue_time||0),vs=Date.parse(r.valid_start||0),ve=Date.parse(r.valid_end||0);"
     new_dates = "    const issue=r.issue_time?Date.parse(r.issue_time):NaN,vs=r.valid_start?Date.parse(r.valid_start):NaN,ve=r.valid_end?Date.parse(r.valid_end):NaN;"
     if old_dates in s:
@@ -82,16 +87,7 @@ def main() -> int:
     elif new_dates not in s:
         raise SystemExit("TAF verification stored validity parser anchor missing")
 
-    # Day files remain the complete history. For the current day, merge the
-    # explicit MessageArchive latest TAF so the running 12 h cycle cannot be
-    # hidden by a lagging Pages/raw snapshot.
-    tafs_fn = re.compile(
-        r"  async function tafsForValidityDay\(day\)\{.*?\n"
-        r"  \}\n"
-        r"  function forecastText",
-        re.S,
-    )
-    replacement = """  async function tafsForValidityDay(day){
+    canonical_tafs = r"""  async function tafsForValidityDay(day){
     const target=dayStart(day),end=target+864e5;
     const issueDays=[shiftDay(day,-1),day];
     const [chunks,current]=await Promise.all([Promise.all(issueDays.map(fetchTafIssueDay)),fetchCurrentTaf()]);
@@ -105,10 +101,14 @@ def main() -> int:
     }
     return unique.sort((a,b)=>a.p.vs-b.p.vs||a.p.issue-b.p.issue);
   }
-  function forecastText"""
-    s, n = tafs_fn.subn(lambda _m: replacement, s, count=1)
-    if n != 1:
-        raise SystemExit("TAF verification tafsForValidityDay hook missing")
+"""
+    s = replace_section(
+        s,
+        "  async function tafsForValidityDay(day){\n",
+        "  function forecastText(f){\n",
+        canonical_tafs,
+        "tafsForValidityDay",
+    )
 
     s = s.replace(
         "VERSION+' · auto 60 s · dane TAF tylko do weryfikacji'",
@@ -116,6 +116,8 @@ def main() -> int:
     )
 
     # Guard the architectural contract.
+    if s.count("const LIVE_ARCHIVE_BASE=") != 1:
+        raise SystemExit("TAF verification has duplicated LIVE_ARCHIVE_BASE")
     if s.count("function centralDayUrls(kind,day)") != 1:
         raise SystemExit("TAF verification has duplicated centralDayUrls")
     if LIVE_BASE not in s:
