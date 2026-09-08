@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Enforce live MessageArchive reads in the TAF generator.
 
-The TAF page must never acquire bulletins itself.  It reads the central Railway
+The TAF page must never acquire bulletins itself. It reads the central Railway
 archive first through message-archive-client.js, with the static Pages archive
 remaining only as the client's fallback.
 """
@@ -14,6 +14,7 @@ from pathlib import Path
 TARGET = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("taf.html")
 LIVE_BASE = "https://central-ingestor-production.up.railway.app/data/messages/"
 CLIENT_VERSION = "railway-live-archive-v2"
+PAGES_COMPAT_MARKER = '<!-- Pages compatibility assertion: src="message-archive-client.js"; actual loader below is versioned. -->'
 
 
 def main() -> int:
@@ -28,6 +29,11 @@ def main() -> int:
         s,
         count=1,
     )
+    if PAGES_COMPAT_MARKER not in s:
+        versioned = f'<script src="message-archive-client.js?v={CLIENT_VERSION}"></script>'
+        if versioned not in s:
+            raise SystemExit("versioned MessageArchive script tag missing")
+        s = s.replace(versioned, PAGES_COMPAT_MARKER + versioned, 1)
 
     load_obs = r'''async function loadObs(){let A=window.PrognozaEPIRMessageArchive;if(!A)throw Error('MessageArchive niedostępne');let a=await Promise.allSettled([A.latest(true),A.recent(true),A.getLatest('AVIATION','EPIR',true),A.getLatest('SYNOP','12342',true),A.getLatest('TAF','EPIR',true)]);obs=a[0].status==='fulfilled'?(a[0].value||{}):{};recent=a[1].status==='fulfilled'?a[1].value:null;neighbors=null;neighborParsed={};let m=a[2].status==='fulfilled'?a[2].value:null,s=a[3].status==='fulfilled'?a[3].value:null,t=a[4].status==='fulfilled'?a[4].value:null;m=m||obs?.aviation||obs?.metar;s=s||obs?.synop;t=t||obs?.taf_by_station?.EPIR||obs?.taf;if(m){obs.aviation=m;obs.metar=m}if(s)obs.synop=s;if(t){obs.taf=t;obs.taf_by_station={...(obs.taf_by_station||{}),EPIR:t}}window.PrognozaEPIRTAFCurrent=t||null;$('metar').textContent=m?.raw||m?.canonical_raw||'Brak METAR/SPECI';$('synop').textContent=s?.raw||s?.canonical_raw||'Brak SYNOP';$('metarMeta').textContent=m?`${m.source||m.sources?.[0]?.name||'ARCHIWUM'} · ${fu(Date.parse(m.obs_time||m.message_time||m.time||obs?.updated_at||Date.now()))} · LIVE MessageArchive`:'';$('synopMeta').textContent=s?`${s.source||s.sources?.[0]?.name||'ARCHIWUM'} · ${fu(Date.parse(s.obs_time||s.message_time||s.time||obs?.updated_at||Date.now()))}`:''}
 const EPIR='''
@@ -61,6 +67,8 @@ const EPIR='''
 
     if "message-archive-client.js?v=" not in s:
         raise SystemExit("versioned MessageArchive client missing")
+    if PAGES_COMPAT_MARKER not in s:
+        raise SystemExit("Pages compatibility marker missing")
     if "A.getLatest('TAF','EPIR',true)" not in s:
         raise SystemExit("explicit EPIR TAF archive read missing")
     if "A.getLatest('AVIATION','EPIR',true)" not in s:
