@@ -2,8 +2,6 @@
 (() => {
   const APP_VERSION = 'v0.10.23 HTML';
   const OBS_KEY = 'prognozaepir-fog-observations-v2';
-  const LATEST_URL = 'data/messages/latest.json';
-  const RECENT_URL = 'data/messages/recent.json';
   const MAX_OBS = 60;
   let latestData = null;
   let recentData = null;
@@ -19,15 +17,30 @@
     if(v) v.textContent=APP_VERSION;
   }
 
-  async function fetchJson(url){
-    const ctrl=new AbortController();
-    const timer=setTimeout(()=>ctrl.abort(),3500);
-    try{
-      const r=await fetch(`${url}?v=${Date.now()}`,{cache:'no-store',signal:ctrl.signal});
-      if(!r.ok) throw new Error(`HTTP ${r.status}`);
-      return await r.json();
-    } finally { clearTimeout(timer); }
+
+  let archiveClientPromise=null;
+  function archiveClient(){
+    if(window.PrognozaEPIRMessageArchive)return Promise.resolve(window.PrognozaEPIRMessageArchive);
+    if(archiveClientPromise)return archiveClientPromise;
+    archiveClientPromise=new Promise((resolve,reject)=>{
+      const ready=()=>window.PrognozaEPIRMessageArchive?resolve(window.PrognozaEPIRMessageArchive):reject(new Error('MessageArchive niedostępne'));
+      const existing=document.querySelector('script[data-prognozaepir-message-archive="1"]');
+      if(existing){
+        window.addEventListener('prognozaepir:message-archive-ready',ready,{once:true});
+        setTimeout(ready,2500);
+        return;
+      }
+      const script=document.createElement('script');
+      script.src='message-archive-client.js';
+      script.dataset.prognozaepirMessageArchive='1';
+      script.onload=ready;
+      script.onerror=()=>reject(new Error('Nie można załadować message-archive-client.js'));
+      document.head.appendChild(script);
+    });
+    return archiveClientPromise;
   }
+  async function archiveLatest(force=false){return (await archiveClient()).latest(force);}
+  async function archiveRecent(force=false){return (await archiveClient()).recent(force);}
 
   function metarPhenomena(m){
     const wx=`${m?.weather||''} ${m?.raw||''}`.toUpperCase();
@@ -256,9 +269,9 @@
     if(el)el.innerHTML=verificationHtml();
   }
 
-  async function refreshLiveMetar(){
+  async function refreshArchive(){
     try{
-      const l=await fetchJson(LATEST_URL);
+      const l=await archiveLatest(true);
       if(l)latestData=l;
       if(recentData)storeAutomaticObservations(recentData);
       installPanel();refreshVerification();
@@ -268,10 +281,10 @@
   async function bootstrap(){
     setVersion();
     try{
-      const [l,r]=await Promise.allSettled([fetchJson(LATEST_URL),fetchJson(RECENT_URL)]);
+      const [l,r]=await Promise.allSettled([archiveLatest(true),archiveRecent(true)]);
       if(l.status==='fulfilled')latestData=l.value;
       if(r.status==='fulfilled')recentData=r.value;
-      await refreshLiveMetar();
+      await refreshArchive();
       if(recentData)storeAutomaticObservations(recentData);
     }catch(e){console.warn('EPIR automatic observations:',e);}
     try{await loadFogEngine();}catch(e){console.error('EPIR Fog Engine load:',e);return;}
@@ -282,13 +295,13 @@
       if(installPanel()||++tries>40){clearInterval(t);refreshVerification();}
     },250);
     setInterval(refreshVerification,30*1000);
-    setInterval(refreshLiveMetar,2*60*1000);
+    setInterval(refreshArchive,2*60*1000);
     setInterval(async()=>{
       try{
-        const [l,r]=await Promise.allSettled([fetchJson(LATEST_URL),fetchJson(RECENT_URL)]);
+        const [l,r]=await Promise.allSettled([archiveLatest(true),archiveRecent(true)]);
         if(l.status==='fulfilled')latestData=l.value;
         if(r.status==='fulfilled')recentData=r.value;
-        await refreshLiveMetar();
+        await refreshArchive();
         if(recentData)storeAutomaticObservations(recentData);
         installPanel();refreshVerification();
       }catch(_){ }
