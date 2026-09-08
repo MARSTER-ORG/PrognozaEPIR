@@ -25,7 +25,19 @@ def main():
     base.patch_index()
     base.patch_rh_axis()
     base.patch_cloud_learning()
-    fog.main()
+
+    fog_source = (ROOT / 'fog-engine.js').read_text(encoding='utf-8')
+    fog_v12_present = (
+        "const KNMI_MODEL = 'knmi_harmonie_arome_europe';" in fog_source
+        and 'function fogModelWeight(' in fog_source
+        and 'async function fetchKnmi()' in fog_source
+        and 'weightedModelMedian' in fog_source
+    )
+    if fog_v12_present:
+        print('fog ensemble v1.2 already present; skipping base fog patch')
+    else:
+        fog.main()
+
     fog_event.main()
     add_legacy_pages_marker()
     print('adaptive runtime + fog ensemble + METAR/SPECI event skill patch applied')
