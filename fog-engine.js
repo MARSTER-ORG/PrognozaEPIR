@@ -3,11 +3,13 @@
   if (typeof PLACE === 'undefined') return;
 
   const APP_VERSION = 'v0.10.23 HTML';
-  const ENGINE_VERSION = 'EPIR FOG ENGINE v1.1';
+  const ENGINE_VERSION = 'EPIR FOG ENGINE v1.2';
   const HOUR = 3600e3;
   const OBS_KEY = 'prognozaepir-fog-observations-v2';
   const MAX_OBS = 60;
   const DMI_MODEL = 'dmi_harmonie_arome_europe';
+  const KNMI_MODEL = 'knmi_harmonie_arome_europe';
+  const ADAPTIVE_WEIGHTS_URL = 'data/learning/adaptive-weights.json';
   const CORE_SUPPLEMENT_MODELS = new Set([
     'ecmwf_ifs','ecmwf_aifs025_single','ncep_gfs_global',
     'icon_d2','icon_eu','icon_global','chmi_aladin_central_europe_2km',
@@ -21,11 +23,20 @@
     'temperature_50m','temperature_100m','temperature_150m','temperature_250m',
     'wind_speed_100m','wind_speed_250m'
   ];
+  const KNMI_VARS = [
+    'temperature_2m','relative_humidity_2m','dew_point_2m','visibility',
+    'cloud_cover','cloud_cover_low','cloud_cover_mid','cloud_cover_high',
+    'wind_speed_10m','wind_direction_10m','wind_gusts_10m','precipitation',
+    'shortwave_radiation','is_day','surface_temperature',
+    'temperature_100m','temperature_200m','temperature_300m'
+  ];
   const SUPPLEMENT_VARS = [
     'temperature_1000hPa','temperature_925hPa','temperature_850hPa','wind_speed_850hPa'
   ];
 
   let dmiRows = [];
+  let knmiRows = [];
+  let adaptiveWeights = null;
   let supplements = new Map();
   let fogSeries = [];
   let engineError = '';
@@ -321,6 +332,32 @@
     })).filter(x=>finite(x.t)).sort((a,b)=>a.t-b.t);
   }
 
+  async function fetchKnmi(){
+    const q=new URLSearchParams({
+      latitude:String(PLACE.lat),longitude:String(PLACE.lon),hourly:KNMI_VARS.join(','),
+      models:KNMI_MODEL,timezone:'UTC',forecast_hours:'60',past_hours:'6',wind_speed_unit:'ms'
+    });
+    const r=await fetch('https://api.open-meteo.com/v1/forecast?'+q,{cache:'no-store'});
+    const j=await r.json().catch(()=>null);
+    if(!r.ok||!j?.hourly?.time)throw new Error(j?.reason||j?.message||('KNMI HTTP '+r.status));
+    const h=j.hourly;
+    knmiRows=(h.time||[]).map((z,i)=>({
+      t:parseUtc(z),T:n(h.temperature_2m?.[i]),Td:n(h.dew_point_2m?.[i]),RH:n(h.relative_humidity_2m?.[i]),VIS:n(h.visibility?.[i]),
+      TCC:n(h.cloud_cover?.[i]),LOW:n(h.cloud_cover_low?.[i]),MID:n(h.cloud_cover_mid?.[i]),HIGH:n(h.cloud_cover_high?.[i]),
+      WS:n(h.wind_speed_10m?.[i]),WD:n(h.wind_direction_10m?.[i]),G:n(h.wind_gusts_10m?.[i]),RR:n(h.precipitation?.[i]),
+      SW:n(h.shortwave_radiation?.[i]),isDay:n(h.is_day?.[i]),Tskin:n(h.surface_temperature?.[i]),
+      T100:n(h.temperature_100m?.[i]),T200:n(h.temperature_200m?.[i]),T300:n(h.temperature_300m?.[i])
+    })).filter(x=>finite(x.t)).sort((a,b)=>a.t-b.t);
+  }
+
+  async function fetchAdaptiveWeights(){
+    const sep=ADAPTIVE_WEIGHTS_URL.includes('?')?'&':'?';
+    const r=await fetch(ADAPTIVE_WEIGHTS_URL+sep+'_='+Date.now(),{cache:'no-store'});
+    const j=await r.json().catch(()=>null);
+    if(!r.ok||j?.schema!=='prognozaepir-adaptive-weights-v1')throw new Error('adaptive weights unavailable');
+    adaptiveWeights=j;
+  }
+
   async function fetchSupplement(modelId){
     if(!CORE_SUPPLEMENT_MODELS.has(modelId))return;
     const q=new URLSearchParams({
@@ -344,7 +381,11 @@
     try{
       await fetchDmi();
       const ids=(typeof MODELS!=='undefined'?MODELS:[]).map(m=>m.id).filter(id=>CORE_SUPPLEMENT_MODELS.has(id));
-      await Promise.all(ids.map(fetchSupplement));
+      await Promise.all([
+        ...ids.map(fetchSupplement),
+        fetchKnmi().catch(e=>{knmiRows=[];console.warn('KNMI fog supplement:',e)}),
+        fetchAdaptiveWeights().catch(e=>{adaptiveWeights=null;console.warn('fog adaptive weights:',e)})
+      ]);
     }catch(e){engineError=e?.message||String(e);}
     finally{fetchBusy=false;rebuildEngine();}
   }
@@ -393,7 +434,20 @@
       T850:null,U850:null,directFog:r.fog2m
     };
   }
-  function modelInput(model,t){return model.id===DMI_MODEL?dmiSurface(t):rawSurface(model,t);}
+  function knmiSurface(t){
+    const r=nearest(knmiRows,t);if(!r)return null;
+    return {
+      id:KNMI_MODEL,name:'KNMI HARMONIE-AROME Europe 5.5 km',t:r.t,T:r.T,Td:r.Td,RH:r.RH,WS:r.WS,WD:r.WD,G:r.G,RR:r.RR,VIS:r.VIS,P:null,Tskin:r.Tskin,
+      LOW:r.LOW,MID:r.MID,HIGH:r.HIGH,TCC:r.TCC,CBH:null,
+      T100:r.T100,T200:r.T200,T300:r.T300,RH100:null,RH200:null,RH300:null,
+      T850:null,U850:null,directFog:null
+    };
+  }
+  function modelInput(model,t){
+    if(model.id===DMI_MODEL)return dmiSurface(t);
+    if(model.id===KNMI_MODEL)return knmiSurface(t);
+    return rawSurface(model,t);
+  }
 
   function historyInput(model,t,backHours){return modelInput(model,t-backHours*HOUR);}
   function precipSum(model,t,hours){
@@ -523,11 +577,37 @@
 
   function modelDefinitions(){
     const base=(typeof MODELS!=='undefined'?MODELS:[]).map(m=>({id:m.id,name:m.name}));
-    return [{id:DMI_MODEL,name:'DMI HARMONIE-AROME 2 km'},...base];
+    return [{id:DMI_MODEL,name:'DMI HARMONIE-AROME 2 km'},{id:KNMI_MODEL,name:'KNMI HARMONIE-AROME Europe 5.5 km'},...base];
   }
-  function typeFromMechanisms(models){
+  function leadBucketName(h){
+    if(!finite(h)||h<0)return null;
+    if(h<3)return '0-3h';if(h<6)return '3-6h';if(h<12)return '6-12h';
+    if(h<24)return '12-24h';if(h<48)return '24-48h';return '48-120h';
+  }
+  function fogModelWeight(modelId,lead){
+    if(modelId===DMI_MODEL)return lead<=12?.16:.10;
+    if(modelId===KNMI_MODEL)return lead<=12?.11:.07;
+    const bucket=leadBucketName(lead),m=adaptiveWeights?.models?.[modelId],row=bucket?m?.lead_buckets?.[bucket]:null;
+    let base=n(m?.base_weight);
+    if(!finite(base)){
+      const d=(typeof MODELS!=='undefined'?MODELS:[]).find(x=>x.id===modelId);base=n(d?.w)??.06;
+    }
+    const prefs=[['visibility',.35],['dew_point',.20],['cloud',.20],['wind',.15],['temperature',.10]];
+    const parts=prefs.map(([k,w])=>({v:n(row?.components?.[k]?.weight_factor),w}));
+    const factor=weightedAvailable(parts).v??n(row?.weight_factor)??1;
+    return clip(base*factor,.015,.25);
+  }
+  function weightedModelMean(models,key,lead){
+    let sw=0,s=0;for(const m of models){const v=n(m?.[key]),w=fogModelWeight(m.id,lead);if(finite(v)&&finite(w)&&w>0){s+=v*w;sw+=w}}
+    return sw?s/sw:null;
+  }
+  function weightedModelMedian(models,key,lead){
+    const a=models.map(m=>({v:n(m?.[key]),w:fogModelWeight(m.id,lead)})).filter(x=>finite(x.v)&&finite(x.w)&&x.w>0).sort((a,b)=>a.v-b.v);
+    const total=a.reduce((q,x)=>q+x.w,0);if(!total)return null;let c=0;for(const x of a){c+=x.w;if(c>=total/2)return x.v}return a[a.length-1]?.v??null;
+  }
+  function typeFromMechanisms(models,lead){
     const keys=['RAD','ADV','CBL','PCP'],v={};
-    for(const k of keys)v[k]=mean(models.map(m=>m[k]));
+    for(const k of keys)v[k]=weightedModelMean(models,k,lead);
     const ranked=keys.map(k=>[k,v[k]]).filter(x=>finite(x[1])).sort((a,b)=>b[1]-a[1]);
     if(!ranked.length)return {text:'—',primary:null,secondary:null,values:v};
     const [a,b]=ranked;
@@ -538,25 +618,29 @@
   function ensembleAt(t){
     const defs=modelDefinitions(),models=defs.map(m=>calcMechanisms(m,t)).filter(Boolean);
     if(!models.length)return null;
-    const phys=mean(models.map(m=>m.PHYS)),nwp=mean(models.map(m=>m.MODEL));
+    const obs=obsForLead(t),lead=Math.max(0,(t-Date.now())/HOUR);
+    const phys=weightedModelMean(models,'PHYS',lead),nwp=weightedModelMean(models,'MODEL',lead);
     const scores=models.map(m=>m.MODEL).filter(finite),sdm=stddev(scores);
     const agree=finite(sdm)?1-clip(sdm/35,0,1):(scores.length===1?.35:null);
-    const obs=obsForLead(t),lead=Math.max(0,(t-Date.now())/HOUR);
     const obsTrend=obs?.trend??null;
+    const directFog=weightedModelMean(models.filter(m=>finite(m.directFog)),'directFog',lead);
     let final;
-    if(lead<=3)final=weightedAvailable([{v:obs?.score??null,w:.30},{v:null,w:.25},{v:phys,w:.25},{v:nwp,w:.20}]);
-    else if(lead<=6)final=weightedAvailable([{v:obsTrend,w:.15},{v:null,w:.15},{v:phys,w:.35},{v:nwp,w:.35}]);
-    else if(lead<=12)final=weightedAvailable([{v:phys,w:.45},{v:nwp,w:.45},{v:obsTrend,w:.10}]);
-    else final=weightedAvailable([{v:phys,w:.50},{v:nwp,w:.50}]);
+    if(lead<=3)final=weightedAvailable([{v:obs?.score??null,w:.25},{v:directFog,w:.20},{v:phys,w:.30},{v:nwp,w:.25}]);
+    else if(lead<=6)final=weightedAvailable([{v:obsTrend,w:.12},{v:directFog,w:.18},{v:phys,w:.35},{v:nwp,w:.35}]);
+    else if(lead<=12)final=weightedAvailable([{v:directFog,w:.12},{v:phys,w:.39},{v:nwp,w:.39},{v:obsTrend,w:.10}]);
+    else final=weightedAvailable([{v:directFog,w:.06},{v:phys,w:.47},{v:nwp,w:.47}]);
 
-    const sat=mean(models.map(m=>mean([m.components.SD,m.components.SRH])));
+    const sat=weightedAvailable(models.map(m=>({v:mean([m.components.SD,m.components.SRH]),w:fogModelWeight(m.id,lead)}))).v;
     const data=clip(mean(models.map(m=>m.coverage))??0,0,1);
     let obsConsistency=null;
     if(obs&&finite(nwp)&&finite(obs.raw))obsConsistency=1-clip(Math.abs(obs.raw-nwp)/100,0,1);
     const conf=weightedAvailable([{v:data,w:.35},{v:agree,w:.40},{v:obsConsistency,w:.25}]).v;
 
     const visModels=models.filter(m=>finite(m.VIS));
-    const modelProb = thr => visModels.length?100*visModels.filter(m=>m.VIS<thr).length/visModels.length:null;
+    const modelProb = thr => {
+      let hit=0,total=0;for(const m of visModels){const w=fogModelWeight(m.id,lead);total+=w;if(m.VIS<thr)hit+=w}
+      return total?100*hit/total:null;
+    };
     const obsVisRisk = thr => obs?.obs? (obs.obs.visM<thr?100:0):null;
     const visRisk = thr => {
       const lower=thr<=500;
@@ -565,16 +649,15 @@
         :[{v:modelProb(thr),w:.55},{v:final.v,w:.25},{v:obsVisRisk(thr),w:.10},{v:finite(sat)?sat*100:null,w:.10}];
       return weightedAvailable(parts).v;
     };
-    const visVals=visModels.map(m=>m.VIS).filter(finite).sort((a,b)=>a-b);
-    let vis=visVals.length?visVals[Math.floor((visVals.length-1)/2)]:null;
+    let vis=weightedModelMedian(visModels,'VIS',lead);
     if(obs?.obs&&finite(vis)){
       const ageLead=Math.max(0,t-obs.obs.t);
       const decay=Math.exp(-ageLead/(6*HOUR));
       const dmiNow=nearest(dmiRows,obs.obs.t,90*60e3);
       if(finite(dmiNow?.VIS)&&dmiNow.VIS>0)vis=clip(vis*Math.pow(clip(obs.obs.visM/dmiNow.VIS,.25,4),decay),50,50000);
     }
-    const type=typeFromMechanisms(models);
-    const T=mean(models.map(m=>m.T));
+    const type=typeFromMechanisms(models,lead);
+    const T=weightedModelMean(models,'T',lead);
     const fzfg=finite(final.v)&&final.v>=60&&finite(T)?(T<=0?'TAK':T<=1?'RYZYKO':'NIE'):'NIE';
     return {
       t,lead,score:final.v,PHYS:phys,NWP:nwp,agreement:agree,data,confidence:conf,type,models,
@@ -644,7 +727,7 @@
       <div class="fog-card"><small>Mgła marznąca</small><strong>${freeze}</strong><em>T przy maksimum ${fmt1(peak.T)}°C</em></div>
       <div class="fog-card"><small>Pewność prognozy</small><strong>${confidenceLabel(current.confidence)}</strong><em>${fmt0((current.confidence??0)*100)}% wskaźnika CONF</em></div>`;
     if(source)source.textContent=`${ENGINE_VERSION} · ${current.models.length} modeli${current.obsUsed?' · OBS '+(current.obsPhenomenon||'aktywne'):''}`;
-    if(note)note.innerHTML=`<b>Dostępność danych:</b> ${fmt0(current.data*100)}% · zgodność modeli ${fmt0((current.agreement??0)*100)}% · MTG FCI: brak automatycznego pola (waga usunięta i zrenormalizowana) · obserwacje: ${current.obsUsed?'użyte w nowcaście ('+(current.obsPhenomenon||'OBS')+')':'brak świeżej obserwacji'}. DMI 2 m fog: ${finite(current.dmiFog)?fmt0(current.dmiFog)+'%':'—'}.`;
+    if(note)note.innerHTML=`<b>Dostępność danych:</b> ${fmt0(current.data*100)}% · zgodność modeli ${fmt0((current.agreement??0)*100)}% · DMI fog 2 m aktywne · KNMI HARMONIE aktywne gdy dostępne · obserwacje: ${current.obsUsed?'użyte w nowcaście ('+(current.obsPhenomenon||'OBS')+')':'brak świeżej obserwacji'}. DMI 2 m fog: ${finite(current.dmiFog)?fmt0(current.dmiFog)+'%':'—'}.`;
     if(hours){
       hours.innerHTML=future.slice(0,13).map(x=>`<div class="fog-hour ${riskCss(x.score)}"><b>${localHour(x.t)}</b><div class="p">${fmt0(x.score)}/100</div><small>${scoreClass(x.score)}</small><small>${x.type?.text||'—'}</small><small>VIS ${fmtM(x.vis)}</small><small>&lt;1km ${fmt0(x.vis1000)}/100</small></div>`).join('');
     }
