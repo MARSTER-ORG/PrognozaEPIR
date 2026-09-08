@@ -1,28 +1,30 @@
-name: Central METAR SPECI TAF SYNOP archive
+name: Central METAR SPECI TAF SYNOP ingestor
 
 on:
   schedule:
-    # Central normalization is a slower redundant path. Fast aviation
-    # acquisition has independent 5-minute METAR and TAF heartbeats. Keep this
-    # path away from GitHub's documented start-of-hour scheduler load peak.
-    - cron: '13-58/15 * * * *'
+    # GitHub Actions is the backup scheduler. The preferred production mode is
+    # scripts/central_ingestor.py --daemon on an external systemd host.
+    - cron: '13-58/10 * * * *'
   workflow_dispatch:
   push:
     branches: [main]
     paths:
       - 'data/import/**'
       - 'data/observations/manual/**'
+      - 'scripts/central_ingestor.py'
+      - 'scripts/check_archive_boundaries.py'
       - 'scripts/message_archive.py'
       - 'scripts/metar_armored.py'
-      - 'scripts/live_metar_collector.py'
-      - 'scripts/refresh_epir_metar.py'
+      - 'scripts/collect_epir_observations.py'
+      - 'scripts/supplement_synop_12342.py'
       - 'scripts/collect_neighbor_tafs.py'
       - 'scripts/repair_awc_tafs.py'
       - 'scripts/sanitize_neighbor_tafs.py'
       - 'scripts/check_epir_archive_freshness.py'
-      - 'scripts/apply_central_archive_cutover.py'
       - 'scripts/finalize_central_message_architecture.py'
       - 'scripts/ensure_taf_native_archive.py'
+      - 'message-archive-client.js'
+      - 'api/taf-proxy.js'
       - '.github/workflows/message-archive.yml'
 
 permissions:
@@ -30,147 +32,69 @@ permissions:
   actions: write
 
 concurrency:
-  group: prognozaepir-central-message-archive
+  group: prognozaepir-central-ingestor
   cancel-in-progress: false
 
 jobs:
-  archive:
+  ingest:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      - name: Validate code
+      - name: Validate central architecture
         run: |
           python3 -m py_compile \
+            scripts/central_ingestor.py \
+            scripts/check_archive_boundaries.py \
             scripts/message_archive.py \
             scripts/metar_armored.py \
-            scripts/live_metar_collector.py \
-            scripts/refresh_epir_metar.py \
+            scripts/collect_epir_observations.py \
+            scripts/supplement_synop_12342.py \
             scripts/collect_neighbor_tafs.py \
             scripts/repair_awc_tafs.py \
             scripts/sanitize_neighbor_tafs.py \
             scripts/check_epir_archive_freshness.py \
-            scripts/apply_central_archive_cutover.py \
             scripts/finalize_central_message_architecture.py \
             scripts/ensure_taf_native_archive.py
+          node --check message-archive-client.js
+          node --check api/taf-proxy.js
+          python3 scripts/check_archive_boundaries.py
 
-      - name: Acquire bulletins into temporary staging
-        shell: bash
+      - name: Run the only archive ingest mechanism
         run: |
-          set -euo pipefail
-
-          # Every stream is best-effort here. Dedicated METAR and TAF heartbeat
-          # workflows own freshness alarms. A failure in one stream must never
-          # prevent centralization of data recovered from another stream.
-          python3 scripts/collect_epir_observations.py || echo '::warning::generic observations source degraded'
-          python3 scripts/supplement_synop_12342.py || echo '::warning::SYNOP supplement degraded'
-
-          metar_transport_ok=0
-          for attempt in 1 2 3; do
-            echo "=== central METAR/SPECI attempt ${attempt}/3 ==="
-            if python3 scripts/metar_armored.py; then
-              metar_transport_ok=1
-              break
-            fi
-            if [ "$attempt" -lt 3 ]; then sleep $((attempt * 10)); fi
-          done
-          if [ "$metar_transport_ok" != 1 ]; then
-            echo '::warning::central METAR transport failed; TAF/SYNOP processing continues'
-          fi
-
-          python3 scripts/collect_neighbor_tafs.py || echo '::warning::IMGW/PilotHub TAF sources degraded'
-          # Independent server-side source. It uses only documented AWC API
-          # parameters and performs a monotonic merge, so it can repair a stale
-          # IMGW snapshot but can never replace a newer TAF with an older one.
-          python3 scripts/repair_awc_tafs.py || echo '::warning::AWC TAF repair degraded'
-          python3 scripts/sanitize_neighbor_tafs.py || echo '::warning::TAF sanitize degraded'
-
-      - name: Normalize deduplicate migrate and cut over consumers
-        run: |
-          python3 scripts/message_archive.py
-          python3 scripts/message_archive.py --validate-only
-          python3 scripts/apply_central_archive_cutover.py
-          python3 scripts/finalize_central_message_architecture.py
-          python3 scripts/ensure_taf_native_archive.py
-          python3 scripts/message_archive.py --validate-only
-          python3 -m py_compile scripts/model_verification.py scripts/cloud_learning.py scripts/finalize_central_message_architecture.py scripts/ensure_taf_native_archive.py
-          node --check taf-verification.js
-
-      - name: Independent freshness diagnostics
-        shell: bash
-        run: |
-          # Diagnostic only. Never discard one good stream because another is
-          # late. Dedicated heartbeat workflows enforce these gates as alarms.
-          python3 scripts/check_epir_archive_freshness.py --metar-only \
-            || echo '::warning::EPIR METAR expected slot is not fresh yet'
-          python3 scripts/check_epir_archive_freshness.py --taf-only --all-tafs \
-            || echo '::warning::one or more TAF stations are behind schedule'
-
-      - name: Drop legacy staging changes
-        run: |
-          git restore --worktree -- data/observations data/taf 2>/dev/null || true
-          git clean -fd -- data/observations data/taf >/dev/null 2>&1 || true
-          git restore --worktree -- .github/workflows/pages.yml 2>/dev/null || true
+          python3 scripts/central_ingestor.py --once --state-file /tmp/prognozaepir-ingest-state.json
+          cat /tmp/prognozaepir-ingest-state.json
           test -s data/messages/latest.json
           test -s data/messages/recent.json
           test -s data/messages/status.json
           test -s data/messages/taf-neighbors.json
           python3 scripts/message_archive.py --validate-only
-          grep -F "data/messages/latest.json" observation-engine.js
-          grep -F 'PrognozaEPIRMessageArchive' taf.html
-          grep -F 'loadNeighborArchive' taf.html
-          ! grep -F 'taf-archive-source.js' taf.html
-          grep -F 'ROOT / "data" / "messages" / "metar"' scripts/model_verification.py
-          grep -F 'SPECI_DIR = ROOT / "data" / "messages" / "speci"' scripts/cloud_learning.py
-          ! grep -F "aviation-api.imgw.pl" observation-engine.js
-          ! grep -F "function fromProxy(" taf.html
-          ! grep -F "loadImgwLive(" taf.html
-          ! grep -F "awiacja.imgw.pl" taf.html
-          ! grep -F "aviationweather.gov" taf.html
-          ! grep -F "/api/taf-proxy" taf.html
-          ! grep -F "data/observations/metar/" taf-verification.js
-          ! grep -F "data/taf/epir/" taf-verification.js
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          bad=[]
-          for p in Path('data/messages/taf').rglob('*.jsonl'):
-              for line in p.read_text(encoding='utf-8').splitlines():
-                  if not line.strip(): continue
-                  r=json.loads(line)
-                  if r.get('station') != 'EPIR': bad.append((str(p),r.get('station')))
-          if bad: raise SystemExit(f'neighbor TAF leaked into history: {bad[:5]}')
-          latest=json.loads(Path('data/messages/latest.json').read_text(encoding='utf-8'))
-          for station in ('EPBY','EPPW','EPKS'):
-              row=(latest.get('taf_by_station') or {}).get(station)
-              if row and not row.get('snapshot_only'):
-                  raise SystemExit(f'{station} is not marked snapshot_only')
-          status=json.loads(Path('data/messages/status.json').read_text(encoding='utf-8'))
-          if status.get('taf_history_scope') != 'EPIR only':
-              raise SystemExit('TAF history scope not finalized')
-          PY
+          python3 scripts/check_archive_boundaries.py
 
-      - name: Commit authoritative archive
+      - name: Commit authoritative archive only
         id: publish
+        shell: bash
         run: |
           set -euo pipefail
-          paths=(data/messages observation-engine.js taf.html taf-verification.js scripts/model_verification.py scripts/cloud_learning.py)
-          if git diff --quiet -- "${paths[@]}"; then
+          if git diff --quiet -- data/messages; then
             echo 'Central archive already up to date.'
             echo 'changed=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add "${paths[@]}"
-          git commit -m 'weather: centralize METAR SPECI TAF SYNOP archive'
+          git add data/messages
+          git commit -m 'weather: central ingestor archive update'
+
           for attempt in 1 2 3 4 5; do
             git fetch origin main
             if git rebase origin/main && git push origin HEAD:main; then
@@ -178,11 +102,12 @@ jobs:
               exit 0
             fi
             git rebase --abort 2>/dev/null || true
-            sleep $((attempt*3))
+            sleep $((attempt * 3))
           done
+          echo 'Unable to publish authoritative archive after 5 attempts.' >&2
           exit 1
 
-      - name: Refresh dependent consumers
+      - name: Refresh archive consumers
         if: steps.publish.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
