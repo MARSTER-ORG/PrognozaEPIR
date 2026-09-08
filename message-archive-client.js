@@ -2,31 +2,55 @@
 (() => {
   // Frontend boundary: this client reads the central archive only. It must never
   // contact IMGW, AWC, PilotHub or any other bulletin provider directly.
-  const ROOT = String(window.PROGNOZAEPIR_ARCHIVE_ROOT || 'data/messages').replace(/\/+$/,'');
+  const LIVE_ROOT = String(
+    window.PROGNOZAEPIR_ARCHIVE_ROOT ||
+    'https://central-ingestor-production.up.railway.app/data/messages'
+  ).replace(/\/+$/,'');
+  const STATIC_ROOT = 'data/messages';
   const TTL_MS = 30_000;
   const cache = new Map();
   const norm = value => String(value || '').toUpperCase();
+
+  async function fetchFrom(root, name, now){
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5_000);
+    try {
+      const response = await fetch(`${root}/${name}?v=${now}`, {
+        cache: 'no-store',
+        signal: controller.signal,
+        headers: {'Accept':'application/json'}
+      });
+      if(!response.ok) throw new Error(`MessageArchive ${name}: HTTP ${response.status}`);
+      return await response.json();
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
   async function fetchJson(name, force=false){
     const now = Date.now();
     const hit = cache.get(name);
     if(!force && hit && now - hit.at < TTL_MS) return hit.value;
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5_000);
+    let value;
+    let source = LIVE_ROOT;
     try {
-      const response = await fetch(`${ROOT}/${name}?v=${now}`, {
-        cache: 'no-store',
-        signal: controller.signal,
-        headers: {'Accept':'application/json'}
-      });
-      if(!response.ok) throw new Error(`MessageArchive ${name}: HTTP ${response.status}`);
-      const value = await response.json();
-      cache.set(name, {at: now, value});
-      return value;
-    } finally {
-      clearTimeout(timer);
+      value = await fetchFrom(LIVE_ROOT, name, now);
+    } catch (liveError) {
+      // GitHub Pages snapshot is intentionally read-only emergency fallback.
+      // It is not an acquisition source and never writes into the archive.
+      source = STATIC_ROOT;
+      try {
+        value = await fetchFrom(STATIC_ROOT, name, now);
+      } catch (staticError) {
+        const error = new Error(`MessageArchive ${name}: live and static archive unavailable`);
+        error.cause = {liveError, staticError};
+        throw error;
+      }
     }
+
+    cache.set(name, {at: now, value, source});
+    return value;
   }
 
   async function latest(force=false){
@@ -65,7 +89,8 @@
   }
 
   const api = Object.freeze({
-    root: ROOT,
+    root: LIVE_ROOT,
+    fallbackRoot: STATIC_ROOT,
     latest,
     recent,
     status: (force=false) => fetchJson('status.json', force),
