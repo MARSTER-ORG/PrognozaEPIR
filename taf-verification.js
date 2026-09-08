@@ -2,6 +2,7 @@
 (() => {
   const VERSION='TAF Verification v2.0';
   const BLOCKED_SKILL_KEY='prognozaepir-taf-skill-v1';
+  const LIVE_ARCHIVE_BASE='https://central-ingestor-production.up.railway.app/data/messages/';
   const CENTRAL_RAW_BASE='https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/messages/';
   const VIS_BANDS=[800,1500,3000,5000];
   const CEIL_BANDS=[200,300,500,1000,1500];
@@ -173,101 +174,11 @@
     return[];
   }
   function centralDayUrls(kind,day){
-    const [y,m,d]=day.split('-');
+    const [y,m,d]=day.split('-'),stamp=Date.now();
     return [
-      `data/messages/${kind}/${y}/${m}/${d}.jsonl?_=${Date.now()}`,
-      `${CENTRAL_RAW_BASE}${kind}/${y}/${m}/${d}.jsonl?raw=${Date.now()}`
-    ];
-  }
-  function centralDayUrls(kind,day){
-    const [y,m,d]=day.split('-');
-    return [
-      `data/messages/${kind}/${y}/${m}/${d}.jsonl?_=${Date.now()}`,
-      `${CENTRAL_RAW_BASE}${kind}/${y}/${m}/${d}.jsonl?raw=${Date.now()}`
-    ];
-  }
-  function centralDayUrls(kind,day){
-    const [y,m,d]=day.split('-');
-    return [
-      `data/messages/${kind}/${y}/${m}/${d}.jsonl?_=${Date.now()}`,
-      `${CENTRAL_RAW_BASE}${kind}/${y}/${m}/${d}.jsonl?raw=${Date.now()}`
-    ];
-  }
-  function centralDayUrls(kind,day){
-    const [y,m,d]=day.split('-');
-    return [
-      `data/messages/${kind}/${y}/${m}/${d}.jsonl?_=${Date.now()}`,
-      `${CENTRAL_RAW_BASE}${kind}/${y}/${m}/${d}.jsonl?raw=${Date.now()}`
-    ];
-  }
-  function centralDayUrls(kind,day){
-    const [y,m,d]=day.split('-');
-    return [
-      `data/messages/${kind}/${y}/${m}/${d}.jsonl?_=${Date.now()}`,
-      `${CENTRAL_RAW_BASE}${kind}/${y}/${m}/${d}.jsonl?raw=${Date.now()}`
-    ];
-  }
-  function centralDayUrls(kind,day){
-    const [y,m,d]=day.split('-');
-    return [
-      `data/messages/${kind}/${y}/${m}/${d}.jsonl?_=${Date.now()}`,
-      `${CENTRAL_RAW_BASE}${kind}/${y}/${m}/${d}.jsonl?raw=${Date.now()}`
-    ];
-  }
-  function centralDayUrls(kind,day){
-    const [y,m,d]=day.split('-');
-    return [
-      `data/messages/${kind}/${y}/${m}/${d}.jsonl?_=${Date.now()}`,
-      `${CENTRAL_RAW_BASE}${kind}/${y}/${m}/${d}.jsonl?raw=${Date.now()}`
-    ];
-  }
-  function centralDayUrls(kind,day){
-    const [y,m,d]=day.split('-');
-    return [
-      `data/messages/${kind}/${y}/${m}/${d}.jsonl?_=${Date.now()}`,
-      `${CENTRAL_RAW_BASE}${kind}/${y}/${m}/${d}.jsonl?raw=${Date.now()}`
-    ];
-  }
-  function centralDayUrls(kind,day){
-    const [y,m,d]=day.split('-');
-    return [
-      `data/messages/${kind}/${y}/${m}/${d}.jsonl?_=${Date.now()}`,
-      `${CENTRAL_RAW_BASE}${kind}/${y}/${m}/${d}.jsonl?raw=${Date.now()}`
-    ];
-  }
-  function centralDayUrls(kind,day){
-    const [y,m,d]=day.split('-');
-    return [
-      `data/messages/${kind}/${y}/${m}/${d}.jsonl?_=${Date.now()}`,
-      `${CENTRAL_RAW_BASE}${kind}/${y}/${m}/${d}.jsonl?raw=${Date.now()}`
-    ];
-  }
-  function centralDayUrls(kind,day){
-    const [y,m,d]=day.split('-');
-    return [
-      `data/messages/${kind}/${y}/${m}/${d}.jsonl?_=${Date.now()}`,
-      `${CENTRAL_RAW_BASE}${kind}/${y}/${m}/${d}.jsonl?raw=${Date.now()}`
-    ];
-  }
-  function centralDayUrls(kind,day){
-    const [y,m,d]=day.split('-');
-    return [
-      `data/messages/${kind}/${y}/${m}/${d}.jsonl?_=${Date.now()}`,
-      `${CENTRAL_RAW_BASE}${kind}/${y}/${m}/${d}.jsonl?raw=${Date.now()}`
-    ];
-  }
-  function centralDayUrls(kind,day){
-    const [y,m,d]=day.split('-');
-    return [
-      `data/messages/${kind}/${y}/${m}/${d}.jsonl?_=${Date.now()}`,
-      `${CENTRAL_RAW_BASE}${kind}/${y}/${m}/${d}.jsonl?raw=${Date.now()}`
-    ];
-  }
-  function centralDayUrls(kind,day){
-    const [y,m,d]=day.split('-');
-    return [
-      `data/messages/${kind}/${y}/${m}/${d}.jsonl?_=${Date.now()}`,
-      `${CENTRAL_RAW_BASE}${kind}/${y}/${m}/${d}.jsonl?raw=${Date.now()}`
+      `${LIVE_ARCHIVE_BASE}${kind}/${y}/${m}/${d}.jsonl?live=${stamp}`,
+      `data/messages/${kind}/${y}/${m}/${d}.jsonl?pages=${stamp}`,
+      `${CENTRAL_RAW_BASE}${kind}/${y}/${m}/${d}.jsonl?raw=${stamp}`
     ];
   }
   async function fetchMetarDay(day){
@@ -288,6 +199,14 @@
     }
     return[...map.values()].sort((a,b)=>Date.parse(a.obs_time)-Date.parse(b.obs_time));
   }
+  async function fetchCurrentTaf(){
+    try{
+      const A=window.PrognozaEPIRMessageArchive;
+      if(A?.getLatest)return await A.getLatest('TAF','EPIR',true);
+      const latest=A?.latest?await A.latest(true):null;
+      return latest?.taf_by_station?.EPIR||latest?.taf||null;
+    }catch(_){return null}
+  }
   function normalizeRecord(r){
     if(!r||r.station!=='EPIR'||String(r.type||'').toUpperCase()!=='TAF'||!r.raw)return null;
     const ref=Date.parse(r.issue_time||r.message_time||0)||Date.now();
@@ -299,8 +218,10 @@
   async function tafsForValidityDay(day){
     const target=dayStart(day),end=target+864e5;
     const issueDays=[shiftDay(day,-1),day];
-    const chunks=await Promise.all(issueDays.map(fetchTafIssueDay));
+    const [chunks,current]=await Promise.all([Promise.all(issueDays.map(fetchTafIssueDay)),fetchCurrentTaf()]);
     const entries=chunks.flat().map(normalizeRecord).filter(Boolean).filter(e=>e.p.ve>target&&e.p.vs<end);
+    const live=normalizeRecord(current);
+    if(live&&live.p.ve>target&&live.p.vs<end)entries.push(live);
     const seen=new Set(),unique=[];
     for(const e of entries.sort((a,b)=>a.p.issue-b.p.issue)){
       const key=e.raw.replace(/\s+/g,' ').trim();
@@ -368,7 +289,7 @@
     }
     const rates=Object.fromEntries(PARAMS.map(k=>[k,pct(counts[k][0],counts[k][1])]));
     const valid=Object.values(rates).filter(finite),overall=valid.length?Math.round(valid.reduce((a,b)=>a+b,0)/valid.length):null;
-    return{entry,p,obs:obs.length,expected:Math.round((p.ve-p.vs)/1800e3),counts,rates,covered,overall,speedMae:seN?se/seN:null,dirMae:deN?de/deN:null,misses,groups:groupSummary(p,obs),final:Date.now()>=p.ve+30*60e3};
+    return{entry,p,obs:obs.length,expected:Math.round((p.ve-p.vs)/1800e3),counts,rates,covered,overall,speedMae:seN?se/seN:null,dirMae:deN?de/deN:null,misses,groups:groupSummary(p,obs),final:Date.now()>=p.ve};
   }
   function aggregate(results){
     const counts=Object.fromEntries(PARAMS.map(k=>[k,[0,0]]));
@@ -445,7 +366,7 @@
     }catch(e){
       $('tafDayMeta').textContent='Błąd weryfikacji: '+(e?.message||String(e));
       $('tafDayRows').innerHTML='<tr><td colspan="9" class="bad">Nie udało się policzyć raportu.</td></tr>';
-    }finally{tafVerifyBusy=false;$('tafDayBusy').textContent=VERSION+' · auto 60 s · dane TAF tylko do weryfikacji'}
+    }finally{tafVerifyBusy=false;$('tafDayBusy').textContent=VERSION+' · LIVE Railway/MessageArchive · auto 60 s · dane TAF tylko do weryfikacji'}
   }
   function start(){installPanel();refreshDay();setInterval(()=>{if(!document.hidden&&$('tafVerifyDay')?.value===utcDate(Date.now()))refreshDay(true)},60000);document.addEventListener('visibilitychange',()=>{if(!document.hidden&&$('tafVerifyDay')?.value===utcDate(Date.now()))refreshDay(true)})}
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start,{once:true});else start();
