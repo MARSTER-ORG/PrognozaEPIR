@@ -1,18 +1,22 @@
-name: Central message archive watchdog
+name: Aviation archive watchdog
 on:
   schedule:
-    - cron: '2-57/5 * * * *'
+    # Independent backup clock. The primary METAR/TAF heartbeats run every 5 min.
+    - cron: '4-54/10 * * * *'
   workflow_dispatch:
 permissions:
   contents: read
   actions: write
 concurrency:
-  group: prognozaepir-central-message-watchdog
+  group: prognozaepir-aviation-watchdog
   cancel-in-progress: true
 jobs:
   trigger:
     runs-on: ubuntu-latest
     steps:
-      - env:
+      - name: Trigger independent aviation collectors
+        env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run message-archive.yml --repo "${{ github.repository }}" --ref main
+        run: |
+          gh workflow run metar-heartbeat.yml --repo "${{ github.repository }}" --ref main
+          gh workflow run taf-heartbeat.yml --repo "${{ github.repository }}" --ref main
