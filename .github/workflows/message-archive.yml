@@ -17,6 +17,7 @@ on:
       - 'scripts/live_metar_collector.py'
       - 'scripts/refresh_epir_metar.py'
       - 'scripts/collect_neighbor_tafs.py'
+      - 'scripts/repair_awc_tafs.py'
       - 'scripts/sanitize_neighbor_tafs.py'
       - 'scripts/check_epir_archive_freshness.py'
       - 'scripts/apply_central_archive_cutover.py'
@@ -53,6 +54,7 @@ jobs:
             scripts/live_metar_collector.py \
             scripts/refresh_epir_metar.py \
             scripts/collect_neighbor_tafs.py \
+            scripts/repair_awc_tafs.py \
             scripts/sanitize_neighbor_tafs.py \
             scripts/check_epir_archive_freshness.py \
             scripts/apply_central_archive_cutover.py \
@@ -83,7 +85,11 @@ jobs:
             echo '::warning::central METAR transport failed; TAF/SYNOP processing continues'
           fi
 
-          python3 scripts/collect_neighbor_tafs.py || echo '::warning::TAF sources degraded'
+          python3 scripts/collect_neighbor_tafs.py || echo '::warning::IMGW/PilotHub TAF sources degraded'
+          # Independent server-side source. It uses only documented AWC API
+          # parameters and performs a monotonic merge, so it can repair a stale
+          # IMGW snapshot but can never replace a newer TAF with an older one.
+          python3 scripts/repair_awc_tafs.py || echo '::warning::AWC TAF repair degraded'
           python3 scripts/sanitize_neighbor_tafs.py || echo '::warning::TAF sanitize degraded'
 
       - name: Normalize deduplicate migrate and cut over consumers
