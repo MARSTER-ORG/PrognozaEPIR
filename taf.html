@@ -226,7 +226,7 @@ const EPIR={lat:52.83,lon:18.33},NSTA={EPBY:{name:'Bydgoszcz',lat:53.0968,lon:17
     if(!r||r.station!=='EPIR'||String(r.type||'').toUpperCase()!=='TAF'||!r.raw)return null;
     const ref=Date.parse(r.issue_time||r.message_time||0)||Date.now();
     const p=parseTaf(r.raw,ref);if(!p)return null;
-    const issue=Date.parse(r.issue_time||0),vs=Date.parse(r.valid_start||0),ve=Date.parse(r.valid_end||0);
+    const issue=r.issue_time?Date.parse(r.issue_time):NaN,vs=r.valid_start?Date.parse(r.valid_start):NaN,ve=r.valid_end?Date.parse(r.valid_end):NaN;
     if(finite(issue))p.issue=issue;if(finite(vs))p.vs=vs;if(finite(ve))p.ve=ve;
     return{raw:r.raw,source:r.source||'archiwum EPIR',source_url:r.source_url||'',issue_time:r.issue_time||null,valid_start:r.valid_start||null,valid_end:r.valid_end||null,record:r,p};
   }
