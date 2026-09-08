@@ -16,7 +16,7 @@ FORBIDDEN = {
     "IMGW Aviation API": re.compile(r"aviation-api\.imgw\.pl", re.I),
     "IMGW aviation web": re.compile(r"awiacja\.imgw\.pl", re.I),
     "AWC METAR/TAF API": re.compile(r"aviationweather\.gov/api/data/(?:metar|taf)", re.I),
-    "PilotHub bulletin API": re.compile(r"pilothub[^\n'\"]*(?:metar|taf)|(?:metar|taf)[^\n'\"]*pilothub", re.I),
+    "PilotHub bulletin source": re.compile(r"pilothub\.pl", re.I),
     "legacy TAF proxy": re.compile(r"/api/taf-proxy", re.I),
 }
 
