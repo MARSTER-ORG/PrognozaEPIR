@@ -36,17 +36,27 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Backfill archived operational model runs
+      - name: Validate recovery scripts
+        run: |
+          python3 -m py_compile \
+            scripts/backfill_model_history.py \
+            scripts/model_verification.py \
+            scripts/build_adaptive_weights.py
+
+      - name: Recover missing archived operational model runs
         env:
           START: ${{ github.event.inputs.start || '2026-06-01' }}
           END: ${{ github.event.inputs.end || '2026-09-07' }}
-        run: python3 scripts/backfill_model_history.py --start "$START" --end "$END" --workers 4 --run-hour 0
+        run: python3 scripts/backfill_model_history.py --start "$START" --end "$END" --workers 3 --run-hour 0
 
       - name: Rebuild cloud skill from historical METAR
         run: python3 scripts/cloud_learning.py
 
-      - name: Rebuild full model verification from METAR and SYNOP
+      - name: Rebuild full model verification from METAR SPECI and SYNOP
         run: python3 scripts/model_verification.py
+
+      - name: Rebuild robust adaptive consensus weights
+        run: python3 scripts/build_adaptive_weights.py
 
       - name: Keep dense recent visibility verification
         run: python3 scripts/backfill_visibility_verification.py
@@ -59,6 +69,7 @@ jobs:
           python3 -m json.tool data/learning/model-backfill-state.json >/dev/null
           python3 -m json.tool data/learning/cloud-skill.json >/dev/null
           python3 -m json.tool data/learning/model-verification.json >/dev/null
+          python3 -m json.tool data/learning/adaptive-weights.json >/dev/null
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -67,18 +78,25 @@ jobs:
               for line in p.read_text(encoding='utf-8').splitlines():
                   json.loads(line); rows+=1
           assert rows > 1000, f'too few historical forecast rows: {rows}'
+          state=json.loads(Path('data/learning/model-backfill-state.json').read_text(encoding='utf-8'))
+          weights=json.loads(Path('data/learning/adaptive-weights.json').read_text(encoding='utf-8'))
+          assert state.get('schema') in {'prognozaepir-model-backfill-state-v1','prognozaepir-model-backfill-state-v2'}
+          assert weights.get('schema') == 'prognozaepir-adaptive-weights-v1'
+          assert len(weights.get('models') or {}) >= 8
           print('validated historical forecast rows:', rows)
+          print('backfill completeness:', state.get('completeness_pct', 'legacy-state'))
           PY
 
       - name: Commit historical learning data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -rf scripts/__pycache__
           git add data/learning
           if git diff --cached --quiet; then
             echo "No backfill changes"
           else
-            git commit -m "weather: backfill June-September 2026 model learning"
+            git commit -m "weather: recover model history and rebuild adaptive learning"
             for attempt in 1 2 3 4; do
               git pull --rebase origin main && git push origin HEAD:main && break
               test "$attempt" = 4 && exit 1
@@ -89,4 +107,6 @@ jobs:
       - name: Redeploy updated learning data
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run pages.yml --ref main
+        run: |
+          gh workflow run pages.yml --ref main
+          gh workflow run model-snapshot.yml --ref main
