@@ -70,7 +70,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # This workflow's :17 hourly schedule already proved able to run when
-          # the dedicated 5-minute archive schedules were delayed. Use it as an
-          # independent recovery clock for METAR/SPECI/TAF/SYNOP acquisition.
+          # A completely separate hourly clock recovers each aviation stream
+          # independently, then also runs the slower central/SYNOP path.
+          gh workflow run metar-heartbeat.yml --repo "${{ github.repository }}" --ref main
+          gh workflow run taf-heartbeat.yml --repo "${{ github.repository }}" --ref main
           gh workflow run message-archive.yml --repo "${{ github.repository }}" --ref main
