@@ -3,7 +3,7 @@
 
 Bulletin providers are allowed only in server-side source adapters under scripts/.
 Frontend code and Vercel API handlers must read data/messages via the shared
-MessageArchive client or static archive files, never acquire METAR/TAF directly.
+MessageArchive client, never acquire METAR/TAF directly.
 """
 from __future__ import annotations
 
@@ -56,6 +56,14 @@ def main() -> int:
             violations.append("taf.html: shared archive client is not loaded")
         if "PrognozaEPIRMessageArchive" not in text:
             violations.append("taf.html: generator bypasses shared archive API")
+
+    observation = ROOT / "observation-engine.js"
+    if observation.exists():
+        text = observation.read_text(encoding="utf-8", errors="replace")
+        if "PrognozaEPIRMessageArchive" not in text:
+            violations.append("observation-engine.js: observations bypass shared archive API")
+        if "data/messages/latest.json" in text or "data/messages/recent.json" in text:
+            violations.append("observation-engine.js: direct archive URLs remain instead of shared client")
 
     if violations:
         print("ARCHIVE BOUNDARY VIOLATIONS:")
