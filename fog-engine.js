@@ -10,6 +10,7 @@
   const DMI_MODEL = 'dmi_harmonie_arome_europe';
   const KNMI_MODEL = 'knmi_harmonie_arome_europe';
   const ADAPTIVE_WEIGHTS_URL = 'data/learning/adaptive-weights.json';
+  const FOG_EVENT_SKILL_URL = 'data/learning/fog-event-skill.json';
   const CORE_SUPPLEMENT_MODELS = new Set([
     'ecmwf_ifs','ecmwf_aifs025_single','ncep_gfs_global',
     'icon_d2','icon_eu','icon_global','chmi_aladin_central_europe_2km',
@@ -37,6 +38,7 @@
   let dmiRows = [];
   let knmiRows = [];
   let adaptiveWeights = null;
+  let fogEventSkill = null;
   let supplements = new Map();
   let fogSeries = [];
   let engineError = '';
@@ -358,6 +360,14 @@
     adaptiveWeights=j;
   }
 
+  async function fetchFogEventSkill(){
+    const sep=FOG_EVENT_SKILL_URL.includes('?')?'&':'?';
+    const r=await fetch(FOG_EVENT_SKILL_URL+sep+'_='+Date.now(),{cache:'no-store'});
+    const j=await r.json().catch(()=>null);
+    if(!r.ok||j?.schema!=='prognozaepir-fog-event-skill-v1')throw new Error('fog event skill unavailable');
+    fogEventSkill=j;
+  }
+
   async function fetchSupplement(modelId){
     if(!CORE_SUPPLEMENT_MODELS.has(modelId))return;
     const q=new URLSearchParams({
@@ -384,7 +394,8 @@
       await Promise.all([
         ...ids.map(fetchSupplement),
         fetchKnmi().catch(e=>{knmiRows=[];console.warn('KNMI fog supplement:',e)}),
-        fetchAdaptiveWeights().catch(e=>{adaptiveWeights=null;console.warn('fog adaptive weights:',e)})
+        fetchAdaptiveWeights().catch(e=>{adaptiveWeights=null;console.warn('fog adaptive weights:',e)}),
+        fetchFogEventSkill().catch(e=>{fogEventSkill=null;console.warn('fog event skill:',e)})
       ]);
     }catch(e){engineError=e?.message||String(e);}
     finally{fetchBusy=false;rebuildEngine();}
@@ -595,7 +606,8 @@
     const prefs=[['visibility',.35],['dew_point',.20],['cloud',.20],['wind',.15],['temperature',.10]];
     const parts=prefs.map(([k,w])=>({v:n(row?.components?.[k]?.weight_factor),w}));
     const factor=weightedAvailable(parts).v??n(row?.weight_factor)??1;
-    return clip(base*factor,.015,.25);
+    const eventFactor=n(fogEventSkill?.models?.[modelId]?.lead_buckets?.[bucket]?.weight_factor)??1;
+    return clip(base*factor*eventFactor,.015,.25);
   }
   function weightedModelMean(models,key,lead){
     let sw=0,s=0;for(const m of models){const v=n(m?.[key]),w=fogModelWeight(m.id,lead);if(finite(v)&&finite(w)&&w>0){s+=v*w;sw+=w}}
@@ -727,7 +739,7 @@
       <div class="fog-card"><small>Mgła marznąca</small><strong>${freeze}</strong><em>T przy maksimum ${fmt1(peak.T)}°C</em></div>
       <div class="fog-card"><small>Pewność prognozy</small><strong>${confidenceLabel(current.confidence)}</strong><em>${fmt0((current.confidence??0)*100)}% wskaźnika CONF</em></div>`;
     if(source)source.textContent=`${ENGINE_VERSION} · ${current.models.length} modeli${current.obsUsed?' · OBS '+(current.obsPhenomenon||'aktywne'):''}`;
-    if(note)note.innerHTML=`<b>Dostępność danych:</b> ${fmt0(current.data*100)}% · zgodność modeli ${fmt0((current.agreement??0)*100)}% · DMI fog 2 m aktywne · KNMI HARMONIE aktywne gdy dostępne · obserwacje: ${current.obsUsed?'użyte w nowcaście ('+(current.obsPhenomenon||'OBS')+')':'brak świeżej obserwacji'}. DMI 2 m fog: ${finite(current.dmiFog)?fmt0(current.dmiFog)+'%':'—'}.`;
+    if(note)note.innerHTML=`<b>Dostępność danych:</b> ${fmt0(current.data*100)}% · zgodność modeli ${fmt0((current.agreement??0)*100)}% · DMI fog 2 m · KNMI HARMONIE · lokalna kalibracja METAR/SPECI · obserwacje: ${current.obsUsed?'użyte w nowcaście ('+(current.obsPhenomenon||'OBS')+')':'brak świeżej obserwacji'}. DMI 2 m fog: ${finite(current.dmiFog)?fmt0(current.dmiFog)+'%':'—'}.`;
     if(hours){
       hours.innerHTML=future.slice(0,13).map(x=>`<div class="fog-hour ${riskCss(x.score)}"><b>${localHour(x.t)}</b><div class="p">${fmt0(x.score)}/100</div><small>${scoreClass(x.score)}</small><small>${x.type?.text||'—'}</small><small>VIS ${fmtM(x.vis)}</small><small>&lt;1km ${fmt0(x.vis1000)}/100</small></div>`).join('');
     }
