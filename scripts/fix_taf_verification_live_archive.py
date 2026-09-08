@@ -71,6 +71,17 @@ def main() -> int:
             raise SystemExit("TAF verification normalizeRecord anchor missing")
         s = s.replace(anchor, current_reader + anchor, 1)
 
+    # A missing archive validity field must never overwrite the validity parsed
+    # from the raw TAF. Date.parse(null || 0) is dangerous in JavaScript because
+    # the numeric/string fallback can become a finite historical date, causing a
+    # perfectly valid current TAF to be filtered out before rendering.
+    old_dates = "    const issue=Date.parse(r.issue_time||0),vs=Date.parse(r.valid_start||0),ve=Date.parse(r.valid_end||0);"
+    new_dates = "    const issue=r.issue_time?Date.parse(r.issue_time):NaN,vs=r.valid_start?Date.parse(r.valid_start):NaN,ve=r.valid_end?Date.parse(r.valid_end):NaN;"
+    if old_dates in s:
+        s = s.replace(old_dates, new_dates, 1)
+    elif new_dates not in s:
+        raise SystemExit("TAF verification stored validity parser anchor missing")
+
     # Day files remain the complete history. For the current day, merge the
     # explicit MessageArchive latest TAF so the running 12 h cycle cannot be
     # hidden by a lagging Pages/raw snapshot.
@@ -113,6 +124,8 @@ def main() -> int:
         raise SystemExit("explicit current EPIR TAF MessageArchive read missing")
     if "`${LIVE_ARCHIVE_BASE}${kind}/" not in s:
         raise SystemExit("live day archive URL missing")
+    if new_dates not in s:
+        raise SystemExit("null-safe TAF validity parser missing")
 
     if s != before:
         TARGET.write_text(s, encoding="utf-8")
