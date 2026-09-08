@@ -1,0 +1,28 @@
+[Unit]
+Description=PrognozaEPIR central METAR/SPECI/TAF/SYNOP ingestor
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=prognozaepir
+Group=prognozaepir
+WorkingDirectory=/opt/prognozaepir
+ExecStart=/usr/bin/python3 /opt/prognozaepir/scripts/central_ingestor.py --daemon --interval 120 --publish-git --state-file /var/lib/prognozaepir/ingest-state.json --lock-file /run/prognozaepir/ingest.lock
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=0
+TimeoutStopSec=30
+RuntimeDirectory=prognozaepir
+RuntimeDirectoryMode=0750
+StateDirectory=prognozaepir
+StateDirectoryMode=0750
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/prognozaepir /var/lib/prognozaepir /run/prognozaepir
+
+[Install]
+WantedBy=multi-user.target
