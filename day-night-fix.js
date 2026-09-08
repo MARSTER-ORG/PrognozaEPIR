@@ -1,20 +1,5 @@
 'use strict';
 (() => {
-  const controls = document.querySelector('.controls');
-  if (controls && !controls.querySelector('[data-eumetsat-fog-link="1"]')) {
-    const icm = [...controls.querySelectorAll('a.control-link')].find(a => /ICM\s+UM/i.test(a.textContent || ''));
-    const link = document.createElement('a');
-    link.className = 'control-link';
-    link.dataset.eumetsatFogLink = '1';
-    link.href = 'https://view.eumetsat.int';
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    link.title = 'EUMETView — wybierz warstwę Fog / Low Clouds RGB - MTG - 0 degree';
-    link.textContent = 'EUMETSAT FOG / LOW CLOUDS ↗';
-    if (icm) icm.insertAdjacentElement('afterend', link);
-    else controls.appendChild(link);
-  }
-
   if (typeof draw !== 'function' || typeof ctx === 'undefined' || typeof PANELS === 'undefined' || typeof PLACE === 'undefined') return;
 
   // Keep the original visual treatment that was accepted for the meteogram:
