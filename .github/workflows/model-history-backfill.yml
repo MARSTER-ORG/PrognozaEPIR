@@ -1,6 +1,10 @@
 name: Backfill EPIR model history
 
 on:
+  schedule:
+    # Daily recovery pass. Once the historical archive reaches 100%, the gate
+    # below turns scheduled runs into a cheap no-op.
+    - cron: '41 2 * * *'
   workflow_dispatch:
     inputs:
       start:
@@ -28,7 +32,7 @@ concurrency:
 jobs:
   backfill:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - name: Checkout main
         uses: actions/checkout@v4
@@ -44,31 +48,81 @@ jobs:
             scripts/build_adaptive_weights.py \
             scripts/build_fog_event_learning.py
 
+      - name: Decide whether scheduled recovery is needed
+        id: recovery_gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          # Manual runs and code/workflow changes are deliberate: always run.
+          event = os.environ.get('EVENT_NAME', '')
+          if event != 'schedule':
+              needed = True
+              reason = f'forced by {event or "unknown event"}'
+          else:
+              path = Path('data/learning/model-backfill-state.json')
+              if not path.exists():
+                  needed = True
+                  reason = 'backfill state missing'
+              else:
+                  state = json.loads(path.read_text(encoding='utf-8'))
+                  schema = state.get('schema')
+                  if schema == 'prognozaepir-model-backfill-state-v2':
+                      remaining = int(state.get('remaining_failed_runs') or 0)
+                      complete = int(state.get('complete_runs') or 0)
+                      expected = int(state.get('expected_runs') or 0)
+                      needed = remaining > 0 or expected == 0 or complete < expected
+                      reason = f'v2 remaining={remaining} complete={complete}/{expected}'
+                  else:
+                      failed = int(state.get('failed_runs') or 0)
+                      requested = int(state.get('requested_runs') or 0)
+                      successful = int(state.get('successful_runs') or 0)
+                      needed = failed > 0 or requested == 0 or successful < requested
+                      reason = f'legacy failed={failed} successful={successful}/{requested}'
+
+          print(f'recovery needed: {needed}; {reason}')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
+              f.write(f"needed={'true' if needed else 'false'}\n")
+              f.write(f"reason={reason}\n")
+          PY
+
       - name: Recover missing archived operational model runs
+        if: steps.recovery_gate.outputs.needed == 'true'
         env:
           START: ${{ github.event.inputs.start || '2026-06-01' }}
           END: ${{ github.event.inputs.end || '2026-09-07' }}
         run: python3 scripts/backfill_model_history.py --start "$START" --end "$END" --workers 3 --run-hour 0
 
       - name: Rebuild cloud skill from historical METAR
+        if: steps.recovery_gate.outputs.needed == 'true'
         run: python3 scripts/cloud_learning.py
 
       - name: Rebuild full model verification from METAR SPECI and SYNOP
+        if: steps.recovery_gate.outputs.needed == 'true'
         run: python3 scripts/model_verification.py
 
       - name: Rebuild robust adaptive consensus weights
+        if: steps.recovery_gate.outputs.needed == 'true'
         run: python3 scripts/build_adaptive_weights.py
 
       - name: Rebuild fog and mist event skill from METAR SPECI
+        if: steps.recovery_gate.outputs.needed == 'true'
         run: python3 scripts/build_fog_event_learning.py
 
       - name: Keep dense recent visibility verification
+        if: steps.recovery_gate.outputs.needed == 'true'
         run: python3 scripts/backfill_visibility_verification.py
 
       - name: Embed verification into learning payload
+        if: steps.recovery_gate.outputs.needed == 'true'
         run: python3 scripts/embed_model_verification.py
 
       - name: Validate generated learning data
+        if: steps.recovery_gate.outputs.needed == 'true'
         run: |
           python3 -m json.tool data/learning/model-backfill-state.json >/dev/null
           python3 -m json.tool data/learning/cloud-skill.json >/dev/null
@@ -97,6 +151,7 @@ jobs:
           PY
 
       - name: Commit historical learning data
+        if: steps.recovery_gate.outputs.needed == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -114,6 +169,7 @@ jobs:
           fi
 
       - name: Redeploy updated learning data
+        if: steps.recovery_gate.outputs.needed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
