@@ -3,6 +3,7 @@ from pathlib import Path
 
 import apply_adaptive_runtime_patch as base
 import apply_fog_learning_upgrade as fog
+import apply_fog_event_skill_patch as fog_event
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -25,8 +26,9 @@ def main():
     base.patch_rh_axis()
     base.patch_cloud_learning()
     fog.main()
+    fog_event.main()
     add_legacy_pages_marker()
-    print('adaptive runtime + fog ensemble patch v2 applied without modifying workflow files')
+    print('adaptive runtime + fog ensemble + METAR/SPECI event skill patch applied')
 
 
 if __name__ == '__main__':
