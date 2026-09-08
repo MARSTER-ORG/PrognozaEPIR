@@ -9,6 +9,7 @@ on:
     branches: [main]
     paths:
       - 'scripts/collect_neighbor_tafs.py'
+      - 'scripts/repair_awc_tafs.py'
       - 'scripts/sanitize_neighbor_tafs.py'
       - 'scripts/check_epir_archive_freshness.py'
       - 'scripts/message_archive.py'
@@ -45,6 +46,7 @@ jobs:
         run: |
           python3 -m py_compile \
             scripts/collect_neighbor_tafs.py \
+            scripts/repair_awc_tafs.py \
             scripts/sanitize_neighbor_tafs.py \
             scripts/check_epir_archive_freshness.py \
             scripts/message_archive.py \
@@ -68,7 +70,11 @@ jobs:
             freshness_ok=0
             for source_attempt in 1 2 3; do
               echo "=== TAF source attempt ${source_attempt}/3 ==="
+              # IMGW/PilotHub collector first, then a server-side AWC pass that
+              # uses only documented API parameters and never regresses a newer
+              # snapshot. This also repairs the old AWC cache-buster failure.
               python3 scripts/collect_neighbor_tafs.py || true
+              python3 scripts/repair_awc_tafs.py || true
               python3 scripts/sanitize_neighbor_tafs.py || true
               python3 scripts/message_archive.py
               python3 scripts/finalize_central_message_architecture.py
