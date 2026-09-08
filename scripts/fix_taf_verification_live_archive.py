@@ -52,7 +52,7 @@ def main() -> int:
     ];
   }
 """
-    s, replaced = block.subn(canonical, s, count=1)
+    s, replaced = block.subn(lambda _m: canonical, s, count=1)
     if replaced != 1:
         raise SystemExit("TAF verification centralDayUrls block missing")
 
@@ -89,13 +89,13 @@ def main() -> int:
     if(live&&live.p.ve>target&&live.p.vs<end)entries.push(live);
     const seen=new Set(),unique=[];
     for(const e of entries.sort((a,b)=>a.p.issue-b.p.issue)){
-      const key=e.raw.replace(/\\s+/g,' ').trim();
+      const key=e.raw.replace(/\s+/g,' ').trim();
       if(seen.has(key))continue;seen.add(key);unique.push(e);
     }
     return unique.sort((a,b)=>a.p.vs-b.p.vs||a.p.issue-b.p.issue);
   }
   function forecastText"""
-    s, n = tafs_fn.subn(replacement, s, count=1)
+    s, n = tafs_fn.subn(lambda _m: replacement, s, count=1)
     if n != 1:
         raise SystemExit("TAF verification tafsForValidityDay hook missing")
 
