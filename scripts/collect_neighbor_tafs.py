@@ -15,6 +15,8 @@ from pathlib import Path
 
 STATIONS = ("EPIR", "EPBY", "EPPW", "EPKS")
 OUT = Path("data/taf/neighbors.json")
+EPIR_HISTORY = Path("data/taf/epir")
+EPIR_LATEST = Path("data/taf/latest.json")
 IMGW_URL = "https://awiacja.imgw.pl/metar-i-taf"
 IMGW_API_URL = "https://aviation-api.imgw.pl/data/last?params=taf&format=json&count=4"
 AWC_BASE = "https://aviationweather.gov/api/data/taf"
@@ -43,6 +45,10 @@ UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like 
 
 def utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def iso_dt(value: datetime) -> str:
+    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def with_cache_buster(url: str) -> str:
@@ -193,6 +199,37 @@ def taf_issue_ts(raw: str, now: datetime | None = None) -> float:
     return best.timestamp() if best else 0.0
 
 
+def resolve_ddhh(code: str, ref: datetime) -> datetime | None:
+    if not re.fullmatch(r"\d{4}", code):
+        return None
+    day, hour = int(code[:2]), int(code[2:])
+    candidates: list[datetime] = []
+    for dm in (-1, 0, 1):
+        year, month = month_shift(ref.year, ref.month, dm)
+        if day > calendar.monthrange(year, month)[1]:
+            continue
+        try:
+            candidates.append(datetime(year, month, day, hour, tzinfo=timezone.utc))
+        except ValueError:
+            pass
+    return min(candidates, key=lambda x: abs((x - ref).total_seconds())) if candidates else None
+
+
+def taf_validity(raw: str, issue: datetime) -> tuple[datetime | None, datetime | None]:
+    m = re.search(r"\b(\d{4})/(\d{4})\b", raw)
+    if not m:
+        return None, None
+    start = resolve_ddhh(m.group(1), issue)
+    end = resolve_ddhh(m.group(2), issue)
+    if start and end and end <= start:
+        # The validity period can cross a month boundary. Re-resolve the end
+        # against a reference one day after the start before giving up.
+        end2 = resolve_ddhh(m.group(2), datetime.fromtimestamp(start.timestamp() + 86400, tz=timezone.utc))
+        if end2:
+            end = end2
+    return start, end
+
+
 def is_current(raw: str, now: datetime | None = None) -> bool:
     now = now or datetime.now(timezone.utc)
     ts = taf_issue_ts(raw, now)
@@ -209,6 +246,84 @@ def load_existing() -> dict:
         return json.loads(OUT.read_text(encoding="utf-8"))
     except Exception:
         return {}
+
+
+def read_jsonl(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    rows: list[dict] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+            if isinstance(row, dict):
+                rows.append(row)
+        except Exception:
+            pass
+    return rows
+
+
+def build_epir_record(row: dict) -> dict | None:
+    raw = normalize_taf(row.get("raw") or "")
+    if not raw or not is_current(raw):
+        return None
+    issue_ts = taf_issue_ts(raw)
+    if not issue_ts:
+        return None
+    issue = datetime.fromtimestamp(issue_ts, tz=timezone.utc)
+    valid_start, valid_end = taf_validity(raw, issue)
+    record = {
+        "schema": "prognozaepir-epir-taf-record-v1",
+        "station": "EPIR",
+        "kind": "official",
+        "raw": raw,
+        "source": row.get("source") or "CURRENT_TAF_COLLECTOR",
+        "source_url": row.get("source_url"),
+        "source_updated_at": row.get("updated_at") or utcnow_iso(),
+        "issue_time": iso_dt(issue),
+        "valid_start": iso_dt(valid_start) if valid_start else None,
+        "valid_end": iso_dt(valid_end) if valid_end else None,
+    }
+    return record
+
+
+def persist_epir_current(row: dict) -> bool:
+    """Persist the selected current EPIR TAF into staging consumed by MessageArchive."""
+    record = build_epir_record(row)
+    if not record:
+        return False
+    issue = datetime.fromisoformat(record["issue_time"].replace("Z", "+00:00"))
+    day_path = EPIR_HISTORY / f"{issue:%Y}" / f"{issue:%m}" / f"{issue:%d}.jsonl"
+    rows = read_jsonl(day_path)
+    changed = False
+    if not any(normalize_taf(x.get("raw") or "") == record["raw"] for x in rows):
+        rows.append(record)
+        rows.sort(key=lambda x: (x.get("issue_time") or "", x.get("raw") or ""))
+        day_path.parent.mkdir(parents=True, exist_ok=True)
+        day_path.write_text(
+            "".join(json.dumps(x, ensure_ascii=False, separators=(",", ":")) + "\n" for x in rows),
+            encoding="utf-8",
+        )
+        changed = True
+        print("Archived current EPIR TAF staging:", record["issue_time"], record["raw"])
+
+    old_latest = {}
+    try:
+        old_latest = json.loads(EPIR_LATEST.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    old_issue = str((old_latest.get("taf") or {}).get("issue_time") or "")
+    if record["issue_time"] >= old_issue and (old_latest.get("taf") or {}).get("raw") != record["raw"]:
+        EPIR_LATEST.parent.mkdir(parents=True, exist_ok=True)
+        EPIR_LATEST.write_text(json.dumps({
+            "schema": "prognozaepir-epir-taf-latest-v1",
+            "station": "EPIR",
+            "taf": record,
+        }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        changed = True
+        print("Updated EPIR TAF latest staging:", record["issue_time"])
+    return changed
 
 
 def add_candidate(store: dict[str, list[dict]], station: str, raw: str, source: str, url: str) -> None:
@@ -346,6 +461,12 @@ def main() -> int:
                 "source": None,
                 "source_url": None,
             }
+
+    # EPIR is special: unlike neighboring TAFs it is historical verification
+    # data. Persist the selected current bulletin into the staging paths that
+    # message_archive.py consumes in this same central ingest cycle.
+    if persist_epir_current(new_st.get("EPIR") or {}):
+        changed = True
 
     payload = {
         "schema": "prognozaepir-neighbor-tafs-v3",

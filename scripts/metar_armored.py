@@ -14,6 +14,7 @@ module only hardens transport, source redundancy and persistence around it.
 """
 from __future__ import annotations
 
+import gzip
 import json
 import os
 import random
@@ -21,6 +22,7 @@ import socket
 import time
 import urllib.error
 import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -88,19 +90,62 @@ import refresh_epir_metar as refresh  # noqa: E402
 import live_metar_collector as live  # noqa: E402
 
 # NOAA/NWS Aviation Weather Center is a genuinely independent worldwide OPMET
-# source. Ask for 12 hours, not only the latest message, so a run that resumes
-# after a scheduler outage can fill every missing 00/30 slot still available
-# in the rolling AWC archive. Direct IMGW remains higher priority.
+# source. The normal endpoint is retained for historical backfill, while the
+# documented once-per-minute cache is an additional latest-report recovery path.
 AWC_URL = 'https://aviationweather.gov/api/data/metar?ids=EPIR&format=raw&hours=12'
+AWC_CACHE_URL = 'https://aviationweather.gov/data/cache/metars.cache.csv.gz'
+refresh.SOURCE_PRIORITY.setdefault('AWC_CACHE_METAR', 55)
 refresh.SOURCE_PRIORITY.setdefault('AWC_METAR', 50)
 
-# Do not waste the armored path on obsolete IMGW HTML/RSS probes. Direct IMGW
-# API is already queried by live.fetch_imgw_api_reports(). Keep only useful
-# independent fallbacks in the generic scanner.
-refresh.IMGW_ENDPOINTS = ()
+# Keep one station-scoped IMGW HTML endpoint as a fallback because the public
+# JSON endpoint has occasionally returned HTTP 400 while the Awiacja service
+# itself still displayed current bulletins. Older legacy PHP/RSS probes remain
+# disabled.
+refresh.IMGW_ENDPOINTS = (
+    ('IMGW-AERODROME-EPIR', 'https://awiacja.imgw.pl/metar-i-taf?aport=EPIR'),
+)
 refresh.LIVE_PAGES = (
     ('CZAD', 'https://metar.czad.org/', 'METAR_CZAD'),
 )
+
+
+def fetch_awc_cache_reports() -> list[dict]:
+    host = _host(AWC_CACHE_URL)
+    stat = _http_health.setdefault(host, {'ok': 0, 'fail': 0, 'attempts': 0, 'last_error': None})
+    last_exc: Exception | None = None
+    for attempt in range(1, 4):
+        stat['attempts'] += 1
+        if attempt > 1:
+            time.sleep(0.8 * attempt + random.uniform(0.0, 0.3))
+        try:
+            req = urllib.request.Request(
+                AWC_CACHE_URL,
+                headers={
+                    'User-Agent': 'PrognozaEPIR/1.0 (+central-ingestor)',
+                    'Accept': 'application/gzip, application/octet-stream, */*',
+                    'Cache-Control': 'no-cache',
+                },
+            )
+            with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_S) as response:
+                payload = response.read()
+            text = gzip.decompress(payload).decode('utf-8', errors='replace')
+            rows = [
+                r for r in refresh.extract_epir_reports(text, 'AWC_CACHE_METAR')
+                if refresh.backfill_valid(r)
+            ]
+            stat['ok'] += 1
+            stat['last_error'] = None
+            print(
+                'AWC METAR cache: backfill=', len(rows),
+                ' newest=', (max(rows, key=refresh.rank).get('obs_time') if rows else None),
+            )
+            return rows
+        except Exception as exc:
+            last_exc = exc
+            stat['last_error'] = str(exc)
+    stat['fail'] += 1
+    print('AWC METAR cache warning:', last_exc)
+    return []
 
 
 def fetch_awc_reports() -> list[dict]:
@@ -125,6 +170,7 @@ def armored_fetch_candidates() -> list[dict]:
         # The direct+fallback collector is expected to self-isolate providers,
         # but keep the extra guard so AWC can still rescue the run.
         print('live collector warning:', exc)
+    rows.extend(fetch_awc_cache_reports())
     rows.extend(fetch_awc_reports())
 
     # Dedupe exact reports, preferring the most authoritative source.
