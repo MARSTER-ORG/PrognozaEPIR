@@ -1,8 +1,8 @@
 'use strict';
 
 // Compatibility endpoint only. Acquisition belongs to scripts/central_ingestor.py.
-// This handler never contacts IMGW/AWC/PilotHub; it exposes the already-built
-// authoritative archive for legacy callers that still use /api/taf-proxy.
+// This handler never contacts bulletin providers; it exposes the already-built
+// authoritative archive for legacy API callers.
 const fs = require('fs');
 const path = require('path');
 
