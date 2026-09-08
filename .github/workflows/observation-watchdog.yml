@@ -1,7 +1,6 @@
-name: Aviation archive watchdog
+name: Central aviation archive watchdog
 on:
   schedule:
-    # Backup clock, deliberately away from the top-of-hour load window.
     - cron: '11-51/10 * * * *'
   workflow_dispatch:
   repository_dispatch:
@@ -16,9 +15,7 @@ jobs:
   trigger:
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger independent aviation collectors
+      - name: Trigger the single central ingestor
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh workflow run metar-heartbeat.yml --repo "${{ github.repository }}" --ref main
-          gh workflow run taf-heartbeat.yml --repo "${{ github.repository }}" --ref main
+        run: gh workflow run message-archive.yml --repo "${{ github.repository }}" --ref main
