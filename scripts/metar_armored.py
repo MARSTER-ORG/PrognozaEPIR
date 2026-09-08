@@ -88,8 +88,10 @@ import refresh_epir_metar as refresh  # noqa: E402
 import live_metar_collector as live  # noqa: E402
 
 # NOAA/NWS Aviation Weather Center is a genuinely independent worldwide OPMET
-# source. It is lower priority than direct IMGW but above scraped mirrors.
-AWC_URL = 'https://aviationweather.gov/api/data/metar?ids=EPIR&format=raw'
+# source. Ask for 12 hours, not only the latest message, so a run that resumes
+# after a scheduler outage can fill every missing 00/30 slot still available
+# in the rolling AWC archive. Direct IMGW remains higher priority.
+AWC_URL = 'https://aviationweather.gov/api/data/metar?ids=EPIR&format=raw&hours=12'
 refresh.SOURCE_PRIORITY.setdefault('AWC_METAR', 50)
 
 # Do not waste the armored path on obsolete IMGW HTML/RSS probes. Direct IMGW
