@@ -5,6 +5,7 @@ on:
     paths:
       - taf-verification.js
       - scripts/embed_taf_verification.py
+      - scripts/fix_taf_verification_live_archive.py
       - scripts/apply_central_archive_cutover.py
       - scripts/finalize_central_message_architecture.py
       - scripts/ensure_taf_native_archive.py
@@ -12,6 +13,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
+  actions: write
 concurrency:
   group: sync-taf-verification
   cancel-in-progress: false
@@ -22,15 +24,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Embed verifier and enforce native central archive
+      - name: Embed verifier and enforce live central archive
         run: |
-          python3 scripts/embed_taf_verification.py
           python3 scripts/apply_central_archive_cutover.py
           python3 scripts/finalize_central_message_architecture.py
           python3 scripts/ensure_taf_native_archive.py
+          python3 scripts/fix_taf_verification_live_archive.py
+          python3 scripts/embed_taf_verification.py
           node --check taf-verification.js
           grep -F 'PrognozaEPIRMessageArchive' taf.html
           grep -F 'loadNeighborArchive' taf.html
+          grep -F "A.getLatest('TAF','EPIR',true)" taf-verification.js
+          grep -F 'central-ingestor-production.up.railway.app/data/messages/' taf-verification.js
+          test "$(grep -F -c 'function centralDayUrls(kind,day)' taf-verification.js)" -eq 1
           ! grep -F 'taf-archive-source.js' taf.html
           ! grep -F 'loadImgwLive(' taf.html
           ! grep -F 'awiacja.imgw.pl' taf.html
@@ -40,10 +46,17 @@ jobs:
           ! grep -F 'data/taf/epir/' taf-verification.js
       - name: Commit synchronized page
         run: |
-          if git diff --quiet -- taf.html taf-verification.js data/messages; then exit 0; fi
+          if git diff --quiet -- taf.html taf-verification.js data/messages; then
+            echo 'TAF verification already synchronized'
+            exit 0
+          fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add taf.html taf-verification.js data/messages
-          git commit -m 'taf: keep verifier on native central message archive'
+          git commit -m 'taf: keep verifier on live central message archive'
           git pull --rebase origin main
           git push
+      - name: Deploy current main to GitHub Pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main
