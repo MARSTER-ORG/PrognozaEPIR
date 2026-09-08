@@ -1,9 +1,11 @@
 name: Aviation archive watchdog
 on:
   schedule:
-    # Independent backup clock. The primary METAR/TAF heartbeats run every 5 min.
-    - cron: '4-54/10 * * * *'
+    # Backup clock, deliberately away from the top-of-hour load window.
+    - cron: '11-51/10 * * * *'
   workflow_dispatch:
+  repository_dispatch:
+    types: [aviation_tick]
 permissions:
   contents: read
   actions: write
