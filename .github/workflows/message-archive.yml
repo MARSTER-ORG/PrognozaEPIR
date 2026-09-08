@@ -14,6 +14,7 @@ on:
       - 'scripts/central_ingestor.py'
       - 'scripts/check_archive_boundaries.py'
       - 'scripts/apply_shared_archive_client.py'
+      - 'scripts/apply_cloud_archive_client.py'
       - 'scripts/message_archive.py'
       - 'scripts/metar_armored.py'
       - 'scripts/collect_epir_observations.py'
@@ -26,6 +27,7 @@ on:
       - 'scripts/ensure_taf_native_archive.py'
       - 'message-archive-client.js'
       - 'observation-engine.js'
+      - 'cloud-learning-client.js'
       - 'api/taf-proxy.js'
       - '.github/workflows/message-archive.yml'
 
@@ -51,11 +53,13 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Enforce shared archive consumer
+      - name: Enforce shared archive consumers
         run: |
-          python3 -m py_compile scripts/apply_shared_archive_client.py
+          python3 -m py_compile scripts/apply_shared_archive_client.py scripts/apply_cloud_archive_client.py
           python3 scripts/apply_shared_archive_client.py
+          python3 scripts/apply_cloud_archive_client.py
           node --check observation-engine.js
+          node --check cloud-learning-client.js
 
       - name: Validate central architecture
         run: |
@@ -63,6 +67,7 @@ jobs:
             scripts/central_ingestor.py \
             scripts/check_archive_boundaries.py \
             scripts/apply_shared_archive_client.py \
+            scripts/apply_cloud_archive_client.py \
             scripts/message_archive.py \
             scripts/metar_armored.py \
             scripts/collect_epir_observations.py \
@@ -76,6 +81,7 @@ jobs:
           node --check message-archive-client.js
           node --check api/taf-proxy.js
           node --check observation-engine.js
+          node --check cloud-learning-client.js
           python3 scripts/check_archive_boundaries.py
 
       - name: Run the only archive ingest mechanism
@@ -94,7 +100,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet -- data/messages observation-engine.js; then
+          paths=(data/messages observation-engine.js cloud-learning-client.js)
+          if git diff --quiet -- "${paths[@]}"; then
             echo 'Central archive and consumers already up to date.'
             echo 'changed=false' >> "$GITHUB_OUTPUT"
             exit 0
@@ -102,7 +109,7 @@ jobs:
 
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add data/messages observation-engine.js
+          git add "${paths[@]}"
           git commit -m 'weather: central ingestor archive update'
 
           for attempt in 1 2 3 4 5; do
