@@ -2,10 +2,9 @@
 """Authoritative live EPIR METAR/SPECI collector.
 
 The primary aviation source is the same public IMGW Aviation API used by the
-awiacja.imgw.pl frontend. IMGW currently accepts count=4 for the `last`
-endpoint, which gives the routine ~90-minute repair buffer seen in the web UI.
-The parser itself has no four-report limit: every METAR/SPECI message returned
-anywhere below EPIR.metars is decoded, deduplicated and archived.
+awiacja.imgw.pl frontend. The collector first asks for a wider recent window
+(count=12) to repair gaps after delayed/dropped automation and falls back to the
+known-good count=4 request if the wider request is rejected or empty.
 
 PilotHub, OGIMET and CZAD remain independent fallbacks. The newest observation
 time always wins; source priority only breaks ties for the same report.
@@ -18,10 +17,8 @@ import time
 import refresh_epir_metar as refresh
 import supplement_metar_pilothub as pilothub
 
-IMGW_API_URL = (
-    'https://aviation-api.imgw.pl/data/last'
-    '?params=metar,taf&format=json&count=4'
-)
+IMGW_API_BASE = 'https://aviation-api.imgw.pl/data/last?params=metar,taf&format=json'
+IMGW_API_COUNTS = (12, 4)
 EPIN_PAGE = (
     'PILOTHUB-EPIN',
     'https://pilothub.pl/lotniska/epin',
@@ -48,25 +45,18 @@ def _walk_message_records(value):
             yield from _walk_message_records(child)
 
 
-def _fresh_imgw_api_url() -> str:
+def _fresh_imgw_api_url(count: int) -> str:
     # The browser frontend can already show a new :00/:30 report while a shared
     # intermediary still serves an older `last` response. A harmless query
     # nonce makes every collector pass a fresh request to the same IMGW API.
-    return f'{IMGW_API_URL}&_={int(time.time() * 1000)}'
+    return f'{IMGW_API_BASE}&count={count}&_={int(time.time() * 1000)}'
 
 
-def fetch_imgw_api_reports():
-    """Fetch all EPIR METAR/SPECI messages exposed by the official IMGW frontend API."""
-    try:
-        payload = json.loads(refresh.c.get_text(_fresh_imgw_api_url(), timeout=20))
-    except Exception as exc:
-        print('IMGW Aviation API warning:', exc)
-        return []
-
+def _decode_imgw_payload(payload, count: int):
     epir = payload.get('EPIR') if isinstance(payload, dict) else None
     metars = (epir or {}).get('metars') if isinstance(epir, dict) else None
     if not metars:
-        print('IMGW Aviation API: EPIR.metars unavailable')
+        print(f'IMGW Aviation API count={count}: EPIR.metars unavailable')
         return []
 
     rows = []
@@ -82,6 +72,7 @@ def fetch_imgw_api_reports():
             if not refresh.backfill_valid(row):
                 continue
             row['imgw_api'] = 'aviation-api.imgw.pl'
+            row['imgw_api_count'] = count
             row['imgw_api_date'] = record.get('date')
             row['imgw_api_file'] = record.get('file')
             row['imgw_api_message_type'] = record.get('messageType')
@@ -92,13 +83,30 @@ def fetch_imgw_api_reports():
 
     rows.sort(key=refresh.rank)
     print(
-        'IMGW Aviation API: raw_records=', raw_records,
+        f'IMGW Aviation API count={count}: raw_records=', raw_records,
         ' decoded/backfill=', len(rows),
         ' newest=', (rows[-1].get('obs_time') if rows else None),
     )
     for row in rows:
         print('IMGW EPIR:', row.get('obs_time'), row.get('report_type'), row.get('raw'))
     return rows
+
+
+def fetch_imgw_api_reports():
+    """Fetch a wider IMGW repair window, falling back to the known-good query."""
+    last_error = None
+    for count in IMGW_API_COUNTS:
+        try:
+            payload = json.loads(refresh.c.get_text(_fresh_imgw_api_url(count), timeout=20))
+            rows = _decode_imgw_payload(payload, count)
+            if rows:
+                return rows
+        except Exception as exc:
+            last_error = exc
+            print(f'IMGW Aviation API count={count} warning:', exc)
+    if last_error:
+        print('IMGW Aviation API exhausted all count windows:', last_error)
+    return []
 
 
 def fetch_candidates():
