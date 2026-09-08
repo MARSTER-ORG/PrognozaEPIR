@@ -1,0 +1,122 @@
+name: Armored EPIR neighbor TAF heartbeat
+
+on:
+  schedule:
+    - cron: '3-58/5 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/collect_neighbor_tafs.py'
+      - 'scripts/sanitize_neighbor_tafs.py'
+      - 'scripts/check_epir_archive_freshness.py'
+      - 'scripts/message_archive.py'
+      - 'scripts/finalize_central_message_architecture.py'
+      - 'scripts/ensure_taf_native_archive.py'
+      - '.github/workflows/taf-heartbeat.yml'
+
+permissions:
+  contents: write
+  actions: write
+
+# TAF has its own queue and cannot suppress or replace METAR runs.
+concurrency:
+  group: prognozaepir-taf-heartbeat
+  cancel-in-progress: false
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate TAF path
+        run: |
+          python3 -m py_compile \
+            scripts/collect_neighbor_tafs.py \
+            scripts/sanitize_neighbor_tafs.py \
+            scripts/check_epir_archive_freshness.py \
+            scripts/message_archive.py \
+            scripts/finalize_central_message_architecture.py \
+            scripts/ensure_taf_native_archive.py
+
+      - name: Acquire and publish every recovered TAF
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          changed=false
+
+          for publish_attempt in 1 2 3 4 5; do
+            echo "=== TAF publish attempt ${publish_attempt}/5 ==="
+            git fetch origin main
+            git reset --hard origin/main
+
+            freshness_ok=0
+            for source_attempt in 1 2 3; do
+              echo "=== TAF source attempt ${source_attempt}/3 ==="
+              python3 scripts/collect_neighbor_tafs.py || true
+              python3 scripts/sanitize_neighbor_tafs.py || true
+              python3 scripts/message_archive.py
+              python3 scripts/finalize_central_message_architecture.py
+              python3 scripts/ensure_taf_native_archive.py
+              python3 scripts/message_archive.py --validate-only
+              if python3 scripts/check_epir_archive_freshness.py --taf-only --all-tafs; then
+                freshness_ok=1
+                break
+              fi
+              if [ "$source_attempt" -lt 3 ]; then sleep $((source_attempt * 15)); fi
+            done
+
+            # Never let one missing station suppress TAFs recovered for the
+            # remaining stations. Publish first; the final gate below is alarm.
+            git restore --worktree -- data/observations data/taf 2>/dev/null || true
+            git clean -fd -- data/observations data/taf >/dev/null 2>&1 || true
+            git restore --worktree -- .github/workflows/pages.yml 2>/dev/null || true
+            python3 scripts/message_archive.py --validate-only
+
+            if git diff --quiet -- data/messages; then
+              echo 'TAF central archive already up to date.'
+              echo "changed=$changed" >> "$GITHUB_OUTPUT"
+              echo "freshness_ok=$freshness_ok" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            git add data/messages
+            git commit -m 'weather: heartbeat TAF archive'
+            if git push origin HEAD:main; then
+              changed=true
+              echo 'TAF archive published.'
+              echo "changed=$changed" >> "$GITHUB_OUTPUT"
+              echo "freshness_ok=$freshness_ok" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            echo 'TAF push raced another archive writer; rebuilding from newest main.'
+            sleep $((publish_attempt * 3))
+          done
+          echo 'Unable to publish TAF after 5 clean rebuild attempts.' >&2
+          exit 1
+
+      - name: Refresh Pages after recovered TAF
+        if: steps.publish.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --repo "${{ github.repository }}" --ref main
+
+      - name: Final per-station TAF cycle alarm
+        # EPIR history and EPBY/EPPW/EPKS current snapshots are checked
+        # independently against their nominal issue times.
+        run: python3 scripts/check_epir_archive_freshness.py --taf-only --all-tafs
