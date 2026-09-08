@@ -16,6 +16,7 @@ from pathlib import Path
 STATIONS = ("EPIR", "EPBY", "EPPW", "EPKS")
 OUT = Path("data/taf/neighbors.json")
 IMGW_URL = "https://awiacja.imgw.pl/metar-i-taf"
+IMGW_API_URL = "https://aviation-api.imgw.pl/data/last?params=taf&format=json&count=4"
 AWC_BASE = "https://aviationweather.gov/api/data/taf"
 PILOTHUB_PAGES = {
     "EPIR": (
@@ -31,7 +32,12 @@ PILOTHUB_PAGES = {
         "https://pilothub.pl/lotniska/epze",
     ),
 }
-SOURCE_PRIORITY = {"IMGW Awiacja": 30, "PilotHub / IMGW": 20, "AWC": 10}
+SOURCE_PRIORITY = {
+    "IMGW Aviation API": 40,
+    "IMGW Awiacja": 30,
+    "PilotHub / IMGW": 20,
+    "AWC": 10,
+}
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
 
 
@@ -132,6 +138,34 @@ def extract_station_tafs(page: str, station: str) -> list[str]:
     return [normalize_taf(x) for x in matches if x.strip()]
 
 
+def _walk_message_records(value):
+    if isinstance(value, dict):
+        if isinstance(value.get("message"), str):
+            yield value
+        for child in value.values():
+            yield from _walk_message_records(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _walk_message_records(child)
+
+
+def extract_imgw_api_tafs(page: str) -> list[tuple[str, str]]:
+    payload = json.loads(page)
+    rows: list[tuple[str, str]] = []
+    if not isinstance(payload, dict):
+        return rows
+    for station in STATIONS:
+        node = payload.get(station)
+        if not isinstance(node, dict):
+            continue
+        tafs = node.get("tafs")
+        for record in _walk_message_records(tafs):
+            raw = normalize_taf(record.get("message") or "")
+            if re.search(rf"\bTAF(?:\s+(?:AMD|COR))?\s+{re.escape(station)}\b", raw, re.I):
+                rows.append((station, raw))
+    return rows
+
+
 def month_shift(year: int, month: int, delta: int) -> tuple[int, int]:
     idx = year * 12 + (month - 1) + delta
     return idx // 12, idx % 12 + 1
@@ -199,8 +233,12 @@ def collect_candidates() -> dict[str, list[dict]]:
     store: dict[str, list[dict]] = defaultdict(list)
     jobs: list[tuple[str, str | None, str, str, str]] = []
 
-    # Official IMGW. Try station-scoped URLs as well as the combined page.
-    # The station parameter helps avoid a stale cached fragment on the large page.
+    # Direct official IMGW Aviation API. This is the same backend used by the
+    # client-rendered Awiacja page and does not depend on raw HTML containing TAFs.
+    jobs.append(("imgw_api", None, IMGW_API_URL, "IMGW Aviation API", IMGW_API_URL))
+
+    # Official Awiacja page remains an independent fallback. Try station-scoped
+    # URLs as well as the combined page to reduce stale cached fragments.
     for url in [f"{IMGW_URL}?aport={sid}" for sid in STATIONS] + [IMGW_URL]:
         jobs.append(("multi", None, url, "IMGW Awiacja", IMGW_URL))
 
@@ -218,13 +256,17 @@ def collect_candidates() -> dict[str, list[dict]]:
 
     def worker(job: tuple[str, str | None, str, str, str]):
         mode, station, url, source, source_url = job
-        accept = "text/plain,*/*;q=0.8" if source == "AWC" else "text/html,*/*;q=0.8"
-        page = fetch_text(url, accept, retries=1)
-        if mode == "multi":
-            rows = split_tafs(page)
+        if mode == "imgw_api":
+            page = fetch_text(url, "application/json,text/plain,*/*;q=0.8", retries=2)
+            rows = extract_imgw_api_tafs(page)
         else:
-            assert station is not None
-            rows = [(station, raw) for raw in extract_station_tafs(page, station)]
+            accept = "text/plain,*/*;q=0.8" if source == "AWC" else "text/html,*/*;q=0.8"
+            page = fetch_text(url, accept, retries=1)
+            if mode == "multi":
+                rows = split_tafs(page)
+            else:
+                assert station is not None
+                rows = [(station, raw) for raw in extract_station_tafs(page, station)]
         return source, source_url, url, rows
 
     # Parallel requests keep the scheduled job fast even when one fallback site
@@ -235,6 +277,7 @@ def collect_candidates() -> dict[str, list[dict]]:
             job = future_map[fut]
             try:
                 source, source_url, _url, rows = fut.result()
+                print(f"TAF source {source}: decoded={len(rows)}")
                 for sid, raw in rows:
                     add_candidate(store, sid, raw, source, source_url)
             except Exception as exc:
@@ -248,7 +291,6 @@ def source_url_rank(station: str, row: dict) -> int:
         return 0
     pages = PILOTHUB_PAGES.get(station, ())
     try:
-        # Earlier entries are intentionally the more station-specific pages.
         return len(pages) - pages.index(row.get("source_url"))
     except ValueError:
         return 0
@@ -293,9 +335,8 @@ def main() -> int:
                 or prev.get("source_url") != best["source_url"]
             )
         elif prev.get("raw"):
-            # Preserve the last successful message during a total upstream
-            # outage. Its original timestamp remains, so the browser marks it
-            # as a stale cycle instead of treating it as current.
+            # Preserve last successful message during total upstream outage.
+            # Its issue time remains old, so the freshness gate detects it.
             new_st[sid] = prev
         else:
             new_st[sid] = {
@@ -307,9 +348,9 @@ def main() -> int:
             }
 
     payload = {
-        "schema": "prognozaepir-neighbor-tafs-v2",
-        "source": "IMGW Awiacja + AWC + PilotHub/IMGW; newest-current selection",
-        "source_url": IMGW_URL,
+        "schema": "prognozaepir-neighbor-tafs-v3",
+        "source": "IMGW Aviation API + IMGW Awiacja + AWC + PilotHub/IMGW; newest-current selection",
+        "source_url": IMGW_API_URL,
         "stations": new_st,
         "updated_at": utcnow_iso() if changed or not old.get("updated_at") else old.get("updated_at"),
     }
