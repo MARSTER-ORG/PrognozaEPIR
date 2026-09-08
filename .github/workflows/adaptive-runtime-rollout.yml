@@ -8,6 +8,7 @@ on:
     paths:
       - 'scripts/apply_adaptive_runtime_patch.py'
       - 'scripts/apply_adaptive_runtime_patch_v2.py'
+      - 'scripts/apply_fog_learning_upgrade.py'
       - 'scripts/build_model_snapshot.py'
       - 'scripts/build_adaptive_weights.py'
       - 'scripts/cloud_learning_backfill.py'
@@ -32,7 +33,7 @@ jobs:
           ref: ${{ github.ref_name }}
           fetch-depth: 0
 
-      - name: Apply frontend/runtime patch
+      - name: Apply frontend/runtime and fog patches
         run: python3 scripts/apply_adaptive_runtime_patch_v2.py
 
       - name: Validate Python syntax
@@ -40,6 +41,7 @@ jobs:
           python3 -m py_compile \
             scripts/apply_adaptive_runtime_patch.py \
             scripts/apply_adaptive_runtime_patch_v2.py \
+            scripts/apply_fog_learning_upgrade.py \
             scripts/build_model_snapshot.py \
             scripts/build_adaptive_weights.py \
             scripts/cloud_learning_backfill.py \
@@ -83,6 +85,7 @@ jobs:
         run: |
           node --check cloud-learning-client.js
           node --check rh-axis-fix.js
+          node --check fog-engine.js
           python3 - <<'PY'
           from pathlib import Path
           s=Path('index.html').read_text(encoding='utf-8')
@@ -100,6 +103,10 @@ jobs:
           client=Path('cloud-learning-client.js').read_text(encoding='utf-8')
           assert 'MODEL_SNAPSHOT_RAW' in client
           assert 'repository-snapshot' in client
+          fog=Path('fog-engine.js').read_text(encoding='utf-8')
+          assert "KNMI_MODEL = 'knmi_harmonie_arome_europe'" in fog
+          assert 'fogModelWeight' in fog
+          assert 'directFog' in fog
           PY
           node --check /tmp/index-inline.js
 
@@ -109,14 +116,14 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           rm -rf scripts/__pycache__
           git add \
-            index.html rh-axis-fix.js cloud-learning-client.js \
+            index.html rh-axis-fix.js cloud-learning-client.js fog-engine.js \
             scripts/cloud_learning.py \
             data/runtime \
             data/learning
           if git diff --cached --quiet; then
             echo "No rollout changes"
           else
-            git commit -m "weather: activate server snapshot and adaptive model weighting"
+            git commit -m "weather: activate robust consensus and fog ensemble learning"
             git reset --hard HEAD
             git clean -fd
             for attempt in 1 2 3 4; do
