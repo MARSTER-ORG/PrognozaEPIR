@@ -52,7 +52,8 @@ def main() -> int:
     taf = ROOT / "taf.html"
     if taf.exists():
         text = taf.read_text(encoding="utf-8", errors="replace")
-        if 'src="message-archive-client.js"' not in text:
+        # Query-string cache busting is allowed and expected for the shared client.
+        if not re.search(r'<script\s+src=["\']message-archive-client\.js(?:\?[^"\']*)?["\']\s*></script>', text, re.I):
             violations.append("taf.html: shared archive client is not loaded")
         if "PrognozaEPIRMessageArchive" not in text:
             violations.append("taf.html: generator bypasses shared archive API")
