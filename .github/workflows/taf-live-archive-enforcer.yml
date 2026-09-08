@@ -1,0 +1,49 @@
+name: Enforce TAF live MessageArchive
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'taf.html'
+      - 'message-archive-client.js'
+      - 'scripts/apply_taf_live_archive.py'
+      - '.github/workflows/taf-live-archive-enforcer.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: taf-live-archive-enforcer
+  cancel-in-progress: false
+
+jobs:
+  enforce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce live archive reads
+        run: |
+          python3 scripts/apply_taf_live_archive.py taf.html
+          python3 scripts/check_archive_boundaries.py
+          grep -F 'message-archive-client.js?v=railway-live-archive-v2' taf.html
+          grep -F "A.getLatest('AVIATION','EPIR',true)" taf.html
+          grep -F "A.getLatest('TAF','EPIR',true)" taf.html
+          grep -F 'central-ingestor-production.up.railway.app/data/messages/' taf.html
+
+      - name: Commit enforced TAF consumer
+        run: |
+          if git diff --quiet -- taf.html; then
+            echo 'taf.html already uses the live central archive'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add taf.html
+          git commit -m 'taf: enforce live central archive reads'
+          git pull --rebase origin main
+          git push origin HEAD:main
