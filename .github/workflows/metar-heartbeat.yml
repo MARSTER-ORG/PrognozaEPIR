@@ -1,121 +1,38 @@
-name: Armored EPIR METAR SPECI heartbeat
+name: EPIR METAR SPECI archive watchdog
 
 on:
   schedule:
-    # GitHub documents that scheduled runs near the start of an hour can be
-    # delayed or dropped under load. Poll from minute 07 instead.
     - cron: '7-57/5 * * * *'
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'scripts/metar_armored.py'
-      - 'scripts/live_metar_collector.py'
-      - 'scripts/refresh_epir_metar.py'
-      - 'scripts/check_epir_archive_freshness.py'
-      - '.github/workflows/metar-heartbeat.yml'
 
 permissions:
-  contents: write
+  contents: read
   actions: write
 
-# METAR/SPECI has its own scheduler queue. A slow or failed TAF job must never
-# replace/cancel a pending METAR run through a shared concurrency group.
 concurrency:
-  group: prognozaepir-metar-heartbeat
-  cancel-in-progress: false
+  group: prognozaepir-metar-watchdog
+  cancel-in-progress: true
 
 jobs:
-  heartbeat:
+  watchdog:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
-      - name: Checkout main
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: main
-          fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
-      - name: Validate METAR path
-        run: |
-          python3 -m py_compile \
-            scripts/metar_armored.py \
-            scripts/live_metar_collector.py \
-            scripts/refresh_epir_metar.py \
-            scripts/message_archive.py \
-            scripts/check_epir_archive_freshness.py
-
-      - name: Acquire and publish every recovered METAR SPECI
-        id: publish
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          changed=false
-
-          # A concurrent TAF/SYNOP writer may win the git race. Never rebase an
-          # old generated archive over it: reset to newest main, reacquire this
-          # stream, rebuild the views and retry from scratch.
-          for publish_attempt in 1 2 3 4 5; do
-            echo "=== METAR publish attempt ${publish_attempt}/5 ==="
-            git fetch origin main
-            git reset --hard origin/main
-
-            freshness_ok=0
-            for source_attempt in 1 2 3; do
-              echo "=== METAR source attempt ${source_attempt}/3 ==="
-              python3 scripts/metar_armored.py || true
-              python3 scripts/message_archive.py
-              if python3 scripts/check_epir_archive_freshness.py --metar-only; then
-                freshness_ok=1
-                break
-              fi
-              if [ "$source_attempt" -lt 3 ]; then sleep $((source_attempt * 15)); fi
-            done
-
-            # Publish any new METAR/SPECI even when the expected routine slot is
-            # still missing. Freshness is checked again after publishing and can
-            # fail the run, but it must not discard a recovered bulletin/SPECI.
-            git restore --worktree -- data/observations data/taf 2>/dev/null || true
-            git clean -fd -- data/observations data/taf >/dev/null 2>&1 || true
-            python3 scripts/message_archive.py --validate-only
-
-            if git diff --quiet -- data/messages; then
-              echo 'METAR/SPECI central archive already up to date.'
-              echo "changed=$changed" >> "$GITHUB_OUTPUT"
-              echo "freshness_ok=$freshness_ok" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-
-            git add data/messages
-            git commit -m 'weather: heartbeat METAR SPECI archive'
-            if git push origin HEAD:main; then
-              changed=true
-              echo 'METAR/SPECI archive published.'
-              echo "changed=$changed" >> "$GITHUB_OUTPUT"
-              echo "freshness_ok=$freshness_ok" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-
-            echo 'METAR push raced another archive writer; rebuilding from newest main.'
-            sleep $((publish_attempt * 3))
-          done
-          echo 'Unable to publish METAR/SPECI after 5 clean rebuild attempts.' >&2
-          exit 1
-
-      - name: Refresh Pages after recovered observation
-        if: steps.publish.outputs.changed == 'true'
+      - name: Check freshness and trigger the single ingestor if needed
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run pages.yml --repo "${{ github.repository }}" --ref main
-
-      - name: Final METAR expected-slot alarm
-        # This alarm runs after publication. It can mark the run failed, but it
-        # can no longer suppress data that were successfully recovered.
-        run: python3 scripts/check_epir_archive_freshness.py --metar-only
+        shell: bash
+        run: |
+          if python3 scripts/check_epir_archive_freshness.py --metar-only; then
+            echo 'METAR/SPECI archive is fresh.'
+            exit 0
+          fi
+          echo '::warning::METAR/SPECI archive stale; triggering central ingestor'
+          gh workflow run message-archive.yml --repo "${{ github.repository }}" --ref main
+          exit 1
