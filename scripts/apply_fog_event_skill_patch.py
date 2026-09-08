@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 P = ROOT / "fog-engine.js"
+PATCH_VERSION = "1.1"
 
 
 def repl(s, old, new, label):
@@ -77,7 +78,7 @@ def main():
     )
 
     P.write_text(s, encoding="utf-8")
-    print("fog METAR/SPECI event skill runtime patch applied")
+    print(f"fog METAR/SPECI event skill runtime patch {PATCH_VERSION} applied")
 
 
 if __name__ == "__main__":
