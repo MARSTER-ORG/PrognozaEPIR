@@ -2,9 +2,11 @@ name: Central METAR SPECI TAF SYNOP ingestor
 
 on:
   schedule:
-    # GitHub Actions is the backup scheduler. The preferred production mode is
-    # scripts/central_ingestor.py --daemon on an external systemd host.
-    - cron: '13-58/10 * * * *'
+    # GitHub Actions is the backup scheduler. Run every 5 minutes so a routine
+    # :00/:30 EPIR METAR is normally collected within one scheduler interval.
+    # Preferred production mode remains scripts/central_ingestor.py --daemon
+    # on an external systemd host, where GitHub scheduler delays do not apply.
+    - cron: '*/5 * * * *'
   workflow_dispatch:
   push:
     branches: [main]
