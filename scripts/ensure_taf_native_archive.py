@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Ensure taf.html uses MessageArchive natively, without compatibility fetch layers."""
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,8 +16,15 @@ def main() -> int:
     s = s.replace('<script src="taf-archive-source.js"></script>\n', '')
     s = s.replace('\n<script src="taf-archive-source.js"></script>', '')
 
-    if '<script src="message-archive-client.js"></script>' not in s:
-        raise SystemExit('message-archive-client.js is missing from taf.html')
+    # Cache-busting/version query strings are part of the production loader and
+    # must not make the architecture validator think MessageArchive is absent.
+    loader = re.search(
+        r'<script\s+src=["\']message-archive-client\.js(?:\?[^"\']*)?["\']\s*></script>',
+        s,
+        flags=re.I,
+    )
+    if not loader:
+        raise SystemExit('message-archive-client.js loader is missing from taf.html')
 
     marker = '/* TAF Verification v2.0 inline'
     primary = s.split(marker, 1)[0]
