@@ -66,6 +66,55 @@ def merge_sources(a,b):
         if k not in seen: seen.add(k); out.append(x)
     return out
 
+def month_for(ref,delta):
+    y=ref.year; m=ref.month+delta
+    while m<1: y-=1; m+=12
+    while m>12: y+=1; m-=12
+    return y,m
+
+def taf_ddhh(code,ref):
+    """Resolve a TAF DDHH validity token near ref; HH=24 means next-day 00Z."""
+    if not re.fullmatch(r'\d{4}',str(code or '')): return None
+    day,hour=int(code[:2]),int(code[2:4])
+    if hour>24: return None
+    candidates=[]
+    for dm in (-1,0,1):
+        y,m=month_for(ref,dm)
+        try:
+            base=datetime(y,m,day,0,tzinfo=timezone.utc)
+            candidates.append(base+timedelta(hours=hour))
+        except: pass
+    return min(candidates,key=lambda x:abs((x-ref).total_seconds())) if candidates else None
+
+def taf_validity(raw,issue):
+    m=re.search(r'\b(\d{4})/(\d{4})\b',space(raw))
+    if not m or not issue: return None,None
+    start=taf_ddhh(m.group(1),issue)
+    if not start: return None,None
+    end=taf_ddhh(m.group(2),start+timedelta(hours=6))
+    if end and end<=start:
+        end=taf_ddhh(m.group(2),start+timedelta(hours=18))
+    return start,end
+
+def apply_taf_validity(r,issue=None):
+    """Make validity metadata canonical from the TAF body without changing identity."""
+    if not isinstance(r,dict) or not r.get('raw'): return False
+    issue=issue or dt(r.get('issue_time')) or dt(r.get('message_time'))
+    if not issue: return False
+    start,end=taf_validity(r['raw'],issue)
+    changed=False
+    canonical={
+        'issue_time':iso(issue),
+        'valid_start':iso(start),
+        'valid_from':iso(start),
+        'valid_end':iso(end),
+        'valid_to':iso(end),
+    }
+    for key,value in canonical.items():
+        if value and r.get(key)!=value:
+            r[key]=value; changed=True
+    return changed
+
 def kind(r,hint=None,speci=None):
     h=(hint or '').upper(); raw=space(r.get('raw')); rt=str(r.get('report_type') or '').upper()
     if h=='SYNOP' or raw.upper().startswith('AAXX '): return 'SYNOP'
@@ -85,6 +134,7 @@ def norm(r,hint=None,path=None,speci=None):
     c=canon(k,r['raw']); o=dict(r)
     o.update(schema='prognozaepir-message-v1',message_id=mid(k,station,c),type=k,station=station,message_time=iso(when),canonical_raw=c,raw=space(r['raw']),sources=merge_sources(r.get('sources'),[src(r,path)]))
     if k in ('METAR','SPECI'): o['report_type']=k
+    if k=='TAF': apply_taf_validity(o,when)
     return o
 
 def dayfile(r):
@@ -115,6 +165,20 @@ def ingest(rows):
         if changed or not p.exists() or p.read_text(encoding='utf-8')!=text:
             if write(p,text): stat['files'].append(str(p.relative_to(ROOT)))
     return stat
+
+def repair_taf_history():
+    """Enrich every existing EPIR TAF from its own raw bulletin, idempotently."""
+    root=A/'taf'; repaired=0; files=[]
+    if not root.exists(): return {'records':0,'files':[]}
+    for p in sorted(root.rglob('*.jsonl')):
+        rows=lines(p); changed=False
+        for r in rows:
+            if r.get('type')!='TAF' or str(r.get('station') or '').upper()!='EPIR': continue
+            if apply_taf_validity(r): repaired+=1; changed=True
+        if changed:
+            text=''.join(json.dumps(x,ensure_ascii=False,separators=(',',':'),sort_keys=True)+'\n' for x in sorted(rows,key=lambda x:(x.get('message_time',''),x.get('message_id',''))))
+            if write(p,text): files.append(str(p.relative_to(ROOT)))
+    return {'records':repaired,'files':files}
 
 def filehash(p): return hashlib.sha256(p.read_bytes()).hexdigest()
 def input_files():
@@ -275,6 +339,10 @@ def validate():
                 if r['message_id'] in seen: raise ValueError(f'duplicate {p} {r["message_id"]}')
                 seen.add(r['message_id'])
                 if r['message_id']!=mid(k,str(r.get('station') or ''),str(r['canonical_raw'])): raise ValueError(f'bad hash {p}')
+                if k=='TAF':
+                    issue=dt(r.get('issue_time')) or dt(r.get('message_time')); start,end=taf_validity(r.get('raw'),issue)
+                    if start and (dt(r.get('valid_start'))!=start or dt(r.get('valid_from'))!=start): raise ValueError(f'bad TAF valid_start {p} {r.get("raw")}')
+                    if end and (dt(r.get('valid_end'))!=end or dt(r.get('valid_to'))!=end): raise ValueError(f'bad TAF valid_end {p} {r.get("raw")}')
     for x in ('latest.json','recent.json','status.json'): json.loads((A/x).read_text(encoding='utf-8'))
     latest=js(A/'latest.json',{})
     snapshot=js(A/'taf-neighbors.json',{}).get('stations') or {}
@@ -289,7 +357,7 @@ def main():
     ap=argparse.ArgumentParser(); ap.add_argument('--full-migrate',action='store_true'); ap.add_argument('--force-import',action='store_true'); ap.add_argument('--validate-only',action='store_true'); a=ap.parse_args()
     if a.validate_only: print(json.dumps({'checked_records':validate()})); return
     mig=js(MIG,{}); full=a.full_migrate or not mig.get('complete'); man,sh,state,ms=manual(a.force_import or full); leg=legacy(full,sh); st=ingest(leg+man)
-    removed=prune_neighbor_taf_history()
+    taf_repair=repair_taf_history(); removed=prune_neighbor_taf_history()
     if full: writej(MIG,{'schema':'prognozaepir-message-migration-v1','complete':True,'legacy_roots':['data/observations/metar','data/observations/synop','data/taf/archive','data/taf/epir']})
-    writej(STATE,state); counts=views(st,full); checked=validate(); print(json.dumps({'full_migration':full,'legacy_seen':len(leg),'manual':ms,'ingest':st,'neighbor_taf_history_removed':removed,'counts':counts,'checked':checked},ensure_ascii=False,indent=2))
+    writej(STATE,state); counts=views(st,full); checked=validate(); print(json.dumps({'full_migration':full,'legacy_seen':len(leg),'manual':ms,'ingest':st,'taf_validity_repair':taf_repair,'neighbor_taf_history_removed':removed,'counts':counts,'checked':checked},ensure_ascii=False,indent=2))
 if __name__=='__main__': main()
