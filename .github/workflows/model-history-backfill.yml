@@ -41,7 +41,8 @@ jobs:
           python3 -m py_compile \
             scripts/backfill_model_history.py \
             scripts/model_verification.py \
-            scripts/build_adaptive_weights.py
+            scripts/build_adaptive_weights.py \
+            scripts/build_fog_event_learning.py
 
       - name: Recover missing archived operational model runs
         env:
@@ -58,6 +59,9 @@ jobs:
       - name: Rebuild robust adaptive consensus weights
         run: python3 scripts/build_adaptive_weights.py
 
+      - name: Rebuild fog and mist event skill from METAR SPECI
+        run: python3 scripts/build_fog_event_learning.py
+
       - name: Keep dense recent visibility verification
         run: python3 scripts/backfill_visibility_verification.py
 
@@ -70,6 +74,7 @@ jobs:
           python3 -m json.tool data/learning/cloud-skill.json >/dev/null
           python3 -m json.tool data/learning/model-verification.json >/dev/null
           python3 -m json.tool data/learning/adaptive-weights.json >/dev/null
+          python3 -m json.tool data/learning/fog-event-skill.json >/dev/null
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -80,11 +85,15 @@ jobs:
           assert rows > 1000, f'too few historical forecast rows: {rows}'
           state=json.loads(Path('data/learning/model-backfill-state.json').read_text(encoding='utf-8'))
           weights=json.loads(Path('data/learning/adaptive-weights.json').read_text(encoding='utf-8'))
+          fog=json.loads(Path('data/learning/fog-event-skill.json').read_text(encoding='utf-8'))
           assert state.get('schema') in {'prognozaepir-model-backfill-state-v1','prognozaepir-model-backfill-state-v2'}
           assert weights.get('schema') == 'prognozaepir-adaptive-weights-v1'
           assert len(weights.get('models') or {}) >= 8
+          assert fog.get('schema') == 'prognozaepir-fog-event-skill-v1'
+          assert fog.get('observation_inventory',{}).get('speci',0) >= 1
           print('validated historical forecast rows:', rows)
           print('backfill completeness:', state.get('completeness_pct', 'legacy-state'))
+          print('fog observation inventory:', fog.get('observation_inventory'))
           PY
 
       - name: Commit historical learning data
@@ -96,7 +105,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "No backfill changes"
           else
-            git commit -m "weather: recover model history and rebuild adaptive learning"
+            git commit -m "weather: recover history and rebuild consensus fog learning"
             for attempt in 1 2 3 4; do
               git pull --rebase origin main && git push origin HEAD:main && break
               test "$attempt" = 4 && exit 1
