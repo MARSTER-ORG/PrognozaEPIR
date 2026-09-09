@@ -428,6 +428,14 @@
     }
   }
 
+  function brOperationalText(score) {
+    if (!finite(score)) return 'BRAK DANYCH';
+    if (score < 40) return 'NIE';
+    if (score < 60) return 'MOŻLIWE';
+    if (score < 80) return 'PRAWDOPODOBNE';
+    return 'BARDZO PRAWDOPODOBNE';
+  }
+
   function renderBrCard() {
     const summary = document.getElementById('fogSummary');
     const rows = brSeries();
@@ -439,11 +447,15 @@
     const peak = future.reduce((a,b) => !a || b.score > a.score ? b : a, null) || current;
     const card = document.createElement('div');
     card.id = 'brCard';
-    const signal = Math.max(current.score, peak.score);
-    if (signal < BR_INFO_THRESHOLD) return;
-    card.className = 'fog-card ' + (signal >= 80 ? 'fog-risk-vhigh' : signal >= 60 ? 'fog-risk-high' : 'fog-risk-mid');
-    card.innerHTML = '<small>Zamglenie · BR</small><strong>teraz ' + Math.round(current.score) + '/100</strong>' +
-      '<em>' + brRiskText(signal) + ' · szczyt ' + Math.round(peak.score) + '/100 ' + localHour(peak.t) + '</em>';
+    card.className = 'fog-card ' + (current.score >= 80 ? 'fog-risk-vhigh' : current.score >= 60 ? 'fog-risk-high' : current.score >= 40 ? 'fog-risk-mid' : '');
+    const currentDetail = current.score >= BR_INFO_THRESHOLD
+      ? Math.round(current.score) + '/100'
+      : 'wynik <40/100 pominięty';
+    const peakDetail = peak.score >= BR_INFO_THRESHOLD
+      ? ' · maks. 12 h ' + Math.round(peak.score) + '/100 ' + localHour(peak.t)
+      : ' · brak sygnału ≥40 w 12 h';
+    card.innerHTML = '<small>ZAMGLENIE (BR) W CIĄGU NAJBLIŻSZEJ GODZINY</small><strong>' + brOperationalText(current.score) + '</strong>' +
+      '<em>' + currentDetail + peakDetail + '</em>';
     summary.appendChild(card);
   }
 
