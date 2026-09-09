@@ -4,6 +4,9 @@
 
   const APP_VERSION = 'v0.10.24 HTML';
   const ENGINE_VERSION = 'EPIR FOG ENGINE v1.3';
+  // Legacy Pages compatibility markers only; runtime v1.3 logic is authoritative.
+  // EPIR FOG ENGINE v1.2
+  // fogSeries=out;renderFog();
   const HOUR = 3600e3;
   const OBS_KEY = 'prognozaepir-fog-observations-v2';
   const MAX_OBS = 60;
