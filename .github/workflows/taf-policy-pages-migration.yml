@@ -1,0 +1,81 @@
+name: Wire TAF policies into Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/taf-policy-pages-migration.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Patch Pages artifact and TAF cache key
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path, old, new, count=1):
+              p=Path(path)
+              s=p.read_text(encoding='utf-8')
+              actual=s.count(old)
+              if actual != count:
+                  raise SystemExit(f'{path}: expected {count} occurrence(s), found {actual}: {old!r}')
+              p.write_text(s.replace(old,new),encoding='utf-8')
+
+          w='.github/workflows/pages.yml'
+          replace_exact(
+              w,
+              '             cloud-learning-client.js message-archive-client.js \\\n',
+              '             cloud-learning-client.js message-archive-client.js taf-cloud-policy.js taf-weather-policy.js taf-instruction-guard.js \\\n'
+          )
+          replace_exact(
+              w,
+              'shortcut-mode.js cloud-learning-client.js message-archive-client.js radar-enhance.js',
+              'shortcut-mode.js cloud-learning-client.js message-archive-client.js taf-cloud-policy.js taf-weather-policy.js taf-instruction-guard.js radar-enhance.js'
+          )
+          replace_exact(
+              w,
+              '          node --check _site/message-archive-client.js\n',
+              '          node --check _site/message-archive-client.js\n          node --check _site/taf-cloud-policy.js\n          node --check _site/taf-weather-policy.js\n          node --check _site/taf-instruction-guard.js\n          node scripts/test-taf-instruction-2023.js\n'
+          )
+          replace_exact(
+              w,
+              '          test -s _site/message-archive-client.js\n',
+              '          test -s _site/message-archive-client.js\n          test -s _site/taf-cloud-policy.js\n          test -s _site/taf-weather-policy.js\n          test -s _site/taf-instruction-guard.js\n'
+          )
+
+          t='taf.html'
+          replace_exact(
+              t,
+              '<script src="message-archive-client.js?v=railway-live-archive-v2"></script>',
+              '<script src="message-archive-client.js?v=taf-policy-local-v1"></script>'
+          )
+          PY
+      - name: Verify repository patch
+        run: |
+          grep -F 'taf-cloud-policy.js taf-weather-policy.js taf-instruction-guard.js' .github/workflows/pages.yml
+          grep -F 'test -s _site/taf-instruction-guard.js' .github/workflows/pages.yml
+          grep -F 'node scripts/test-taf-instruction-2023.js' .github/workflows/pages.yml
+          grep -F 'message-archive-client.js?v=taf-policy-local-v1' taf.html
+          node --check taf-cloud-policy.js
+          node --check taf-weather-policy.js
+          node --check taf-instruction-guard.js
+          node scripts/test-taf-instruction-2023.js
+      - name: Commit patch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/pages.yml taf.html
+          git diff --cached --quiet && exit 0
+          git commit -m 'fix: deploy TAF policy scripts with GitHub Pages'
+          git push origin HEAD:main
