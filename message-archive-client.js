@@ -106,9 +106,10 @@
   window.PrognozaEPIRMessageArchive = api;
   window.dispatchEvent(new CustomEvent('prognozaepir:message-archive-ready'));
 
-  // Generator TAF ma własne lekkie polityki interpretacyjne. Na Pages część
-  // starszych workflowów nie kopiowała tych plików do _site, dlatego loader
-  // próbuje najpierw lokalnego assetu, a przy 404 pobiera ten sam moduł z repo.
+  // Generator TAF: najpierw polityka chmur, następnie pogody, a na końcu
+  // jeden nadrzędny strażnik zgodności z Instrukcją TAF Edycja (A) 11.2023.
+  // Strażnik przejmuje reguły porywów oraz CAVOK/NSC, aby uniknąć konfliktu
+  // kilku niezależnych mutatorów tej samej depeszy.
   if (/\/taf\.html$/i.test(location.pathname)) {
     const RAW = 'https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/';
     const loadPolicy = (name, version) => new Promise((resolve, reject) => {
@@ -130,9 +131,8 @@
     (async () => {
       try {
         await loadPolicy('taf-cloud-policy.js', '20260909-3');
-        await loadPolicy('taf-gust-policy.js', '20260909-2');
         await loadPolicy('taf-weather-policy.js', '20260909-2');
-        await loadPolicy('taf-cavok-nsc-policy.js', '20260909-1');
+        await loadPolicy('taf-instruction-guard.js', '20260909-4');
       } catch (error) {
         console.warn('TAF policy loader:', error);
       }
