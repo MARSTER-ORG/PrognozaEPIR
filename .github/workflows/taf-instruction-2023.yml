@@ -1,0 +1,46 @@
+name: TAF Instruction 11.2023 compliance
+
+on:
+  push:
+    branches: [main, codex/taf-instruction-2023-audit]
+    paths:
+      - 'taf.html'
+      - 'taf-*.js'
+      - 'message-archive-client.js'
+      - 'scripts/test-taf-instruction-2023.js'
+      - '.github/workflows/taf-instruction-2023.yml'
+  pull_request:
+    paths:
+      - 'taf.html'
+      - 'taf-*.js'
+      - 'message-archive-client.js'
+      - 'scripts/test-taf-instruction-2023.js'
+      - '.github/workflows/taf-instruction-2023.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  taf-rules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: JavaScript syntax
+        run: |
+          node --check taf-cloud-policy.js
+          node --check taf-weather-policy.js
+          node --check taf-instruction-guard.js
+          node --check message-archive-client.js
+      - name: Instruction 11.2023 regression suite
+        run: node scripts/test-taf-instruction-2023.js
+      - name: Guard loader order
+        run: |
+          grep -F "loadPolicy('taf-cloud-policy.js'" message-archive-client.js
+          grep -F "loadPolicy('taf-weather-policy.js'" message-archive-client.js
+          grep -F "loadPolicy('taf-instruction-guard.js'" message-archive-client.js
+          ! grep -F "loadPolicy('taf-gust-policy.js'" message-archive-client.js
+          ! grep -F "loadPolicy('taf-cavok-nsc-policy.js'" message-archive-client.js
