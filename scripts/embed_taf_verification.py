@@ -6,8 +6,8 @@ JS = Path('taf-verification.js')
 
 html = HTML.read_text(encoding='utf-8')
 js = JS.read_text(encoding='utf-8').strip()
-if "const VERSION='TAF Verification v2.0'" not in js:
-    raise SystemExit('taf-verification.js is not TAF Verification v2.0')
+if "const VERSION='TAF Verification v2.1'" not in js:
+    raise SystemExit('taf-verification.js is not strict TAF Verification v2.1')
 
 # These are stable verification semantics. Keep this tiny normalization here,
 # but do not re-apply historical live-refresh/archive patches: those belong to
@@ -31,6 +31,18 @@ if "central-ingestor-production.up.railway.app/data/messages/" not in js:
 if js.count("function centralDayUrls(kind,day)") != 1:
     raise SystemExit('TAF verification centralDayUrls must exist exactly once')
 
+# Strict occurrence semantics are mandatory for the historical group report.
+strict_tokens = (
+    "function strictObservationRecord(o)",
+    "function strictGroupMatch(f,o)",
+    "wxTokens:wxTokens(raw),clouds,raw",
+    "if(!strictObservationRecord(o))continue",
+    "if(strictGroupMatch(e.state,o))",
+)
+for token in strict_tokens:
+    if token not in js:
+        raise SystemExit(f'TAF verification strict invariant missing: {token}')
+
 JS.write_text(js + '\n', encoding='utf-8')
 
 marker = '/* TAF Verification '
@@ -44,7 +56,7 @@ if end < 0:
     raise SystemExit('closing </script> for TAF Verification not found')
 end += len('</script>')
 
-block = '<script>\n/* TAF Verification v2.0 inline — generated from taf-verification.js */\n' + js + '\n</script>'
+block = '<script>\n/* TAF Verification v2.1 inline — generated from taf-verification.js */\n' + js + '\n</script>'
 updated = html[:start] + block + html[end:]
 HTML.write_text(updated, encoding='utf-8')
-print('Embedded TAF Verification v2.0 from live-archive source into taf.html')
+print('Embedded strict TAF Verification v2.1 from live-archive source into taf.html')
