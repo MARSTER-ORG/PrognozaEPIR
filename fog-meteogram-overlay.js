@@ -667,11 +667,24 @@
     return score >= THRESHOLD ? fmt0(score) + '/100' : 'wynik <40/100 pominięty';
   }
 
+  function localDate(t) {
+    try {
+      const tz = (typeof PLACE !== 'undefined' && PLACE?.tz) ? PLACE.tz : 'Europe/Warsaw';
+      return new Intl.DateTimeFormat('pl-PL',{timeZone:tz,day:'2-digit',month:'2-digit'}).format(new Date(t));
+    } catch (_) {
+      return new Date(t).toLocaleDateString('pl-PL',{day:'2-digit',month:'2-digit'});
+    }
+  }
+
   function peakDetail(ev) {
     if (!ev || ev.peak.score < THRESHOLD) return 'brak sygnału ≥40/100 w 48 h';
-    const range = ev.peakFrom === null
-      ? localHour(ev.peak.t)
-      : localHour(ev.peakFrom) + '–' + localHour(ev.peakTo);
+    const from = ev.peakFrom === null ? ev.peak.t : ev.peakFrom;
+    const to = ev.peakTo === null ? ev.peak.t : ev.peakTo;
+    const dateFrom = localDate(from);
+    const dateTo = localDate(to);
+    const range = dateFrom === dateTo
+      ? dateFrom + ' · ' + localHour(from) + '–' + localHour(to)
+      : dateFrom + ' ' + localHour(from) + '–' + dateTo + ' ' + localHour(to);
     return fmt0(ev.peak.score) + '/100 · ' + range;
   }
 
