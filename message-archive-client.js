@@ -106,12 +106,18 @@
   window.PrognozaEPIRMessageArchive = api;
   window.dispatchEvent(new CustomEvent('prognozaepir:message-archive-ready'));
 
-  // Generator TAF ma dodatkową politykę chmur. Ładujemy ją tylko na taf.html,
-  // żeby centralny klient archiwum pozostał lekki na pozostałych podstronach.
+  // Generator TAF ma własne lekkie polityki interpretacyjne. Ładujemy je tylko
+  // na taf.html, więc pozostałe podstrony nie ponoszą kosztu tych modułów.
   if (/\/taf\.html$/i.test(location.pathname)) {
-    const s = document.createElement('script');
-    s.src = 'taf-cloud-policy.js?v=20260909-1';
-    s.async = true;
-    document.head.appendChild(s);
+    const cloud = document.createElement('script');
+    cloud.src = 'taf-cloud-policy.js?v=20260909-2';
+    cloud.async = true;
+    cloud.onload = () => {
+      const gust = document.createElement('script');
+      gust.src = 'taf-gust-policy.js?v=20260909-1';
+      gust.async = true;
+      document.head.appendChild(gust);
+    };
+    document.head.appendChild(cloud);
   }
 })();
