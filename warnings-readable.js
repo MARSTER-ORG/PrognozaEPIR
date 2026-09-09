@@ -9,7 +9,7 @@
     '26':'świętokrzyskie','28':'warmińsko-mazurskie','30':'wielkopolskie','32':'zachodniopomorskie'
   };
   const el=id=>document.getElementById(id);
-  const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[ch]));
+  const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   const countyWord=n=>n===1?'powiat':(n%10>=2&&n%10<=4&&(n%100<12||n%100>14)?'powiaty':'powiatów');
   const fmtDate=value=>{const m=String(value||'').match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);return m?`${m[3]}.${m[2]} ${m[4]}:${m[5]}`:String(value||'—')};
   const areaLabel=warning=>{
@@ -346,10 +346,6 @@
 })();
 
 // Unified radar animation -----------------------------------------------------
-// One animation controller for every radar visualization: all POLRAD products
-// exposed as polrad_* buttons (CMAX, CAPPI, SRI, PAC, future products) and
-// RainViewer fallback. Uses preloading + cross-fade for POLRAD images and a
-// double-buffered tile layer for RainViewer. Manual history remains available.
 (() => {
   if(window.__PrognozaEPIRUnifiedRadarAnimation)return;
   window.__PrognozaEPIRUnifiedRadarAnimation=true;
@@ -360,7 +356,7 @@
   const BOUNDS=()=>L.latLngBounds([[48.5,13.5],[56.0,25.0]]);
   const MAX_ANIM_FRAMES=24;
   const cache=new Map();
-  let installed=false,playing=false,timer=0,currentLayer=null,currentPack=null,currentIndex=0,transitionSeq=0;
+  let installed=false,playing=false,timer=0,currentLayer=null,currentPack=null,currentIndex=0,transitionSeq=0,internalRange=false;
 
   function fmtTime(sec){
     try{return new Intl.DateTimeFormat('pl-PL',{timeZone:'Europe/Warsaw',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(Number(sec)*1000));}
@@ -445,7 +441,7 @@
       if(index===pack.frames.length-1){removeAnimLayer();return;}
       showAnimFrame(pack,index);return;
     }
-    if(range)range.dispatchEvent(new Event('input',{bubbles:true}));
+    if(range){internalRange=true;try{range.dispatchEvent(new Event('input',{bubbles:true}));}finally{internalRange=false;}}
   }
   function stop({latest=true}={}){
     clearTimer();const was=playing;playing=false;const b=$('playRadar');if(b)b.textContent='▶ Animacja';
@@ -480,12 +476,15 @@
   function installControls(){
     if(installed)return true;const bar=document.querySelector('.mapbar'),oldPlay=$('playRadar'),range=$('radarFrame');if(!bar||!oldPlay||!range||typeof L==='undefined'||typeof map==='undefined')return false;
     const play=oldPlay.cloneNode(true);oldPlay.replaceWith(play);play.disabled=false;play.textContent='▶ Animacja';play.title='Animacja aktywnego zobrazowania radarowego';play.addEventListener('click',start);
-    let speed=$('radarAnimSpeed');if(!speed){speed=document.createElement('select');speed.id='radarAnimSpeed';speed.title='Prędkość animacji';speed.innerHTML='<option value="900">wolna</option><option value="650" selected>normalna</option><option value="400">szybka</option>';play.insertAdjacentElement('afterend',speed);}
+    let speed=$('radarAnimSpeed');if(!speed){speed=document.createElement('select');speed.id='radarAnimSpeed';speed.title='Prędkość animacji';speed.style.cssText='border:1px solid var(--line);background:var(--panel2);color:var(--ink);border-radius:6px;padding:5px 6px;font-size:9px';speed.innerHTML='<option value="900">wolna</option><option value="650" selected>normalna</option><option value="400">szybka</option>';play.insertAdjacentElement('afterend',speed);}
     let animInfo=$('radarAnimInfo');if(!animInfo){animInfo=document.createElement('span');animInfo.id='radarAnimInfo';animInfo.style.cssText='font-size:8px;color:var(--muted);white-space:nowrap';range.insertAdjacentElement('afterend',animInfo);}
     range.disabled=false;
     range.addEventListener('input',()=>{
-      if(playing)stop({latest:false});const p=activeProduct();if(!currentPack||currentPack.id!==p?.id){syncProduct({toLatest:false}).then(pack=>{if(pack)setNativeFrame(pack,Number(range.value)||0);});return;}
-      setNativeFrame(currentPack,Number(range.value)||0);currentIndex=Number(range.value)||0;
+      if(internalRange)return;
+      if(playing)stop({latest:false});const p=activeProduct();const idx=Number(range.value)||0;
+      if(!currentPack||currentPack.id!==p?.id){syncProduct({toLatest:false}).then(pack=>{if(!pack)return;if(pack.kind==='polrad'&&pack.id!=='cappi'){currentIndex=idx;return;}setNativeFrame(pack,idx);currentIndex=idx;});return;}
+      if(currentPack.kind==='polrad'&&currentPack.id!=='cappi'){currentIndex=idx;return;}
+      setNativeFrame(currentPack,idx);currentIndex=idx;
     });
     document.addEventListener('click',e=>{
       const target=e.target?.closest?.('button');if(!target)return;
@@ -501,7 +500,7 @@
     },true);
     document.addEventListener('visibilitychange',()=>{if(document.hidden&&playing)stop({latest:true});});
     $('refresh')?.addEventListener('click',()=>setTimeout(()=>syncProduct({force:true,toLatest:true}),700));
-    installed=true;setTimeout(()=>syncProduct({toLatest:true}),250);return true;
+    installed=true;setTimeout(()=>syncProduct({toLatest:true}),250);setTimeout(()=>syncProduct({toLatest:true}),1400);return true;
   }
   let tries=0;const boot=()=>{if(installControls())return;if(++tries<20)setTimeout(boot,250);};setTimeout(boot,0);
   window.PrognozaEPIRRadarAnimation={start,stop:()=>stop({latest:true}),refresh:()=>syncProduct({force:true,toLatest:true}),active:activeProduct};
