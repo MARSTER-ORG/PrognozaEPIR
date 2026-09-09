@@ -31,24 +31,105 @@ jobs:
       - name: Patch model loading
         run: python3 scripts/fix_model_selector.py
 
+      - name: Repair BR engine wiring and visibility
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('fog-meteogram-overlay.js')
+          s=p.read_text(encoding='utf-8')
+
+          # Publish the derived BR series so its wiring can be inspected and reused.
+          old="""    return rows.map(row => {
+      const score = brScoreForFogRow(row);
+      return finite(score) ? {...row,score} : null;
+    }).filter(Boolean);"""
+          new="""    const out = rows.map(row => {
+      const score = brScoreForFogRow(row);
+      return finite(score) ? {...row,score} : null;
+    }).filter(Boolean);
+    window.PrognozaEPIRBRSeries = out;
+    return out;"""
+          if old in s:
+              s=s.replace(old,new,1)
+          elif 'window.PrognozaEPIRBRSeries = out;' not in s:
+              raise SystemExit('BR series export hook not found')
+
+          # A single >=60 hourly BR value previously produced moveTo() only and was invisible.
+          old="""    ctx.stroke();
+    ctx.setLineDash([]);
+
+    const cp = typeof canvasPalette === 'function' ? canvasPalette() : {muted:'#666',grid2:'#999'};"""
+          new="""    ctx.stroke();
+    ctx.setLineDash([]);
+    // Mark every operational BR point, including isolated single-hour signals.
+    for (const row of br) {
+      if (!finite(row.t) || !finite(row.score) || row.score < BR_DRAW_THRESHOLD) continue;
+      const xx = x(row.t);
+      const yy = yOnRiskScale(row.score,p);
+      ctx.beginPath();
+      ctx.arc(xx,yy,3.0,0,Math.PI*2);
+      ctx.fillStyle = BR_COLOR;
+      ctx.fill();
+    }
+
+    const cp = typeof canvasPalette === 'function' ? canvasPalette() : {muted:'#666',grid2:'#999'};"""
+          if old in s:
+              s=s.replace(old,new,1)
+          elif 'including isolated single-hour signals' not in s:
+              raise SystemExit('BR draw hook not found')
+
+          # Show the BR summary when either now or the next 12 h reaches the information threshold.
+          old="""    const card = document.createElement('div');
+    card.id = 'brCard';
+    if (current.score < BR_INFO_THRESHOLD) return;
+    card.className = 'fog-card ' + (current.score >= 80 ? 'fog-risk-vhigh' : current.score >= 60 ? 'fog-risk-high' : 'fog-risk-mid');
+    card.innerHTML = '<small>Zamglenie · BR</small><strong>' + Math.round(current.score) + '/100</strong>' +
+      '<em>' + brRiskText(current.score) + ' · szczyt ' + Math.round(peak.score) + '/100 ' + localHour(peak.t) + '</em>';"""
+          new="""    const card = document.createElement('div');
+    card.id = 'brCard';
+    const signal = Math.max(current.score, peak.score);
+    if (signal < BR_INFO_THRESHOLD) return;
+    card.className = 'fog-card ' + (signal >= 80 ? 'fog-risk-vhigh' : signal >= 60 ? 'fog-risk-high' : 'fog-risk-mid');
+    card.innerHTML = '<small>Zamglenie · BR</small><strong>teraz ' + Math.round(current.score) + '/100</strong>' +
+      '<em>' + brRiskText(signal) + ' · szczyt ' + Math.round(peak.score) + '/100 ' + localHour(peak.t) + '</em>';"""
+          if old in s:
+              s=s.replace(old,new,1)
+          elif 'const signal = Math.max(current.score, peak.score);' not in s:
+              raise SystemExit('BR card hook not found')
+
+          # Keep meteogram operational threshold at 60 everywhere in the legend.
+          s=s.replace('słupki = FOG ENGINE, od 40/100','słupki = FOG ENGINE, od 60/100')
+          s=s.replace("if (text === 'FOG ENGINE ≥60/100') text = 'FOG ENGINE ≥40/100';",
+                      "if (text === 'FOG ENGINE ≥40/100') text = 'FOG ENGINE ≥60/100';")
+
+          p.write_text(s,encoding='utf-8')
+          PY
+
       - name: Validate repair
         run: |
           grep -F 'async function reqVars(model,vars,timeoutMs)' index.html
           grep -F 'demo=false;populateView();try{' index.html
           grep -F 'populateView();if(!datasets.size)' index.html
+          grep -F 'const FOG_DRAW_THRESHOLD = 60;' fog-meteogram-overlay.js
+          grep -F 'const BR_DRAW_THRESHOLD = 60;' fog-meteogram-overlay.js
+          grep -F 'window.PrognozaEPIRBRSeries = out;' fog-meteogram-overlay.js
+          grep -F 'including isolated single-hour signals' fog-meteogram-overlay.js
+          grep -F 'const signal = Math.max(current.score, peak.score);' fog-meteogram-overlay.js
+          grep -F 'słupki = FOG ENGINE, od 60/100' fog-meteogram-overlay.js
           python3 -c "from pathlib import Path; s=Path('index.html').read_text(encoding='utf-8'); Path('/tmp/index-inline.js').write_text(s.split('<script>',1)[1].split('</script>',1)[0],encoding='utf-8')"
           node --check /tmp/index-inline.js
+          node --check fog-meteogram-overlay.js
 
       - name: Commit repair
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add index.html
+          git add index.html fog-meteogram-overlay.js
           if git diff --cached --quiet; then
             echo 'No changes needed'
             exit 0
           fi
-          git commit -m 'fix: restore resilient model selector loading'
+          git commit -m 'fix: restore BR mist forecast visibility and wiring'
           git pull --rebase origin main
           git push origin HEAD:main
 
