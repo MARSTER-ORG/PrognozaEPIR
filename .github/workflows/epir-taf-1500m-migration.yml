@@ -1,0 +1,86 @@
+name: Apply EPIR 1500m TAF threshold
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/epir-taf-1500m-migration.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply EPIR threshold
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path, old, new, count=1):
+              p=Path(path)
+              s=p.read_text(encoding='utf-8')
+              actual=s.count(old)
+              if actual != count:
+                  raise SystemExit(f'{path}: expected {count} occurrence(s), found {actual}: {old!r}')
+              p.write_text(s.replace(old,new),encoding='utf-8')
+
+          g='taf-instruction-guard.js'
+          replace_exact(g,
+              '  const NSC_LIMIT_FT = 5000;',
+              '  // EPIR: local operational cloud threshold is 1500 m = 4921.26 ft for both CAVOK and NSC.\n  const NSC_LIMIT_FT = CAVOK_BASE_LIMIT_FT;')
+          replace_exact(g,
+              '    const msaFt = finite(Number(options.msaFt)) ? Number(options.msaFt) : NaN;\n    const cavokLimitFt = finite(msaFt) ? Math.max(CAVOK_BASE_LIMIT_FT, msaFt) : CAVOK_BASE_LIMIT_FT;\n    const nscLimitFt = finite(msaFt) ? Math.max(NSC_LIMIT_FT, msaFt) : NSC_LIMIT_FT;',
+              '    // EPIR fixed local rule: both CAVOK and NSC use 1500 m (4921.26 ft).\n    const cavokLimitFt = CAVOK_BASE_LIMIT_FT;\n    const nscLimitFt = CAVOK_BASE_LIMIT_FT;')
+          replace_exact(g,
+              '    const msaFt=finite(Number(options.msaFt))?Number(options.msaFt):NaN;\n    const nscLimitFt=finite(msaFt)?Math.max(NSC_LIMIT_FT,msaFt):NSC_LIMIT_FT;',
+              '    const nscLimitFt=CAVOK_BASE_LIMIT_FT;')
+          replace_exact(g,
+              "    if (/\\bCAVOK\\b/.test(raw) && !finite(msaFt)) {\n      issues.push({level:'warn',code:'MSA_UNKNOWN',text:'CAVOK sprawdzono względem 1500 m; najwyższa MSA EPIR nie jest skonfigurowana, więc nie można zastosować wyższego z tych dwóch progów.'});\n    }\n",
+              '')
+          replace_exact(g,
+              "      units.textContent='CAVOK 1500 m/MSA · NSC 5000 ft/MSA ✓';",
+              "      units.textContent='EPIR: CAVOK/NSC 1500 m · 4921 ft ✓';")
+          replace_exact(g,
+              '    const msaFt=Number(window.PROGNOZAEPIR_TAF_HIGHEST_MSA_FT);\n    const result=normalize(current,{series,msaFt:finite(msaFt)?msaFt:null});',
+              '    const result=normalize(current,{series});')
+
+          t='scripts/test-taf-instruction-2023.js'
+          replace_exact(t,
+              '// 3.8.10 vs 3.8.9: CAVOK uses 1500 m (~4921 ft), NSC uses 5000 ft.',
+              '// EPIR local rule: CAVOK and NSC both use 1500 m (~4921 ft).')
+          replace_exact(t,
+              "assert.match(r.text, /18005KT 3000 NSC=/, '5000 ft ordinary cloud is not significant for NSC');",
+              "assert.match(r.text, /18005KT 3000 NSC=/, '5000 ft ordinary cloud is above the EPIR 1500 m / 4921 ft NSC threshold');")
+          replace_exact(t,
+              "r = norm(base('18005KT 9999 BKN050'), [], {msaFt:6000});\nassert.match(r.text, /9999 BKN050=/, 'MSA above 5000 ft must raise the operational cloud limit');",
+              "assert.ok(Math.abs(guard.constants.NSC_LIMIT_FT - guard.constants.CAVOK_BASE_LIMIT_FT) < 0.01);\nr = norm(base('18005KT 9999 BKN050'), [], {msaFt:6000});\nassert.match(r.text, /18005KT CAVOK=/, 'EPIR uses the fixed 1500 m / 4921 ft threshold for both CAVOK and NSC');")
+
+          m='message-archive-client.js'
+          replace_exact(m,
+              "        await loadPolicy('taf-instruction-guard.js', '20260909-1');",
+              "        await loadPolicy('taf-instruction-guard.js', '20260909-2');")
+          PY
+      - name: Verify
+        run: |
+          node --check taf-instruction-guard.js
+          node --check message-archive-client.js
+          node scripts/test-taf-instruction-2023.js
+          grep -F "const NSC_LIMIT_FT = CAVOK_BASE_LIMIT_FT;" taf-instruction-guard.js
+          grep -F "EPIR: CAVOK/NSC 1500 m · 4921 ft ✓" taf-instruction-guard.js
+          ! grep -F "MSA_UNKNOWN" taf-instruction-guard.js
+      - name: Commit migration
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add taf-instruction-guard.js scripts/test-taf-instruction-2023.js message-archive-client.js
+          git diff --cached --quiet && exit 0
+          git commit -m 'fix: use EPIR 1500m threshold for CAVOK and NSC'
+          git push origin HEAD:main
