@@ -37,7 +37,7 @@
     const box=ensureBox();if(!box)return;
     const m=cardMap(),overall=m['Sprawdzalność ogólna'];
     const vals=[m['Wiatr'],m['Widzialność'],m['Pułap'],m['Pogoda']].filter(finite);
-    if(!finite(overall)||!vals.length){box.textContent='';return}
+    if(!finite(overall)||!vals.length){if(box.textContent)box.textContent='';return}
     const base=Math.round(vals.reduce((a,b)=>a+b,0)/vals.length);
     const penalty=round1(Math.max(0,base-overall));
     const parts=[];
@@ -48,7 +48,8 @@
     const meta=(document.getElementById('tafDayMeta')?.textContent||'').trim();
     const mm=meta.match(/zakończone:\s*(\d+)\/(\d+)/i);
     const progress=mm&&mm[1]!==mm[2]?` Raport jest bieżący: zakończone ${mm[1]}/${mm[2]} TAF; pozostałe TAF-y W TOKU również wpływają na aktualny wynik.`:'';
-    box.innerHTML=`<b>Skąd bierze się wynik:</b> średnia bazowa z głównych elementów (${parts.join(' + ')}) = <b>${base}%</b>. Następnie odejmowana jest kara za niepotwierdzone elementy grup zmian = <b>−${penalty} pkt</b>. Wynik ogólny: <b>${base}% − ${penalty} = ${overall}%</b>.${progress}`;
+    const html=`<b>Skąd bierze się wynik:</b> średnia bazowa z głównych elementów (${parts.join(' + ')}) = <b>${base}%</b>. Następnie odejmowana jest kara za niepotwierdzone elementy grup zmian = <b>−${penalty} pkt</b>. Wynik ogólny: <b>${base}% − ${penalty} = ${overall}%</b>.${progress}`;
+    if(box.innerHTML!==html)box.innerHTML=html;
   }
 
   function explainRows(){
@@ -60,7 +61,8 @@
       const base=Math.round(vals.reduce((a,b)=>a+b,0)/vals.length),penalty=round1(Math.max(0,base-result));
       let note=td[3].querySelector('.taf-score-breakdown');
       if(!note){note=document.createElement('div');note.className='note taf-score-breakdown';note.style.marginTop='2px';td[3].appendChild(note)}
-      note.textContent=penalty>0?`bazowo ${base}% − kara grup ${penalty} pkt`:`bazowo ${base}% · bez kary grup`;
+      const text=penalty>0?`bazowo ${base}% − kara grup ${penalty} pkt`:`bazowo ${base}% · bez kary grup`;
+      if(note.textContent!==text)note.textContent=text;
     }
   }
 
