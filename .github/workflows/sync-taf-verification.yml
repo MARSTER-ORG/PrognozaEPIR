@@ -7,6 +7,7 @@ on:
       - scripts/embed_taf_verification.py
       - scripts/fix_taf_verification_live_archive.py
       - scripts/enforce_taf_group_penalty.py
+      - scripts/enforce_taf_weak_weather_significance.py
       - .github/workflows/sync-taf-verification.yml
   workflow_dispatch:
 permissions:
@@ -22,14 +23,18 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Enforce live verifier, strict group scoring and embed it
+      - name: Enforce generator WX significance, live verifier and scoring
         run: |
+          python3 scripts/enforce_taf_weak_weather_significance.py
           python3 scripts/fix_taf_verification_live_archive.py
           python3 scripts/enforce_taf_group_penalty.py
           python3 scripts/embed_taf_verification.py
           node --check taf-verification.js
           grep -F 'PrognozaEPIRMessageArchive' taf.html
           grep -F 'loadNeighborArchive' taf.html
+          grep -F 'TAF_WEAK_WX_MIN_HOURS=2' taf.html
+          grep -F 'function applyTafWxSignificance(a)' taf.html
+          grep -F 'rows=applyTafWxSignificance(addUpstream(anchor(ed.period,ed.modelNow)))' taf.html
           grep -F "A.getLatest('TAF','EPIR',true)" taf-verification.js
           grep -F 'central-ingestor-production.up.railway.app/data/messages/' taf-verification.js
           grep -F 'LIVE Railway/MessageArchive' taf-verification.js
@@ -45,16 +50,16 @@ jobs:
           ! grep -F '/api/taf-proxy' taf.html
           ! grep -F 'data/observations/metar/' taf-verification.js
           ! grep -F 'data/taf/epir/' taf-verification.js
-      - name: Commit synchronized verifier
+      - name: Commit synchronized TAF generator/verifier
         run: |
           if git diff --quiet -- taf.html taf-verification.js; then
-            echo 'TAF verification already synchronized'
+            echo 'TAF generator/verifier already synchronized'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add taf.html taf-verification.js
-          git commit -m 'taf: enforce strict change-group scoring'
+          git commit -m 'taf: suppress isolated weak precipitation'
           git pull --rebase origin main
           git push
       - name: Deploy current main to GitHub Pages
