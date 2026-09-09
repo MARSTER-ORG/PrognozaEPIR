@@ -15,8 +15,7 @@
   if (!/\/taf\.html$/i.test(location.pathname)) return;
 
   let applying = false;
-  let timer = 0;
-  let last = '';
+  let queued = false;
 
   function apply() {
     if (applying) return;
@@ -25,19 +24,19 @@
     const current = String(el.textContent || '');
     if (!/^\s*TAF\s+(?:AMD\s+|COR\s+)?EPIR\b/.test(current)) return;
     const clean = normalizeTafTerminator(current);
-    if (!clean || clean === current || clean === last) {
-      last = clean || current;
-      return;
-    }
+    if (!clean || clean === current) return;
     applying = true;
     el.textContent = clean;
-    last = clean;
     applying = false;
   }
 
   function schedule() {
-    clearTimeout(timer);
-    timer = setTimeout(apply, 700);
+    if (queued) return;
+    queued = true;
+    queueMicrotask(() => {
+      queued = false;
+      apply();
+    });
   }
 
   function install() {
@@ -45,6 +44,9 @@
     if (!el) return;
     new MutationObserver(schedule).observe(el, {childList:true, characterData:true, subtree:true});
     schedule();
+    // Dodatkowe zabezpieczenie przed późnymi, asynchronicznymi modyfikacjami
+    // innych polityk TAF. Sanitizer jest idempotentny, więc kontrola jest tania.
+    setInterval(apply, 500);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install, {once:true});
