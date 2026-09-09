@@ -114,10 +114,12 @@
   function brSeries() {
     const rows = window.PrognozaEPIRFogSeries;
     if (!Array.isArray(rows)) return [];
-    return rows.map(row => {
+    const out = rows.map(row => {
       const score = brScoreForFogRow(row);
       return finite(score) ? {...row,score} : null;
     }).filter(Boolean);
+    window.PrognozaEPIRBRSeries = out;
+    return out;
   }
 
   function fogColor(score) {
@@ -318,6 +320,16 @@
     }
     ctx.stroke();
     ctx.setLineDash([]);
+    // Mark every operational BR point, including isolated single-hour signals.
+    for (const row of br) {
+      if (!finite(row.t) || !finite(row.score) || row.score < BR_DRAW_THRESHOLD) continue;
+      const xx = x(row.t);
+      const yy = yOnRiskScale(row.score,p);
+      ctx.beginPath();
+      ctx.arc(xx,yy,3.0,0,Math.PI*2);
+      ctx.fillStyle = BR_COLOR;
+      ctx.fill();
+    }
 
     const cp = typeof canvasPalette === 'function' ? canvasPalette() : {muted:'#666',grid2:'#999'};
     ctx.strokeStyle = cp.grid2 || '#999';
@@ -392,7 +404,7 @@
     el.innerHTML =
       '<b>Widzialność / mgła:</b>' +
       '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:16px;height:3px;border-radius:2px;background:#d97706"></i>linia = widzialność konsensusu</span>' +
-      '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:8px;height:12px;border-radius:1px;background:rgba(216,108,47,.72)"></i>słupki = FOG ENGINE, od 40/100</span>' +
+      '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:8px;height:12px;border-radius:1px;background:rgba(216,108,47,.72)"></i>słupki = FOG ENGINE, od 60/100</span>' +
       '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#d63434;border:1px solid #ffdede"></i>czerwone punkty = niska mgła MIFG &lt;2 m, od 60/100; liczba = wynik MIFG</span>' +
       '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:16px;height:0;border-top:2px dashed '+BR_COLOR+'"></i>linia BR = zamglenie, od 60/100</span>';
     legend.appendChild(el);
@@ -427,10 +439,11 @@
     const peak = future.reduce((a,b) => !a || b.score > a.score ? b : a, null) || current;
     const card = document.createElement('div');
     card.id = 'brCard';
-    if (current.score < BR_INFO_THRESHOLD) return;
-    card.className = 'fog-card ' + (current.score >= 80 ? 'fog-risk-vhigh' : current.score >= 60 ? 'fog-risk-high' : 'fog-risk-mid');
-    card.innerHTML = '<small>Zamglenie · BR</small><strong>' + Math.round(current.score) + '/100</strong>' +
-      '<em>' + brRiskText(current.score) + ' · szczyt ' + Math.round(peak.score) + '/100 ' + localHour(peak.t) + '</em>';
+    const signal = Math.max(current.score, peak.score);
+    if (signal < BR_INFO_THRESHOLD) return;
+    card.className = 'fog-card ' + (signal >= 80 ? 'fog-risk-vhigh' : signal >= 60 ? 'fog-risk-high' : 'fog-risk-mid');
+    card.innerHTML = '<small>Zamglenie · BR</small><strong>teraz ' + Math.round(current.score) + '/100</strong>' +
+      '<em>' + brRiskText(signal) + ' · szczyt ' + Math.round(peak.score) + '/100 ' + localHour(peak.t) + '</em>';
     summary.appendChild(card);
   }
 
@@ -472,7 +485,7 @@
     drawLegend = function() {
       const nativeFillText = ctx.fillText;
       ctx.fillText = function(text,...args) {
-        if (text === 'FOG ENGINE ≥60/100') text = 'FOG ENGINE ≥40/100';
+        if (text === 'FOG ENGINE ≥40/100') text = 'FOG ENGINE ≥60/100';
         return nativeFillText.call(this,text,...args);
       };
       try { return baseLegend.apply(this,arguments); }
