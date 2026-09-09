@@ -116,6 +116,12 @@
       const gust = document.createElement('script');
       gust.src = 'taf-gust-policy.js?v=20260909-1';
       gust.async = true;
+      gust.onload = () => {
+        const weather = document.createElement('script');
+        weather.src = 'taf-weather-policy.js?v=20260909-1';
+        weather.async = true;
+        document.head.appendChild(weather);
+      };
       document.head.appendChild(gust);
     };
     document.head.appendChild(cloud);
