@@ -1,0 +1,74 @@
+name: Add ARCH to Pages deployment
+
+on:
+  workflow_run:
+    workflows: ["Deploy PrognozaEPIR to GitHub Pages"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-arch-postdeploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Resolve source Pages run
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            RUN_ID="${{ github.event.workflow_run.id }}"
+          else
+            RUN_ID="$(gh run list --workflow pages.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
+          fi
+          test -n "$RUN_ID"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Download built Pages artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: github-pages
+          path: _pages_artifact
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.source.outputs.run_id }}
+
+      - name: Add ARCH page
+        run: |
+          set -euo pipefail
+          mkdir -p _site
+          TAR_FILE="$(find _pages_artifact -maxdepth 2 -type f -name '*.tar' -print -quit)"
+          test -n "$TAR_FILE"
+          tar -xf "$TAR_FILE" -C _site
+          cp arch.html _site/arch.html
+          test -s _site/index.html
+          test -s _site/arch.html
+          grep -F '<a class="control-link" href="arch.html">ARCH</a>' _site/index.html
+          grep -F 'PrognozaEPIR · ARCH' _site/arch.html
+
+      - name: Upload patched Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+      - name: Deploy patched Pages site
+        id: deployment
+        uses: actions/deploy-pages@v4
