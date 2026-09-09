@@ -308,16 +308,18 @@
       const relevant=obs.filter(o=>o.t>=e.s&&o.t<(e.e||p.ve));
       const keys=groupElementKeys(e.state);
       if(!relevant.length||!keys.length){
-        const item={token:e.token,kind:e.kind,missing:[],penalty:0,verifiable:relevant.length>0};
+        const item={token:e.token,kind:e.kind,missing:[],penalty:0,elements:keys.length,verifiable:relevant.length>0};
         groups.push(item);byToken.set(e.token,item);continue;
       }
       const missing=keys.filter(k=>!relevant.some(o=>groupElementMatch(e.state,o,k)));
-      const penalty=missing.length*GROUP_ELEMENT_PENALTY;
+      // Max -10 pkt for a whole change group, distributed across its elements.
+      // Example: VIS + WX + CLOUD => one miss -3.3, two -6.7, all three -10.
+      const penalty=Math.round((GROUP_ELEMENT_PENALTY*missing.length/keys.length)*10)/10;
       total+=penalty;
-      const item={token:e.token,kind:e.kind,missing,penalty,verifiable:true};
+      const item={token:e.token,kind:e.kind,missing,penalty,elements:keys.length,verifiable:true};
       groups.push(item);byToken.set(e.token,item);
     }
-    return{total,groups,byToken};
+    return{total:Math.round(total*10)/10,groups,byToken};
   }
   function groupSummary(p,obs){
     const out=[],penalties=groupElementPenalties(p,obs).byToken;
