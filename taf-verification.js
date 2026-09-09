@@ -1,6 +1,6 @@
 'use strict';
 (() => {
-  const VERSION='TAF Verification v2.0';
+  const VERSION='TAF Verification v2.1';
   const BLOCKED_SKILL_KEY='prognozaepir-taf-skill-v1';
   const LIVE_ARCHIVE_BASE='https://central-ingestor-production.up.railway.app/data/messages/';
   const CENTRAL_RAW_BASE='https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/messages/';
@@ -71,6 +71,37 @@
     if(/\b(?:GR|GS|SQ)\b/.test(s))return'OTHER';
     return'NONE';
   }
+  function strictObservationRecord(o){
+    const raw=String(o?.canonical_raw||o?.raw||'').replace(/\s+/g,' ').trim();
+    return /^(?:(?:METAR|SPECI)\s+)?(?:COR\s+)?EPIR\s+\d{6}Z(?:\s+AUTO)?\s+(?:\d{3}|VRB)\d{2,3}(?:G(?:P99|\d{2,3}))?KT\b/i.test(raw);
+  }
+  function wxTokens(raw){
+    return (String(raw||'').toUpperCase().match(/\b(?:\+|-)?(?:MIFG|FZFG|FG|BR|HZ|TSRA|TSGR|TS|SHRA|SHSN|RASN|SNRA|FZRA|FZDZ|RA|DZ|SN|GR|GS|SQ)\b/g)||[]).map(x=>x.replace(/^[+-]/,''));
+  }
+  function coverRank(c){return({FEW:1,SCT:2,BKN:3,OVC:4})[String(c||'').toUpperCase()]||0}
+  function strictGroupMatch(f,o){
+    const checks=[];
+    if(finite(f.windKt))checks.push(componentHits(f,o).wind===true);
+    if(Object.prototype.hasOwnProperty.call(f,'vis')){
+      checks.push(f.vis>=10000?finite(o.vis)&&o.vis>=10000:finite(o.vis)&&o.vis<10000&&o.vis<=f.vis);
+    }
+    if(Object.prototype.hasOwnProperty.call(f,'wxFamily')){
+      const family=f.wxFamily??'NONE',forecastWx=wxTokens(f.wx||'');
+      if(family==='NONE')checks.push((o.wxFamily??'NONE')==='NONE');
+      else checks.push(forecastWx.length?forecastWx.every(x=>(o.wxTokens||[]).includes(x)):family===(o.wxFamily??'NONE'));
+    }
+    if(Object.prototype.hasOwnProperty.call(f,'clouds')){
+      const fc=f.clouds||[],conv=fc.filter(c=>c.type==='CB'||c.type==='TCU');
+      if(conv.length){
+        checks.push(conv.every(c=>(o.clouds||[]).some(x=>x.type===c.type&&coverRank(x.cover)>=coverRank(c.cover)&&Math.abs(x.ft-c.ft)<=1000)));
+      }else if(f.cavok||f.nsc){
+        checks.push(!(o.clouds||[]).some(c=>c.ft<4921));
+      }else if(fc.some(c=>c.cover==='BKN'||c.cover==='OVC')){
+        checks.push(componentHits(f,o).ceiling===true);
+      }
+    }
+    return checks.length>0&&checks.every(Boolean);
+  }
   function part(txt){
     const s=String(txt||'').replace(/\s+/g,' ').trim();
     const w=s.match(/\b(\d{3}|VRB)(\d{2,3})(?:G(P99|\d{2,3}))?KT\b/);
@@ -124,10 +155,10 @@
   function metarState(o){
     const raw=String(o?.raw||'');
     const wm=raw.match(/\b(\d{3}|VRB)(\d{2,3})(?:G(\d{2,3}))?KT\b/),vm=raw.match(/\b(9999|\d{4})\b/);
-    const clouds=[...raw.matchAll(/\b(FEW|SCT|BKN|OVC)(\d{3})/g)].map(m=>({cover:m[1],ft:+m[2]*100}));
+    const clouds=[...raw.matchAll(/\b(FEW|SCT|BKN|OVC)(\d{3})(CB|TCU)?\b/g)].map(m=>({cover:m[1],ft:+m[2]*100,type:m[3]||''}));
     const vis=finite(o?.visibility_m)?o.visibility_m:(vm?(vm[1]==='9999'?10000:+vm[1]):(/\bCAVOK\b/.test(raw)?10000:null));
     const ceil=finite(o?.ceiling_m_agl)?ft(o.ceiling_m_agl):(clouds.filter(c=>c.cover==='BKN'||c.cover==='OVC').sort((a,b)=>a.ft-b.ft)[0]?.ft??null);
-    return{t:Date.parse(o?.obs_time||0),windDir:finite(o?.wind_direction_deg)?o.wind_direction_deg:(wm&&wm[1]!=='VRB'?+wm[1]:null),windKt:finite(o?.wind_speed_ms)?kt(o.wind_speed_ms):(wm?+wm[2]:null),gustKt:finite(o?.wind_gust_ms)?kt(o.wind_gust_ms):(wm&&wm[3]?+wm[3]:null),vis,ceilingFt:ceil,wxFamily:wxFamily(raw),raw};
+    return{t:Date.parse(o?.obs_time||0),windDir:finite(o?.wind_direction_deg)?o.wind_direction_deg:(wm&&wm[1]!=='VRB'?+wm[1]:null),windKt:finite(o?.wind_speed_ms)?kt(o.wind_speed_ms):(wm?+wm[2]:null),gustKt:finite(o?.wind_gust_ms)?kt(o.wind_gust_ms):(wm&&wm[3]?+wm[3]:null),vis,ceilingFt:ceil,wxFamily:wxFamily(raw),wxTokens:wxTokens(raw),clouds,raw};
   }
   function componentHits(f,o){
     const out={};
@@ -194,6 +225,7 @@
   async function observationsFor(p){
     const chunks=await Promise.all(datesBetween(p.vs,p.ve).map(fetchMetarDay)),map=new Map();
     for(const o of chunks.flat()){
+      if(!strictObservationRecord(o))continue;
       const t=Date.parse(o.obs_time||0);
       if(t>=p.vs&&t<p.ve)map.set(o.obs_time,o);
     }
@@ -257,14 +289,7 @@
       }else{
         let observed=false;
         for(const o of relevant){
-          const base=statesAt(p,o.t).base,alt=merge(base,e.state),h=componentHits(alt,o);
-          const keys=[];
-          if(finite(e.state.windKt))keys.push('wind');
-          if(finite(e.state.vis))keys.push('vis');
-          if(Object.prototype.hasOwnProperty.call(e.state,'ceilingFt'))keys.push('ceiling');
-          if(Object.prototype.hasOwnProperty.call(e.state,'wxFamily'))keys.push('wx');
-          const used=keys.length?keys:PARAMS.filter(k=>typeof h[k]==='boolean');
-          if(used.length&&used.every(k=>h[k]===true)){observed=true;break}
+          if(strictGroupMatch(e.state,o)){observed=true;break}
         }
         const prob=e.kind.startsWith('PROB30');
         out.push({kind:e.kind,token:e.token,status:observed?'warunki grupy zaobserwowano':prob?'warunków grupy nie zaobserwowano':'grupy nie potwierdzono',ok:prob?null:observed});
@@ -321,7 +346,7 @@
       <div id="tafDayMeta" class="note" style="margin-top:7px"></div>
       <div class="scroll" style="margin-top:8px"><table style="min-width:980px"><thead><tr><th>Cykl / wydanie</th><th>Źródło</th><th>METAR</th><th>Wynik</th><th>Wiatr</th><th>VIS</th><th>Pułap</th><th>WX</th><th>Status</th></tr></thead><tbody id="tafDayRows"><tr><td colspan="9">Wybierz dzień i kliknij „Policz sprawdzalność”.</td></tr></tbody></table></div>
       <div id="tafDayDetails" style="margin-top:8px"></div>
-      <div class="note" style="margin-top:8px">Kryteria: wiatr — prędkość &lt;10 kt różnicy i kierunek &lt;60° przy istotnym wietrze; VIS — zgodność przedziału 800/1500/3000/5000 m; pułap — zgodność przedziału 200/300/500/1000/1500 ft; WX — zgodność głównej rodziny zjawiska. TEMPO/PROB30 może pokryć obserwowane odchylenie. PROB30 nie jest oceniane jako „trafione/nietrafione” na podstawie jednego przypadku.</div>`;
+      <div class="note" style="margin-top:8px">Kryteria: wiatr — prędkość &lt;10 kt różnicy i kierunek &lt;60° przy istotnym wietrze; VIS — zgodność przedziału 800/1500/3000/5000 m; pułap — zgodność przedziału 200/300/500/1000/1500 ft; WX — zgodność głównej rodziny zjawiska. TEMPO/PROB30 może pokryć obserwowane odchylenie. Status „warunki grupy zaobserwowano” wymaga jednego METAR/SPECI w okresie, który jednocześnie spełnia wszystkie jawnie prognozowane elementy grupy: VIS, dokładny rodzaj WX oraz CB/TCU z ilością i podstawą. PROB30 nie jest oceniane jako „trafione/nietrafione” na podstawie jednego przypadku.</div>`;
     grid.appendChild(s);
     const input=$('tafVerifyDay');input.max=utcDate(Date.now());input.value=utcDate(Date.now());
     $('tafDayPrev').onclick=()=>{input.value=shiftDay(input.value,-1);refreshDay()};
