@@ -25,49 +25,18 @@ jobs:
           from pathlib import Path
           p = Path('fog-meteogram-overlay.js')
           s = p.read_text(encoding='utf-8')
-
-          old = '''  function peakDetail(ev) {
-    if (!ev || ev.peak.score < THRESHOLD) return 'brak sygnału ≥40/100 w 48 h';
-    const range = ev.peakFrom === null
-      ? localHour(ev.peak.t)
-      : localHour(ev.peakFrom) + '–' + localHour(ev.peakTo);
-    return fmt0(ev.peak.score) + '/100 · ' + range;
-  }
-'''
-
-          new = '''  function localDate(t) {
-    try {
-      const tz = (typeof PLACE !== 'undefined' && PLACE?.tz) ? PLACE.tz : 'Europe/Warsaw';
-      return new Intl.DateTimeFormat('pl-PL',{timeZone:tz,day:'2-digit',month:'2-digit'}).format(new Date(t));
-    } catch (_) {
-      return new Date(t).toLocaleDateString('pl-PL',{day:'2-digit',month:'2-digit'});
-    }
-  }
-
-  function peakDetail(ev) {
-    if (!ev || ev.peak.score < THRESHOLD) return 'brak sygnału ≥40/100 w 48 h';
-    const from = ev.peakFrom === null ? ev.peak.t : ev.peakFrom;
-    const to = ev.peakTo === null ? ev.peak.t : ev.peakTo;
-    const dateFrom = localDate(from);
-    const dateTo = localDate(to);
-    const range = dateFrom === dateTo
-      ? dateFrom + ' · ' + localHour(from) + '–' + localHour(to)
-      : dateFrom + ' ' + localHour(from) + '–' + dateTo + ' ' + localHour(to);
-    return fmt0(ev.peak.score) + '/100 · ' + range;
-  }
-'''
-
+          old = "  function peakDetail(ev) {\n    if (!ev || ev.peak.score < THRESHOLD) return 'brak sygnału ≥40/100 w 48 h';\n    const range = ev.peakFrom === null\n      ? localHour(ev.peak.t)\n      : localHour(ev.peakFrom) + '–' + localHour(ev.peakTo);\n    return fmt0(ev.peak.score) + '/100 · ' + range;\n  }\n"
+          new = "  function localDate(t) {\n    try {\n      const tz = (typeof PLACE !== 'undefined' && PLACE?.tz) ? PLACE.tz : 'Europe/Warsaw';\n      return new Intl.DateTimeFormat('pl-PL',{timeZone:tz,day:'2-digit',month:'2-digit'}).format(new Date(t));\n    } catch (_) {\n      return new Date(t).toLocaleDateString('pl-PL',{day:'2-digit',month:'2-digit'});\n    }\n  }\n\n  function peakDetail(ev) {\n    if (!ev || ev.peak.score < THRESHOLD) return 'brak sygnału ≥40/100 w 48 h';\n    const from = ev.peakFrom === null ? ev.peak.t : ev.peakFrom;\n    const to = ev.peakTo === null ? ev.peak.t : ev.peakTo;\n    const dateFrom = localDate(from);\n    const dateTo = localDate(to);\n    const range = dateFrom === dateTo\n      ? dateFrom + ' · ' + localHour(from) + '–' + localHour(to)\n      : dateFrom + ' ' + localHour(from) + '–' + dateTo + ' ' + localHour(to);\n    return fmt0(ev.peak.score) + '/100 · ' + range;\n  }\n"
           if old not in s:
               raise SystemExit('peakDetail block not found')
-          s = s.replace(old, new, 1)
-          p.write_text(s, encoding='utf-8')
+          p.write_text(s.replace(old, new, 1), encoding='utf-8')
           PY
 
       - name: Validate
         run: |
           node --check fog-meteogram-overlay.js
+          grep -F "function localDate(t)" fog-meteogram-overlay.js
           grep -F "dateFrom + ' · ' + localHour(from)" fog-meteogram-overlay.js
-          grep -F "return fmt0(ev.peak.score) + '/100 · ' + range;" fog-meteogram-overlay.js
 
       - name: Commit
         run: |
