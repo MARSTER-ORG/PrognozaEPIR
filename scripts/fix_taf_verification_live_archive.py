@@ -124,7 +124,10 @@ def enforce_strict_group_verification(s: str) -> str:
           if(strictGroupMatch(e.state,o)){observed=true;break}
         }
 """
-    s = must_replace(s, old_group, new_group, "strict TEMPO/PROB30 occurrence test")
+    # The proportional group-penalty layer may compact this loop to one line.
+    # Treat either formatting as the same already-enforced strict invariant.
+    if "if(strictGroupMatch(e.state,o))" not in s:
+        s = must_replace(s, old_group, new_group, "strict TEMPO/PROB30 occurrence test")
 
     old_note = "TEMPO/PROB30 może pokryć obserwowane odchylenie. PROB30 nie jest oceniane jako „trafione/nietrafione” na podstawie jednego przypadku."
     new_note = "TEMPO/PROB30 może pokryć obserwowane odchylenie. Status „warunki grupy zaobserwowano” wymaga jednego METAR/SPECI w okresie, który jednocześnie spełnia wszystkie jawnie prognozowane elementy grupy: VIS, dokładny rodzaj WX oraz CB/TCU z ilością i podstawą. PROB30 nie jest oceniane jako „trafione/nietrafione” na podstawie jednego przypadku."
