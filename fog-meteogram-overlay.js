@@ -1,6 +1,6 @@
 'use strict';
 (() => {
-  const FOG_DRAW_THRESHOLD = 40;
+  const FOG_DRAW_THRESHOLD = 60;
   const MIFG_DRAW_THRESHOLD = 60;
   const BR_DRAW_THRESHOLD = 60;
   const FOG_INFO_THRESHOLD = 40;
