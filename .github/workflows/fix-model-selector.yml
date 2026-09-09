@@ -31,42 +31,24 @@ jobs:
       - name: Patch model loading
         run: python3 scripts/fix_model_selector.py
 
-      - name: Patch fog meteogram draw threshold
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('fog-meteogram-overlay.js')
-          s = p.read_text(encoding='utf-8')
-          old = 'const FOG_DRAW_THRESHOLD = 40;'
-          new = 'const FOG_DRAW_THRESHOLD = 60;'
-          if old in s:
-              s = s.replace(old, new, 1)
-          elif new not in s:
-              raise SystemExit('FOG draw threshold declaration not found')
-          p.write_text(s, encoding='utf-8')
-          PY
-
       - name: Validate repair
         run: |
           grep -F 'async function reqVars(model,vars,timeoutMs)' index.html
           grep -F 'demo=false;populateView();try{' index.html
           grep -F 'populateView();if(!datasets.size)' index.html
-          grep -F 'const FOG_DRAW_THRESHOLD = 60;' fog-meteogram-overlay.js
-          grep -F 'const FOG_INFO_THRESHOLD = 40;' fog-meteogram-overlay.js
           python3 -c "from pathlib import Path; s=Path('index.html').read_text(encoding='utf-8'); Path('/tmp/index-inline.js').write_text(s.split('<script>',1)[1].split('</script>',1)[0],encoding='utf-8')"
           node --check /tmp/index-inline.js
-          node --check fog-meteogram-overlay.js
 
       - name: Commit repair
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add index.html fog-meteogram-overlay.js
+          git add index.html
           if git diff --cached --quiet; then
             echo 'No changes needed'
             exit 0
           fi
-          git commit -m 'fix: draw fog on meteogram only from 60'
+          git commit -m 'fix: restore resilient model selector loading'
           git pull --rebase origin main
           git push origin HEAD:main
 
