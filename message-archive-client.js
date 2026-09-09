@@ -132,6 +132,7 @@
         await loadPolicy('taf-cloud-policy.js', '20260909-3');
         await loadPolicy('taf-gust-policy.js', '20260909-2');
         await loadPolicy('taf-weather-policy.js', '20260909-2');
+        await loadPolicy('taf-cavok-nsc-policy.js', '20260909-1');
       } catch (error) {
         console.warn('TAF policy loader:', error);
       }
