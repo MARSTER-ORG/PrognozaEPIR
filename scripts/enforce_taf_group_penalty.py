@@ -4,8 +4,9 @@ from pathlib import Path
 P = Path('taf-verification.js')
 s = P.read_text(encoding='utf-8')
 
-# The 10-point pool applies to a whole change group.  If a group has N
-# verifiable elements, each missing element consumes 10/N points from that pool.
+# Each missing element costs 10 points, then the total is normalized by the
+# number of change groups in the TAF. Example: one group with missing
+# VIS + WX + CLOUD => (10 * 3) / 1 = -30 points.
 CONST = "  const GROUP_ELEMENT_PENALTY=10;\n"
 if 'GROUP_ELEMENT_PENALTY=10' not in s:
     anchor = "  const LABELS={wind:'Wiatr',vis:'Widzialność',ceiling:'Pułap',wx:'Pogoda'};\n"
@@ -42,6 +43,7 @@ HELPERS = r'''  function groupElementKeys(f){
   }
   function groupElementPenalties(p,obs){
     const groups=[],byToken=new Map();let total=0;
+    const changeCount=Math.max(1,p.events.length);
     for(const e of p.events){
       const relevant=obs.filter(o=>o.t>=e.s&&o.t<(e.e||p.ve));
       const keys=groupElementKeys(e.state);
@@ -50,9 +52,10 @@ HELPERS = r'''  function groupElementKeys(f){
         groups.push(item);byToken.set(e.token,item);continue;
       }
       const missing=keys.filter(k=>!relevant.some(o=>groupElementMatch(e.state,o,k)));
-      // Max -10 pkt for a whole change group, distributed across its elements.
-      // Example: VIS + WX + CLOUD => one miss -3.3, two -6.7, all three -10.
-      const penalty=Math.round((GROUP_ELEMENT_PENALTY*missing.length/keys.length)*10)/10;
+      // Each missing element costs 10 points, normalized by number of change groups.
+      // Example: one group, VIS + WX + CLOUD all missing => (10 * 3) / 1 = -30.
+      // With two change groups the same three misses contribute -15 points.
+      const penalty=Math.round((GROUP_ELEMENT_PENALTY*missing.length/changeCount)*10)/10;
       total+=penalty;
       const item={token:e.token,kind:e.kind,missing,penalty,elements:keys.length,verifiable:true};
       groups.push(item);byToken.set(e.token,item);
@@ -119,7 +122,8 @@ elif 'const ps=results.map(x=>x.groupPenalty)' not in s:
 required = [
     'GROUP_ELEMENT_PENALTY=10',
     'function groupElementPenalties(p,obs)',
-    'GROUP_ELEMENT_PENALTY*missing.length/keys.length',
+    'const changeCount=Math.max(1,p.events.length);',
+    'GROUP_ELEMENT_PENALTY*missing.length/changeCount',
     'Math.max(0,rawOverall-groupPenalty)',
     "brak METAR w okresie — bez kary",
 ]
@@ -128,4 +132,4 @@ for token in required:
         raise SystemExit(f'TAF group penalty: required token missing: {token}')
 
 P.write_text(s, encoding='utf-8')
-print('TAF verification: proportional change-group penalty enforced (max -10 points per group)')
+print('TAF verification: missing-element penalty enforced (10 * missing elements / change groups)')
