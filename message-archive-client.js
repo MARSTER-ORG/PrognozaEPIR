@@ -112,27 +112,51 @@
   // kilku niezależnych mutatorów tej samej depeszy.
   if (/\/taf\.html$/i.test(location.pathname)) {
     const RAW = 'https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/';
-    const loadPolicy = (name, version) => new Promise((resolve, reject) => {
-      const attach = (src, fallback) => {
-        const s = document.createElement('script');
-        s.src = src;
-        s.async = true;
-        s.onload = () => resolve();
-        s.onerror = () => {
-          s.remove();
-          if (fallback) attach(`${RAW}${name}?v=${version}`, false);
-          else reject(new Error(`Nie udało się załadować ${name}`));
-        };
-        document.head.appendChild(s);
+
+    const attachScript = (src) => new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = src;
+      s.async = true;
+      s.onload = () => resolve();
+      s.onerror = () => {
+        s.remove();
+        reject(new Error(`Nie udało się załadować ${src}`));
       };
-      attach(`${name}?v=${version}`, true);
+      document.head.appendChild(s);
     });
+
+    const attachRawAsBlob = async (name, version) => {
+      const rawUrl = `${RAW}${name}?v=${version}`;
+      const response = await fetch(rawUrl, {cache:'no-store'});
+      if (!response.ok) throw new Error(`TAF policy ${name}: HTTP ${response.status}`);
+      const code = await response.text();
+      const blobUrl = URL.createObjectURL(new Blob([code], {type:'text/javascript'}));
+      try {
+        await attachScript(blobUrl);
+      } finally {
+        URL.revokeObjectURL(blobUrl);
+      }
+    };
+
+    const loadPolicy = async (name, version) => {
+      try {
+        await attachScript(`${name}?v=${version}`);
+      } catch (localError) {
+        try {
+          await attachRawAsBlob(name, version);
+        } catch (rawError) {
+          const error = new Error(`Nie udało się załadować ${name}`);
+          error.cause = {localError, rawError};
+          throw error;
+        }
+      }
+    };
 
     (async () => {
       try {
         await loadPolicy('taf-cloud-policy.js', '20260909-3');
         await loadPolicy('taf-weather-policy.js', '20260909-2');
-        await loadPolicy('taf-instruction-guard.js', '20260909-5');
+        await loadPolicy('taf-instruction-guard.js', '20260909-6');
       } catch (error) {
         console.warn('TAF policy loader:', error);
       }
