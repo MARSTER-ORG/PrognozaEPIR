@@ -2,121 +2,32 @@ name: Fix MIFG primary renderer
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
-      - '.github/workflows/fix-mifg-primary-render.yml'
+      - .github/workflows/fix-mifg-primary-render.yml
   workflow_dispatch:
 
 permissions:
   contents: write
 
-concurrency:
-  group: fix-mifg-primary-render
-  cancel-in-progress: false
-
 jobs:
   patch:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout main
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
-
-      - name: Refresh main
+      - name: Patch MIFG renderer
+        run: python3 scripts/fix_mifg_primary_renderer.py
+      - name: Validate JavaScript
+        run: node --check mifg-engine.js
+      - name: Commit result
         run: |
-          git fetch origin main
-          git reset --hard origin/main
-
-      - name: Patch primary MIFG renderer
-        shell: python
-        run: |
-          from pathlib import Path
-          import re
-
-          p = Path('mifg-engine.js')
-          s = p.read_text(encoding='utf-8')
-
-          pattern = re.compile(r"  function render\(\)\{\n.*?\n  \}\n\n  async function doRefresh\(\)\{", re.S)
-          m = pattern.search(s)
-          if not m:
-              raise SystemExit('primary MIFG render() block not found')
-
-          replacement = r'''  function operationalText(score){
-    if(!finite(score))return 'BRAK DANYCH';
-    if(score<40)return 'NIE';
-    if(score<60)return 'MOŻLIWE';
-    if(score<80)return 'PRAWDOPODOBNE';
-    return 'BARDZO PRAWDOPODOBNE';
-  }
-
-  function render(){
-    const summary=document.getElementById('fogSummary');
-    if(!summary||!series.length)return;
-    document.getElementById('mifgCard')?.remove();
-    for(const oldCard of [...summary.children]){
-      const small=oldCard.querySelector?.('small');
-      if(small&&/\bMIFG\b/i.test(small.textContent||''))oldCard.remove();
-    }
-    const now=Date.now();
-    const current=series.reduce((a,b)=>Math.abs(b.t-now)<Math.abs(a.t-now)?b:a,series[0]);
-    const future=series.filter(x=>x.t>=now-HOUR&&x.t<=now+12*HOUR);
-    const peak=future.reduce((a,b)=>!a||(b.score??-1)>(a.score??-1)?b:a,null)||current;
-    const obs=obsHasMifg(latestObs)&&obsAgeHours(latestObs)<=2;
-    const card=document.createElement('div');
-    card.id='mifgCard';
-    card.className='fog-card '+(current.score>=80?'fog-risk-vhigh':current.score>=60?'fog-risk-high':current.score>=40?'fog-risk-mid':'');
-    const currentDetail=current.score>=40
-      ?Math.round(current.score)+'/100'
-      :'wynik <40/100 pominięty';
-    const peakDetail=peak.score>=40
-      ?' · maks. 12 h '+Math.round(peak.score)+'/100 '+localHour(peak.t)
-      :' · brak sygnału ≥40 w 12 h';
-    card.innerHTML='<small>MIFG</small><strong>'+operationalText(current.score)+'</strong>'+
-      '<em>'+currentDetail+peakDetail+(obs?' · MIFG OBS':'')+'</em>';
-    summary.appendChild(card);
-
-    const note=document.getElementById('fogDataNote');
-    let n=document.getElementById('mifgNote');
-    if(note&&!n){
-      n=document.createElement('div');n.id='mifgNote';n.className='fog-data-note';
-      note.insertAdjacentElement('afterend',n);
-    }
-    if(n){
-      const fallback=engineStatus.source.includes('fallback')?' · fallback multimodel aktywny':'';
-      n.innerHTML='<b>MIFG:</b> osobny score płytkiej mgły &lt;2 m; VIS nie jest głównym predyktorem. Kluczowe są nasycenie przy powierzchni, wiatr, inwersja, wychładzanie i wilgotność podłoża'+fallback+'.';
-    }
-  }
-
-  async function doRefresh(){'''
-
-          s2 = pattern.sub(replacement, s, count=1)
-          if s2 == s:
-              raise SystemExit('patch produced no change')
-          p.write_text(s2, encoding='utf-8')
-
-      - name: Validate
-        run: |
-          node --check mifg-engine.js
-          grep -F "function operationalText(score)" mifg-engine.js
-          grep -F "'<small>MIFG</small><strong>'" mifg-engine.js
-          grep -F "'wynik <40/100 pominięty'" mifg-engine.js
-          grep -F "' · brak sygnału ≥40 w 12 h'" mifg-engine.js
-          if grep -Fq 'MIFG &lt;2 m — shallow fog</small><strong>' mifg-engine.js; then
-            echo 'Old MIFG summary renderer still present'
-            exit 1
-          fi
-
-      - name: Commit patch
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add mifg-engine.js
-          if git diff --cached --quiet; then
-            echo 'No changes needed'
-            exit 0
-          fi
-          git commit -m 'ui: make primary MIFG summary match BR'
+          git commit -m "ui: make primary MIFG summary match BR"
           git pull --rebase origin main
           git push origin HEAD:main
