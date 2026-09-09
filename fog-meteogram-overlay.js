@@ -969,6 +969,76 @@
           grid-template-columns: 1fr !important;
         }
       }
+      /* EPIR_COMPACT_POPOVER_V2 */
+      #${POPOVER_ID} {
+        width: max-content !important;
+        max-width: min(255px, calc(100vw - 10px)) !important;
+        max-height: min(44vh, 340px) !important;
+        padding: 5px 6px !important;
+        border-radius: 7px !important;
+        font-size: 10px !important;
+        line-height: 1.12 !important;
+        box-shadow: 0 5px 18px rgba(0,0,0,.38) !important;
+      }
+      #${POPOVER_ID} .epir-popover-close {
+        width: 20px !important;
+        height: 20px !important;
+        margin: -2px -2px 1px 5px !important;
+        padding: 0 !important;
+        border-radius: 5px !important;
+        font: 700 14px/18px Arial,sans-serif !important;
+      }
+      #${POPOVER_ID} .section-head {
+        display: flex !important;
+        align-items: baseline !important;
+        justify-content: space-between !important;
+        gap: 6px !important;
+        padding: 0 22px 3px 0 !important;
+        margin: 0 0 2px !important;
+        white-space: nowrap !important;
+      }
+      #${POPOVER_ID} .section-head b { font-size: 10px !important; }
+      #${POPOVER_ID} .section-head span { font-size: 8px !important; }
+      #${POPOVER_ID} .section-values {
+        display: flex !important;
+        flex-direction: column !important;
+        grid-template-columns: none !important;
+        gap: 0 !important;
+      }
+      #${POPOVER_ID} .section-value {
+        display: flex !important;
+        align-items: baseline !important;
+        justify-content: space-between !important;
+        gap: 8px !important;
+        min-width: 0 !important;
+        padding: 2px 0 !important;
+        border: 0 !important;
+        background: transparent !important;
+      }
+      #${POPOVER_ID} .section-value small {
+        display: block !important;
+        flex: 1 1 auto !important;
+        font-size: 8.5px !important;
+        line-height: 1.08 !important;
+      }
+      #${POPOVER_ID} .section-value strong {
+        display: block !important;
+        flex: 0 1 auto !important;
+        max-width: 145px !important;
+        font-size: 10.5px !important;
+        line-height: 1.1 !important;
+        text-align: right !important;
+        white-space: normal !important;
+      }
+      #${POPOVER_ID} .section-help { display: none !important; }
+      @media (max-width: 560px) {
+        #${POPOVER_ID} {
+          width: max-content !important;
+          max-width: min(245px, calc(100vw - 10px)) !important;
+          max-height: 42vh !important;
+          padding: 5px !important;
+        }
+      }
     `;
     document.head.appendChild(style);
   }
