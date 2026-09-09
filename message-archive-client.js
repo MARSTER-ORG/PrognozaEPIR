@@ -106,24 +106,35 @@
   window.PrognozaEPIRMessageArchive = api;
   window.dispatchEvent(new CustomEvent('prognozaepir:message-archive-ready'));
 
-  // Generator TAF ma własne lekkie polityki interpretacyjne. Ładujemy je tylko
-  // na taf.html, więc pozostałe podstrony nie ponoszą kosztu tych modułów.
+  // Generator TAF ma własne lekkie polityki interpretacyjne. Na Pages część
+  // starszych workflowów nie kopiowała tych plików do _site, dlatego loader
+  // próbuje najpierw lokalnego assetu, a przy 404 pobiera ten sam moduł z repo.
   if (/\/taf\.html$/i.test(location.pathname)) {
-    const cloud = document.createElement('script');
-    cloud.src = 'taf-cloud-policy.js?v=20260909-2';
-    cloud.async = true;
-    cloud.onload = () => {
-      const gust = document.createElement('script');
-      gust.src = 'taf-gust-policy.js?v=20260909-1';
-      gust.async = true;
-      gust.onload = () => {
-        const weather = document.createElement('script');
-        weather.src = 'taf-weather-policy.js?v=20260909-1';
-        weather.async = true;
-        document.head.appendChild(weather);
+    const RAW = 'https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/';
+    const loadPolicy = (name, version) => new Promise((resolve, reject) => {
+      const attach = (src, fallback) => {
+        const s = document.createElement('script');
+        s.src = src;
+        s.async = true;
+        s.onload = () => resolve();
+        s.onerror = () => {
+          s.remove();
+          if (fallback) attach(`${RAW}${name}?v=${version}`, false);
+          else reject(new Error(`Nie udało się załadować ${name}`));
+        };
+        document.head.appendChild(s);
       };
-      document.head.appendChild(gust);
-    };
-    document.head.appendChild(cloud);
+      attach(`${name}?v=${version}`, true);
+    });
+
+    (async () => {
+      try {
+        await loadPolicy('taf-cloud-policy.js', '20260909-3');
+        await loadPolicy('taf-gust-policy.js', '20260909-2');
+        await loadPolicy('taf-weather-policy.js', '20260909-2');
+      } catch (error) {
+        console.warn('TAF policy loader:', error);
+      }
+    })();
   }
 })();
