@@ -65,8 +65,8 @@ jobs:
 
           m='message-archive-client.js'
           replace_exact(m,
-              "        await loadPolicy('taf-instruction-guard.js', '20260909-1');",
-              "        await loadPolicy('taf-instruction-guard.js', '20260909-2');")
+              "        await loadPolicy('taf-instruction-guard.js', '20260909-4');",
+              "        await loadPolicy('taf-instruction-guard.js', '20260909-5');")
           PY
       - name: Verify
         run: |
@@ -76,6 +76,7 @@ jobs:
           grep -F "const NSC_LIMIT_FT = CAVOK_BASE_LIMIT_FT;" taf-instruction-guard.js
           grep -F "EPIR: CAVOK/NSC 1500 m · 4921 ft ✓" taf-instruction-guard.js
           ! grep -F "MSA_UNKNOWN" taf-instruction-guard.js
+          grep -F "taf-instruction-guard.js', '20260909-5'" message-archive-client.js
       - name: Commit migration
         run: |
           git config user.name 'github-actions[bot]'
