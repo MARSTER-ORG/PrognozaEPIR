@@ -22,184 +22,99 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-
           p = Path('fog-meteogram-overlay.js')
           s = p.read_text(encoding='utf-8')
-
-          old = '''      #${POPOVER_ID} {
-        position: fixed;
-        z-index: 2147483000;
-        width: min(460px, calc(100vw - 16px));
-        max-height: min(62vh, 560px);
-        overflow: auto;
-        box-sizing: border-box;
-        padding: 12px 12px 11px;
-        border: 1px solid var(--border, #59616b);
-        border-radius: 10px;
-        background: var(--panel, #20262c);
-        color: var(--text, #e5e7eb);
-        box-shadow: 0 10px 34px rgba(0,0,0,.48);
-        overscroll-behavior: contain;
-        -webkit-overflow-scrolling: touch;
-      }
-      #${POPOVER_ID}[hidden] { display: none !important; }
-      #${POPOVER_ID} .epir-popover-close {
-        position: sticky;
-        z-index: 2;
-        top: 0;
-        float: right;
-        width: 30px;
-        height: 30px;
-        margin: -5px -5px 3px 8px;
-        border: 1px solid var(--border, #59616b);
-        border-radius: 7px;
-        background: var(--panel2, #2a3037);
-        color: var(--text, #e5e7eb);
-        font: 700 20px/26px Arial,sans-serif;
-        text-align: center;
-        cursor: pointer;
-      }
-      #${POPOVER_ID} .section-head {
-        padding-right: 32px;
-      }
-      #${POPOVER_ID} .section-values {
-        grid-template-columns: repeat(2, minmax(0,1fr)) !important;
-      }
-      #${POPOVER_ID} .section-help {
-        margin-bottom: 0;
-      }
-      @media (max-width: 560px) {
-        #${POPOVER_ID} {
-          width: calc(100vw - 14px);
-          max-height: 58vh;
-          padding: 10px;
-          border-radius: 9px;
-        }
-        #${POPOVER_ID} .section-values {
-          grid-template-columns: repeat(2, minmax(0,1fr)) !important;
-          gap: 6px !important;
-        }
-      }
-      @media (max-width: 360px) {
-        #${POPOVER_ID} .section-values {
-          grid-template-columns: 1fr !important;
-        }
-      }
-'''
-
-          new = '''      #${POPOVER_ID} {
-        position: fixed;
-        z-index: 2147483000;
-        width: max-content;
-        max-width: min(270px, calc(100vw - 12px));
-        max-height: min(48vh, 360px);
-        overflow: auto;
-        box-sizing: border-box;
-        padding: 6px 7px 6px;
-        border: 1px solid var(--border, #59616b);
-        border-radius: 7px;
-        background: var(--panel, #20262c);
-        color: var(--text, #e5e7eb);
-        box-shadow: 0 5px 18px rgba(0,0,0,.38);
-        overscroll-behavior: contain;
-        -webkit-overflow-scrolling: touch;
-        font-size: 10px;
-        line-height: 1.15;
-      }
-      #${POPOVER_ID}[hidden] { display: none !important; }
-      #${POPOVER_ID} .epir-popover-close {
-        position: sticky;
-        z-index: 2;
-        top: 0;
-        float: right;
-        width: 20px;
-        height: 20px;
-        margin: -2px -2px 1px 6px;
-        padding: 0;
-        border: 1px solid var(--border, #59616b);
-        border-radius: 5px;
-        background: var(--panel2, #2a3037);
-        color: var(--text, #e5e7eb);
-        font: 700 14px/18px Arial,sans-serif;
-        text-align: center;
-        cursor: pointer;
-      }
-      #${POPOVER_ID} .section-head {
-        display: flex !important;
-        align-items: baseline !important;
-        justify-content: space-between !important;
-        gap: 8px !important;
-        padding: 0 22px 3px 0 !important;
-        margin: 0 0 3px !important;
-        border-bottom: 1px solid var(--border, #59616b) !important;
-        white-space: nowrap;
-      }
-      #${POPOVER_ID} .section-head b {
-        font-size: 10px !important;
-      }
-      #${POPOVER_ID} .section-head span {
-        font-size: 8px !important;
-      }
-      #${POPOVER_ID} .section-values {
-        display: flex !important;
-        flex-direction: column !important;
-        gap: 0 !important;
-      }
-      #${POPOVER_ID} .section-value {
-        display: flex !important;
-        align-items: baseline !important;
-        justify-content: space-between !important;
-        gap: 10px !important;
-        min-width: 0 !important;
-        padding: 2px 0 !important;
-        border: 0 !important;
-        border-bottom: 1px solid color-mix(in srgb, var(--border, #59616b) 45%, transparent) !important;
-        background: transparent !important;
-      }
-      #${POPOVER_ID} .section-value:last-child {
-        border-bottom: 0 !important;
-      }
-      #${POPOVER_ID} .section-value small {
-        display: block !important;
-        flex: 0 1 auto;
-        color: var(--muted, #a6acb5) !important;
-        font-size: 8.5px !important;
-        line-height: 1.1 !important;
-      }
-      #${POPOVER_ID} .section-value strong {
-        display: block !important;
-        flex: 0 0 auto;
-        max-width: 155px;
-        font-size: 10.5px !important;
-        line-height: 1.12 !important;
-        text-align: right;
-        white-space: normal;
-      }
-      #${POPOVER_ID} .section-help {
-        display: none !important;
-      }
-      @media (max-width: 560px) {
-        #${POPOVER_ID} {
-          max-width: min(255px, calc(100vw - 10px));
-          max-height: 44vh;
-          padding: 5px 6px;
-        }
-      }
-'''
-
-          if old not in s:
-              raise SystemExit('Popover style block not found')
-          s = s.replace(old, new, 1)
-          p.write_text(s, encoding='utf-8')
+          tag = 'EPIR_COMPACT_POPOVER_V2'
+          if tag not in s:
+              start = s.index('// --- EPIR METEOGRAM SECTION POPOVER EMBEDDED ---')
+              marker = "    `;\n    document.head.appendChild(style);"
+              pos = s.index(marker, start)
+              css = "\n".join([
+                  "      /* EPIR_COMPACT_POPOVER_V2 */",
+                  "      #${POPOVER_ID} {",
+                  "        width: max-content !important;",
+                  "        max-width: min(255px, calc(100vw - 10px)) !important;",
+                  "        max-height: min(44vh, 340px) !important;",
+                  "        padding: 5px 6px !important;",
+                  "        border-radius: 7px !important;",
+                  "        font-size: 10px !important;",
+                  "        line-height: 1.12 !important;",
+                  "        box-shadow: 0 5px 18px rgba(0,0,0,.38) !important;",
+                  "      }",
+                  "      #${POPOVER_ID} .epir-popover-close {",
+                  "        width: 20px !important;",
+                  "        height: 20px !important;",
+                  "        margin: -2px -2px 1px 5px !important;",
+                  "        padding: 0 !important;",
+                  "        border-radius: 5px !important;",
+                  "        font: 700 14px/18px Arial,sans-serif !important;",
+                  "      }",
+                  "      #${POPOVER_ID} .section-head {",
+                  "        display: flex !important;",
+                  "        align-items: baseline !important;",
+                  "        justify-content: space-between !important;",
+                  "        gap: 6px !important;",
+                  "        padding: 0 22px 3px 0 !important;",
+                  "        margin: 0 0 2px !important;",
+                  "        white-space: nowrap !important;",
+                  "      }",
+                  "      #${POPOVER_ID} .section-head b { font-size: 10px !important; }",
+                  "      #${POPOVER_ID} .section-head span { font-size: 8px !important; }",
+                  "      #${POPOVER_ID} .section-values {",
+                  "        display: flex !important;",
+                  "        flex-direction: column !important;",
+                  "        grid-template-columns: none !important;",
+                  "        gap: 0 !important;",
+                  "      }",
+                  "      #${POPOVER_ID} .section-value {",
+                  "        display: flex !important;",
+                  "        align-items: baseline !important;",
+                  "        justify-content: space-between !important;",
+                  "        gap: 8px !important;",
+                  "        min-width: 0 !important;",
+                  "        padding: 2px 0 !important;",
+                  "        border: 0 !important;",
+                  "        background: transparent !important;",
+                  "      }",
+                  "      #${POPOVER_ID} .section-value small {",
+                  "        display: block !important;",
+                  "        flex: 1 1 auto !important;",
+                  "        font-size: 8.5px !important;",
+                  "        line-height: 1.08 !important;",
+                  "      }",
+                  "      #${POPOVER_ID} .section-value strong {",
+                  "        display: block !important;",
+                  "        flex: 0 1 auto !important;",
+                  "        max-width: 145px !important;",
+                  "        font-size: 10.5px !important;",
+                  "        line-height: 1.1 !important;",
+                  "        text-align: right !important;",
+                  "        white-space: normal !important;",
+                  "      }",
+                  "      #${POPOVER_ID} .section-help { display: none !important; }",
+                  "      @media (max-width: 560px) {",
+                  "        #${POPOVER_ID} {",
+                  "          width: max-content !important;",
+                  "          max-width: min(245px, calc(100vw - 10px)) !important;",
+                  "          max-height: 42vh !important;",
+                  "          padding: 5px !important;",
+                  "        }",
+                  "      }",
+              ])
+              s = s[:pos] + css + "\n" + s[pos:]
+              p.write_text(s, encoding='utf-8')
           PY
 
       - name: Validate JavaScript
-        run: node --check fog-meteogram-overlay.js
+        run: |
+          node --check fog-meteogram-overlay.js
+          grep -F 'EPIR_COMPACT_POPOVER_V2' fog-meteogram-overlay.js
 
       - name: Commit compact popover
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add fog-meteogram-overlay.js
+          if git diff --cached --quiet; then exit 0; fi
           git commit -m 'ui: compact meteogram section popover'
           git push origin main
