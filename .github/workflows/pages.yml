@@ -33,7 +33,7 @@ jobs:
           cp index.html radar.html taf.html sat-fog.html epir-icon.svg epir-icon-192.png epir-icon-512.png \
              index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js meteogram-visfog-split.js meteogram-visfog-cleanup.js \
              rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js shortcut-mode.js \
-             cloud-learning-client.js message-archive-client.js \
+             cloud-learning-client.js message-archive-client.js taf-instruction-guard.js \
              radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js \
              lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
           cp -R data/messages/. _site/data/messages/
@@ -188,7 +188,7 @@ jobs:
 
       - name: Validate JavaScript
         run: |
-          for f in index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js meteogram-visfog-split.js meteogram-visfog-cleanup.js rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js shortcut-mode.js cloud-learning-client.js message-archive-client.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js; do
+          for f in index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js meteogram-visfog-split.js meteogram-visfog-cleanup.js rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js shortcut-mode.js cloud-learning-client.js message-archive-client.js taf-instruction-guard.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js; do
             node --check "$f"
           done
           node --check _site/meteogram-visfog-split.js
@@ -199,6 +199,7 @@ jobs:
           node --check _site/mifg-engine.js
           node --check _site/cloud-learning-client.js
           node --check _site/message-archive-client.js
+          node --check _site/taf-instruction-guard.js
           python3 - <<'PY'
           from pathlib import Path
           s=Path('_site/taf.html').read_text(encoding='utf-8')
@@ -225,6 +226,7 @@ jobs:
           test -s _site/meteogram-visfog-cleanup.js
           test -s _site/cloud-learning-client.js
           test -s _site/message-archive-client.js
+          test -s _site/taf-instruction-guard.js
           test -s _site/data/messages/latest.json
           test -s _site/data/messages/recent.json
           test -s _site/data/messages/status.json
@@ -247,6 +249,11 @@ jobs:
           grep -F 'src="message-archive-client.js"' _site/taf.html
           grep -F 'PrognozaEPIRMessageArchive' _site/taf.html
           grep -F 'loadNeighborArchive' _site/taf.html
+          grep -F "loadPolicy('taf-instruction-guard.js'" _site/message-archive-client.js
+          ! grep -F "loadPolicy('taf-cloud-policy.js'" _site/message-archive-client.js
+          ! grep -F "loadPolicy('taf-weather-policy.js'" _site/message-archive-client.js
+          ! grep -F "loadPolicy('taf-output-sanitizer.js'" _site/message-archive-client.js
+          ! grep -F "loadPolicy('taf-radar-nowcast-sync.js'" _site/message-archive-client.js
           ! grep -F 'taf-archive-source.js' _site/taf.html
           ! grep -F 'loadImgwLive(' _site/taf.html
           ! grep -F 'awiacja.imgw.pl' _site/taf.html
