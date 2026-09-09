@@ -8,6 +8,7 @@ on:
       - 'taf-*.js'
       - 'message-archive-client.js'
       - 'scripts/test-taf-instruction-2023.js'
+      - 'scripts/test-taf-output-sanitizer.js'
       - '.github/workflows/taf-instruction-2023.yml'
   pull_request:
     paths:
@@ -15,6 +16,7 @@ on:
       - 'taf-*.js'
       - 'message-archive-client.js'
       - 'scripts/test-taf-instruction-2023.js'
+      - 'scripts/test-taf-output-sanitizer.js'
       - '.github/workflows/taf-instruction-2023.yml'
   workflow_dispatch:
 
@@ -34,13 +36,17 @@ jobs:
           node --check taf-cloud-policy.js
           node --check taf-weather-policy.js
           node --check taf-instruction-guard.js
+          node --check taf-output-sanitizer.js
           node --check message-archive-client.js
       - name: Instruction 11.2023 regression suite
-        run: node scripts/test-taf-instruction-2023.js
+        run: |
+          node scripts/test-taf-instruction-2023.js
+          node scripts/test-taf-output-sanitizer.js
       - name: Guard loader order
         run: |
           grep -F "loadPolicy('taf-cloud-policy.js'" message-archive-client.js
           grep -F "loadPolicy('taf-weather-policy.js'" message-archive-client.js
           grep -F "loadPolicy('taf-instruction-guard.js'" message-archive-client.js
+          grep -F "loadPolicy('taf-output-sanitizer.js'" message-archive-client.js
           ! grep -F "loadPolicy('taf-gust-policy.js'" message-archive-client.js
           ! grep -F "loadPolicy('taf-cavok-nsc-policy.js'" message-archive-client.js
