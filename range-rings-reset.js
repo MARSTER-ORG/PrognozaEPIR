@@ -334,3 +334,48 @@
     radiiKm:RADII_KM.slice()
   };
 })();
+
+// Radar popup interaction guard: tapping inside a Leaflet popup must never be
+// interpreted as a new map sample. Only the X control closes the current popup.
+(() => {
+  if (window.__epirRadarPopupInteractionGuard) return;
+  window.__epirRadarPopupInteractionGuard = true;
+
+  const popupTarget = e => {
+    const t = e?.target;
+    return t instanceof Element ? t.closest('.leaflet-popup') : null;
+  };
+  const isClose = e => {
+    const t = e?.target;
+    return t instanceof Element && !!t.closest('.leaflet-popup-close-button');
+  };
+  const stop = e => {
+    if (!popupTarget(e)) return false;
+    e.stopPropagation();
+    if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+    return true;
+  };
+
+  document.addEventListener('pointerdown', e => {
+    if (popupTarget(e)) stop(e);
+  }, true);
+
+  document.addEventListener('pointerup', e => {
+    if (!popupTarget(e)) return;
+    const close = isClose(e);
+    stop(e);
+    if (close) {
+      try { map.closePopup(); } catch (_) {}
+    }
+  }, true);
+
+  document.addEventListener('click', e => {
+    if (!popupTarget(e)) return;
+    const close = isClose(e);
+    stop(e);
+    if (close) {
+      e.preventDefault();
+      try { map.closePopup(); } catch (_) {}
+    }
+  }, true);
+})();
