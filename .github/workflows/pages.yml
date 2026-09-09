@@ -30,7 +30,7 @@ jobs:
       - name: Prepare site
         run: |
           mkdir -p _site/data/messages _site/data/learning
-          cp index.html radar.html taf.html sat-fog.html epir-icon.svg epir-icon-192.png epir-icon-512.png \
+          cp index.html radar.html taf.html sat-fog.html arch.html epir-icon.svg epir-icon-192.png epir-icon-512.png \
              index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js meteogram-visfog-split.js meteogram-visfog-cleanup.js \
              rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js shortcut-mode.js \
              cloud-learning-client.js message-archive-client.js taf-instruction-guard.js \
@@ -218,6 +218,7 @@ jobs:
           test -s _site/epir-icon-512.png
           test -s _site/taf.html
           test -s _site/sat-fog.html
+          test -s _site/arch.html
           test -s _site/fog-engine.js
           test -s _site/observation-engine.js
           test -s _site/mifg-engine.js
@@ -243,6 +244,8 @@ jobs:
           python3 -m json.tool _site/data/learning/fog-event-skill.json >/dev/null
           grep -F '<a class="control-link" href="taf.html">GENERATOR TAF</a>' _site/index.html
           grep -F '<a class="control-link" href="sat-fog.html">SAT / FOG EUMETSAT</a>' _site/index.html
+          grep -F '<a class="control-link" href="arch.html">ARCH</a>' _site/index.html
+          grep -F 'PrognozaEPIR · ARCH' _site/arch.html
           grep -F 'GENERATOR TAF v0.2.0' _site/taf.html
           grep -F 'TAF EPBY/EPPW/EPKS' _site/taf.html
           grep -F 'PROB40 wyłączone' _site/taf.html
