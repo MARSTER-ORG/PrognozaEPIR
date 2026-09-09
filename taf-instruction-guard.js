@@ -5,8 +5,7 @@
   const FT_PER_M = 3.28084;
   const CAVOK_BASE_LIMIT_M = 1500;
   const CAVOK_BASE_LIMIT_FT = CAVOK_BASE_LIMIT_M * FT_PER_M;
-  // EPIR: local operational cloud threshold is 1500 m = 4921.26 ft for both CAVOK and NSC.
-  const NSC_LIMIT_FT = CAVOK_BASE_LIMIT_FT;
+  const NSC_LIMIT_FT = 5000;
   const CEILING_THRESHOLDS_FT = [200, 300, 500, 1000, 1500];
   const VIS_THRESHOLDS_M = [800, 1500, 3000, 5000];
   const GUST_GAP_KT = 10;
@@ -544,9 +543,9 @@
     let parsed=lines.map((line,i)=>parseLine(line,i,times.issue)).filter(Boolean);
     const base=parsed.find(g=>g.kind==='BASE');
     if (!base) return {text:String(raw),issues:[{level:'error',code:'BASE',text:'Nie rozpoznano części głównej TAF EPIR.'}],groups:[],times,gustEpisodes:[]};
-    // EPIR fixed local rule: both CAVOK and NSC use 1500 m (4921.26 ft).
-    const cavokLimitFt = CAVOK_BASE_LIMIT_FT;
-    const nscLimitFt = CAVOK_BASE_LIMIT_FT;
+    const msaFt = finite(Number(options.msaFt)) ? Number(options.msaFt) : NaN;
+    const cavokLimitFt = finite(msaFt) ? Math.max(CAVOK_BASE_LIMIT_FT, msaFt) : CAVOK_BASE_LIMIT_FT;
+    const nscLimitFt = finite(msaFt) ? Math.max(NSC_LIMIT_FT, msaFt) : NSC_LIMIT_FT;
     let state={wind:'',vis:null,wx:[],clouds:[],cavok:false,nsc:false};
     const normalized=[];
     for (const g of parsed) {
@@ -622,12 +621,16 @@
       if (norm!==c) issues.push({level:'error',code:'VIS_STEP',text:`Widzialność ${c} nie leży na kroku kodowania; oczekiwano ${norm}.`});
       if (n>9000) issues.push({level:'error',code:'VIS9999',text:`Widzialność ${c} powinna być 9999 dla 10 km lub więcej.`});
     }
-    const nscLimitFt=CAVOK_BASE_LIMIT_FT;
+    const msaFt=finite(Number(options.msaFt))?Number(options.msaFt):NaN;
+    const nscLimitFt=finite(msaFt)?Math.max(NSC_LIMIT_FT,msaFt):NSC_LIMIT_FT;
     if (/\b(?:FEW|SCT|BKN|OVC)\d{3}(?!CB\b|TCU\b)/.test(raw)) {
       for (const m of raw.matchAll(/\b(?:FEW|SCT|BKN|OVC)(\d{3})(CB|TCU)?\b/g)) {
         const ft=Number(m[1])*100;
         if (!m[2] && ft>=nscLimitFt) issues.push({level:'warn',code:'HIGH_CLOUD',text:`${m[0]}: zwykła warstwa jest powyżej progu istotności NSC (${Math.round(nscLimitFt)} ft).`});
       }
+    }
+    if (/\bCAVOK\b/.test(raw) && !finite(msaFt)) {
+      issues.push({level:'warn',code:'MSA_UNKNOWN',text:'CAVOK sprawdzono względem 1500 m; najwyższa MSA EPIR nie jest skonfigurowana, więc nie można zastosować wyższego z tych dwóch progów.'});
     }
     return issues;
   }
@@ -663,7 +666,7 @@
       const units=document.createElement('span');
       units.dataset.tafInstructionGuard='1';
       units.className='pill ok';
-      units.textContent='EPIR: CAVOK/NSC 1500 m · 4921 ft ✓';
+      units.textContent='CAVOK 1500 m/MSA · NSC 5000 ft/MSA ✓';
       sources.appendChild(units);
     }
     const checks=$('checks');
@@ -711,7 +714,8 @@
     if(!/^TAF\s+(?:AMD\s+|COR\s+)?EPIR\b/.test(current)||current===last)return;
     const times=tafTimes(current);if(!times)return;
     const series=getSeriesFromPage(times);
-    const result=normalize(current,{series});
+    const msaFt=Number(window.PROGNOZAEPIR_TAF_HIGHEST_MSA_FT);
+    const result=normalize(current,{series,msaFt:finite(msaFt)?msaFt:null});
     updateUi(result);
     if(result.text===current){last=current;return;}
     applying=true;el.textContent=result.text;last=result.text;applying=false;
