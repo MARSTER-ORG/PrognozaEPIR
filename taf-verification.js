@@ -304,6 +304,7 @@
   }
   function groupElementPenalties(p,obs){
     const groups=[],byToken=new Map();let total=0;
+    const changeCount=Math.max(1,p.events.length);
     for(const e of p.events){
       const relevant=obs.filter(o=>o.t>=e.s&&o.t<(e.e||p.ve));
       const keys=groupElementKeys(e.state);
@@ -312,9 +313,10 @@
         groups.push(item);byToken.set(e.token,item);continue;
       }
       const missing=keys.filter(k=>!relevant.some(o=>groupElementMatch(e.state,o,k)));
-      // Max -10 pkt for a whole change group, distributed across its elements.
-      // Example: VIS + WX + CLOUD => one miss -3.3, two -6.7, all three -10.
-      const penalty=Math.round((GROUP_ELEMENT_PENALTY*missing.length/keys.length)*10)/10;
+      // Each missing element costs 10 points, normalized by number of change groups.
+      // Example: one group, VIS + WX + CLOUD all missing => (10 * 3) / 1 = -30.
+      // With two change groups the same three misses contribute -15 points.
+      const penalty=Math.round((GROUP_ELEMENT_PENALTY*missing.length/changeCount)*10)/10;
       total+=penalty;
       const item={token:e.token,kind:e.kind,missing,penalty,elements:keys.length,verifiable:true};
       groups.push(item);byToken.set(e.token,item);
