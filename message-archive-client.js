@@ -106,9 +106,12 @@
   window.PrognozaEPIRMessageArchive = api;
   window.dispatchEvent(new CustomEvent('prognozaepir:message-archive-ready'));
 
-  // Generator TAF: najpierw polityka chmur, następnie pogody, potem nadrzędny
-  // strażnik zgodności z Instrukcją TAF Edycja (A) 11.2023, sanitizer
-  // terminatora oraz synchronizacja gotowości radarowego nowcastu TCU/CB.
+  // Generator TAF ma jednego właściciela końcowego tekstu depeszy.
+  // Wcześniejsze niezależne obserwatory cloud/weather/sanitizer oraz późne
+  // automatyczne ponowne generowanie po radarze potrafiły nadpisywać się
+  // wzajemnie i powodować widoczne przełączanie CAVOK <-> NSC. Rdzeń taf.html
+  // nadal wylicza chmury, pogodę i grupy zmian; poniższy guard wykonuje jeden,
+  // deterministyczny etap zgodności z Instrukcją TAF Edycja (A) 11.2023.
   if (/\/taf\.html$/i.test(location.pathname)) {
     const RAW = 'https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/';
 
@@ -153,11 +156,7 @@
 
     (async () => {
       try {
-        await loadPolicy('taf-cloud-policy.js', '20260909-3');
-        await loadPolicy('taf-weather-policy.js', '20260909-2');
-        await loadPolicy('taf-instruction-guard.js', '20260909-6');
-        await loadPolicy('taf-output-sanitizer.js', '20260909-2');
-        await loadPolicy('taf-radar-nowcast-sync.js', '20260909-1');
+        await loadPolicy('taf-instruction-guard.js', '20260909-7');
       } catch (error) {
         console.warn('TAF policy loader:', error);
       }

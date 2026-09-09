@@ -2,13 +2,14 @@ name: TAF Instruction 11.2023 compliance
 
 on:
   push:
-    branches: [main, codex/taf-instruction-2023-audit]
+    branches: [main, codex/taf-instruction-2023-audit, fix/taf-stable-cavok-nsc-audit]
     paths:
       - 'taf.html'
       - 'taf-*.js'
       - 'message-archive-client.js'
       - 'scripts/test-taf-instruction-2023.js'
       - 'scripts/test-taf-output-sanitizer.js'
+      - 'scripts/test-taf-stability.js'
       - '.github/workflows/taf-instruction-2023.yml'
   pull_request:
     paths:
@@ -17,6 +18,7 @@ on:
       - 'message-archive-client.js'
       - 'scripts/test-taf-instruction-2023.js'
       - 'scripts/test-taf-output-sanitizer.js'
+      - 'scripts/test-taf-stability.js'
       - '.github/workflows/taf-instruction-2023.yml'
   workflow_dispatch:
 
@@ -37,16 +39,20 @@ jobs:
           node --check taf-weather-policy.js
           node --check taf-instruction-guard.js
           node --check taf-output-sanitizer.js
+          node --check taf-radar-nowcast-sync.js
           node --check message-archive-client.js
+          node --check scripts/test-taf-stability.js
       - name: Instruction 11.2023 regression suite
         run: |
           node scripts/test-taf-instruction-2023.js
           node scripts/test-taf-output-sanitizer.js
-      - name: Guard loader order
+          node scripts/test-taf-stability.js
+      - name: Single final-output owner
         run: |
-          grep -F "loadPolicy('taf-cloud-policy.js'" message-archive-client.js
-          grep -F "loadPolicy('taf-weather-policy.js'" message-archive-client.js
           grep -F "loadPolicy('taf-instruction-guard.js'" message-archive-client.js
-          grep -F "loadPolicy('taf-output-sanitizer.js'" message-archive-client.js
+          ! grep -F "loadPolicy('taf-cloud-policy.js'" message-archive-client.js
+          ! grep -F "loadPolicy('taf-weather-policy.js'" message-archive-client.js
+          ! grep -F "loadPolicy('taf-output-sanitizer.js'" message-archive-client.js
+          ! grep -F "loadPolicy('taf-radar-nowcast-sync.js'" message-archive-client.js
           ! grep -F "loadPolicy('taf-gust-policy.js'" message-archive-client.js
           ! grep -F "loadPolicy('taf-cavok-nsc-policy.js'" message-archive-client.js
