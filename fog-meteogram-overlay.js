@@ -428,6 +428,43 @@
     }
   }
 
+  function mifgOperationalText(score) {
+    if (!finite(score)) return 'BRAK DANYCH';
+    if (score < 40) return 'NIE';
+    if (score < 60) return 'MOŻLIWE';
+    if (score < 80) return 'PRAWDOPODOBNE';
+    return 'BARDZO PRAWDOPODOBNE';
+  }
+
+  function renderMifgCard() {
+    const summary = document.getElementById('fogSummary');
+    const rows = mifgSeries().filter(row => row && finite(row.t) && finite(row.score));
+    if (!summary || !rows.length) return;
+
+    document.getElementById('mifgCard')?.remove();
+    for (const oldCard of [...summary.children]) {
+      const small = oldCard.querySelector?.('small');
+      if (small && /\bMIFG\b/i.test(small.textContent || '')) oldCard.remove();
+    }
+
+    const now = Date.now();
+    const current = rows.reduce((a,b) => Math.abs(b.t-now) < Math.abs(a.t-now) ? b : a, rows[0]);
+    const future = rows.filter(row => row.t >= now-HOUR && row.t <= now+12*HOUR);
+    const peak = future.reduce((a,b) => !a || b.score > a.score ? b : a, null) || current;
+    const card = document.createElement('div');
+    card.id = 'mifgCard';
+    card.className = 'fog-card ' + (current.score >= 80 ? 'fog-risk-vhigh' : current.score >= 60 ? 'fog-risk-high' : current.score >= 40 ? 'fog-risk-mid' : '');
+    const currentDetail = current.score >= MIFG_INFO_THRESHOLD
+      ? Math.round(current.score) + '/100'
+      : 'wynik <40/100 pominięty';
+    const peakDetail = peak.score >= MIFG_INFO_THRESHOLD
+      ? ' · maks. 12 h ' + Math.round(peak.score) + '/100 ' + localHour(peak.t)
+      : ' · brak sygnału ≥40 w 12 h';
+    card.innerHTML = '<small>MIFG</small><strong>' + mifgOperationalText(current.score) + '</strong>' +
+      '<em>' + currentDetail + peakDetail + '</em>';
+    summary.appendChild(card);
+  }
+
   function brOperationalText(score) {
     if (!finite(score)) return 'BRAK DANYCH';
     if (score < 40) return 'NIE';
@@ -528,6 +565,7 @@
     }
     installLegendNote();
     installBrHoverTooltip();
+    queueMicrotask(renderMifgCard);
     queueMicrotask(renderBrCard);
     return true;
   }
@@ -539,9 +577,9 @@
     } catch (_) { }
   }
 
-  window.addEventListener('prognozaepir:fog-series-updated', () => { redraw(); queueMicrotask(renderBrCard); });
-  window.addEventListener('prognozaepir:mifg-series-updated', () => { redraw(); queueMicrotask(renderBrCard); });
-  setInterval(renderBrCard,90*1000);
+  window.addEventListener('prognozaepir:fog-series-updated', () => { redraw(); queueMicrotask(renderMifgCard); queueMicrotask(renderBrCard); });
+  window.addEventListener('prognozaepir:mifg-series-updated', () => { redraw(); queueMicrotask(renderMifgCard); queueMicrotask(renderBrCard); });
+  setInterval(() => { renderMifgCard(); renderBrCard(); },90*1000);
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => { install(); installLegendNote(); }, {once:true});
   } else {
