@@ -379,3 +379,57 @@
     }
   }, true);
 })();
+
+// Add distance and direction from the selected point to the POLRAD maximum popup.
+(() => {
+  if (window.__epirRadarPopupDistanceDirection) return;
+  window.__epirRadarPopupDistanceDirection = true;
+
+  const toRad = d => d * Math.PI / 180;
+  const toDeg = r => r * 180 / Math.PI;
+  const currentPoint = () => {
+    if (typeof point !== 'undefined' && Number.isFinite(Number(point?.lat)) && Number.isFinite(Number(point?.lon))) {
+      return {lat:Number(point.lat),lon:Number(point.lon)};
+    }
+    const lat = Number(String(document.getElementById('lat')?.value || '').replace(',','.'));
+    const lon = Number(String(document.getElementById('lon')?.value || '').replace(',','.'));
+    return Number.isFinite(lat) && Number.isFinite(lon) ? {lat,lon} : null;
+  };
+  const distanceKm = (a,b) => {
+    const R=6371.0088,p1=toRad(a.lat),p2=toRad(b.lat),dp=toRad(b.lat-a.lat),dl=toRad(b.lon-a.lon);
+    const h=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
+    return 2*R*Math.asin(Math.min(1,Math.sqrt(h)));
+  };
+  const bearingDeg = (a,b) => {
+    const p1=toRad(a.lat),p2=toRad(b.lat),dl=toRad(b.lon-a.lon);
+    const y=Math.sin(dl)*Math.cos(p2),x=Math.cos(p1)*Math.sin(p2)-Math.sin(p1)*Math.cos(p2)*Math.cos(dl);
+    return (toDeg(Math.atan2(y,x))+360)%360;
+  };
+  const compass16 = deg => {
+    const names=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+    return names[Math.round((((deg%360)+360)%360)/22.5)%16];
+  };
+
+  function enhancePopup(e){
+    const popup=e?.popup;
+    const root=popup?.getElement?.();
+    const content=root?.querySelector?.('.leaflet-popup-content');
+    if(!content || content.querySelector('.epir-popup-distance-direction')) return;
+    const text=String(content.textContent||'');
+    if(!/Maksimum\s+w\s+promieniu/i.test(text) || !/Analiza\s+POLRAD/i.test(text)) return;
+    const p=currentPoint(),ll=popup?.getLatLng?.();
+    if(!p || !ll || !Number.isFinite(Number(ll.lat)) || !Number.isFinite(Number(ll.lng))) return;
+    const target={lat:Number(ll.lat),lon:Number(ll.lng)};
+    const km=distanceKm(p,target),az=bearingDeg(p,target);
+    const row=document.createElement('div');
+    row.className='epir-popup-distance-direction';
+    row.style.marginTop='5px';
+    row.style.fontSize='12px';
+    row.style.fontWeight='600';
+    row.textContent=`Od punktu: ${km<10?km.toFixed(1):Math.round(km)} km · ${compass16(az)} · ${Math.round(az)}°`;
+    content.appendChild(row);
+  }
+
+  map.on('popupopen',enhancePopup);
+  setTimeout(()=>{try{if(map._popup)enhancePopup({popup:map._popup});}catch(_){}},100);
+})();
