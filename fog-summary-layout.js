@@ -215,7 +215,7 @@
   function renderPhenomenon(title,kind,ev,diagnostic) {
     if (!ev) {
       return '<section class="fog-phen-row"><div class="fog-phen-title">'+esc(title)+'</div><div class="fog-phen-grid">'+
-        card(kind+' W CIĄGU NAJBLIŻSZEJ GODZINY','BRAK DANYCH','oczekiwanie na dane')+
+        card((kind==='FG'?'MGŁA':kind)+' W CIĄGU NAJBLIŻSZEJ GODZINY','BRAK DANYCH','oczekiwanie na dane')+
         card('MAKSIMUM W 48 H','BRAK DANYCH','oczekiwanie na dane')+
         card('KIEDY '+kind+'?','BRAK DANYCH','oczekiwanie na dane')+
         card('DIAGNOSTYKA','BRAK DANYCH','oczekiwanie na dane')+
@@ -223,7 +223,7 @@
     }
     const diag = diagnostic(ev.current,ev.peak);
     return '<section class="fog-phen-row"><div class="fog-phen-title">'+esc(title)+'</div><div class="fog-phen-grid">'+
-      card(kind+' W CIĄGU NAJBLIŻSZEJ GODZINY',classText(ev.current.score,kind),currentDetail(ev.current.score),ev.current.score)+
+      card((kind==='FG'?'MGŁA':kind)+' W CIĄGU NAJBLIŻSZEJ GODZINY',classText(ev.current.score,kind),currentDetail(ev.current.score),ev.current.score)+
       card('MAKSIMUM W 48 H',classText(ev.peak.score,kind),peakDetail(ev),ev.peak.score)+
       card('KIEDY '+kind+'?',whenDetail(ev),'próg operacyjny 40/100',ev.peak.score)+
       card(diag.label,diag.value,diag.detail,diag.score ?? null)+
