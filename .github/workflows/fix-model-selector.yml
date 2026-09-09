@@ -31,41 +31,24 @@ jobs:
       - name: Patch model loading
         run: python3 scripts/fix_model_selector.py
 
-      - name: Rename fog current-hour card
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('fog-engine.js')
-          s=p.read_text(encoding='utf-8')
-          old='MGŁA — OPERACYJNIE'
-          new='MGŁA W CIĄGU NAJBLIŻSZEJ GODZINY'
-          if old not in s and new not in s:
-              raise SystemExit('Fog card label not found')
-          s=s.replace(old,new,1)
-          p.write_text(s,encoding='utf-8')
-          PY
-
       - name: Validate repair
         run: |
           grep -F 'async function reqVars(model,vars,timeoutMs)' index.html
           grep -F 'demo=false;populateView();try{' index.html
           grep -F 'populateView();if(!datasets.size)' index.html
-          grep -F 'MGŁA W CIĄGU NAJBLIŻSZEJ GODZINY' fog-engine.js
-          ! grep -F 'MGŁA — OPERACYJNIE' fog-engine.js
           python3 -c "from pathlib import Path; s=Path('index.html').read_text(encoding='utf-8'); Path('/tmp/index-inline.js').write_text(s.split('<script>',1)[1].split('</script>',1)[0],encoding='utf-8')"
           node --check /tmp/index-inline.js
-          node --check fog-engine.js
 
       - name: Commit repair
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add index.html fog-engine.js
+          git add index.html
           if git diff --cached --quiet; then
             echo 'No changes needed'
             exit 0
           fi
-          git commit -m 'ui: rename current-hour fog status card'
+          git commit -m 'fix: restore resilient model selector loading'
           git pull --rebase origin main
           git push origin HEAD:main
 
