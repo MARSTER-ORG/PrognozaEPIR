@@ -31,6 +31,9 @@ jobs:
       - name: Patch model loading
         run: python3 scripts/fix_model_selector.py
 
+      - name: Patch operational fog interpretation
+        run: python3 scripts/fix_fog_operational.py
+
       - name: Validate repair
         run: |
           grep -F 'async function reqVars(model,vars,timeoutMs)' index.html
@@ -38,18 +41,28 @@ jobs:
           grep -F 'populateView();if(!datasets.size)' index.html
           python3 -c "from pathlib import Path; s=Path('index.html').read_text(encoding='utf-8'); Path('/tmp/index-inline.js').write_text(s.split('<script>',1)[1].split('</script>',1)[0],encoding='utf-8')"
           node --check /tmp/index-inline.js
+          node --check fog-engine.js
+          node --check fog-meteogram-overlay.js
+          grep -F "const ENGINE_VERSION = 'EPIR FOG ENGINE v1.3';" fog-engine.js
+          grep -F "if(s<40)return 'NIE';" fog-engine.js
+          grep -F "if(s<60)return 'MOŻLIWA';" fog-engine.js
+          grep -F "if(s<80)return 'PRAWDOPODOBNA';" fog-engine.js
+          grep -F "return 'BARDZO PRAWDOPODOBNA';" fog-engine.js
+          grep -F "wynik <40/100 pominięty" fog-engine.js
+          grep -F "const FOG_DRAW_THRESHOLD = 40;" fog-meteogram-overlay.js
+          grep -F "window.PrognozaEPIRFogSeries=fogSeries" fog-engine.js
 
       - name: Commit repair
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add index.html
+          git add index.html fog-engine.js fog-meteogram-overlay.js
           if git diff --cached --quiet; then
             echo 'No changes needed'
             exit 0
           fi
-          git commit -m 'fix: restore resilient model selector loading'
+          git commit -m 'fix: simplify operational fog interpretation'
           git pull --rebase origin main
           git push origin HEAD:main
 
-# repair applied in 9f1ad4d9f9afe446e57a180c213045a6b45530fe
+# Model selector repair applied previously; this registered workflow also runs the one-shot fog UI repair.
