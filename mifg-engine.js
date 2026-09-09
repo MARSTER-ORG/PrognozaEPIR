@@ -153,7 +153,7 @@
   function dmiUrl(vars){
     const q=new URLSearchParams({
       latitude:String(PLACE.lat),longitude:String(PLACE.lon),hourly:vars.join(','),
-      models:MODEL,timezone:'UTC',forecast_hours:'24',past_hours:'12',wind_speed_unit:'ms'
+      models:MODEL,timezone:'UTC',forecast_hours:'54',past_hours:'12',wind_speed_unit:'ms'
     });
     return 'https://api.open-meteo.com/v1/forecast?'+q;
   }
@@ -190,7 +190,7 @@
 
   function scoreDmiRows(rows){
     const now=Date.now();
-    return rows.filter(x=>x.t>=now-HOUR&&x.t<=now+18*HOUR).map(x=>{
+    return rows.filter(x=>x.t>=now-HOUR&&x.t<=now+48*HOUR).map(x=>{
       const p3=nearest(rows,x.t-3*HOUR);
       const ss=surfaceSaturation(x.Td,x.Tskin);
       const as=airSaturation(x.T,x.Td);
@@ -232,7 +232,7 @@
 
   function scoreConsensus(src){
     const rows=consensusRows(src), now=Date.now();
-    return rows.filter(x=>x.t>=now-HOUR&&x.t<=now+18*HOUR).map(x=>{
+    return rows.filter(x=>x.t>=now-HOUR&&x.t<=now+48*HOUR).map(x=>{
       const p3=nearest(rows,x.t-3*HOUR);
       const as=airSaturation(x.T,x.Td);
       const rhs=rhScore(x.RH);
