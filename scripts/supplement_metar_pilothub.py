@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""PilotHub verification/fallback collector for EPIR METAR.
+"""PilotHub verification/fallback collector for EPIR METAR/SPECI.
 
-PilotHub's EPIN page has no local METAR, but server-side HTML contains the
-nearest station EPIR in a dedicated METAR section. Parse that section first,
-then fall back to a whole-page scan and other known nearby PilotHub pages.
+PilotHub is a fallback only.  Its airport pages also contain TAF text, decoded
+forecast prose, NOTAMs and other page content, so whole-page extraction is
+accepted only when the candidate has the structural shape of a METAR/SPECI.
+This prevents a TAF beginning with ``EPIR DDHHMMZ DDHH/DDHH ...`` from being
+misclassified as a METAR and swallowing the rest of the HTML page up to a later
+QNH token.
 """
+from __future__ import annotations
+
 import html
 import json
 import re
@@ -15,13 +20,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import collect_epir_observations as c
 
 PILOTHUB_URLS = (
-    # Confirmed from a saved PilotHub EPIN page: this page contains the nearest
-    # station EPIR and its current METAR in <h3>METAR</h3> ... <code>...</code>.
     ('EPIN', 'https://pilothub.pl/lotniska/epin'),
     ('SZPITAL', 'https://pilothub.pl/lotniska/inowroclaw-szpital'),
     ('LATKOWO', 'https://pilothub.pl/lotniska/inowroclaw-latkowo-lotnisko-wojskowe'),
 )
 MAX_PILOTHUB_AGE_MIN = 240
+MAX_RAW_LEN = 512
+
+# After DDHHMMZ a normal EPIR METAR/SPECI must proceed to the wind group
+# (optionally preceded by AUTO).  A TAF proceeds to DDHH/DDHH instead.
+_METAR_START_RE = re.compile(
+    r'^(?:(?:METAR|SPECI)\s+)?(?:COR\s+)?EPIR\s+\d{6}Z\s+'
+    r'(?:AUTO\s+)?(?:VRB|\d{3})\d{2,3}(?:G\d{2,3})?KT\b',
+    re.I,
+)
+_VALIDITY_RE = re.compile(r'\b\d{4}/\d{4}\b')
+_REPORT_RE = re.compile(
+    r'\b((?:(?:METAR|SPECI)\s+)?(?:COR\s+)?EPIR\s+\d{6}Z\s+.*?\bQ\d{4}\b)=?',
+    re.I,
+)
 
 
 def read_latest():
@@ -43,29 +60,53 @@ def is_fresh(row, max_age_min):
     return 0 <= (c.now() - dt).total_seconds() <= max_age_min * 60
 
 
-def _metar_section_raw_reports(text):
-    """Extract EPIR from PilotHub's dedicated METAR HTML section.
+def _normalise(value):
+    value = html.unescape(re.sub(r'<[^>]+>', ' ', value or ''))
+    return re.sub(r'\s+', ' ', value).strip()
 
-    The EPIN page renders e.g.:
-      <h3>METAR</h3>
-      <p><code>METAR EPIR 062100Z ... Q1025=</code></p>
-    This is preferred over scanning arbitrary page text.
-    """
+
+def _plausible_metar_raw(raw):
+    """Reject cross-bulletin/page captures before they reach decode_metar()."""
+    raw = _normalise(raw)
+    if not raw or len(raw) > MAX_RAW_LEN:
+        return False
+    # A trailing '=' is a bulletin terminator.  Any earlier '=' proves that the
+    # regex crossed a previous bulletin boundary and continued through page text.
+    core = raw[:-1].rstrip() if raw.endswith('=') else raw
+    if '=' in core:
+        return False
+    if _VALIDITY_RE.search(core):
+        return False
+    if not _METAR_START_RE.search(core):
+        return False
+    if not re.search(r'\bQ\d{4}\b', core, re.I):
+        return False
+    return True
+
+
+def _extract_raw_reports(value):
+    value = _normalise(value)
+    out = []
+    seen = set()
+    for match in _REPORT_RE.finditer(value):
+        raw = re.sub(r'\s+', ' ', match.group(1)).strip()
+        if not _plausible_metar_raw(raw) or raw in seen:
+            continue
+        seen.add(raw)
+        out.append(raw)
+    return out
+
+
+def _metar_section_raw_reports(text):
+    """Extract reports from PilotHub's dedicated METAR <code> section."""
     out = []
     seen = set()
     section_re = re.compile(
         r'<h3[^>]*>\s*METAR\s*</h3>\s*<p[^>]*>\s*<code[^>]*>(.*?)</code>',
         re.I | re.S,
     )
-    report_re = re.compile(
-        r'\b((?:METAR|SPECI)\s+EPIR\s+\d{6}Z\s+.*?\bQ\d{4}\b)=?',
-        re.I,
-    )
     for section in section_re.finditer(text or ''):
-        value = html.unescape(re.sub(r'<[^>]+>', ' ', section.group(1)))
-        value = re.sub(r'\s+', ' ', value).strip()
-        for match in report_re.finditer(value):
-            raw = re.sub(r'\s+', ' ', match.group(1)).strip()
+        for raw in _extract_raw_reports(section.group(1)):
             if raw not in seen:
                 seen.add(raw)
                 out.append(raw)
@@ -73,20 +114,8 @@ def _metar_section_raw_reports(text):
 
 
 def _candidate_raw_reports(plain):
-    """Return all plausible EPIR METAR/SPECI strings visible on PilotHub."""
-    out = []
-    seen = set()
-    patterns = (
-        r'\b((?:METAR|SPECI)\s+EPIR\s+\d{6}Z\s+.*?\bQ\d{4}\b)=?',
-        r'\b(EPIR\s+\d{6}Z\s+.*?\bQ\d{4}\b)=?',
-    )
-    for pattern in patterns:
-        for match in re.finditer(pattern, plain, re.I):
-            raw = re.sub(r'\s+', ' ', match.group(1)).strip()
-            if raw not in seen:
-                seen.add(raw)
-                out.append(raw)
-    return out
+    """Compatibility fallback, guarded against TAF/page-text contamination."""
+    return _extract_raw_reports(plain)
 
 
 def fetch_pilothub_reports():
@@ -95,12 +124,15 @@ def fetch_pilothub_reports():
     for label, url in PILOTHUB_URLS:
         try:
             text = c.get_text(url)
-            plain = html.unescape(re.sub(r'<[^>]+>', ' ', text))
-            plain = re.sub(r'\s+', ' ', plain)
+            plain = _normalise(text)
 
-            # Prefer the exact METAR block seen in the saved EPIN page, then
-            # retain the generic whole-page parser as a compatibility fallback.
-            raw_reports = _metar_section_raw_reports(text) + _candidate_raw_reports(plain)
+            # Prefer the dedicated METAR block.  Whole-page fallback is allowed
+            # only through the strict structural validator above.
+            raw_reports = _metar_section_raw_reports(text)
+            for raw in _candidate_raw_reports(plain):
+                if raw not in raw_reports:
+                    raw_reports.append(raw)
+
             page_rows = []
             page_seen = set()
             for raw in raw_reports:
@@ -110,7 +142,10 @@ def fetch_pilothub_reports():
                     row = None
                 if not row or not is_fresh(row, MAX_PILOTHUB_AGE_MIN):
                     continue
-                ident = (row.get('station'), row.get('obs_time'), row.get('raw'))
+                row['report_type'] = 'SPECI' if raw.lstrip().upper().startswith('SPECI ') else 'METAR'
+                if re.match(r'^(?:METAR|SPECI)\s+COR\b', raw, re.I):
+                    row['correction'] = True
+                ident = (row.get('station'), row.get('obs_time'), row.get('raw'), row.get('report_type'))
                 if ident in page_seen:
                     continue
                 page_seen.add(ident)
@@ -120,8 +155,10 @@ def fetch_pilothub_reports():
                 if ident not in decoded_ids:
                     decoded_ids.add(ident)
                     decoded.append(row)
-            print(f'PilotHub {label}: fresh={len(page_rows)}' + (
-                f' newest={max(page_rows, key=lambda r: obs_time(r)).get("obs_time")}' if page_rows else ''))
+            print(
+                f'PilotHub {label}: fresh={len(page_rows)}' +
+                (f' newest={max(page_rows, key=lambda r: obs_time(r)).get("obs_time")}' if page_rows else '')
+            )
         except Exception as exc:
             print(f'PilotHub {label} warning:', exc)
     return decoded
@@ -135,7 +172,12 @@ def fetch_pilothub_metar():
 
 
 def same_report(a, b):
-    return bool(a and b and a.get('obs_time') == b.get('obs_time') and a.get('raw') == b.get('raw'))
+    return bool(
+        a and b and
+        a.get('obs_time') == b.get('obs_time') and
+        a.get('raw') == b.get('raw') and
+        a.get('report_type', 'METAR') == b.get('report_type', 'METAR')
+    )
 
 
 def newest_report(a, b):
@@ -155,10 +197,9 @@ def newest_report(a, b):
 def main():
     latest = read_latest()
     primary = latest.get('metar')
-
     fallback = fetch_pilothub_metar()
     if not fallback:
-        print('PilotHub: no fresh EPIR METAR found on checked pages')
+        print('PilotHub: no fresh structurally valid EPIR METAR/SPECI found')
         return
 
     chosen = newest_report(primary, fallback)
