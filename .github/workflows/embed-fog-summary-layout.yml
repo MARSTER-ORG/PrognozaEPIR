@@ -1,0 +1,73 @@
+name: Embed fog summary layout
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: embed-fog-summary-layout
+  cancel-in-progress: true
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Embed structured renderer
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          layout_path = Path('fog-summary-layout.js')
+          overlay_path = Path('fog-meteogram-overlay.js')
+          index_path = Path('index.html')
+
+          layout = layout_path.read_text(encoding='utf-8')
+          # FG should be described to the operator as MGŁA, not only as the code FG.
+          layout = layout.replace(
+              "card(kind+' W CIĄGU NAJBLIŻSZEJ GODZINY',classText(ev.current.score,kind),currentDetail(ev.current.score),ev.current.score)+",
+              "card((kind==='FG'?'MGŁA':kind)+' W CIĄGU NAJBLIŻSZEJ GODZINY',classText(ev.current.score,kind),currentDetail(ev.current.score),ev.current.score)+"
+          )
+          layout = layout.replace(
+              "card(kind+' W CIĄGU NAJBLIŻSZEJ GODZINY','BRAK DANYCH','oczekiwanie na dane')+",
+              "card((kind==='FG'?'MGŁA':kind)+' W CIĄGU NAJBLIŻSZEJ GODZINY','BRAK DANYCH','oczekiwanie na dane')+"
+          )
+          layout_path.write_text(layout, encoding='utf-8')
+
+          marker = '// --- EPIR STRUCTURED FOG SUMMARY EMBEDDED ---'
+          overlay = overlay_path.read_text(encoding='utf-8')
+          if marker not in overlay:
+              overlay = overlay.rstrip() + '\n\n' + marker + '\n' + layout.rstrip() + '\n'
+              overlay_path.write_text(overlay, encoding='utf-8')
+
+          index = index_path.read_text(encoding='utf-8')
+          index = re.sub(r'\s*<script src="fog-summary-layout\.js(?:\?v=[^"]*)?"></script>\s*', '\n', index)
+          index_path.write_text(index, encoding='utf-8')
+          PY
+
+      - name: Validate
+        run: |
+          node --check fog-meteogram-overlay.js
+          node --check fog-summary-layout.js
+          grep -F 'EPIR STRUCTURED FOG SUMMARY EMBEDDED' fog-meteogram-overlay.js
+          grep -F "kind==='FG'?'MGŁA':kind" fog-summary-layout.js
+          if grep -F 'fog-summary-layout.js?v=' index.html; then exit 1; fi
+
+      - name: Commit result
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add fog-meteogram-overlay.js fog-summary-layout.js index.html
+          git commit -m 'fix: embed structured FG BR MIFG summary in deployed overlay'
+          git push origin main
