@@ -1,0 +1,78 @@
+name: Wire meteogram section popover
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Patch Pages pipeline
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('.github/workflows/pages.yml')
+          s = p.read_text(encoding='utf-8')
+
+          if 'meteogram-section-popover.js' not in s:
+              old = 'fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js shortcut-mode.js'
+              new = 'fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js meteogram-section-popover.js shortcut-mode.js'
+              if old not in s:
+                  raise SystemExit('Pages copy/validate marker not found')
+              s = s.replace(old, new)
+
+              old = "          fog_overlay_addon = '<script src=\"fog-meteogram-overlay.js\"></script>'\n"
+              new = old + "          section_popover_addon = f'<script src=\"meteogram-section-popover.js?v={ASSET_V}\"></script>'\n"
+              if old not in s:
+                  raise SystemExit('fog overlay addon marker not found')
+              s = s.replace(old, new, 1)
+
+              old = '              fog_overlay_addon,\n              shortcut_addon,'
+              new = '              fog_overlay_addon,\n              section_popover_addon,\n              shortcut_addon,'
+              if old not in s:
+                  raise SystemExit('addons list marker not found')
+              s = s.replace(old, new, 1)
+
+              old = '          node --check _site/fog-meteogram-overlay.js\n'
+              new = old + '          node --check _site/meteogram-section-popover.js\n'
+              if old not in s:
+                  raise SystemExit('_site JS validation marker not found')
+              s = s.replace(old, new, 1)
+
+              old = '          test -s _site/fog-meteogram-overlay.js\n'
+              new = old + '          test -s _site/meteogram-section-popover.js\n'
+              if old not in s:
+                  raise SystemExit('deployed feature marker not found')
+              s = s.replace(old, new, 1)
+
+          p.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Validate patch
+        run: |
+          node --check meteogram-section-popover.js
+          grep -F 'meteogram-section-popover.js shortcut-mode.js' .github/workflows/pages.yml
+          grep -F 'section_popover_addon' .github/workflows/pages.yml
+          grep -F 'node --check _site/meteogram-section-popover.js' .github/workflows/pages.yml
+          grep -F 'test -s _site/meteogram-section-popover.js' .github/workflows/pages.yml
+
+      - name: Commit and remove one-shot workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/patch-meteogram-popover.yml
+          git add .github/workflows/pages.yml
+          git commit -m 'feat: deploy meteogram section popover for all panels'
+          git push origin main
