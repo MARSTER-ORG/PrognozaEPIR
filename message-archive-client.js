@@ -105,4 +105,13 @@
 
   window.PrognozaEPIRMessageArchive = api;
   window.dispatchEvent(new CustomEvent('prognozaepir:message-archive-ready'));
+
+  // Generator TAF ma dodatkową politykę chmur. Ładujemy ją tylko na taf.html,
+  // żeby centralny klient archiwum pozostał lekki na pozostałych podstronach.
+  if (/\/taf\.html$/i.test(location.pathname)) {
+    const s = document.createElement('script');
+    s.src = 'taf-cloud-policy.js?v=20260909-1';
+    s.async = true;
+    document.head.appendChild(s);
+  }
 })();
