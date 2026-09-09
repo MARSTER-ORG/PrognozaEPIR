@@ -1,6 +1,6 @@
 'use strict';
 (() => {
-  const FOG_DRAW_THRESHOLD = 60;
+  const FOG_DRAW_THRESHOLD = 40;
   const MIFG_DRAW_THRESHOLD = 60;
   const BR_DRAW_THRESHOLD = 60;
   const FOG_INFO_THRESHOLD = 40;
@@ -121,7 +121,7 @@
   }
 
   function fogColor(score) {
-    if (score >= 75) return 'rgba(208,80,63,.62)';
+    if (score >= 80) return 'rgba(208,80,63,.62)';
     if (score >= 60) return 'rgba(216,108,47,.57)';
     return 'rgba(212,154,40,.50)';
   }
@@ -336,7 +336,7 @@
     ctx.font = 'bold 8px Arial';
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'right';
-    ctx.fillText('FOG 60',x0-24,baseY);
+    ctx.fillText('FOG 40',x0-24,baseY);
     ctx.fillText('FOG 100',x0-24,fog100LabelY);
     ctx.restore();
   }
@@ -392,7 +392,7 @@
     el.innerHTML =
       '<b>Widzialność / mgła:</b>' +
       '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:16px;height:3px;border-radius:2px;background:#d97706"></i>linia = widzialność konsensusu</span>' +
-      '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:8px;height:12px;border-radius:1px;background:rgba(216,108,47,.72)"></i>słupki = FOG ENGINE, od 60/100</span>' +
+      '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:8px;height:12px;border-radius:1px;background:rgba(216,108,47,.72)"></i>słupki = FOG ENGINE, od 40/100</span>' +
       '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#d63434;border:1px solid #ffdede"></i>czerwone punkty = niska mgła MIFG &lt;2 m, od 60/100; liczba = wynik MIFG</span>' +
       '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:16px;height:0;border-top:2px dashed '+BR_COLOR+'"></i>linia BR = zamglenie, od 60/100</span>';
     legend.appendChild(el);
@@ -427,7 +427,8 @@
     const peak = future.reduce((a,b) => !a || b.score > a.score ? b : a, null) || current;
     const card = document.createElement('div');
     card.id = 'brCard';
-    card.className = 'fog-card ' + (current.score >= 75 ? 'fog-risk-vhigh' : current.score >= 60 ? 'fog-risk-high' : current.score >= 40 ? 'fog-risk-mid' : 'fog-risk-low');
+    if (current.score < BR_INFO_THRESHOLD) return;
+    card.className = 'fog-card ' + (current.score >= 80 ? 'fog-risk-vhigh' : current.score >= 60 ? 'fog-risk-high' : 'fog-risk-mid');
     card.innerHTML = '<small>Zamglenie · BR</small><strong>' + Math.round(current.score) + '/100</strong>' +
       '<em>' + brRiskText(current.score) + ' · szczyt ' + Math.round(peak.score) + '/100 ' + localHour(peak.t) + '</em>';
     summary.appendChild(card);
@@ -471,7 +472,7 @@
     drawLegend = function() {
       const nativeFillText = ctx.fillText;
       ctx.fillText = function(text,...args) {
-        if (text === 'FOG ENGINE ≥40/100') text = 'FOG ENGINE ≥60/100';
+        if (text === 'FOG ENGINE ≥60/100') text = 'FOG ENGINE ≥40/100';
         return nativeFillText.call(this,text,...args);
       };
       try { return baseLegend.apply(this,arguments); }
