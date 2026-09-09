@@ -156,7 +156,7 @@
         await loadPolicy('taf-cloud-policy.js', '20260909-3');
         await loadPolicy('taf-weather-policy.js', '20260909-2');
         await loadPolicy('taf-instruction-guard.js', '20260909-6');
-        await loadPolicy('taf-output-sanitizer.js', '20260909-1');
+        await loadPolicy('taf-output-sanitizer.js', '20260909-2');
       } catch (error) {
         console.warn('TAF policy loader:', error);
       }
