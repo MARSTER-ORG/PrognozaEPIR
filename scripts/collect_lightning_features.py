@@ -37,6 +37,7 @@ RADII_KM = (20, 40, 80, 150)
 WINDOWS_MIN = (5, 10, 20)
 LOOKBACK_MIN = 35
 MAX_FEATURE_AGE_MIN = 25
+MAX_MAP_POINTS = 600
 
 
 def utc_now() -> datetime:
@@ -94,6 +95,7 @@ def disabled_payload(reason: str) -> dict[str, Any]:
         "trend_80km": None,
         "centroid": None,
         "motion": None,
+        "points": [],
     }
 
 
@@ -277,6 +279,23 @@ def build_features(records: list[dict[str, Any]], now: datetime, product_end: da
         status = "ok" if product_age <= 20 else "stale"
 
     data_time = max((p["time"] for p in candidates), default=None)
+
+    # Keep only a compact, recent point sample for the interactive map.
+    # The engine still uses the aggregate fields above; exposing the local
+    # point sample lets the browser draw actual LFL flashes without AFA.
+    map_points = []
+    for p in sorted(candidates, key=lambda x: x["time"], reverse=True)[:MAX_MAP_POINTS]:
+        item = {
+            "lat": round(float(p["lat"]), 5),
+            "lon": round(float(p["lon"]), 5),
+            "time": iso(p["time"]),
+            "age_min": round(float(p["age_min"]), 1),
+            "distance_km": round(float(p["distance_km"]), 1),
+        }
+        if "filter_confidence" in p and math.isfinite(float(p["filter_confidence"])):
+            item["filter_confidence"] = round(float(p["filter_confidence"]), 3)
+        map_points.append(item)
+
     return {
         "schema": "prognozaepir-lightning-features-v1",
         "updated_at": iso(now),
@@ -300,6 +319,8 @@ def build_features(records: list[dict[str, Any]], now: datetime, product_end: da
         "trend_80km": trend,
         "centroid": centroid_out,
         "motion": motion,
+        "points": map_points,
+        "points_truncated": len(candidates) > MAX_MAP_POINTS,
     }
 
 
