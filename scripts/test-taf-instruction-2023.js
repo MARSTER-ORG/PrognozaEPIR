@@ -30,15 +30,16 @@ assert.equal(guard.ceilingBandFt(500), 3);
 assert.equal(guard.ceilingBandFt(1000), 4);
 assert.equal(guard.ceilingBandFt(1500), 5);
 
-// 3.8.10 vs 3.8.9: CAVOK uses 1500 m (~4921 ft), NSC uses 5000 ft.
+// EPIR local rule: CAVOK and NSC both use 1500 m (~4921 ft).
 let r = norm(base('18005KT 9999 BKN049'));
 assert.match(r.text, /9999 BKN049=/, '4900 ft must block CAVOK because it is below 1500 m');
 r = norm(base('18005KT 9999 BKN050'));
 assert.match(r.text, /18005KT CAVOK=/, '5000 ft does not block the 1500 m CAVOK floor');
 r = norm(base('18005KT 3000 BKN050'));
-assert.match(r.text, /18005KT 3000 NSC=/, '5000 ft ordinary cloud is not significant for NSC');
+assert.match(r.text, /18005KT 3000 NSC=/, '5000 ft ordinary cloud is above the EPIR 1500 m / 4921 ft NSC threshold');
+assert.ok(Math.abs(guard.constants.NSC_LIMIT_FT - guard.constants.CAVOK_BASE_LIMIT_FT) < 0.01);
 r = norm(base('18005KT 9999 BKN050'), [], {msaFt:6000});
-assert.match(r.text, /9999 BKN050=/, 'MSA above 5000 ft must raise the operational cloud limit');
+assert.match(r.text, /18005KT CAVOK=/, 'EPIR uses the fixed 1500 m / 4921 ft threshold for both CAVOK and NSC');
 
 // 3.7.12: MIFG/BCFG/PRFG not coded in military TAF.
 r = norm(base('18005KT 3000 MIFG NSC'));

@@ -132,7 +132,7 @@
       try {
         await loadPolicy('taf-cloud-policy.js', '20260909-3');
         await loadPolicy('taf-weather-policy.js', '20260909-2');
-        await loadPolicy('taf-instruction-guard.js', '20260909-4');
+        await loadPolicy('taf-instruction-guard.js', '20260909-5');
       } catch (error) {
         console.warn('TAF policy loader:', error);
       }
