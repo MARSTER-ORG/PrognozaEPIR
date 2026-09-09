@@ -1,0 +1,120 @@
+name: MIFG summary UI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/mifg-summary-ui.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mifg-summary-ui
+  cancel-in-progress: false
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Refresh main
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Make MIFG summary match BR
+        shell: python
+        run: |
+          from pathlib import Path
+
+          p = Path('fog-meteogram-overlay.js')
+          s = p.read_text(encoding='utf-8')
+
+          anchor = "  function brOperationalText(score) {\n"
+          if anchor not in s:
+              raise SystemExit('brOperationalText anchor not found')
+          if 'function renderMifgCard()' in s:
+              raise SystemExit('renderMifgCard already exists')
+
+          block = r'''  function mifgOperationalText(score) {
+    if (!finite(score)) return 'BRAK DANYCH';
+    if (score < 40) return 'NIE';
+    if (score < 60) return 'MOŻLIWE';
+    if (score < 80) return 'PRAWDOPODOBNE';
+    return 'BARDZO PRAWDOPODOBNE';
+  }
+
+  function renderMifgCard() {
+    const summary = document.getElementById('fogSummary');
+    const rows = mifgSeries().filter(row => row && finite(row.t) && finite(row.score));
+    if (!summary || !rows.length) return;
+
+    document.getElementById('mifgCard')?.remove();
+    for (const oldCard of [...summary.children]) {
+      const small = oldCard.querySelector?.('small');
+      if (small && /\bMIFG\b/i.test(small.textContent || '')) oldCard.remove();
+    }
+
+    const now = Date.now();
+    const current = rows.reduce((a,b) => Math.abs(b.t-now) < Math.abs(a.t-now) ? b : a, rows[0]);
+    const future = rows.filter(row => row.t >= now-HOUR && row.t <= now+12*HOUR);
+    const peak = future.reduce((a,b) => !a || b.score > a.score ? b : a, null) || current;
+    const card = document.createElement('div');
+    card.id = 'mifgCard';
+    card.className = 'fog-card ' + (current.score >= 80 ? 'fog-risk-vhigh' : current.score >= 60 ? 'fog-risk-high' : current.score >= 40 ? 'fog-risk-mid' : '');
+    const currentDetail = current.score >= MIFG_INFO_THRESHOLD
+      ? Math.round(current.score) + '/100'
+      : 'wynik <40/100 pominięty';
+    const peakDetail = peak.score >= MIFG_INFO_THRESHOLD
+      ? ' · maks. 12 h ' + Math.round(peak.score) + '/100 ' + localHour(peak.t)
+      : ' · brak sygnału ≥40 w 12 h';
+    card.innerHTML = '<small>MIFG</small><strong>' + mifgOperationalText(current.score) + '</strong>' +
+      '<em>' + currentDetail + peakDetail + '</em>';
+    summary.appendChild(card);
+  }
+
+'''
+          s = s.replace(anchor, block + anchor, 1)
+
+          replacements = {
+              "    queueMicrotask(renderBrCard);\n": "    queueMicrotask(renderMifgCard);\n    queueMicrotask(renderBrCard);\n",
+              "  window.addEventListener('prognozaepir:fog-series-updated', () => { redraw(); queueMicrotask(renderBrCard); });\n": "  window.addEventListener('prognozaepir:fog-series-updated', () => { redraw(); queueMicrotask(renderMifgCard); queueMicrotask(renderBrCard); });\n",
+              "  window.addEventListener('prognozaepir:mifg-series-updated', () => { redraw(); queueMicrotask(renderBrCard); });\n": "  window.addEventListener('prognozaepir:mifg-series-updated', () => { redraw(); queueMicrotask(renderMifgCard); queueMicrotask(renderBrCard); });\n",
+              "  setInterval(renderBrCard,90*1000);\n": "  setInterval(() => { renderMifgCard(); renderBrCard(); },90*1000);\n",
+          }
+          for old, new in replacements.items():
+              count = s.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected exactly one match for {old!r}, got {count}')
+              s = s.replace(old, new, 1)
+
+          p.write_text(s, encoding='utf-8')
+
+      - name: Validate
+        run: |
+          node --check fog-meteogram-overlay.js
+          grep -F 'function renderMifgCard()' fog-meteogram-overlay.js
+          grep -F "'<small>MIFG</small><strong>'" fog-meteogram-overlay.js
+          grep -F "if (score < 40) return 'NIE';" fog-meteogram-overlay.js
+          grep -F 'wynik <40/100 pominięty' fog-meteogram-overlay.js
+          grep -F 'brak sygnału ≥40 w 12 h' fog-meteogram-overlay.js
+
+      - name: Commit patch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add fog-meteogram-overlay.js
+          if git diff --cached --quiet; then
+            echo 'No changes needed'
+            exit 0
+          fi
+          git commit -m 'ui: make MIFG summary operational like BR'
+          git pull --rebase origin main
+          git push origin HEAD:main
