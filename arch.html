@@ -93,11 +93,22 @@ tr.synop-row:hover td,tr.synop-row:focus td{background:var(--hover)}
   }
   function formatUtc(ms){return Number.isFinite(ms)?new Date(ms).toISOString().slice(0,16).replace('T',' '):'—'}
   function escapeHtml(value){return String(value).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]))}
-  function finite(value){const n=Number(value);return Number.isFinite(n)?n:null}
+  function finite(value){if(value===null||value===undefined||value==='')return null;const n=Number(value);return Number.isFinite(n)?n:null}
   function fmt(value,digits=1){const n=finite(value);return n===null?'—':n.toFixed(digits).replace(/\.0$/,'')}
   function compass(deg){const n=finite(deg);if(n===null)return '';const names=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];return names[Math.round((((n%360)+360)%360)/22.5)%16]}
-  function visibilityText(row){if(row?.visibility_report&&String(row.visibility_report).toLowerCase()!=='unused')return String(row.visibility_report);const v=finite(row?.visibility_m);if(v===null)return '—';const prefix=row?.visibility_lower_bound?'≥ ':row?.visibility_upper_bound?'≤ ':'';return `${prefix}${Math.round(v).toLocaleString('pl-PL')} m`}
-  function weatherText(row){const code=finite(row?.present_weather_code);let text=String(row?.present_weather||'').trim();if(/^fog\b/i.test(text))text=text.replace(/^fog/i,'mgła');else if(/^mist\b/i.test(text))text=text.replace(/^mist/i,'zamglenie');else if(/^present weather\b/i.test(text))text=text.replace(/^present weather/i,'zjawisko bieżące');if(!text&&code===null)return 'brak kodu ww';if(!text)text='zjawisko bieżące';return code===null?text:`${text} · ww=${String(Math.trunc(code)).padStart(2,'0')}`}
+  function visibilityText(row){
+    const v=finite(row?.visibility_m),code=String(row?.visibility_code_vv||'').trim();
+    let text='—';
+    if(v!==null){const prefix=row?.visibility_lower_bound?'≥ ':row?.visibility_upper_bound?'≤ ':'';text=v>=1000&&v%1000===0?`${prefix}${v/1000} km`:`${prefix}${Math.round(v).toLocaleString('pl-PL')} m`}
+    else if(row?.visibility_report&&String(row.visibility_report).toLowerCase()!=='unused')text=String(row.visibility_report);
+    return code?`${text} (VV=${code})`:text;
+  }
+  function weatherText(row){
+    const code=finite(row?.present_weather_code);let text=String(row?.present_weather||'').trim();
+    if(code===null||code===0)return 'brak zjawiska';
+    if(/^fog\b/i.test(text))text=text.replace(/^fog/i,'mgła');else if(/^mist\b/i.test(text))text=text.replace(/^mist/i,'zamglenie');else if(/^present weather\b/i.test(text))text=text.replace(/^present weather/i,'zjawisko bieżące');
+    if(!text)text='zjawisko bieżące';return `${text} · ww=${String(Math.trunc(code)).padStart(2,'0')}`;
+  }
   function cloudText(row){const n=finite(row?.total_cloud_oktas);return n===null?'—':`${Math.trunc(n)}/8`}
   function synopDecodedHtml(row){
     const windDir=finite(row?.wind_direction_deg),windSpeed=finite(row?.wind_speed_ms),rh=finite(row?.relative_humidity_pct),base=finite(row?.cloud_base_m_agl),pmsl=finite(row?.pressure_hpa),p0=finite(row?.station_pressure_hpa);
@@ -110,7 +121,6 @@ tr.synop-row:hover td,tr.synop-row:focus td{background:var(--hover)}
       ['Punkt rosy',finite(row?.dew_point_c)===null?'—':`${fmt(row.dew_point_c,1)} °C`],
       ['Wilgotność',rh===null?'—':`${fmt(rh,1)}%`],
       ['Widzialność',visibilityText(row)],
-      ['VV',row?.visibility_code_vv?String(row.visibility_code_vv):'—'],
       ['Zachmurzenie',cloudText(row)],
       ['Podstawa chmur',base===null?'—':`ok. ${Math.round(base)} m AGL`],
       ['Ciśnienie MSL',pmsl===null?'—':`${fmt(pmsl,1)} hPa`],
