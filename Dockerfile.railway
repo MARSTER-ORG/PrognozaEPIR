@@ -5,11 +5,14 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    INGEST_INTERVAL_SECONDS=300
+    INGEST_INTERVAL_SECONDS=300 \
+    LIGHTNING_FEATURES_ENABLED=1 \
+    EUMETSAT_COLLECTION_ID=EO:EUM:DAT:0691
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m pip install --no-cache-dir eumdac netCDF4
 
 COPY . /app
 
