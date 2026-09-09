@@ -4,6 +4,8 @@ from pathlib import Path
 P = Path('taf-verification.js')
 s = P.read_text(encoding='utf-8')
 
+# The 10-point pool applies to a whole change group.  If a group has N
+# verifiable elements, each missing element consumes 10/N points from that pool.
 CONST = "  const GROUP_ELEMENT_PENALTY=10;\n"
 if 'GROUP_ELEMENT_PENALTY=10' not in s:
     anchor = "  const LABELS={wind:'Wiatr',vis:'Widzialność',ceiling:'Pułap',wx:'Pogoda'};\n"
@@ -44,19 +46,25 @@ HELPERS = r'''  function groupElementKeys(f){
       const relevant=obs.filter(o=>o.t>=e.s&&o.t<(e.e||p.ve));
       const keys=groupElementKeys(e.state);
       if(!relevant.length||!keys.length){
-        const item={token:e.token,kind:e.kind,missing:[],penalty:0,verifiable:relevant.length>0};
+        const item={token:e.token,kind:e.kind,missing:[],penalty:0,elements:keys.length,verifiable:relevant.length>0};
         groups.push(item);byToken.set(e.token,item);continue;
       }
       const missing=keys.filter(k=>!relevant.some(o=>groupElementMatch(e.state,o,k)));
-      const penalty=missing.length*GROUP_ELEMENT_PENALTY;
+      // Max -10 pkt for a whole change group, distributed across its elements.
+      // Example: VIS + WX + CLOUD => one miss -3.3, two -6.7, all three -10.
+      const penalty=Math.round((GROUP_ELEMENT_PENALTY*missing.length/keys.length)*10)/10;
       total+=penalty;
-      const item={token:e.token,kind:e.kind,missing,penalty,verifiable:true};
+      const item={token:e.token,kind:e.kind,missing,penalty,elements:keys.length,verifiable:true};
       groups.push(item);byToken.set(e.token,item);
     }
-    return{total,groups,byToken};
+    return{total:Math.round(total*10)/10,groups,byToken};
   }
 '''
-if 'function groupElementPenalties(p,obs)' not in s:
+helper_start = s.find('  function groupElementKeys(f){\n')
+group_start = s.find('  function groupSummary(p,obs){\n', helper_start if helper_start >= 0 else 0)
+if helper_start >= 0 and group_start > helper_start:
+    s = s[:helper_start] + HELPERS + s[group_start:]
+elif 'function groupElementPenalties(p,obs)' not in s:
     anchor = '  function groupSummary(p,obs){\n'
     if anchor not in s:
         raise SystemExit('TAF group penalty: groupSummary anchor not found')
@@ -111,7 +119,7 @@ elif 'const ps=results.map(x=>x.groupPenalty)' not in s:
 required = [
     'GROUP_ELEMENT_PENALTY=10',
     'function groupElementPenalties(p,obs)',
-    "missing.length*GROUP_ELEMENT_PENALTY",
+    'GROUP_ELEMENT_PENALTY*missing.length/keys.length',
     'Math.max(0,rawOverall-groupPenalty)',
     "brak METAR w okresie — bez kary",
 ]
@@ -120,4 +128,4 @@ for token in required:
         raise SystemExit(f'TAF group penalty: required token missing: {token}')
 
 P.write_text(s, encoding='utf-8')
-print('TAF verification: strict -10 points per missing change-group element enforced')
+print('TAF verification: proportional change-group penalty enforced (max -10 points per group)')
