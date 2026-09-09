@@ -727,7 +727,7 @@
     const type=peak.type?.text||current.type?.text||'—';
     const freeze=peak.fzfg;
     summary.innerHTML=`
-      <div class="fog-card ${riskCss(current.score)}"><small>MGŁA — OPERACYJNIE</small><strong>${scoreClass(current.score)}</strong><em>${current.score>=40?fmt0(current.score)+'/100':'wynik <40/100 pominięty'}</em></div>
+      <div class="fog-card ${riskCss(current.score)}"><small>MGŁA W CIĄGU NAJBLIŻSZEJ GODZINY</small><strong>${scoreClass(current.score)}</strong><em>${current.score>=40?fmt0(current.score)+'/100':'wynik <40/100 pominięty'}</em></div>
       <div class="fog-card"><small>Typ procesu</small><strong>${type}</strong><em>${peak.type?.secondary?'wtórny: '+mechanismName(peak.type.secondary):'dominujący mechanizm'}</em></div>
       <div class="fog-card"><small>Kiedy mgła?</small><strong>${ev.onset?localHour(ev.onset)+' → '+(ev.end?localHour(ev.end):'dalej'):'brak sygnału ≥40 w 48 h'}</strong><em>próg operacyjny 40/100</em></div>
       <div class="fog-card ${riskCss(peak.score)}"><small>Maksimum w 48 h</small><strong>${peak.score>=40?scoreClass(peak.score):'PONIŻEJ PROGU'}</strong><em>${peak.score>=40?fmt0(peak.score)+'/100 · '+(ev.peakFrom?localHour(ev.peakFrom)+'–'+localHour(ev.peakTo):localHour(peak.t)):'brak operacyjnej mgły'}</em></div>
