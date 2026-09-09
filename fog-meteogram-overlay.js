@@ -454,7 +454,7 @@
     const peakDetail = peak.score >= BR_INFO_THRESHOLD
       ? ' · maks. 12 h ' + Math.round(peak.score) + '/100 ' + localHour(peak.t)
       : ' · brak sygnału ≥40 w 12 h';
-    card.innerHTML = '<small>ZAMGLENIE (BR) W CIĄGU NAJBLIŻSZEJ GODZINY</small><strong>' + brOperationalText(current.score) + '</strong>' +
+    card.innerHTML = '<small>BR</small><strong>' + brOperationalText(current.score) + '</strong>' +
       '<em>' + currentDetail + peakDetail + '</em>';
     summary.appendChild(card);
   }
