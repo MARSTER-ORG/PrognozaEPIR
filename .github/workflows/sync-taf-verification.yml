@@ -6,6 +6,7 @@ on:
       - taf-verification.js
       - scripts/embed_taf_verification.py
       - scripts/fix_taf_verification_live_archive.py
+      - scripts/enforce_taf_group_penalty.py
       - .github/workflows/sync-taf-verification.yml
   workflow_dispatch:
 permissions:
@@ -21,9 +22,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Enforce live verifier and embed it
+      - name: Enforce live verifier, strict group scoring and embed it
         run: |
           python3 scripts/fix_taf_verification_live_archive.py
+          python3 scripts/enforce_taf_group_penalty.py
           python3 scripts/embed_taf_verification.py
           node --check taf-verification.js
           grep -F 'PrognozaEPIRMessageArchive' taf.html
@@ -31,6 +33,10 @@ jobs:
           grep -F "A.getLatest('TAF','EPIR',true)" taf-verification.js
           grep -F 'central-ingestor-production.up.railway.app/data/messages/' taf-verification.js
           grep -F 'LIVE Railway/MessageArchive' taf-verification.js
+          grep -F 'GROUP_ELEMENT_PENALTY=10' taf-verification.js
+          grep -F 'function groupElementPenalties(p,obs)' taf-verification.js
+          grep -F 'Math.max(0,rawOverall-groupPenalty)' taf-verification.js
+          grep -F 'brak METAR w okresie — bez kary' taf-verification.js
           test "$(grep -F -c 'function centralDayUrls(kind,day)' taf-verification.js)" -eq 1
           ! grep -F 'taf-archive-source.js' taf.html
           ! grep -F 'loadImgwLive(' taf.html
@@ -48,7 +54,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add taf.html taf-verification.js
-          git commit -m 'taf: keep verifier on live central message archive'
+          git commit -m 'taf: enforce strict change-group scoring'
           git pull --rebase origin main
           git push
       - name: Deploy current main to GitHub Pages
