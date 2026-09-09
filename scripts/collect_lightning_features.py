@@ -1,18 +1,11 @@
 #!/usr/bin/env python3
-"""Collect MTG LI Lightning Flashes (LFL) and derive compact EPIR features.
+"""Collect EUMETSAT MTG LI L2 Lightning Flashes (LFL).
 
-This intentionally does not use LI AFA imagery. It downloads the official
-EUMETSAT LI Level-2 Lightning Flashes product (EO:EUM:DAT:0691), reads actual
-flash time/latitude/longitude records, and stores only aggregate features used
-by the Cb nowcast.
+The collector keeps a rolling in-memory cache of recent flashes. EPIR
+aggregates are derived from that cache, while a compact Europe-wide point
+sample is exposed for the interactive radar map.
 
-Required environment variables:
-  EUMETSAT_CONSUMER_KEY
-  EUMETSAT_CONSUMER_SECRET
-
-Optional:
-  LIGHTNING_FEATURES_ENABLED=1
-  EUMETSAT_COLLECTION_ID=EO:EUM:DAT:0691
+LI AFA imagery is deliberately not used here.
 """
 from __future__ import annotations
 
@@ -35,9 +28,18 @@ ENABLED = os.environ.get("LIGHTNING_FEATURES_ENABLED", "1").strip().lower() not 
 
 RADII_KM = (20, 40, 80, 150)
 WINDOWS_MIN = (5, 10, 20)
-LOOKBACK_MIN = 35
-MAX_FEATURE_AGE_MIN = 25
-MAX_MAP_POINTS = 600
+LOOKBACK_MIN = 24
+MAX_FEATURE_AGE_MIN = 22
+MAX_MAP_POINTS = int(os.environ.get("LFL_MAX_MAP_POINTS", "2500"))
+BOOTSTRAP_PRODUCTS = int(os.environ.get("LFL_BOOTSTRAP_PRODUCTS", "72"))
+
+EU_MIN_LAT = float(os.environ.get("LFL_EUROPE_MIN_LAT", "30"))
+EU_MAX_LAT = float(os.environ.get("LFL_EUROPE_MAX_LAT", "72"))
+EU_MIN_LON = float(os.environ.get("LFL_EUROPE_MIN_LON", "-15"))
+EU_MAX_LON = float(os.environ.get("LFL_EUROPE_MAX_LON", "45"))
+
+_flash_cache: dict[tuple[int, int, int], dict[str, Any]] = {}
+_seen_products: dict[str, datetime] = {}
 
 
 def utc_now() -> datetime:
@@ -86,9 +88,10 @@ def disabled_payload(reason: str) -> dict[str, Any]:
             "instrument": "MTG Lightning Imager",
             "product": "LI L2 Lightning Flashes (LFL)",
             "collection": COLLECTION_ID,
-            "note": "LI AFA is not used",
+            "note": "actual LFL points; LI AFA is not used",
         },
         "point": {"name": "EPIR", "lat": EPIR_LAT, "lon": EPIR_LON},
+        "map_scope": {"min_lat": EU_MIN_LAT, "max_lat": EU_MAX_LAT, "min_lon": EU_MIN_LON, "max_lon": EU_MAX_LON},
         "radial_counts_20min": {str(r): 0 for r in RADII_KM},
         "time_counts_80km": {str(w): 0 for w in WINDOWS_MIN},
         "nearest": None,
@@ -101,6 +104,12 @@ def disabled_payload(reason: str) -> dict[str, Any]:
 
 def _as_datetime(seconds_since_2000: float) -> datetime:
     return datetime(2000, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=float(seconds_since_2000))
+
+
+def _aware(dt: datetime | None) -> datetime:
+    if not isinstance(dt, datetime):
+        return datetime.min.replace(tzinfo=timezone.utc)
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
 
 
 def _download_body(product: Any, target_dir: Path) -> Path:
@@ -127,12 +136,16 @@ def _records_from_netcdf(path: Path) -> list[dict[str, Any]]:
         for name in ("flash_time", "latitude", "longitude"):
             if name not in ds.variables:
                 raise RuntimeError(f"{path.name}: missing LFL variable {name}")
+
+        # netCDF4 applies scale_factor/add_offset automatically. For LFL that
+        # means latitude/longitude arrive already in degrees.
         times = np.ma.filled(ds.variables["flash_time"][:], np.nan)
         lats = np.ma.filled(ds.variables["latitude"][:], np.nan)
         lons = np.ma.filled(ds.variables["longitude"][:], np.nan)
         confidence = None
         if "flash_filter_confidence" in ds.variables:
             confidence = np.ma.filled(ds.variables["flash_filter_confidence"][:], np.nan)
+
         n = min(len(times), len(lats), len(lons))
         for i in range(n):
             t, lat, lon = float(times[i]), float(lats[i]), float(lons[i])
@@ -149,7 +162,26 @@ def _records_from_netcdf(path: Path) -> list[dict[str, Any]]:
     return out
 
 
-def fetch_lfl(now: datetime) -> tuple[list[dict[str, Any]], datetime | None, list[str]]:
+def _flash_key(item: dict[str, Any]) -> tuple[int, int, int]:
+    return (
+        int(item["time"].timestamp() * 1000),
+        int(round(float(item["lat"]) * 10000)),
+        int(round(float(item["lon"]) * 10000)),
+    )
+
+
+def _prune_cache(now: datetime) -> None:
+    cutoff = now - timedelta(minutes=MAX_FEATURE_AGE_MIN + 2)
+    for key, item in list(_flash_cache.items()):
+        if item["time"] < cutoff:
+            _flash_cache.pop(key, None)
+    seen_cutoff = now - timedelta(hours=2)
+    for pid, when in list(_seen_products.items()):
+        if when < seen_cutoff:
+            _seen_products.pop(pid, None)
+
+
+def fetch_lfl(now: datetime) -> tuple[list[dict[str, Any]], datetime | None, list[str], int]:
     key = os.environ.get("EUMETSAT_CONSUMER_KEY", "").strip()
     secret = os.environ.get("EUMETSAT_CONSUMER_SECRET", "").strip()
     if not key or not secret:
@@ -164,68 +196,111 @@ def fetch_lfl(now: datetime) -> tuple[list[dict[str, Any]], datetime | None, lis
     start = (now - timedelta(minutes=LOOKBACK_MIN)).replace(tzinfo=None)
     end = (now + timedelta(minutes=1)).replace(tzinfo=None)
     products = list(collection.search(dtstart=start, dtend=end))
-    products.sort(key=lambda p: getattr(p, "sensing_start", datetime.min))
-    products = products[-5:]
+    products.sort(key=lambda p: _aware(getattr(p, "sensing_start", None)))
     if not products:
         raise RuntimeError("no recent EUMETSAT LFL products found")
 
-    records: list[dict[str, Any]] = []
-    product_ids: list[str] = []
-    product_end: datetime | None = None
+    product_end = max((_aware(getattr(p, "sensing_end", None)) for p in products), default=None)
+    ids = [str(p) for p in products]
+
+    unseen = [p for p in products if str(p) not in _seen_products]
+    # Fresh process: bootstrap a useful Europe-wide history. Later cycles only
+    # download newly appeared 10-second products and keep them in memory.
+    if not _flash_cache and len(unseen) > BOOTSTRAP_PRODUCTS:
+        unseen = unseen[-BOOTSTRAP_PRODUCTS:]
+
+    downloaded = 0
+    errors: list[str] = []
     with tempfile.TemporaryDirectory(prefix="prognozaepir-lfl-") as tmp:
         td = Path(tmp)
-        for product in products:
-            product_ids.append(str(product))
-            raw_end = getattr(product, "sensing_end", None)
-            if isinstance(raw_end, datetime):
-                if raw_end.tzinfo is None:
-                    raw_end = raw_end.replace(tzinfo=timezone.utc)
-                else:
-                    raw_end = raw_end.astimezone(timezone.utc)
-                if product_end is None or raw_end > product_end:
-                    product_end = raw_end
-            path = _download_body(product, td)
-            records.extend(_records_from_netcdf(path))
+        for product in unseen:
+            pid = str(product)
+            try:
+                path = _download_body(product, td)
+                for item in _records_from_netcdf(path):
+                    _flash_cache[_flash_key(item)] = item
+                _seen_products[pid] = now
+                downloaded += 1
+            except Exception as exc:
+                errors.append(f"{pid}: {type(exc).__name__}: {exc}")
 
-    uniq: dict[tuple[int, int, int], dict[str, Any]] = {}
-    for item in records:
-        k = (
-            int(item["time"].timestamp() * 1000),
-            int(round(item["lat"] * 10000)),
-            int(round(item["lon"] * 10000)),
-        )
-        uniq[k] = item
-    return list(uniq.values()), product_end, product_ids
+    _prune_cache(now)
+    if not _flash_cache and errors:
+        raise RuntimeError(errors[-1])
+
+    return list(_flash_cache.values()), product_end, ids[-12:], downloaded
 
 
 def centroid(points: list[dict[str, Any]]) -> dict[str, float] | None:
     if not points:
         return None
-    lat = sum(p["lat"] for p in points) / len(points)
-    lon = sum(p["lon"] for p in points) / len(points)
-    return {"lat": lat, "lon": lon}
+    return {
+        "lat": sum(float(p["lat"]) for p in points) / len(points),
+        "lon": sum(float(p["lon"]) for p in points) / len(points),
+    }
 
 
-def build_features(records: list[dict[str, Any]], now: datetime, product_end: datetime | None, product_ids: list[str]) -> dict[str, Any]:
-    candidates: list[dict[str, Any]] = []
+def _sample_map_points(points: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
+    ordered = sorted(points, key=lambda x: x["time"], reverse=True)
+    truncated = len(ordered) > MAX_MAP_POINTS
+    if truncated:
+        step = len(ordered) / MAX_MAP_POINTS
+        ordered = [ordered[min(len(ordered) - 1, int(i * step))] for i in range(MAX_MAP_POINTS)]
+
+    out: list[dict[str, Any]] = []
+    for p in ordered:
+        item = {
+            "lat": round(float(p["lat"]), 5),
+            "lon": round(float(p["lon"]), 5),
+            "time": iso(p["time"]),
+            "age_min": round(float(p["age_min"]), 1),
+            "distance_km": round(float(p["distance_km"]), 1),
+        }
+        if "filter_confidence" in p:
+            try:
+                q = float(p["filter_confidence"])
+            except (TypeError, ValueError):
+                q = math.nan
+            if math.isfinite(q):
+                item["filter_confidence"] = round(q, 3)
+        out.append(item)
+    return out, truncated
+
+
+def build_features(
+    records: list[dict[str, Any]],
+    now: datetime,
+    product_end: datetime | None,
+    product_ids: list[str],
+    downloaded_products: int = 0,
+) -> dict[str, Any]:
+    europe: list[dict[str, Any]] = []
+    local: list[dict[str, Any]] = []
+
     for item in records:
         age_min = (now - item["time"]).total_seconds() / 60.0
         if age_min < -2 or age_min > MAX_FEATURE_AGE_MIN:
             continue
-        d = haversine_km(EPIR_LAT, EPIR_LON, item["lat"], item["lon"])
-        if d > 180:
-            continue
-        candidates.append({**item, "age_min": age_min, "distance_km": d})
 
-    radial: dict[str, int] = {}
-    for radius in RADII_KM:
-        radial[str(radius)] = sum(1 for p in candidates if p["age_min"] <= 20 and p["distance_km"] <= radius)
+        lat, lon = float(item["lat"]), float(item["lon"])
+        d = haversine_km(EPIR_LAT, EPIR_LON, lat, lon)
+        enriched = {**item, "age_min": age_min, "distance_km": d}
 
-    time_counts: dict[str, int] = {}
-    for window in WINDOWS_MIN:
-        time_counts[str(window)] = sum(1 for p in candidates if p["age_min"] <= window and p["distance_km"] <= 80)
+        if EU_MIN_LAT <= lat <= EU_MAX_LAT and EU_MIN_LON <= lon <= EU_MAX_LON:
+            europe.append(enriched)
+        if d <= 180:
+            local.append(enriched)
 
-    nearest = min(candidates, key=lambda p: p["distance_km"], default=None)
+    radial = {
+        str(radius): sum(1 for p in local if p["age_min"] <= 20 and p["distance_km"] <= radius)
+        for radius in RADII_KM
+    }
+    time_counts = {
+        str(window): sum(1 for p in local if p["age_min"] <= window and p["distance_km"] <= 80)
+        for window in WINDOWS_MIN
+    }
+
+    nearest = min(local, key=lambda p: p["distance_km"], default=None)
     nearest_out = None
     if nearest is not None:
         nearest_out = {
@@ -235,8 +310,8 @@ def build_features(records: list[dict[str, Any]], now: datetime, product_end: da
             "time": iso(nearest["time"]),
         }
 
-    current10 = [p for p in candidates if 0 <= p["age_min"] <= 10 and p["distance_km"] <= 80]
-    previous10 = [p for p in candidates if 10 < p["age_min"] <= 20 and p["distance_km"] <= 80]
+    current10 = [p for p in local if 0 <= p["age_min"] <= 10 and p["distance_km"] <= 80]
+    previous10 = [p for p in local if 10 < p["age_min"] <= 20 and p["distance_km"] <= 80]
     c1, c0 = len(current10), len(previous10)
     pct = None if c0 == 0 else round((c1 - c0) / c0 * 100.0, 1)
     trend = {
@@ -244,21 +319,24 @@ def build_features(records: list[dict[str, Any]], now: datetime, product_end: da
         "previous_10min": c0,
         "delta": c1 - c0,
         "percent": pct,
-        "label": "wzrost" if c1 >= c0 + max(2, round(c0 * .35)) else ("spadek" if c0 >= c1 + max(2, round(c0 * .35)) else "stabilnie"),
+        "label": "wzrost" if c1 >= c0 + max(2, round(c0 * .35)) else (
+            "spadek" if c0 >= c1 + max(2, round(c0 * .35)) else "stabilnie"
+        ),
     }
 
-    cluster_points = [p for p in candidates if p["age_min"] <= 10 and p["distance_km"] <= 150]
+    cluster_points = [p for p in local if p["age_min"] <= 10 and p["distance_km"] <= 150]
     cen = centroid(cluster_points)
     centroid_out = None
     if cen:
         centroid_out = {
-            **{k: round(v, 4) for k, v in cen.items()},
+            "lat": round(cen["lat"], 4),
+            "lon": round(cen["lon"], 4),
             "count": len(cluster_points),
             "distance_km": round(haversine_km(EPIR_LAT, EPIR_LON, cen["lat"], cen["lon"]), 1),
             "bearing_deg": round(bearing_deg(EPIR_LAT, EPIR_LON, cen["lat"], cen["lon"])),
         }
 
-    old_points = [p for p in candidates if 10 < p["age_min"] <= 20 and p["distance_km"] <= 150]
+    old_points = [p for p in local if 10 < p["age_min"] <= 20 and p["distance_km"] <= 150]
     old_cen = centroid(old_points)
     motion = None
     if cen and old_cen and len(cluster_points) >= 2 and len(old_points) >= 2:
@@ -278,23 +356,10 @@ def build_features(records: list[dict[str, Any]], now: datetime, product_end: da
         product_age = max(0.0, (now - product_end).total_seconds() / 60.0)
         status = "ok" if product_age <= 20 else "stale"
 
-    data_time = max((p["time"] for p in candidates), default=None)
-
-    # Keep only a compact, recent point sample for the interactive map.
-    # The engine still uses the aggregate fields above; exposing the local
-    # point sample lets the browser draw actual LFL flashes without AFA.
-    map_points = []
-    for p in sorted(candidates, key=lambda x: x["time"], reverse=True)[:MAX_MAP_POINTS]:
-        item = {
-            "lat": round(float(p["lat"]), 5),
-            "lon": round(float(p["lon"]), 5),
-            "time": iso(p["time"]),
-            "age_min": round(float(p["age_min"]), 1),
-            "distance_km": round(float(p["distance_km"]), 1),
-        }
-        if "filter_confidence" in p and math.isfinite(float(p["filter_confidence"])):
-            item["filter_confidence"] = round(float(p["filter_confidence"]), 3)
-        map_points.append(item)
+    europe20 = [p for p in europe if p["age_min"] <= 20]
+    map_points, truncated = _sample_map_points(europe20)
+    data_time = max((p["time"] for p in europe), default=None)
+    oldest_age = max((p["age_min"] for p in europe20), default=0.0)
 
     return {
         "schema": "prognozaepir-lightning-features-v1",
@@ -307,12 +372,24 @@ def build_features(records: list[dict[str, Any]], now: datetime, product_end: da
             "collection": COLLECTION_ID,
             "product_end": iso(product_end),
             "product_age_min": None if product_age is None else round(product_age, 1),
-            "products": product_ids[-5:],
-            "note": "actual LFL flash positions/times; LI AFA is not used",
+            "products": product_ids,
+            "downloaded_products_this_cycle": downloaded_products,
+            "cache_flashes": len(records),
+            "note": "actual Europe-wide LFL flash positions/times; LI AFA is not used",
         },
         "point": {"name": "EPIR", "lat": EPIR_LAT, "lon": EPIR_LON},
+        "map_scope": {
+            "min_lat": EU_MIN_LAT,
+            "max_lat": EU_MAX_LAT,
+            "min_lon": EU_MIN_LON,
+            "max_lon": EU_MAX_LON,
+            "window_min": 20,
+            "available_window_min": round(min(20.0, oldest_age), 1),
+            "window_complete": oldest_age >= 19.0,
+        },
         "data_time": iso(data_time),
-        "flashes_considered": len(candidates),
+        "flashes_considered": len(local),
+        "europe_flashes_20min": len(europe20),
         "radial_counts_20min": radial,
         "time_counts_80km": time_counts,
         "nearest": nearest_out,
@@ -320,7 +397,7 @@ def build_features(records: list[dict[str, Any]], now: datetime, product_end: da
         "centroid": centroid_out,
         "motion": motion,
         "points": map_points,
-        "points_truncated": len(candidates) > MAX_MAP_POINTS,
+        "points_truncated": truncated,
     }
 
 
@@ -339,13 +416,11 @@ def collect_and_write() -> dict[str, Any]:
 
     now = utc_now()
     try:
-        records, product_end, product_ids = fetch_lfl(now)
-        payload = build_features(records, now, product_end, product_ids)
+        records, product_end, product_ids, downloaded = fetch_lfl(now)
+        payload = build_features(records, now, product_end, product_ids, downloaded)
     except Exception as exc:
-        payload = {
-            **disabled_payload(f"{type(exc).__name__}: {exc}"),
-            "status": "error",
-        }
+        payload = {**disabled_payload(f"{type(exc).__name__}: {exc}"), "status": "error"}
+
     atomic_json(OUT, payload)
     return payload
 
@@ -356,7 +431,10 @@ def main() -> int:
         "status": payload.get("status"),
         "updated_at": payload.get("updated_at"),
         "counts": payload.get("radial_counts_20min"),
+        "europe_flashes_20min": payload.get("europe_flashes_20min"),
+        "points": len(payload.get("points") or []),
         "nearest": payload.get("nearest"),
+        "downloaded_products_this_cycle": payload.get("source", {}).get("downloaded_products_this_cycle"),
         "reason": payload.get("reason"),
     }, ensure_ascii=False))
     return 0 if payload.get("status") in {"ok", "stale", "disabled"} else 1
