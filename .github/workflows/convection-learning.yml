@@ -1,0 +1,65 @@
+name: Convection TCu-Cb learning
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - scripts/build_convection_skill.py
+      - .github/workflows/convection-learning.yml
+  schedule:
+    - cron: '17 4 * * *'
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: convection-learning
+  cancel-in-progress: true
+
+jobs:
+  learn:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build historical convection calibration
+        run: |
+          python3 -m py_compile scripts/build_convection_skill.py
+          python3 scripts/build_convection_skill.py
+          python3 -m json.tool data/learning/cloud-skill.json >/dev/null
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          j=json.loads(Path('data/learning/cloud-skill.json').read_text(encoding='utf-8'))
+          c=j.get('convection') or {}
+          t=c.get('training') or {}
+          assert c.get('schema') == 'prognozaepir-convection-skill-v1'
+          assert int(t.get('matched_samples') or 0) > 0, 'no historical model-METAR matches'
+          assert len((c.get('calibration') or {}).get('environment_score_bins') or []) == 5
+          print('Convection calibration:', t)
+          PY
+
+      - name: Persist learned calibration
+        id: persist
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/learning/cloud-skill.json
+          if git diff --cached --quiet; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          else
+            git commit -m 'Update learned TCu/CB convection calibration'
+            git pull --rebase origin main
+            git push origin HEAD:main
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy refreshed calibration
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main
