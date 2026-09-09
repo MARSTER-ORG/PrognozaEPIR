@@ -18,11 +18,12 @@ const EPIR={lat:52.83,lon:18.33},NSTA={EPBY:{name:'Bydgoszcz',lat:53.0968,lon:17
   const VERSION='TAF Verification v2.1';
   const BLOCKED_SKILL_KEY='prognozaepir-taf-skill-v1';
   const LIVE_ARCHIVE_BASE='https://central-ingestor-production.up.railway.app/data/messages/';
-  const CENTRAL_RAW_BASE='https://central-ingestor-production.up.railway.app/data/messages/';
+  const CENTRAL_RAW_BASE='https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/messages/';
   const VIS_BANDS=[800,1500,3000,5000];
   const CEIL_BANDS=[200,300,500,1000,1500];
   const PARAMS=['wind','vis','ceiling','wx'];
   const LABELS={wind:'Wiatr',vis:'Widzialność',ceiling:'Pułap',wx:'Pogoda'};
+  const GROUP_ELEMENT_PENALTY=10;
   const $=id=>document.getElementById(id);
   const finite=Number.isFinite;
   const pad=(n,w=2)=>String(n).padStart(w,'0');
@@ -289,25 +290,71 @@ const EPIR={lat:52.83,lon:18.33},NSTA={EPBY:{name:'Bydgoszcz',lat:53.0968,lon:17
     const ceil=finite(o.ceilingFt)?`${Math.round(o.ceilingFt)} ft`:'brak BKN/OVC';
     return `${wind} · VIS ${vis} · pułap ${ceil} · WX ${o.wxFamily??'NONE'}`;
   }
-  function groupSummary(p,obs){
-    const out=[];
+  function groupElementKeys(f){
+    const keys=[];
+    if(finite(f.windKt))keys.push('WIND');
+    if(Object.prototype.hasOwnProperty.call(f,'vis'))keys.push('VIS');
+    if(Object.prototype.hasOwnProperty.call(f,'wxFamily'))keys.push('WX');
+    if(Object.prototype.hasOwnProperty.call(f,'clouds'))keys.push('CLOUD');
+    return keys;
+  }
+  function groupElementMatch(f,o,key){
+    if(key==='WIND')return componentHits(f,o).wind===true;
+    if(key==='VIS')return f.vis>=10000?finite(o.vis)&&o.vis>=10000:finite(o.vis)&&o.vis<10000&&o.vis<=f.vis;
+    if(key==='WX'){
+      const family=f.wxFamily??'NONE',forecastWx=wxTokens(f.wx||'');
+      if(family==='NONE')return (o.wxFamily??'NONE')==='NONE';
+      return forecastWx.length?forecastWx.every(x=>(o.wxTokens||[]).includes(x)):family===(o.wxFamily??'NONE');
+    }
+    if(key==='CLOUD'){
+      const fc=f.clouds||[],oc=o.clouds||[],conv=fc.filter(c=>c.type==='CB'||c.type==='TCU');
+      if(conv.length)return conv.every(c=>oc.some(x=>x.type===c.type&&coverRank(x.cover)>=coverRank(c.cover)&&Math.abs(x.ft-c.ft)<=1000));
+      if(f.cavok)return !oc.some(c=>c.ft<4921)&&!oc.some(c=>c.type==='CB'||c.type==='TCU');
+      if(f.nsc)return !oc.some(c=>c.ft<5000)&&!oc.some(c=>c.type==='CB'||c.type==='TCU');
+      if(fc.some(c=>c.cover==='BKN'||c.cover==='OVC'))return componentHits(f,o).ceiling===true;
+      if(fc.length)return fc.every(c=>oc.some(x=>coverRank(x.cover)>=coverRank(c.cover)&&Math.abs(x.ft-c.ft)<=1000));
+      return true;
+    }
+    return false;
+  }
+  function groupElementPenalties(p,obs){
+    const groups=[],byToken=new Map();let total=0;
     for(const e of p.events){
       const relevant=obs.filter(o=>o.t>=e.s&&o.t<(e.e||p.ve));
-      if(!relevant.length){out.push({kind:e.kind,token:e.token,status:'brak METAR w okresie',ok:null});continue}
+      const keys=groupElementKeys(e.state);
+      if(!relevant.length||!keys.length){
+        const item={token:e.token,kind:e.kind,missing:[],penalty:0,verifiable:relevant.length>0};
+        groups.push(item);byToken.set(e.token,item);continue;
+      }
+      const missing=keys.filter(k=>!relevant.some(o=>groupElementMatch(e.state,o,k)));
+      const penalty=missing.length*GROUP_ELEMENT_PENALTY;
+      total+=penalty;
+      const item={token:e.token,kind:e.kind,missing,penalty,verifiable:true};
+      groups.push(item);byToken.set(e.token,item);
+    }
+    return{total,groups,byToken};
+  }
+  function groupSummary(p,obs){
+    const out=[],penalties=groupElementPenalties(p,obs).byToken;
+    for(const e of p.events){
+      const relevant=obs.filter(o=>o.t>=e.s&&o.t<(e.e||p.ve));
+      const gp=penalties.get(e.token)||{missing:[],penalty:0};
+      const penaltyText=gp.penalty?` · nie wystąpiło: ${gp.missing.join(', ')} · -${gp.penalty} pkt`:'';
+      if(!relevant.length){out.push({kind:e.kind,token:e.token,status:'brak METAR w okresie — bez kary',ok:null,penalty:0,missing:[]});continue}
       if(e.kind==='FM'||e.kind==='BECMG'){
         let good=0,total=0;
         for(const o of relevant){
           const h=componentHits(statesAt(p,o.t).base,o);
           for(const k of PARAMS)if(typeof h[k]==='boolean'){total++;if(h[k])good++}
         }
-        out.push({kind:e.kind,token:e.token,status:total?`${pct(good,total)}% zgodności po zmianie`:'brak danych',ok:total?good/total>=.75:null});
+        out.push({kind:e.kind,token:e.token,status:(total?`${pct(good,total)}% zgodności po zmianie`:'brak danych')+penaltyText,ok:total?good/total>=.75:null,penalty:gp.penalty,missing:gp.missing});
       }else{
         let observed=false;
-        for(const o of relevant){
-          if(strictGroupMatch(e.state,o)){observed=true;break}
-        }
+        for(const o of relevant){if(strictGroupMatch(e.state,o)){observed=true;break}}
         const prob=e.kind.startsWith('PROB30');
-        out.push({kind:e.kind,token:e.token,status:observed?'warunki grupy zaobserwowano':prob?'warunków grupy nie zaobserwowano':'grupy nie potwierdzono',ok:prob?null:observed});
+        let status=observed?'warunki grupy zaobserwowano':prob?'warunków grupy nie zaobserwowano':'grupy nie potwierdzono';
+        status+=penaltyText;
+        out.push({kind:e.kind,token:e.token,status,ok:prob?null:observed,penalty:gp.penalty,missing:gp.missing});
       }
     }
     return out;
@@ -328,15 +375,19 @@ const EPIR={lat:52.83,lon:18.33},NSTA={EPBY:{name:'Bydgoszcz',lat:53.0968,lon:17
       if(bad.length)misses.push({t:o.t,bad,forecast:states.base,observed:o,covered:h.covered});
     }
     const rates=Object.fromEntries(PARAMS.map(k=>[k,pct(counts[k][0],counts[k][1])]));
-    const valid=Object.values(rates).filter(finite),overall=valid.length?Math.round(valid.reduce((a,b)=>a+b,0)/valid.length):null;
-    return{entry,p,obs:obs.length,expected:Math.round((p.ve-p.vs)/1800e3),counts,rates,covered,overall,speedMae:seN?se/seN:null,dirMae:deN?de/deN:null,misses,groups:groupSummary(p,obs),final:Date.now()>=p.ve};
+    const valid=Object.values(rates).filter(finite),rawOverall=valid.length?Math.round(valid.reduce((a,b)=>a+b,0)/valid.length):null;
+    const groupPenalty=groupElementPenalties(p,obs).total;
+    const overall=finite(rawOverall)?Math.max(0,rawOverall-groupPenalty):null;
+    return{entry,p,obs:obs.length,expected:Math.round((p.ve-p.vs)/1800e3),counts,rates,covered,rawOverall,groupPenalty,overall,speedMae:seN?se/seN:null,dirMae:deN?de/deN:null,misses,groups:groupSummary(p,obs),final:Date.now()>=p.ve};
   }
   function aggregate(results){
     const counts=Object.fromEntries(PARAMS.map(k=>[k,[0,0]]));
     for(const x of results)for(const k of PARAMS){counts[k][0]+=x.counts[k][0];counts[k][1]+=x.counts[k][1]}
     const rates=Object.fromEntries(PARAMS.map(k=>[k,pct(counts[k][0],counts[k][1])]));
-    const vals=Object.values(rates).filter(finite),overall=vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length):null;
-    return{counts,rates,overall};
+    const vals=Object.values(rates).filter(finite),rawOverall=vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length):null;
+    const ps=results.map(x=>x.groupPenalty).filter(finite),groupPenalty=ps.length?Math.round(ps.reduce((a,b)=>a+b,0)/ps.length):0;
+    const overall=finite(rawOverall)?Math.max(0,rawOverall-groupPenalty):null;
+    return{counts,rates,rawOverall,groupPenalty,overall};
   }
   function scoreClass(v){return !finite(v)?'':v>=85?'ok':v>=70?'warn':'bad'}
   function metricCard(label,value,sub=''){
