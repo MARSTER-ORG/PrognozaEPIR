@@ -31,11 +31,17 @@ jobs:
       - name: Patch model loading
         run: python3 scripts/fix_model_selector.py
 
+      - name: Patch Pages fog compatibility
+        run: python3 scripts/fix_pages_fog_build.py
+
       - name: Validate repair
         run: |
           grep -F 'async function reqVars(model,vars,timeoutMs)' index.html
           grep -F 'demo=false;populateView();try{' index.html
           grep -F 'populateView();if(!datasets.size)' index.html
+          grep -F "exported='window.PrognozaEPIRFogSeries=fogSeries'" .github/workflows/pages.yml
+          grep -F 'EPIR FOG ENGINE v1.3' .github/workflows/pages.yml
+          grep -F 'MGŁA — OPERACYJNIE' .github/workflows/pages.yml
           python3 -c "from pathlib import Path; s=Path('index.html').read_text(encoding='utf-8'); Path('/tmp/index-inline.js').write_text(s.split('<script>',1)[1].split('</script>',1)[0],encoding='utf-8')"
           node --check /tmp/index-inline.js
 
@@ -43,13 +49,11 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add index.html
+          git add index.html .github/workflows/pages.yml
           if git diff --cached --quiet; then
             echo 'No changes needed'
             exit 0
           fi
-          git commit -m 'fix: restore resilient model selector loading'
+          git commit -m 'fix: make Pages build compatible with fog v1.3'
           git pull --rebase origin main
           git push origin HEAD:main
-
-# repair applied in 9f1ad4d9f9afe446e57a180c213045a6b45530fe
