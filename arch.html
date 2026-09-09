@@ -70,6 +70,108 @@ tr.synop-row:hover td,tr.synop-row:focus td{background:var(--hover)}
   const TAF_VALIDITY=/\b\d{4}\/\d{4}\b/;
   const QNH=/\bQ(?:\d{4}|\/{4})\b/i;
   const SYNOP_START=/^AAXX\s+\d{5}\s+12342\b/i;
+  const WW_CODES=[
+    'brak zjawiska',
+    'brak zjawiska — chmury zanikają lub słabną',
+    'brak zjawiska — stan nieba bez istotnych zmian',
+    'brak zjawiska — chmury tworzą się lub rozwijają',
+    'dym ograniczający widzialność',
+    'zmętnienie atmosfery przez pył lub drobne cząstki',
+    'rozległy pył zawieszony w powietrzu, niewzbudzony przez wiatr na stacji',
+    'pył lub piasek unoszony przez wiatr, bez burzy pyłowej lub piaskowej',
+    'dobrze rozwinięte wiry pyłowe lub piaskowe',
+    'burza pyłowa lub piaskowa w zasięgu wzroku albo w ubiegłej godzinie',
+    'zamglenie',
+    'płaty płytkiej mgły lub mgły lodowej',
+    'mniej więcej ciągła płytka mgła lub mgła lodowa',
+    'błyskawice widoczne, grzmotów nie słychać',
+    'virga — opad widoczny, lecz niedocierający do ziemi',
+    'opad widoczny w oddali, ponad 5 km od stacji, nie na stacji',
+    'opad widoczny w pobliżu, do 5 km od stacji, nie na stacji',
+    'grzmot słyszalny, bez opadu na stacji',
+    'szkwał',
+    'trąba powietrzna lub wodna',
+    'mżawka lub śnieg ziarnisty w ubiegłej godzinie, obecnie brak',
+    'deszcz w ubiegłej godzinie, obecnie brak',
+    'śnieg lub kryształki lodu w ubiegłej godzinie, obecnie brak',
+    'deszcz ze śniegiem lub ziarna lodowe w ubiegłej godzinie, obecnie brak',
+    'marznąca mżawka lub marznący deszcz w ubiegłej godzinie, obecnie brak',
+    'przelotny deszcz w ubiegłej godzinie, obecnie brak',
+    'przelotny śnieg lub deszcz ze śniegiem w ubiegłej godzinie, obecnie brak',
+    'przelotny grad lub grad z deszczem w ubiegłej godzinie, obecnie brak',
+    'mgła lub mgła lodowa w ubiegłej godzinie, obecnie brak',
+    'burza w ubiegłej godzinie, obecnie brak burzy i opadu',
+    'słaba lub umiarkowana burza pyłowa lub piaskowa, słabnie',
+    'słaba lub umiarkowana burza pyłowa lub piaskowa, bez zmian',
+    'słaba lub umiarkowana burza pyłowa lub piaskowa, zaczyna się lub nasila',
+    'silna burza pyłowa lub piaskowa, słabnie',
+    'silna burza pyłowa lub piaskowa, bez zmian',
+    'silna burza pyłowa lub piaskowa, zaczyna się lub nasila',
+    'słaba lub umiarkowana niska zamieć śnieżna',
+    'silna niska zamieć śnieżna',
+    'słaba lub umiarkowana wysoka zamieć śnieżna',
+    'silna wysoka zamieć śnieżna',
+    'mgła lub mgła lodowa w oddali, nie na stacji',
+    'mgła lub mgła lodowa w płatach',
+    'mgła lub mgła lodowa, niebo widoczne, słabnie',
+    'mgła lub mgła lodowa, niebo niewidoczne, słabnie',
+    'mgła lub mgła lodowa, niebo widoczne, bez zmian',
+    'mgła lub mgła lodowa, niebo niewidoczne, bez zmian',
+    'mgła lub mgła lodowa, niebo widoczne, zaczyna się lub gęstnieje',
+    'mgła lub mgła lodowa, niebo niewidoczne, zaczyna się lub gęstnieje',
+    'mgła osadzająca szadź, niebo widoczne',
+    'mgła osadzająca szadź, niebo niewidoczne',
+    'słaba mżawka, przerywana',
+    'słaba mżawka, ciągła',
+    'umiarkowana mżawka, przerywana',
+    'umiarkowana mżawka, ciągła',
+    'silna mżawka, przerywana',
+    'silna mżawka, ciągła',
+    'słaba marznąca mżawka',
+    'umiarkowana lub silna marznąca mżawka',
+    'słaba mżawka z deszczem',
+    'umiarkowana lub silna mżawka z deszczem',
+    'słaby deszcz, przerywany',
+    'słaby deszcz, ciągły',
+    'umiarkowany deszcz, przerywany',
+    'umiarkowany deszcz, ciągły',
+    'silny deszcz, przerywany',
+    'silny deszcz, ciągły',
+    'słaby marznący deszcz',
+    'umiarkowany lub silny marznący deszcz',
+    'słaby deszcz lub mżawka ze śniegiem',
+    'umiarkowany lub silny deszcz lub mżawka ze śniegiem',
+    'słaby śnieg, przerywany',
+    'słaby śnieg, ciągły',
+    'umiarkowany śnieg, przerywany',
+    'umiarkowany śnieg, ciągły',
+    'silny śnieg, przerywany',
+    'silny śnieg, ciągły',
+    'kryształki lodu — pył diamentowy',
+    'śnieg ziarnisty',
+    'pojedyncze kryształki śniegu w kształcie gwiazdek',
+    'ziarna lodowe',
+    'słaby przelotny deszcz',
+    'umiarkowany lub silny przelotny deszcz',
+    'gwałtowny lub nawalny przelotny deszcz',
+    'słaby przelotny deszcz ze śniegiem',
+    'umiarkowany lub silny przelotny deszcz ze śniegiem',
+    'słaby przelotny śnieg',
+    'umiarkowany lub silny przelotny śnieg',
+    'słaby przelotny krup śnieżny lub drobny grad, możliwy z deszczem lub śniegiem',
+    'umiarkowany lub silny przelotny krup śnieżny lub drobny grad, możliwy z deszczem lub śniegiem',
+    'słaby przelotny grad, bez burzy',
+    'umiarkowany lub silny przelotny grad, bez burzy',
+    'słaby deszcz; burza była w ubiegłej godzinie, obecnie jej brak',
+    'umiarkowany lub silny deszcz; burza była w ubiegłej godzinie, obecnie jej brak',
+    'słaby śnieg, deszcz ze śniegiem, krup lub grad; burza była w ubiegłej godzinie',
+    'umiarkowany lub silny śnieg, deszcz ze śniegiem, krup lub grad; burza była w ubiegłej godzinie',
+    'burza słaba lub umiarkowana z deszczem i/lub śniegiem, bez gradu',
+    'burza słaba lub umiarkowana z gradem, możliwy deszcz i/lub śnieg',
+    'silna burza z deszczem i/lub śniegiem, bez gradu',
+    'burza z burzą pyłową lub piaskową',
+    'silna burza z gradem'
+  ];
   let selectedType=null,visibleRows=[],requestSerial=0,rejectedRows=0,activeSynopRow=null;
 
   function initTheme(){try{const saved=localStorage.getItem('prognozaepir-theme');if(saved==='dark'||saved==='light')document.documentElement.dataset.theme=saved}catch(_){}}
@@ -103,11 +205,25 @@ tr.synop-row:hover td,tr.synop-row:focus td{background:var(--hover)}
     else if(row?.visibility_report&&String(row.visibility_report).toLowerCase()!=='unused')text=String(row.visibility_report);
     return code?`${text} (VV=${code})`:text;
   }
+  function synopWeatherCode(row){
+    const stored=finite(row?.present_weather_code);
+    if(stored!==null&&stored>=0&&stored<=99)return Math.trunc(stored);
+    const raw=String(row?._raw||row?.canonical_raw||row?.raw||'').replace(/=$/,'').trim();
+    if(!raw)return null;
+    const toks=raw.split(/\s+/),stationIndex=toks.indexOf('12342');
+    if(stationIndex<0)return null;
+    for(let i=stationIndex+3;i<toks.length;i++){
+      const token=toks[i];
+      if(token==='222'||token==='333'||token==='444'||token==='555')break;
+      const m=/^7(\d{2})[0-9/]{2}$/.exec(token);
+      if(m)return Number(m[1]);
+    }
+    return null;
+  }
   function weatherText(row){
-    const code=finite(row?.present_weather_code);let text=String(row?.present_weather||'').trim();
+    const code=synopWeatherCode(row);
     if(code===null||code===0)return 'brak zjawiska';
-    if(/^fog\b/i.test(text))text=text.replace(/^fog/i,'mgła');else if(/^mist\b/i.test(text))text=text.replace(/^mist/i,'zamglenie');else if(/^present weather\b/i.test(text))text=text.replace(/^present weather/i,'zjawisko bieżące');
-    if(!text)text='zjawisko bieżące';return `${text} · ww=${String(Math.trunc(code)).padStart(2,'0')}`;
+    return `${WW_CODES[code]||'zjawisko nierozpoznane'} (ww=${String(code).padStart(2,'0')})`;
   }
   function cloudText(row){const n=finite(row?.total_cloud_oktas);return n===null?'—':`${Math.trunc(n)}/8`}
   function synopDecodedHtml(row){
@@ -129,7 +245,7 @@ tr.synop-row:hover td,tr.synop-row:focus td{background:var(--hover)}
     ];
     const grid=rows.map(([k,v])=>`<div class="tt-key">${escapeHtml(k)}</div><div class="tt-value">${escapeHtml(v)}</div>`).join('');
     const wigos=row?.wigos?` · WIGOS ${escapeHtml(row.wigos)}`:'';
-    return `<div class="tt-title">SYNOP 12342 — zdekodowane parametry${wigos}</div><div class="tt-grid">${grid}</div><div class="tt-raw">${escapeHtml(row?._raw||'')}</div><div class="tt-note">Dymek pokazuje parametry zdekodowane i zapisane w centralnym archiwum PrognozaEPIR.</div>`;
+    return `<div class="tt-title">SYNOP 12342 — zdekodowane parametry${wigos}</div><div class="tt-grid">${grid}</div><div class="tt-raw">${escapeHtml(row?._raw||'')}</div><div class="tt-note">Dymek pokazuje parametry zdekodowane z depeszy SYNOP i danych centralnego archiwum PrognozaEPIR.</div>`;
   }
   function positionSynopTooltip(x,y){const tip=$('synopTooltip');if(tip.hidden)return;const pad=8,offset=14;let left=x+offset,top=y+offset;const r=tip.getBoundingClientRect();if(left+r.width>window.innerWidth-pad)left=Math.max(pad,x-r.width-offset);if(top+r.height>window.innerHeight-pad)top=Math.max(pad,y-r.height-offset);tip.style.left=`${Math.round(left)}px`;tip.style.top=`${Math.round(top)}px`}
   function showSynopTooltip(tr,x,y){const index=Number(tr?.dataset?.synopIndex);if(!Number.isInteger(index)||!visibleRows[index])return;activeSynopRow=tr;const tip=$('synopTooltip');tip.innerHTML=synopDecodedHtml(visibleRows[index]);tip.hidden=false;if(Number.isFinite(x)&&Number.isFinite(y))positionSynopTooltip(x,y);else{const r=tr.getBoundingClientRect();positionSynopTooltip(Math.min(r.right,window.innerWidth-20),Math.min(r.top+18,window.innerHeight-20))}}
