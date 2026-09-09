@@ -107,8 +107,8 @@
   window.dispatchEvent(new CustomEvent('prognozaepir:message-archive-ready'));
 
   // Generator TAF: najpierw polityka chmur, następnie pogody, potem nadrzędny
-  // strażnik zgodności z Instrukcją TAF Edycja (A) 11.2023, a na samym końcu
-  // sanitizer terminatora, który gwarantuje dokładnie jeden znak '=' na końcu.
+  // strażnik zgodności z Instrukcją TAF Edycja (A) 11.2023, sanitizer
+  // terminatora oraz synchronizacja gotowości radarowego nowcastu TCU/CB.
   if (/\/taf\.html$/i.test(location.pathname)) {
     const RAW = 'https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/';
 
@@ -157,6 +157,7 @@
         await loadPolicy('taf-weather-policy.js', '20260909-2');
         await loadPolicy('taf-instruction-guard.js', '20260909-6');
         await loadPolicy('taf-output-sanitizer.js', '20260909-2');
+        await loadPolicy('taf-radar-nowcast-sync.js', '20260909-1');
       } catch (error) {
         console.warn('TAF policy loader:', error);
       }
