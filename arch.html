@@ -6,367 +6,120 @@
 <meta name="color-scheme" content="light dark">
 <title>ARCH — archiwum depesz PrognozaEPIR</title>
 <style>
-:root{--bg:#f4f4f2;--ink:#232323;--muted:#6e6e6e;--surface:#fff;--surface2:#f7f7f7;--border:#9a9a9a;--blue:#1f2a75;--blueText:#1f2a75;--ok:#2c7a3f;--error:#8a2d2d;--errorBg:#fff4f4}
-:root[data-theme="dark"]{--bg:#111418;--ink:#e7e9ed;--muted:#a6acb5;--surface:#181c21;--surface2:#20252b;--border:#59616b;--blue:#8fa2ff;--blueText:#9aabff;--ok:#76c58b;--error:#ffb8c0;--errorBg:#2a1719}
-@media(prefers-color-scheme:dark){:root:not([data-theme]){--bg:#111418;--ink:#e7e9ed;--muted:#a6acb5;--surface:#181c21;--surface2:#20252b;--border:#59616b;--blue:#8fa2ff;--blueText:#9aabff;--ok:#76c58b;--error:#ffb8c0;--errorBg:#2a1719}}
-*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--ink);font-family:Arial,Helvetica,sans-serif}.app{max-width:1320px;margin:0 auto;padding:12px 10px 28px}.top{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:10px}.brand{font-size:18px;font-weight:700}.brand small{font-weight:400;color:var(--muted)}.home{border:1px solid var(--border);background:var(--surface);color:var(--ink);border-radius:7px;padding:7px 10px;text-decoration:none;font-size:12px}.panel{border:1px solid var(--border);background:var(--surface);padding:10px;border-radius:5px}.filters{display:flex;flex-wrap:wrap;gap:8px;align-items:end}.field{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted)}input[type=date]{border:1px solid var(--border);background:var(--surface2);color:var(--ink);border-radius:6px;padding:7px 8px;font:inherit;font-size:13px}.types{display:flex;flex-wrap:wrap;gap:6px}.types button,.copybar button{border:1px solid var(--border);background:var(--surface);color:var(--ink);border-radius:7px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer}.types button.active{background:var(--blue);color:#fff;border-color:var(--blue)}.types button:disabled,.copybar button:disabled{opacity:.45;cursor:not-allowed}.meta{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;align-items:center;margin:9px 1px 7px;font-size:11px;color:var(--muted)}#status.ok{color:var(--ok)}#status.error{color:var(--error)}.table-wrap{overflow-x:auto;background:var(--surface)}table{width:100%;border-collapse:collapse;table-layout:auto;background:var(--surface);font-size:12px}td{border:1px solid var(--border);padding:5px 7px;vertical-align:top}td.time{width:154px;min-width:154px;white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--ink)}td.message{font-family:Consolas,"Courier New",monospace;white-space:pre-wrap;overflow-wrap:anywhere;word-break:normal;line-height:1.3}.empty{border:1px solid var(--border);padding:18px;text-align:center;color:var(--muted);background:var(--surface2);font-size:12px}.copybar{display:flex;flex-wrap:wrap;gap:7px;align-items:center;margin-top:10px}.copy-result{font-size:11px;color:var(--muted)}.note{margin-top:8px;font-size:10px;color:var(--muted);line-height:1.35}.error-box{display:none;margin-top:8px;border:1px solid var(--border);background:var(--errorBg);color:var(--error);padding:8px;border-radius:4px;font-size:11px;white-space:pre-wrap}
+:root{--bg:#f4f4f2;--ink:#232323;--muted:#6e6e6e;--surface:#fff;--surface2:#f7f7f7;--border:#9a9a9a;--blue:#1f2a75;--ok:#2c7a3f;--error:#8a2d2d;--errorBg:#fff4f4}
+:root[data-theme="dark"]{--bg:#111418;--ink:#e7e9ed;--muted:#a6acb5;--surface:#181c21;--surface2:#20252b;--border:#59616b;--blue:#8fa2ff;--ok:#76c58b;--error:#ffb8c0;--errorBg:#2a1719}
+@media(prefers-color-scheme:dark){:root:not([data-theme]){--bg:#111418;--ink:#e7e9ed;--muted:#a6acb5;--surface:#181c21;--surface2:#20252b;--border:#59616b;--blue:#8fa2ff;--ok:#76c58b;--error:#ffb8c0;--errorBg:#2a1719}}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--ink);font-family:Arial,Helvetica,sans-serif}.app{max-width:1320px;margin:0 auto;padding:12px 10px 28px}.top{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:10px}.brand{font-size:18px;font-weight:700}.brand small{font-weight:400;color:var(--muted)}.home{border:1px solid var(--border);background:var(--surface);color:var(--ink);border-radius:7px;padding:7px 10px;text-decoration:none;font-size:12px}.panel{border:1px solid var(--border);background:var(--surface);padding:10px;border-radius:5px}.filters{display:flex;flex-wrap:wrap;gap:8px;align-items:end}.field{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted)}input[type=date]{border:1px solid var(--border);background:var(--surface2);color:var(--ink);border-radius:6px;padding:7px 8px;font:inherit;font-size:13px}.types{display:flex;flex-wrap:wrap;gap:6px}.types button,.copybar button{border:1px solid var(--border);background:var(--surface);color:var(--ink);border-radius:7px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer}.types button.active{background:var(--blue);color:#fff;border-color:var(--blue)}.types button:disabled,.copybar button:disabled{opacity:.45;cursor:not-allowed}.meta{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;align-items:center;margin:9px 1px 7px;font-size:11px;color:var(--muted)}#status.ok{color:var(--ok)}#status.error{color:var(--error)}.table-wrap{overflow-x:auto;background:var(--surface)}table{width:100%;border-collapse:collapse;table-layout:auto;background:var(--surface);font-size:12px}td{border:1px solid var(--border);padding:5px 7px;vertical-align:top}td.time{width:154px;min-width:154px;white-space:nowrap;font-variant-numeric:tabular-nums}td.message{font-family:Consolas,"Courier New",monospace;white-space:pre-wrap;overflow-wrap:anywhere;word-break:normal;line-height:1.3}.empty{border:1px solid var(--border);padding:18px;text-align:center;color:var(--muted);background:var(--surface2);font-size:12px}.copybar{display:flex;flex-wrap:wrap;gap:7px;align-items:center;margin-top:10px}.copy-result{font-size:11px;color:var(--muted)}.note{margin-top:8px;font-size:10px;color:var(--muted);line-height:1.35}.error-box{display:none;margin-top:8px;border:1px solid var(--border);background:var(--errorBg);color:var(--error);padding:8px;border-radius:4px;font-size:11px;white-space:pre-wrap}
 @media(max-width:700px){.app{padding:7px 4px 18px}.brand{font-size:15px}.panel{padding:7px}.filters{gap:6px}.field{flex:1 1 135px}.field input{width:100%}.types{width:100%}.types button{flex:1 1 calc(25% - 6px);padding:7px 5px;font-size:10px}table{font-size:10px}td{padding:4px 5px}td.time{width:126px;min-width:126px}.copybar button{font-size:10px;padding:7px 8px}.home{font-size:10px;padding:6px 8px}}
 </style>
 </head>
 <body>
 <div class="app">
-  <div class="top">
-    <div class="brand">PrognozaEPIR · ARCH <small>archiwum depesz</small></div>
-    <a class="home" href="index.html">← Strona główna</a>
-  </div>
-
+  <div class="top"><div class="brand">PrognozaEPIR · ARCH <small>archiwum depesz</small></div><a class="home" href="index.html">← Strona główna</a></div>
   <div class="panel">
     <div class="filters">
       <label class="field">OD (UTC)<input id="dateFrom" type="date"></label>
       <label class="field">DO (UTC)<input id="dateTo" type="date"></label>
       <div class="types" aria-label="Typ depeszy">
-        <button type="button" data-type="METAR" class="active">METAR</button>
-        <button type="button" data-type="SPECI">SPECI</button>
-        <button type="button" data-type="SYNOP">SYNOP</button>
-        <button type="button" data-type="TAF">TAF</button>
+        <button type="button" data-type="METAR" class="active">METAR</button><button type="button" data-type="SPECI">SPECI</button><button type="button" data-type="SYNOP">SYNOP</button><button type="button" data-type="TAF">TAF</button>
       </div>
     </div>
-
-    <div class="meta">
-      <span id="summary">Wybierz zakres i typ depeszy.</span>
-      <span id="status">—</span>
-    </div>
-
-    <div id="tableWrap" class="table-wrap" hidden>
-      <table id="archiveTable" aria-label="Archiwum depesz bez nagłówków"><tbody></tbody></table>
-    </div>
+    <div class="meta"><span id="summary">Wybierz zakres i typ depeszy.</span><span id="status">—</span></div>
+    <div id="tableWrap" class="table-wrap" hidden><table id="archiveTable" aria-label="Archiwum depesz bez nagłówków"><tbody></tbody></table></div>
     <div id="empty" class="empty">Brak wczytanych komunikatów.</div>
     <div id="errorBox" class="error-box"></div>
-
-    <div class="copybar">
-      <button id="copyRaw" type="button" disabled>KOPIUJ SUROWE</button>
-      <button id="copyTable" type="button" disabled>KOPIUJ TABELĘ</button>
-      <span id="copyResult" class="copy-result"></span>
-    </div>
+    <div class="copybar"><button id="copyRaw" type="button" disabled>KOPIUJ SUROWE</button><button id="copyTable" type="button" disabled>KOPIUJ TABELĘ</button><span id="copyResult" class="copy-result"></span></div>
     <div class="note">Tabela ma 2 kolumny: data i godzina UTC | depesza. „KOPIUJ TABELĘ” zapisuje do schowka prawdziwą tabelę HTML z obramowaniem, aby linie pozostały widoczne po wklejeniu do Worda.</div>
   </div>
 </div>
 <script>
 'use strict';
 (() => {
-  const LIVE_ROOT = String(window.PROGNOZAEPIR_ARCHIVE_ROOT || 'https://central-ingestor-production.up.railway.app/data/messages').replace(/\/+$/,'');
-  const STATIC_ROOT = 'data/messages';
-  const VALID_TYPES = new Set(['METAR','SPECI','SYNOP','TAF']);
-  const $ = id => document.getElementById(id);
-  let selectedType = 'METAR';
-  let visibleRows = [];
-  let requestSerial = 0;
+  const LIVE_ROOT=String(window.PROGNOZAEPIR_ARCHIVE_ROOT||'https://central-ingestor-production.up.railway.app/data/messages').replace(/\/+$/,'');
+  const STATIC_ROOT='data/messages';
+  const VALID_TYPES=new Set(['METAR','SPECI','SYNOP','TAF']);
+  const METAR_START=/^(?:METAR|SPECI)\s+EPIR\s+\d{6}Z\s+(?:AUTO\s+)?(?:VRB|\d{3})\d{2,3}(?:G\d{2,3})?KT\b/i;
+  const TAF_VALIDITY=/\b\d{4}\/\d{4}\b/;
+  const $=id=>document.getElementById(id);
+  let selectedType='METAR',visibleRows=[],requestSerial=0,rejectedRows=0;
 
-  function initTheme(){
-    try {
-      const saved = localStorage.getItem('prognozaepir-theme');
-      if(saved === 'dark' || saved === 'light') document.documentElement.dataset.theme = saved;
-    } catch (_) {}
-  }
+  function initTheme(){try{const saved=localStorage.getItem('prognozaepir-theme');if(saved==='dark'||saved==='light')document.documentElement.dataset.theme=saved}catch(_){}}
+  function utcDayString(date){return date.toISOString().slice(0,10)}
+  function parseDay(value){const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value||''));if(!m)return null;const d=new Date(Date.UTC(+m[1],+m[2]-1,+m[3]));return Number.isFinite(d.getTime())&&utcDayString(d)===value?d:null}
+  function daysInclusive(from,to){const out=[];for(let t=from.getTime();t<=to.getTime();t+=86400000)out.push(new Date(t));return out}
+  function messageTime(row){const value=row?.message_time||row?.obs_time||row?.issue_time||row?.time||row?.created_at||'';const ms=Date.parse(value);return Number.isFinite(ms)?ms:NaN}
+  function sourceText(row){return String(row?.canonical_raw||row?.raw||row?.message||row?.text||'').replace(/\s+/g,' ').trim()}
 
-  function utcDayString(date){
-    return date.toISOString().slice(0,10);
-  }
-
-  function parseDay(value){
-    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
-    if(!match) return null;
-    const d = new Date(Date.UTC(Number(match[1]), Number(match[2])-1, Number(match[3])));
-    return Number.isFinite(d.getTime()) && utcDayString(d) === value ? d : null;
-  }
-
-  function daysInclusive(from, to){
-    const out = [];
-    for(let t = from.getTime(); t <= to.getTime(); t += 86400000) out.push(new Date(t));
-    return out;
-  }
-
-  function messageTime(row){
-    const value = row?.message_time || row?.obs_time || row?.issue_time || row?.time || row?.created_at || '';
-    const ms = Date.parse(value);
-    return Number.isFinite(ms) ? ms : NaN;
-  }
-
-  function messageText(row){
-    return String(row?.canonical_raw || row?.raw || row?.message || row?.text || '').trim();
-  }
-
-  function formatUtc(ms){
-    if(!Number.isFinite(ms)) return '—';
-    return new Date(ms).toISOString().slice(0,16).replace('T',' ');
-  }
-
-  function escapeHtml(value){
-    return String(value).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-  }
-
-  function setBusy(busy){
-    document.querySelectorAll('[data-type]').forEach(button => button.disabled = busy);
-    $('dateFrom').disabled = busy;
-    $('dateTo').disabled = busy;
-    $('copyRaw').disabled = busy || visibleRows.length === 0;
-    $('copyTable').disabled = busy || visibleRows.length === 0;
-  }
-
-  async function fetchText(url){
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
-    try {
-      const response = await fetch(url, {cache:'no-store', signal:controller.signal, headers:{'Accept':'application/x-ndjson,text/plain,*/*'}});
-      if(!response.ok){
-        const error = new Error(`HTTP ${response.status}`);
-        error.status = response.status;
-        throw error;
-      }
-      return await response.text();
-    } finally {
-      clearTimeout(timer);
+  function cleanTelegram(row,type){
+    let s=sourceText(row);if(!s)return null;
+    if(type==='METAR'||type==='SPECI'){
+      const eq=s.indexOf('=');if(eq>=0)s=s.slice(0,eq+1).trim();
+      if(/^EPIR\s+/i.test(s))s=`${type} ${s}`;
+      if(s.length>520||TAF_VALIDITY.test(s)||!METAR_START.test(s)||!(/\bQ\d{4}\b/i.test(s)))return null;
+      if(type==='METAR'&&!/^METAR\b/i.test(s))return null;
+      if(type==='SPECI'&&!/^SPECI\b/i.test(s))return null;
+      return s.endsWith('=')?s:s+'=';
     }
+    if(type==='TAF'){
+      const eq=s.indexOf('=');if(eq>=0)s=s.slice(0,eq+1).trim();
+      if(!/^TAF\s+[A-Z]{4}\s+\d{6}Z\b/i.test(s)||!TAF_VALIDITY.test(s)||s.length>1500)return null;
+      return s.endsWith('=')?s:s+'=';
+    }
+    if(type==='SYNOP'){
+      const eq=s.indexOf('=');if(eq>=0)s=s.slice(0,eq+1).trim();
+      return s.length<=1500?s:null;
+    }
+    return null;
   }
 
-  async function fetchArchiveFile(relativePath){
-    const stamp = Date.now();
-    let liveError = null;
-    try {
-      return await fetchText(`${LIVE_ROOT}/${relativePath}?v=${stamp}`);
-    } catch (error) {
-      liveError = error;
-    }
-    try {
-      return await fetchText(`${STATIC_ROOT}/${relativePath}?v=${stamp}`);
-    } catch (staticError) {
-      if(liveError?.status === 404 && staticError?.status === 404) return '';
-      const error = new Error(`Nie udało się odczytać ${relativePath} z archiwum live ani kopii statycznej.`);
-      error.cause = {liveError, staticError};
-      throw error;
-    }
-  }
+  function formatUtc(ms){return Number.isFinite(ms)?new Date(ms).toISOString().slice(0,16).replace('T',' '):'—'}
+  function escapeHtml(value){return String(value).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]))}
+  function setBusy(busy){document.querySelectorAll('[data-type]').forEach(b=>b.disabled=busy);$('dateFrom').disabled=busy;$('dateTo').disabled=busy;$('copyRaw').disabled=busy||!visibleRows.length;$('copyTable').disabled=busy||!visibleRows.length}
 
-  function parseJsonl(text, type){
-    const rows = [];
-    for(const line of String(text || '').split(/\r?\n/)){
-      if(!line.trim()) continue;
-      try {
-        const row = JSON.parse(line);
-        const rowType = String(row?.type || row?.report_type || '').toUpperCase();
-        if(rowType && rowType !== type) continue;
-        const raw = messageText(row);
-        if(!raw) continue;
-        rows.push({...row, _raw: raw, _time: messageTime(row)});
-      } catch (error) {
-        console.warn('ARCH: pominięto uszkodzony wiersz JSONL', error);
-      }
+  async function fetchText(url){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),8000);try{const r=await fetch(url,{cache:'no-store',signal:controller.signal,headers:{Accept:'application/x-ndjson,text/plain,*/*'}});if(!r.ok){const e=new Error(`HTTP ${r.status}`);e.status=r.status;throw e}return await r.text()}finally{clearTimeout(timer)}}
+  async function fetchArchiveFile(path){const stamp=Date.now();let liveError=null;try{return await fetchText(`${LIVE_ROOT}/${path}?v=${stamp}`)}catch(e){liveError=e}try{return await fetchText(`${STATIC_ROOT}/${path}?v=${stamp}`)}catch(e){if(liveError?.status===404&&e?.status===404)return '';throw new Error(`Nie udało się odczytać ${path} z archiwum live ani kopii statycznej.`)}}
+
+  function parseJsonl(text,type){
+    const rows=[];
+    for(const line of String(text||'').split(/\r?\n/)){
+      if(!line.trim())continue;
+      try{
+        const row=JSON.parse(line),rowType=String(row?.type||row?.report_type||'').toUpperCase();
+        if(rowType&&rowType!==type)continue;
+        const raw=cleanTelegram(row,type);
+        if(!raw){rejectedRows++;continue}
+        rows.push({...row,_raw:raw,_time:messageTime(row)});
+      }catch(e){rejectedRows++;console.warn('ARCH: pominięto uszkodzony wiersz JSONL',e)}
     }
     return rows;
   }
+  async function loadDay(type,day){const y=String(day.getUTCFullYear()).padStart(4,'0'),m=String(day.getUTCMonth()+1).padStart(2,'0'),d=String(day.getUTCDate()).padStart(2,'0');return parseJsonl(await fetchArchiveFile(`${type.toLowerCase()}/${y}/${m}/${d}.jsonl`),type)}
+  function dedupeAndSort(rows){const seen=new Set(),out=[];for(const row of rows){const key=`${Number.isFinite(row._time)?row._time:''}|${row._raw}`;if(seen.has(key))continue;seen.add(key);out.push(row)}out.sort((a,b)=>(Number.isFinite(b._time)?b._time:-Infinity)-(Number.isFinite(a._time)?a._time:-Infinity)||a._raw.localeCompare(b._raw));return out}
+  async function loadRange(type,from,to){const days=daysInclusive(from,to),rows=[];for(let i=0;i<days.length;i+=6){const parts=await Promise.all(days.slice(i,i+6).map(day=>loadDay(type,day)));parts.forEach(p=>rows.push(...p))}return dedupeAndSort(rows)}
 
-  async function loadDay(type, day){
-    const y = String(day.getUTCFullYear()).padStart(4,'0');
-    const m = String(day.getUTCMonth()+1).padStart(2,'0');
-    const d = String(day.getUTCDate()).padStart(2,'0');
-    const path = `${type.toLowerCase()}/${y}/${m}/${d}.jsonl`;
-    return parseJsonl(await fetchArchiveFile(path), type);
-  }
-
-  function dedupeAndSort(rows){
-    const seen = new Set();
-    const out = [];
-    for(const row of rows){
-      const key = row.message_id || `${Number.isFinite(row._time) ? row._time : ''}|${row._raw}`;
-      if(seen.has(key)) continue;
-      seen.add(key);
-      out.push(row);
-    }
-    out.sort((a,b) => {
-      const at = Number.isFinite(a._time) ? a._time : -Infinity;
-      const bt = Number.isFinite(b._time) ? b._time : -Infinity;
-      return bt - at || a._raw.localeCompare(b._raw);
-    });
-    return out;
-  }
-
-  async function loadRange(type, from, to){
-    const days = daysInclusive(from, to);
-    const rows = [];
-    const concurrency = 6;
-    for(let i=0; i<days.length; i+=concurrency){
-      const chunk = days.slice(i, i+concurrency);
-      const parts = await Promise.all(chunk.map(day => loadDay(type, day)));
-      parts.forEach(part => rows.push(...part));
-    }
-    return dedupeAndSort(rows);
-  }
-
-  function render(){
-    const tbody = $('archiveTable').tBodies[0];
-    tbody.replaceChildren();
-    const fragment = document.createDocumentFragment();
-    for(const row of visibleRows){
-      const tr = document.createElement('tr');
-      const tdTime = document.createElement('td');
-      tdTime.className = 'time';
-      tdTime.textContent = formatUtc(row._time);
-      const tdMessage = document.createElement('td');
-      tdMessage.className = 'message';
-      tdMessage.textContent = row._raw;
-      tr.append(tdTime, tdMessage);
-      fragment.appendChild(tr);
-    }
-    tbody.appendChild(fragment);
-    $('tableWrap').hidden = visibleRows.length === 0;
-    $('empty').hidden = visibleRows.length !== 0;
-    $('empty').textContent = visibleRows.length ? '' : 'Brak komunikatów w wybranym okresie.';
-    $('copyRaw').disabled = visibleRows.length === 0;
-    $('copyTable').disabled = visibleRows.length === 0;
-  }
+  function render(){const tbody=$('archiveTable').tBodies[0];tbody.replaceChildren();const f=document.createDocumentFragment();for(const row of visibleRows){const tr=document.createElement('tr'),t=document.createElement('td'),m=document.createElement('td');t.className='time';t.textContent=formatUtc(row._time);m.className='message';m.textContent=row._raw;tr.append(t,m);f.appendChild(tr)}tbody.appendChild(f);$('tableWrap').hidden=!visibleRows.length;$('empty').hidden=!!visibleRows.length;$('empty').textContent=visibleRows.length?'':'Brak komunikatów w wybranym okresie.';$('copyRaw').disabled=!visibleRows.length;$('copyTable').disabled=!visibleRows.length}
 
   async function refresh(){
-    const serial = ++requestSerial;
-    const from = parseDay($('dateFrom').value);
-    const to = parseDay($('dateTo').value);
-    $('copyResult').textContent = '';
-    $('errorBox').style.display = 'none';
-    if(!VALID_TYPES.has(selectedType)) return;
-    if(!from || !to){
-      $('status').className = 'error';
-      $('status').textContent = 'Podaj prawidłowy zakres dat.';
-      return;
-    }
-    if(from > to){
-      $('status').className = 'error';
-      $('status').textContent = 'Data OD nie może być późniejsza niż DO.';
-      return;
-    }
-    const dayCount = Math.round((to-from)/86400000)+1;
-    if(dayCount > 3660){
-      $('status').className = 'error';
-      $('status').textContent = 'Zakres jest zbyt długi (maks. 3660 dni).';
-      return;
-    }
-    visibleRows = [];
-    render();
-    setBusy(true);
-    $('summary').textContent = `${selectedType} · ${$('dateFrom').value} — ${$('dateTo').value} · UTC`;
-    $('status').className = '';
-    $('status').textContent = 'Wczytywanie…';
-    try {
-      const rows = await loadRange(selectedType, from, to);
-      if(serial !== requestSerial) return;
-      visibleRows = rows;
-      render();
-      $('status').className = 'ok';
-      $('status').textContent = `Znaleziono: ${rows.length}`;
-    } catch (error) {
-      if(serial !== requestSerial) return;
-      visibleRows = [];
-      render();
-      $('status').className = 'error';
-      $('status').textContent = 'Błąd odczytu archiwum';
-      $('errorBox').style.display = 'block';
-      $('errorBox').textContent = error?.message || String(error);
-      console.error('ARCH:', error);
-    } finally {
-      if(serial === requestSerial) setBusy(false);
-    }
+    const serial=++requestSerial,from=parseDay($('dateFrom').value),to=parseDay($('dateTo').value);$('copyResult').textContent='';$('errorBox').style.display='none';
+    if(!VALID_TYPES.has(selectedType))return;
+    if(!from||!to){$('status').className='error';$('status').textContent='Podaj prawidłowy zakres dat.';return}
+    if(from>to){$('status').className='error';$('status').textContent='Data OD nie może być późniejsza niż DO.';return}
+    if(Math.round((to-from)/86400000)+1>3660){$('status').className='error';$('status').textContent='Zakres jest zbyt długi (maks. 3660 dni).';return}
+    visibleRows=[];rejectedRows=0;render();setBusy(true);$('summary').textContent=`${selectedType} · ${$('dateFrom').value} — ${$('dateTo').value} · UTC`;$('status').className='';$('status').textContent='Wczytywanie…';
+    try{const rows=await loadRange(selectedType,from,to);if(serial!==requestSerial)return;visibleRows=rows;render();$('status').className='ok';$('status').textContent=`Znaleziono: ${rows.length}${rejectedRows?` · odrzucono błędnych: ${rejectedRows}`:''}`}
+    catch(e){if(serial!==requestSerial)return;visibleRows=[];render();$('status').className='error';$('status').textContent='Błąd odczytu archiwum';$('errorBox').style.display='block';$('errorBox').textContent=e?.message||String(e);console.error('ARCH:',e)}
+    finally{if(serial===requestSerial)setBusy(false)}
   }
 
-  function rawClipboardText(){
-    return visibleRows.map(row => row._raw).join('\n');
-  }
+  function rawClipboardText(){return visibleRows.map(r=>r._raw).join('\n')}
+  function tablePlainText(){return visibleRows.map(r=>`${formatUtc(r._time)}\t${r._raw}`).join('\n')}
+  function tableHtml(){const rows=visibleRows.map(r=>`<tr><td style="border:1px solid #000;padding:4px 6px;vertical-align:top;white-space:nowrap;">${escapeHtml(formatUtc(r._time))}</td><td style="border:1px solid #000;padding:4px 6px;vertical-align:top;">${escapeHtml(r._raw)}</td></tr>`).join('');return `<table style="border-collapse:collapse;border:1px solid #000;font-family:Arial,sans-serif;font-size:10pt;"><tbody>${rows}</tbody></table>`}
+  async function copyPlain(text){if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(text);return}const a=document.createElement('textarea');a.value=text;a.style.position='fixed';a.style.left='-9999px';document.body.appendChild(a);a.select();const ok=document.execCommand('copy');a.remove();if(!ok)throw new Error('Przeglądarka nie zezwoliła na kopiowanie.')}
+  async function copyHtmlTable(){const html=tableHtml(),plain=tablePlainText();if(navigator.clipboard?.write&&window.ClipboardItem){await navigator.clipboard.write([new ClipboardItem({'text/html':new Blob([html],{type:'text/html'}),'text/plain':new Blob([plain],{type:'text/plain'})})]);return}const h=document.createElement('div');h.contentEditable='true';h.style.position='fixed';h.style.left='-9999px';h.innerHTML=html;document.body.appendChild(h);const range=document.createRange();range.selectNodeContents(h);const sel=window.getSelection();sel.removeAllRanges();sel.addRange(range);const ok=document.execCommand('copy');sel.removeAllRanges();h.remove();if(!ok)throw new Error('Przeglądarka nie zezwoliła na kopiowanie tabeli.')}
+  async function doCopy(kind){if(!visibleRows.length)return;$('copyResult').textContent='Kopiowanie…';try{if(kind==='raw')await copyPlain(rawClipboardText());else await copyHtmlTable();$('copyResult').textContent=kind==='raw'?`Skopiowano ${visibleRows.length} komunikatów.`:`Skopiowano tabelę: ${visibleRows.length} wierszy.`}catch(e){$('copyResult').textContent=`Błąd kopiowania: ${e?.message||e}`}}
+  function chooseType(type){if(!VALID_TYPES.has(type))return;selectedType=type;document.querySelectorAll('[data-type]').forEach(b=>b.classList.toggle('active',b.dataset.type===type));refresh()}
 
-  function tablePlainText(){
-    return visibleRows.map(row => `${formatUtc(row._time)}\t${row._raw.replace(/\r?\n/g,' ')}`).join('\n');
-  }
-
-  function tableHtml(){
-    const rows = visibleRows.map(row => {
-      const time = escapeHtml(formatUtc(row._time));
-      const raw = escapeHtml(row._raw).replace(/\r?\n/g,'<br>');
-      return `<tr><td style="border:1px solid #000;padding:4px 6px;vertical-align:top;white-space:nowrap;">${time}</td><td style="border:1px solid #000;padding:4px 6px;vertical-align:top;">${raw}</td></tr>`;
-    }).join('');
-    return `<table style="border-collapse:collapse;border:1px solid #000;font-family:Arial,sans-serif;font-size:10pt;"><tbody>${rows}</tbody></table>`;
-  }
-
-  async function copyPlain(text){
-    if(navigator.clipboard?.writeText){
-      await navigator.clipboard.writeText(text);
-      return;
-    }
-    const area = document.createElement('textarea');
-    area.value = text;
-    area.style.position = 'fixed';
-    area.style.left = '-9999px';
-    document.body.appendChild(area);
-    area.select();
-    const ok = document.execCommand('copy');
-    area.remove();
-    if(!ok) throw new Error('Przeglądarka nie zezwoliła na kopiowanie.');
-  }
-
-  async function copyHtmlTable(){
-    const html = tableHtml();
-    const plain = tablePlainText();
-    if(navigator.clipboard?.write && window.ClipboardItem){
-      const item = new ClipboardItem({
-        'text/html': new Blob([html], {type:'text/html'}),
-        'text/plain': new Blob([plain], {type:'text/plain'})
-      });
-      await navigator.clipboard.write([item]);
-      return;
-    }
-    const holder = document.createElement('div');
-    holder.contentEditable = 'true';
-    holder.style.position = 'fixed';
-    holder.style.left = '-9999px';
-    holder.innerHTML = html;
-    document.body.appendChild(holder);
-    const range = document.createRange();
-    range.selectNodeContents(holder);
-    const selection = window.getSelection();
-    selection.removeAllRanges();
-    selection.addRange(range);
-    const ok = document.execCommand('copy');
-    selection.removeAllRanges();
-    holder.remove();
-    if(!ok) throw new Error('Przeglądarka nie zezwoliła na kopiowanie tabeli.');
-  }
-
-  async function doCopy(kind){
-    if(!visibleRows.length) return;
-    $('copyResult').textContent = 'Kopiowanie…';
-    try {
-      if(kind === 'raw') await copyPlain(rawClipboardText());
-      else await copyHtmlTable();
-      $('copyResult').textContent = kind === 'raw'
-        ? `Skopiowano ${visibleRows.length} komunikatów.`
-        : `Skopiowano tabelę: ${visibleRows.length} wierszy.`;
-    } catch (error) {
-      $('copyResult').textContent = `Błąd kopiowania: ${error?.message || error}`;
-    }
-  }
-
-  function chooseType(type){
-    if(!VALID_TYPES.has(type)) return;
-    selectedType = type;
-    document.querySelectorAll('[data-type]').forEach(button => button.classList.toggle('active', button.dataset.type === type));
-    refresh();
-  }
-
-  initTheme();
-  const today = utcDayString(new Date());
-  $('dateFrom').value = today;
-  $('dateTo').value = today;
-  document.querySelectorAll('[data-type]').forEach(button => button.addEventListener('click', () => chooseType(button.dataset.type)));
-  $('dateFrom').addEventListener('change', refresh);
-  $('dateTo').addEventListener('change', refresh);
-  $('copyRaw').addEventListener('click', () => doCopy('raw'));
-  $('copyTable').addEventListener('click', () => doCopy('table'));
-  refresh();
+  initTheme();const today=utcDayString(new Date());$('dateFrom').value=today;$('dateTo').value=today;document.querySelectorAll('[data-type]').forEach(b=>b.addEventListener('click',()=>chooseType(b.dataset.type)));$('dateFrom').addEventListener('change',refresh);$('dateTo').addEventListener('change',refresh);$('copyRaw').addEventListener('click',()=>doCopy('raw'));$('copyTable').addEventListener('click',()=>doCopy('table'));refresh();
 })();
 </script>
 </body>
