@@ -690,7 +690,14 @@
 
   function whenDetail(ev) {
     if (!ev || ev.peak.score < THRESHOLD || ev.onset === null) return 'brak sygnału ≥40 w 48 h';
-    return localHour(ev.onset) + ' → ' + (ev.end === null ? 'dalej' : localHour(ev.end));
+    const from = ev.onset;
+    const to = ev.end;
+    const dateFrom = localDate(from);
+    if (to === null) return dateFrom + ' · ' + localHour(from) + ' → dalej';
+    const dateTo = localDate(to);
+    return dateFrom === dateTo
+      ? dateFrom + ' · ' + localHour(from) + ' → ' + localHour(to)
+      : dateFrom + ' ' + localHour(from) + ' → ' + dateTo + ' ' + localHour(to);
   }
 
   function card(label,value,detail,score=null) {
