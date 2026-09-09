@@ -1,0 +1,82 @@
+name: Fix Pages fog summary asset
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fix-pages-fog-summary
+  cancel-in-progress: true
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Patch Pages deployment
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('.github/workflows/pages.yml')
+          s = p.read_text(encoding='utf-8')
+
+          old = 'mifg-engine.js fog-meteogram-overlay.js shortcut-mode.js \\\n'
+          new = 'mifg-engine.js fog-meteogram-overlay.js fog-summary-layout.js shortcut-mode.js \\\n'
+          if old not in s:
+              raise SystemExit('Pages copy list marker not found')
+          s = s.replace(old, new, 1)
+
+          old = 'for f in index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js meteogram-visfog-split.js meteogram-visfog-cleanup.js rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js shortcut-mode.js'
+          new = 'for f in index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js meteogram-visfog-split.js meteogram-visfog-cleanup.js rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js fog-summary-layout.js shortcut-mode.js'
+          if old not in s:
+              raise SystemExit('Pages JS validation list marker not found')
+          s = s.replace(old, new, 1)
+
+          old = 'node --check _site/fog-meteogram-overlay.js\n          node --check _site/mifg-engine.js'
+          new = 'node --check _site/fog-meteogram-overlay.js\n          node --check _site/fog-summary-layout.js\n          node --check _site/mifg-engine.js'
+          if old not in s:
+              raise SystemExit('Pages _site validation marker not found')
+          s = s.replace(old, new, 1)
+
+          old = 'test -s _site/fog-meteogram-overlay.js\n          test -s _site/meteogram-visfog-split.js'
+          new = 'test -s _site/fog-meteogram-overlay.js\n          test -s _site/fog-summary-layout.js\n          test -s _site/meteogram-visfog-split.js'
+          if old not in s:
+              raise SystemExit('Pages verify marker not found')
+          s = s.replace(old, new, 1)
+
+          p.write_text(s, encoding='utf-8')
+
+          # Bump the script URL so mobile browsers do not retain the previous 404.
+          p = Path('index.html')
+          s = p.read_text(encoding='utf-8')
+          if 'fog-summary-layout.js?v=1' in s:
+              s = s.replace('fog-summary-layout.js?v=1', 'fog-summary-layout.js?v=2')
+          elif 'fog-summary-layout.js?v=2' not in s:
+              raise SystemExit('fog summary script tag not found in index.html')
+          p.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Validate
+        run: |
+          node --check fog-summary-layout.js
+          grep -F 'fog-summary-layout.js' .github/workflows/pages.yml
+          grep -F 'fog-summary-layout.js?v=2' index.html
+
+      - name: Commit fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/pages.yml index.html
+          git commit -m 'fix: include fog summary layout in Pages artifact'
+          git push origin main
