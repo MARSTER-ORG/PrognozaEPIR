@@ -204,6 +204,7 @@ def cycle(*, publish: bool, state_path: Path) -> dict:
         results.append(run_step("architecture-boundary", script("check_archive_boundaries.py"), attempts=1, timeout=60, critical=True))
 
         results.append(run_step("metar-freshness", script("check_epir_archive_freshness.py", "--metar-only"), attempts=1, timeout=60))
+        results.append(run_step("synop-freshness", script("check_synop_archive_freshness.py"), attempts=1, timeout=60))
         results.append(run_step("taf-freshness", script("check_epir_archive_freshness.py", "--taf-only", "--all-tafs"), attempts=1, timeout=60))
 
         cleanup_staging()
@@ -232,7 +233,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--once", action="store_true", help="run one cycle (default)")
-    mode.add_argument("--daemon", action="store_true", help="run continuously")
+    mode.add_argument("--daemon", action="store_true", help="run continuously (systemd / VPS)")
     ap.add_argument("--interval", type=int, default=120, help="daemon interval in seconds (min 60)")
     ap.add_argument("--publish-git", action="store_true", help="commit/push changed data/messages to origin/main")
     ap.add_argument("--lock-file", type=Path, default=DEFAULT_LOCK)
