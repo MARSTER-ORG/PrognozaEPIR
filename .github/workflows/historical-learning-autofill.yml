@@ -1,0 +1,117 @@
+name: Historical learning autofill
+
+on:
+  schedule:
+    - cron: '41 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/auto_backfill_from_observations.py'
+      - 'scripts/backfill_model_history.py'
+      - 'scripts/enrich_synoptic_context.py'
+      - 'scripts/synoptic_regime.py'
+      - '.github/workflows/historical-learning-autofill.yml'
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: historical-learning-autofill-main
+  cancel-in-progress: false
+
+jobs:
+  autofill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate historical autofill code
+        run: |
+          python3 -m py_compile \
+            scripts/auto_backfill_from_observations.py \
+            scripts/backfill_model_history.py \
+            scripts/enrich_synoptic_context.py \
+            scripts/synoptic_regime.py \
+            scripts/model_verification.py \
+            scripts/build_adaptive_weights.py \
+            scripts/build_historical_model_skill.py \
+            scripts/build_synoptic_regime_learning.py
+
+      - name: Acquire missing operational history and pressure-level context
+        id: acquire
+        run: |
+          python3 scripts/auto_backfill_from_observations.py --max-days 2 --workers 3
+          if git diff --quiet -- data/learning/model-forecasts data/learning/observation-history-autofill-state.json; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Rebuild learning after historical acquisition
+        if: steps.acquire.outputs.changed == 'true'
+        run: |
+          python3 scripts/model_verification.py
+          python3 scripts/cloud_learning_backfill.py
+          python3 scripts/build_adaptive_weights.py
+          python3 scripts/build_historical_model_skill.py
+          python3 scripts/build_synoptic_regime_learning.py
+          python3 scripts/build_fog_event_learning.py
+          python3 scripts/embed_model_verification.py
+
+      - name: Validate rebuilt learning
+        if: steps.acquire.outputs.changed == 'true'
+        run: |
+          python3 -m json.tool data/learning/observation-history-autofill-state.json >/dev/null
+          python3 -m json.tool data/learning/adaptive-weights.json >/dev/null
+          python3 -m json.tool data/learning/historical-model-skill.json >/dev/null
+          python3 -m json.tool data/learning/synoptic-regime-skill.json >/dev/null
+          python3 -m json.tool data/learning/model-verification.json >/dev/null
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          state=json.loads(Path('data/learning/observation-history-autofill-state.json').read_text(encoding='utf-8'))
+          syn=json.loads(Path('data/learning/synoptic-regime-skill.json').read_text(encoding='utf-8'))
+          assert state.get('schema') == 'prognozaepir-observation-history-autofill-v1'
+          assert state.get('source_policy')
+          assert syn.get('schema') == 'prognozaepir-synoptic-regime-learning-v1'
+          assert len(syn.get('models') or {}) >= 8
+          print('selected run days:', state.get('selected_run_days'))
+          print('remaining pending days:', state.get('remaining_pending_days'))
+          print('synoptic usable cases:', syn.get('usable_cases'))
+          PY
+
+      - name: Commit acquired history and rebuilt learning
+        if: steps.acquire.outputs.changed == 'true'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          rm -rf scripts/__pycache__
+          git add data/learning
+          git commit -m 'weather: autofill historical model and synoptic context'
+          git reset --hard HEAD
+          git clean -fd
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            if git rebase origin/main && git push origin HEAD:main; then
+              exit 0
+            fi
+            git rebase --abort 2>/dev/null || true
+            sleep $((attempt * 3))
+          done
+          exit 1
+
+      - name: Redeploy refreshed learning
+        if: steps.acquire.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --repo "${{ github.repository }}" --ref main
