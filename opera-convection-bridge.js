@@ -237,19 +237,29 @@
     return [[p.lat-dLat,p.lon-dLon],[p.lat+dLat,p.lon+dLon]];
   }
 
+  // POLRAD CMAX visual scale. The thresholds mirror the CMAX colour decoder
+  // used by this page: blue -> cyan -> green -> yellow -> orange -> red -> magenta.
+  const POLRAD_CMAX_PALETTE = [
+    [58,[255,0,255,255]],
+    [52,[255,0,0,255]],
+    [47,[255,128,0,255]],
+    [44,[255,220,0,255]],
+    [41,[160,255,0,255]],
+    [38,[0,200,0,255]],
+    [34,[0,255,255,255]],
+    [30,[0,170,255,255]],
+    [27,[0,80,255,255]],
+    [20,[0,0,210,255]],
+    [14,[0,0,145,255]],
+    [8,[0,0,85,255]]
+  ];
+
   function colorForDbz(v) {
-    if (!finite(v) || v < 5) return [0,0,0,0];
-    if (v >= 62) return [245,140,255,225];
-    if (v >= 56) return [255,25,204,225];
-    if (v >= 50) return [230,0,89,225];
-    if (v >= 44) return [255,22,0,225];
-    if (v >= 38) return [255,136,0,220];
-    if (v >= 32) return [255,242,0,215];
-    if (v >= 26) return [255,251,216,205];
-    if (v >= 20) return [184,244,241,195];
-    if (v >= 14) return [27,200,240,190];
-    if (v >= 8) return [0,51,232,185];
-    return [0,0,204,175];
+    if (!finite(v) || v < 8) return [0,0,0,0];
+    for (const [minimum,rgba] of POLRAD_CMAX_PALETTE) {
+      if (v >= minimum) return rgba;
+    }
+    return [0,0,0,0];
   }
 
   function rasterFor(latest) {
@@ -313,6 +323,7 @@
     button.dataset.operaVisiblePixels = String(state.visiblePixels ?? 0);
     button.dataset.operaSignificantPixels = String(state.significantPixels ?? 0);
     button.dataset.operaFrameUtc = state.frameUtc || '';
+    button.dataset.operaPalette = state.palette || '';
   }
 
   function renderMap(opera = lastOpera) {
@@ -323,12 +334,12 @@
     const enabled = button.classList.contains('active');
     if (!enabled) {
       clearFixed(m);
-      publishState(button,{enabled:false,rendered:false,visiblePixels:0,significantPixels:0,frameUtc:''});
+      publishState(button,{enabled:false,rendered:false,visiblePixels:0,significantPixels:0,frameUtc:'',palette:'POLRAD CMAX'});
       return;
     }
     if (!opera || opera.error || !opera.latest) {
       clearFixed(m);
-      publishState(button,{enabled:true,rendered:false,visiblePixels:0,significantPixels:0,frameUtc:''});
+      publishState(button,{enabled:true,rendered:false,visiblePixels:0,significantPixels:0,frameUtc:'',palette:'POLRAD CMAX'});
       return;
     }
 
@@ -336,7 +347,7 @@
     const raster = rasterFor(opera.latest);
     if (!p || !raster) {
       clearFixed(m);
-      publishState(button,{enabled:true,rendered:false,visiblePixels:0,significantPixels:0,frameUtc:fmtUtc(opera.frameEnd)});
+      publishState(button,{enabled:true,rendered:false,visiblePixels:0,significantPixels:0,frameUtc:fmtUtc(opera.frameEnd),palette:'POLRAD CMAX'});
       return;
     }
 
@@ -366,8 +377,8 @@
     const frameUtc = fmtUtc(opera.frameEnd || opera.latest.time);
     const rendered = !!fixedLayer || !!outlineLayer;
     button.title = raster.visible > 0
-      ? `OPERA CMAX · ${frameUtc} · widoczne piksele: ${raster.visible}`
-      : `OPERA CMAX · ${frameUtc} · brak echa ≥5 dBZ w promieniu 160 km`;
+      ? `OPERA CMAX · skala POLRAD · ${frameUtc} · widoczne piksele: ${raster.visible}`
+      : `OPERA CMAX · skala POLRAD · ${frameUtc} · brak echa ≥8 dBZ w promieniu 160 km`;
     publishState(button,{
       enabled:true,
       rendered,
@@ -376,7 +387,8 @@
       frameUtc,
       maxDbz:finite(raster.max)?raster.max:null,
       bounds,
-      pane:PANE
+      pane:PANE,
+      palette:'POLRAD CMAX'
     });
   }
 
