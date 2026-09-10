@@ -9,10 +9,10 @@ Rules:
 from __future__ import annotations
 
 import argparse
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+SELF = Path(__file__).resolve()
 TEXT_SUFFIXES = {'.html', '.js', '.mjs', '.cjs', '.py', '.yml', '.yaml'}
 SKIP_DIRS = {'.git', 'node_modules', 'data'}
 
@@ -35,6 +35,8 @@ JS_DATE_REPLACEMENTS = (
 
 def source_files():
     for path in ROOT.rglob('*'):
+        if path.resolve() == SELF:
+            continue
         if not path.is_file() or path.suffix.lower() not in TEXT_SUFFIXES:
             continue
         rel = path.relative_to(ROOT)
