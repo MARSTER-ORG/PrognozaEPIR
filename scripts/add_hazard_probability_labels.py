@@ -46,6 +46,14 @@ for path in FILES:
     elif 'probabilityLabel(p.prob)' not in s:
         raise SystemExit(f'Window probability hook not found in {path.name}')
 
+    # Heights in feet are displayed in full hundreds (e.g. 400, 1800 ft).
+    old_ft = 'const ft=m=>Math.round((m*3.28084)/10)*10;'
+    new_ft = 'const ft=m=>Math.round((m*3.28084)/100)*100;'
+    if old_ft in s:
+        s = s.replace(old_ft, new_ft, 1)
+    elif new_ft not in s:
+        raise SystemExit(f'Feet rounding hook not found in {path.name}')
+
     # Give the probability + text label enough room in the hourly rows.
     s = s.replace('grid-template-columns:120px 85px 115px 1fr',
                   'grid-template-columns:120px 130px 115px 1fr', 1)
@@ -54,4 +62,4 @@ for path in FILES:
 
     path.write_text(s, encoding='utf-8')
 
-print('hazard probability labels installed')
+print('hazard probability labels and 100-ft height rounding installed')
