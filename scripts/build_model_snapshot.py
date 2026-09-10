@@ -43,8 +43,8 @@ CORE = [
     "cloud_cover_mid", "cloud_cover_high",
     "cape", "lifted_index", "convective_inhibition", "freezing_level_height",
 ]
-COMMON_LEVELS = [1000, 925, 850, 700, 500, 300, 200]
-ALADIN_LEVELS = [1000, 950, 925, 850, 700, 500, 300, 250, 200]
+COMMON_LEVELS = [1000, 975, 950, 925, 900, 850, 800, 750, 700, 650, 600, 550, 500, 450, 400, 350, 300, 275, 250, 200]
+ALADIN_LEVELS = [1000, 950, 925, 850, 800, 700, 600, 500, 450, 400, 350, 300, 275, 250, 200]
 
 
 def iso_now():
@@ -129,7 +129,15 @@ def profile_variables(model_id: str):
     levels = ALADIN_LEVELS if model_id == "chmi_aladin_central_europe_2km" else COMMON_LEVELS
     out = []
     for p in levels:
-        out += [f"cloud_cover_{p}hPa", f"relative_humidity_{p}hPa", f"geopotential_height_{p}hPa"]
+        out += [
+            f"temperature_{p}hPa",
+            f"relative_humidity_{p}hPa",
+            f"cloud_cover_{p}hPa",
+            f"wind_speed_{p}hPa",
+            f"wind_direction_{p}hPa",
+            f"vertical_velocity_{p}hPa",
+            f"geopotential_height_{p}hPa",
+        ]
     return out
 
 
