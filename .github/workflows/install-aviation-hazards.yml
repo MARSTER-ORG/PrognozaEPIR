@@ -1,0 +1,55 @@
+name: Install aviation hazards modules
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/install-aviation-hazards.yml'
+      - 'scripts/install_aviation_hazards.py'
+      - 'aviation-hazards.js'
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: install-aviation-hazards
+  cancel-in-progress: false
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Install modules and vertical model fields
+        run: |
+          python3 -m py_compile scripts/install_aviation_hazards.py
+          python3 scripts/install_aviation_hazards.py
+          node --check aviation-hazards.js
+          node --check warnings-readable.js
+          python3 -m py_compile scripts/build_model_snapshot.py
+          grep -F 'vertical_velocity_{p}hPa' scripts/build_model_snapshot.py
+          grep -F 'PrognozaEPIRAviationHazardsV1' warnings-readable.js
+
+      - name: Commit installation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scripts/build_model_snapshot.py warnings-readable.js
+          if git diff --cached --quiet; then
+            echo "Already installed"
+            exit 0
+          fi
+          git commit -m "weather: add icing and turbulence diagnostics"
+          for attempt in 1 2 3 4; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            echo "push retry $attempt"
+            sleep $((attempt*3))
+          done
+          exit 1
