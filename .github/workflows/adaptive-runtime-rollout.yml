@@ -15,6 +15,9 @@ on:
       - 'scripts/build_model_snapshot.py'
       - 'scripts/build_adaptive_weights.py'
       - 'scripts/build_historical_model_skill.py'
+      - 'scripts/build_synoptic_regime_learning.py'
+      - 'scripts/enrich_synoptic_context.py'
+      - 'scripts/synoptic_regime.py'
       - 'scripts/cloud_learning_backfill.py'
       - 'scripts/model_verification.py'
       - '.github/workflows/adaptive-runtime-rollout.yml'
@@ -55,6 +58,9 @@ jobs:
             scripts/build_model_snapshot.py \
             scripts/build_adaptive_weights.py \
             scripts/build_historical_model_skill.py \
+            scripts/build_synoptic_regime_learning.py \
+            scripts/enrich_synoptic_context.py \
+            scripts/synoptic_regime.py \
             scripts/cloud_learning_backfill.py \
             scripts/cloud_learning.py \
             scripts/model_verification.py
@@ -79,6 +85,7 @@ jobs:
           python3 scripts/cloud_learning_backfill.py
           python3 scripts/build_adaptive_weights.py
           python3 scripts/build_historical_model_skill.py
+          python3 scripts/build_synoptic_regime_learning.py
           python3 scripts/build_fog_event_learning.py
           python3 scripts/embed_model_verification.py
 
@@ -91,6 +98,7 @@ jobs:
           python3 -m json.tool data/learning/cloud-skill.json >/dev/null
           python3 -m json.tool data/learning/adaptive-weights.json >/dev/null
           python3 -m json.tool data/learning/historical-model-skill.json >/dev/null
+          python3 -m json.tool data/learning/synoptic-regime-skill.json >/dev/null
           python3 -m json.tool data/learning/fog-event-skill.json >/dev/null
           python3 -m json.tool data/learning/model-verification.json >/dev/null
           python3 - <<'PY'
@@ -99,6 +107,7 @@ jobs:
           snap=json.loads(Path('data/runtime/models-latest.json').read_text(encoding='utf-8'))
           weights=json.loads(Path('data/learning/adaptive-weights.json').read_text(encoding='utf-8'))
           hist=json.loads(Path('data/learning/historical-model-skill.json').read_text(encoding='utf-8'))
+          syn=json.loads(Path('data/learning/synoptic-regime-skill.json').read_text(encoding='utf-8'))
           fog=json.loads(Path('data/learning/fog-event-skill.json').read_text(encoding='utf-8'))
           cloud=json.loads(Path('data/learning/cloud-skill.json').read_text(encoding='utf-8'))
           verify=json.loads(Path('data/learning/model-verification.json').read_text(encoding='utf-8'))
@@ -109,6 +118,9 @@ jobs:
           assert hist.get('schema') == 'prognozaepir-historical-model-skill-v1'
           assert len(hist.get('models') or {}) >= 8
           assert (hist.get('archive') or {}).get('usable_forecast_cases',0) >= 100
+          assert syn.get('schema') == 'prognozaepir-synoptic-regime-learning-v1'
+          assert len(syn.get('models') or {}) >= 8
+          assert syn.get('usable_cases',0) >= 100
           assert fog.get('schema') == 'prognozaepir-fog-event-skill-v1'
           assert fog.get('observation_inventory',{}).get('speci',0) >= 1
           assert cloud.get('schema') == 'prognozaepir-cloud-learning-v1'
@@ -119,6 +131,8 @@ jobs:
           print('cloud learning samples:', cloud_samples)
           print('historical usable forecast cases:', hist.get('archive',{}).get('usable_forecast_cases'))
           print('historical period:', hist.get('archive',{}).get('valid_time_start'), hist.get('archive',{}).get('valid_time_end'))
+          print('synoptic usable cases:', syn.get('usable_cases'))
+          print('synoptic coverage:', syn.get('coverage'))
           print('fog observation inventory:', fog.get('observation_inventory'))
           print('wind verification method:', verify.get('method'))
           PY
@@ -145,6 +159,9 @@ jobs:
           client=Path('cloud-learning-client.js').read_text(encoding='utf-8')
           assert 'MODEL_SNAPSHOT_RAW' in client
           assert 'repository-snapshot' in client
+          assert 'SYNOPTIC_SKILL_RAW' in client
+          assert 'contextForItems' in client
+          assert '.70/1.30' in client
           fog=Path('fog-engine.js').read_text(encoding='utf-8')
           assert "KNMI_MODEL = 'knmi_harmonie_arome_europe'" in fog
           assert 'fogModelWeight' in fog
