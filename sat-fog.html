@@ -16,7 +16,7 @@
 <body>
 <div class="app">
   <div class="top">
-    <div><div class="brand"><a href="index.html">PrognozaEPIR</a> <small>SAT / FOG EUMETSAT v1.2</small></div><div class="place">MTG / FCI · Fog / Low Clouds RGB · EPIR / Inowrocław</div></div>
+    <div><div class="brand"><a href="index.html">PrognozaEPIR</a> <small>SAT / FOG EUMETSAT v1.3</small></div><div class="place">MTG / FCI · Fog / Low Clouds RGB · EPIR / Inowrocław</div></div>
     <div class="status"><span id="badge" class="badge">ŁADOWANIE</span><div id="statusText">WMS EUMETSAT</div></div>
   </div>
   <div class="controls">
@@ -27,6 +27,7 @@
     <button id="latest" type="button" disabled>Najnowsza</button>
     <button id="epir" type="button">EPIR</button>
     <button id="baseToggle" type="button" aria-pressed="true">Tło mapy: ON</button>
+    <button id="borderToggle" type="button" aria-pressed="true" disabled>Granice: ładowanie…</button>
     <span class="spacer"></span>
   </div>
   <div class="grid">
@@ -58,17 +59,18 @@
       <div class="note"><b>Najważniejsze ograniczenie:</b> sam kolor nie rozróżnia mgły przy ziemi od niskiego Stratus. Cienki cirrus może również zasłonić sygnał mgły. Produkt jest przeznaczony głównie do nocy; podczas dnia i silnego zmierzchu interpretacja jest niewiarygodna.</div>
     </aside>
   </div>
-  <div class="source">Źródło obrazu: EUMETSAT EUMETView WMS · MTG/FCI Fog / Low Clouds RGB, 1 km, NRT. Kalibracja: kotwice barw wyprowadzone z EUMETSAT Night Microphysics RGB Quick Guide; obraz przewodnika nie jest częścią aplikacji. Kolory mogą zmieniać się z geometrią obserwacji i charakterem sceny, dlatego klasyfikacja jest probabilistyczna.</div>
+  <div class="source">Źródło obrazu: EUMETSAT EUMETView WMS · MTG/FCI Fog / Low Clouds RGB, 1 km, NRT. Granice państw: Natural Earth 1:110m. Kalibracja: kotwice barw wyprowadzone z EUMETSAT Night Microphysics RGB Quick Guide; obraz przewodnika nie jest częścią aplikacji. Kolory mogą zmieniać się z geometrią obserwacji i charakterem sceny, dlatego klasyfikacja jest probabilistyczna.</div>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 <script>
 'use strict';
 (() => {
   const WMS='https://view.eumetsat.int/geoserver/wms';
+  const BORDERS_URL='https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_0_countries.geojson';
   const TITLE_RE=/fog\s*\/\s*low\s*clouds\s*rgb/i;
   const EPIR=[52.7989,18.2639];
   const $=id=>document.getElementById(id);
-  let map, layer=null, baseLayer=null, inspectMarker=null, layerName='', times=[], timeIndex=-1, timer=0, currentTime='';
+  let map, layer=null, baseLayer=null, borderHaloLayer=null, borderLineLayer=null, bordersOn=true, inspectMarker=null, layerName='', times=[], timeIndex=-1, timer=0, currentTime='';
 
   // Kotwice RGB zmierzone z pól referencyjnych Quick Guide EUMETSAT.
   // Dla klas, których barwa zależy silniej od sceny (np. pink-grey), stosujemy kilka kotwic.
@@ -144,9 +146,25 @@
     layer.on('load',()=>{$('loading').hidden=true;badge('LIVE','ok');});layer.on('tileerror',()=>{badge('BŁĄD WMS','bad');$('loading').hidden=true;});layer.addTo(map);showTime();
   }
   function setIndex(i){if(!times.length)return;timeIndex=(i+times.length)%times.length;currentTime=times[timeIndex];$('timeSelect').value=String(timeIndex);redraw();}
+  async function loadBorders(){
+    const btn=$('borderToggle');
+    try{
+      const r=await fetch(BORDERS_URL,{cache:'force-cache'});if(!r.ok)throw Error('HTTP '+r.status);
+      const geo=await r.json();
+      const common={pane:'bordersPane',interactive:false,fill:false};
+      borderHaloLayer=L.geoJSON(geo,{style:{...common,color:'#000000',weight:3.2,opacity:.58}});
+      borderLineLayer=L.geoJSON(geo,{style:{...common,color:'#ffffff',weight:1.15,opacity:.92}});
+      if(bordersOn){borderHaloLayer.addTo(map);borderLineLayer.addTo(map);}
+      btn.disabled=false;btn.textContent='Granice: '+(bordersOn?'ON':'OFF');btn.setAttribute('aria-pressed',String(bordersOn));
+    }catch(e){
+      btn.disabled=true;btn.textContent='Granice: błąd';btn.title='Nie udało się pobrać granic państw: '+String(e.message||e);
+    }
+  }
   function initMap(){
     map=L.map('map',{zoomControl:true,preferCanvas:true}).setView(EPIR,7);
     baseLayer=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'© OpenStreetMap contributors',opacity:.35}).addTo(map);
+    map.createPane('bordersPane');map.getPane('bordersPane').style.zIndex='390';map.getPane('bordersPane').style.pointerEvents='none';
+    loadBorders();
     const icon=L.divIcon({className:'',html:'<div class="epir-dot"></div>',iconSize:[12,12],iconAnchor:[6,6]});
     L.marker(EPIR,{icon,title:'EPIR / Inowrocław'}).addTo(map).bindTooltip('EPIR / Inowrocław',{permanent:false});
     L.circle(EPIR,{radius:25000,color:'#ff6a60',weight:1,fill:false,dashArray:'5,5'}).addTo(map);map.on('click',e=>inspectPixel(e.latlng));
@@ -213,6 +231,7 @@
   }
   $('prev').addEventListener('click',()=>setIndex(timeIndex-1));$('next').addEventListener('click',()=>setIndex(timeIndex+1));$('latest').addEventListener('click',()=>setIndex(times.length-1));$('epir').addEventListener('click',()=>map?.setView(EPIR,9));
   $('baseToggle').addEventListener('click',()=>{const on=map?.hasLayer(baseLayer);if(on)map.removeLayer(baseLayer);else baseLayer.addTo(map);$('baseToggle').textContent='Tło mapy: '+(on?'OFF':'ON');$('baseToggle').setAttribute('aria-pressed',String(!on));});
+  $('borderToggle').addEventListener('click',()=>{bordersOn=!bordersOn;if(borderHaloLayer&&borderLineLayer){if(bordersOn){borderHaloLayer.addTo(map);borderLineLayer.addTo(map);}else{map.removeLayer(borderHaloLayer);map.removeLayer(borderLineLayer);}}$('borderToggle').textContent='Granice: '+(bordersOn?'ON':'OFF');$('borderToggle').setAttribute('aria-pressed',String(bordersOn));});
   $('timeSelect').addEventListener('change',e=>{const i=+e.target.value;if(Number.isInteger(i))setIndex(i);});
   $('play').addEventListener('click',()=>{if(timer){clearInterval(timer);timer=0;$('play').textContent='▶ animacja';return;}if(times.length<2)return;$('play').textContent='■ stop';timer=setInterval(()=>setIndex(timeIndex+1),850);});start();
 })();
