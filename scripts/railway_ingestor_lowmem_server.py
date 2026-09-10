@@ -4,6 +4,10 @@
 The HTTP process stays lightweight. Every 5-minute acquisition cycle runs the
 message ingestor and MTG LI collector in disposable child processes so numpy,
 netCDF4 and EUMETSAT libraries are returned to the OS after each cycle.
+
+The same lightweight HTTP process also exposes the OPERA DBZH Range/CORS proxy
+used by radar.html. This lets the separate opera-* Railway services be retired
+without changing the browser-side CMAX renderer or TCu/Cb fusion logic.
 """
 from __future__ import annotations
 
@@ -11,6 +15,7 @@ import hashlib
 import json
 import mimetypes
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -18,7 +23,11 @@ import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlparse
+from urllib.request import Request, urlopen
+
+import opera_proxy_only as opera
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
@@ -34,7 +43,7 @@ STARTED_AT = datetime.now(timezone.utc).replace(microsecond=0).isoformat().repla
 _runtime_lock = threading.Lock()
 _runtime = {
     "started_at": STARTED_AT,
-    "mode": "low-memory-subprocess-v1",
+    "mode": "low-memory-subprocess-v2-opera",
     "cycle_running": False,
     "cycle_started_at": None,
     "last_cycle": None,
@@ -215,7 +224,7 @@ def run_worker() -> None:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "PrognozaEPIR-Ingestor/1.2-lowmem"
+    server_version = "PrognozaEPIR-Ingestor/1.3-lowmem-opera"
 
     def log_message(self, fmt: str, *args) -> None:
         print(f"[{utc_iso()}] http {self.address_string()} {fmt % args}", flush=True)
@@ -225,7 +234,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Range")
+        self.send_header("Access-Control-Expose-Headers", "Accept-Ranges, Content-Range, Content-Length, ETag, Last-Modified")
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
         if length is not None:
@@ -252,8 +262,104 @@ class Handler(BaseHTTPRequestHandler):
             "last_cycle": last,
             "latest": latest_summary(),
             "lightning": lightning_summary(),
+            "opera_proxy": {
+                "available": True,
+                "path": "/opera/dbzh/YYYYMMDDHHMM.tiff",
+                "source": "EUMETNET OPERA openradar-24h DBZH GeoTIFF",
+                "range": True,
+            },
             "archive_manifest_files": len(manifest_snapshot().get("files") or []),
         }, head_only=head_only)
+
+    def _opera_headers(self, status: int, content_type: str | None = None) -> None:
+        self.send_response(status)
+        if content_type:
+            self.send_header("Content-Type", content_type)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Range")
+        self.send_header("Access-Control-Expose-Headers", "Accept-Ranges, Content-Range, Content-Length, ETag, Last-Modified")
+
+    def _opera_json(self, status: int, payload: dict, head_only: bool = False) -> None:
+        body = (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+        self._opera_headers(status, "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if not head_only:
+            self.wfile.write(body)
+
+    def _opera_health(self, head_only: bool = False) -> None:
+        self._opera_json(200, {
+            "service": "prognozaepir-central-ingestor",
+            "component": "opera-cmax-proxy",
+            "version": "1.3",
+            "ok": True,
+            "source": "EUMETNET OPERA openradar-24h DBZH GeoTIFF",
+            "range": True,
+            "time": utc_iso(),
+        }, head_only)
+
+    def _proxy_opera_frame(self, path: str, head_only: bool = False) -> None:
+        match = opera.FRAME_RE.fullmatch(path)
+        if not match:
+            self._opera_json(400, {"error": "invalid OPERA path"}, head_only)
+            return
+        token = match.group(1)
+        try:
+            dt = opera.frame_time(token)
+        except ValueError:
+            self._opera_json(400, {"error": "invalid timestamp"}, head_only)
+            return
+        delta = (datetime.now(timezone.utc) - dt).total_seconds()
+        if dt.minute % 5 or delta > opera.MAX_AGE_SECONDS or delta < -opera.MAX_FUTURE_SECONDS:
+            self._opera_json(400, {"error": "timestamp outside recent OPERA window"}, head_only)
+            return
+
+        headers = {
+            "Accept": "image/tiff,application/octet-stream;q=0.9,*/*;q=0.1",
+            "User-Agent": "PrognozaEPIR-Central-Ingestor-OPERA/1.3",
+        }
+        requested_range = self.headers.get("Range")
+        if requested_range:
+            requested_range = requested_range.strip()
+            if not re.fullmatch(r"bytes=\d+-\d*", requested_range):
+                self._opera_json(416, {"error": "unsupported range"}, head_only)
+                return
+            headers["Range"] = requested_range
+
+        req = Request(opera.upstream_url(token), headers=headers, method="HEAD" if head_only else "GET")
+        try:
+            with urlopen(req, timeout=20) as upstream:
+                self._opera_headers(getattr(upstream, "status", 200), upstream.headers.get("Content-Type") or "image/tiff")
+                self.send_header("Accept-Ranges", upstream.headers.get("Accept-Ranges") or "bytes")
+                self.send_header("Cache-Control", "public, max-age=300")
+                for name in ("Content-Length", "Content-Range", "ETag", "Last-Modified"):
+                    value = upstream.headers.get(name)
+                    if value:
+                        self.send_header(name, value)
+                self.end_headers()
+                if head_only:
+                    return
+                while True:
+                    chunk = upstream.read(128 * 1024)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+        except HTTPError as exc:
+            if exc.code == 404:
+                self._opera_json(404, {"error": "OPERA frame not available", "frame": token}, head_only)
+            elif exc.code == 416:
+                self._opera_headers(416)
+                if exc.headers and exc.headers.get("Content-Range"):
+                    self.send_header("Content-Range", exc.headers.get("Content-Range"))
+                self.end_headers()
+            else:
+                self._opera_json(502, {"error": f"OPERA upstream HTTP {exc.code}"}, head_only)
+        except (URLError, TimeoutError, OSError) as exc:
+            self._opera_json(502, {"error": f"OPERA upstream unavailable: {type(exc).__name__}"}, head_only)
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
     def _file(self, request_path: str, head_only: bool = False) -> None:
         relative = unquote(request_path).lstrip("/")
@@ -291,6 +397,10 @@ class Handler(BaseHTTPRequestHandler):
             self._health(head_only)
         elif path == "/archive-manifest":
             self._json(manifest_snapshot(), head_only=head_only)
+        elif path == "/opera/health":
+            self._opera_health(head_only)
+        elif path.startswith("/opera/dbzh/"):
+            self._proxy_opera_frame(path, head_only)
         else:
             self._file(path, head_only)
 
@@ -304,7 +414,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Range")
+        self.send_header("Access-Control-Expose-Headers", "Accept-Ranges, Content-Range, Content-Length, ETag, Last-Modified")
         self.send_header("Access-Control-Max-Age", "86400")
         self.end_headers()
 
@@ -313,7 +424,7 @@ def main() -> int:
     worker = threading.Thread(target=run_worker, name="central-ingestor-lowmem", daemon=True)
     worker.start()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"[{utc_iso()}] http server listening on 0.0.0.0:{PORT}", flush=True)
+    print(f"[{utc_iso()}] http server listening on 0.0.0.0:{PORT}; OPERA CMAX proxy merged", flush=True)
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
