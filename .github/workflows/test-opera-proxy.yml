@@ -15,47 +15,54 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Verify public health and a recent DBZH GeoTIFF range
+      - name: Probe official MeteoGate GeoTIFF catalogue
         shell: bash
         run: |
           set -euo pipefail
-          BASE='https://opera-cmax-live-production.up.railway.app'
-          echo 'Checking public health...'
-          curl -fSs --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 10 --max-time 60 "$BASE/health"
-          echo
-
-          python3 - <<'PY' >/tmp/opera_tokens.txt
+          API='https://api.meteogate.eu/eu-eumetnet-weather-radar/collections/observations/locations/0-20010-0-OPERA'
+          read -r START END < <(python3 - <<'PY'
           from datetime import datetime, timezone, timedelta
-          now=datetime.now(timezone.utc).replace(second=0,microsecond=0)
-          now=now.replace(minute=(now.minute//5)*5)
-          for minutes in range(5, 125, 5):
-              print((now-timedelta(minutes=minutes)).strftime('%Y%m%d%H%M'))
+          end=datetime.now(timezone.utc).replace(second=0,microsecond=0)-timedelta(minutes=10)
+          start=end-timedelta(hours=3)
+          print(start.strftime('%Y-%m-%dT%H:%MZ'), end.strftime('%Y-%m-%dT%H:%MZ'))
           PY
-
-          ok=0
-          while read -r token; do
-            url="$BASE/opera/dbzh/$token.tiff"
-            echo "Trying $token UTC..."
-            code="$(curl -sS --retry 2 --retry-all-errors --retry-delay 1 --connect-timeout 10 --max-time 45 \
-              -H 'Range: bytes=0-16383' -o /tmp/opera-frame.bin -w '%{http_code}' "$url" || true)"
-            if [ "$code" = '206' ] || [ "$code" = '200' ]; then
-              TOKEN="$token" python3 - <<'PY'
-          import os
+          )
+          echo "Query window: $START - $END UTC"
+          code="$(curl -sS -G --connect-timeout 10 --max-time 60 \
+            -D /tmp/catalog.headers -o /tmp/catalog.json -w '%{http_code}' \
+            --data-urlencode "datetime=$START/$END" \
+            --data-urlencode 'f=CoverageJSON' \
+            --data-urlencode 'standard_name=DBZH' \
+            --data-urlencode 'format=GeoTIFF' \
+            --data-urlencode 'method=comp' \
+            "$API")"
+          echo "MeteoGate HTTP $code"
+          cat /tmp/catalog.headers
+          echo '--- catalogue response ---'
+          head -c 30000 /tmp/catalog.json || true
+          echo
+          CODE="$code" python3 - <<'PY'
+          import json, os, sys
           from pathlib import Path
-          p=Path('/tmp/opera-frame.bin')
-          data=p.read_bytes()
-          if len(data) < 8:
-              raise SystemExit('response too short')
-          if not (data.startswith(b'II*\x00') or data.startswith(b'MM\x00*')):
-              raise SystemExit(f'not TIFF: first bytes={data[:8]!r}')
-          print(f"Valid TIFF range for {os.environ['TOKEN']} UTC: {len(data)} bytes")
+          if os.environ['CODE'] not in {'200','206'}:
+              raise SystemExit(f"MeteoGate returned HTTP {os.environ['CODE']}")
+          raw=Path('/tmp/catalog.json').read_text(encoding='utf-8',errors='replace')
+          try:
+              doc=json.loads(raw)
+          except Exception as exc:
+              raise SystemExit(f'not JSON: {exc}')
+          print('Top-level:', type(doc).__name__, list(doc)[:30] if isinstance(doc,dict) else '')
+          found=[]
+          def walk(v,path='$'):
+              if isinstance(v,dict):
+                  for k,x in v.items(): walk(x,f'{path}.{k}')
+              elif isinstance(v,list):
+                  for i,x in enumerate(v): walk(x,f'{path}[{i}]')
+              elif isinstance(v,str) and ('http' in v.lower() or 'tif' in v.lower() or 'geotiff' in v.lower()):
+                  found.append((path,v))
+          walk(doc)
+          print('Relevant strings:')
+          for p,v in found[:100]: print(p, '=', v)
+          if not found:
+              print('No URL/GeoTIFF strings found')
           PY
-              ok=1
-              break
-            fi
-          done </tmp/opera_tokens.txt
-
-          if [ "$ok" != '1' ]; then
-            echo 'No recent OPERA DBZH GeoTIFF could be fetched through the public proxy.' >&2
-            exit 1
-          fi
