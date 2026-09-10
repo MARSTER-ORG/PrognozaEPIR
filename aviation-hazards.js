@@ -44,6 +44,14 @@
     return mlo===mhi?`${mlo} m / ${flo} ft AMSL`:`${mlo}–${mhi} m / ${flo}–${fhi} ft AMSL`;
   }
   function riskClass(p){return p>=75?'high':p>=50?'mid':'low';}
+  function probabilityLabel(p){
+    p=Math.round(Number(p)||0);
+    if(p<20)return'brak istotnego sygnału';
+    if(p<40)return'możliwe';
+    if(p<60)return'prawdopodobne';
+    if(p<80)return'bardzo prawdopodobne';
+    return'niemal pewne';
+  }
   function icingIntensity(s,p){if(p<20)return'brak / małe';if(s>=.72)return'intensywne';if(s>=.46)return'umiarkowane';return'słabe';}
   function turbIntensity(s,p){if(p<20)return'brak / mała';if(s>=.72)return'silna';if(s>=.46)return'umiarkowana';return'słaba';}
   function weightedMean(rows,key){
@@ -80,10 +88,10 @@
       .avh-wrap{padding:9px 10px;font-size:10px;line-height:1.4}.avh-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
       .avh-tile{background:var(--panel2);border-left:3px solid var(--blue2);padding:7px;min-height:64px}.avh-tile small{display:block;color:var(--muted);font-size:8.5px;margin-bottom:3px}.avh-tile b{display:block;font-size:14px;line-height:1.16}.avh-tile span{display:block;color:var(--muted);font-size:8px;margin-top:3px}
       .avh-low{border-color:#27a844!important;box-shadow:inset 0 0 0 1px rgba(39,168,68,.15)}.avh-mid{border-color:#f59f00!important;box-shadow:inset 0 0 0 1px rgba(245,159,0,.18)}.avh-high{border-color:#e03131!important;box-shadow:inset 0 0 0 1px rgba(224,49,49,.20)}
-      .avh-windows{margin-top:7px;display:grid;gap:5px}.avh-window{display:grid;grid-template-columns:120px 85px 115px 1fr;gap:6px;align-items:center;background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--blue2);border-radius:7px;padding:6px}.avh-window b{font-size:10px}.avh-window span{font-size:8.5px;color:var(--muted)}
+      .avh-windows{margin-top:7px;display:grid;gap:5px}.avh-window{display:grid;grid-template-columns:120px 130px 115px 1fr;gap:6px;align-items:center;background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--blue2);border-radius:7px;padding:6px}.avh-window b{font-size:10px}.avh-window span{font-size:8.5px;color:var(--muted)}
       .avh-note{margin-top:7px;border:1px solid var(--line);background:var(--panel2);border-radius:7px;padding:7px;color:var(--muted);font-size:8.5px}.avh-note strong{color:var(--ink)}
       .avh-actions{margin-top:7px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}.avh-actions button{border:1px solid var(--line);background:var(--panel2);color:var(--ink);border-radius:7px;padding:6px 8px;font-size:9px;font-weight:700}.avh-source{color:var(--muted);font-size:8px}
-      @media(max-width:700px){.avh-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.avh-window{grid-template-columns:1fr 80px}.avh-window .avh-height{grid-column:1/-1}}
+      @media(max-width:700px){.avh-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.avh-window{grid-template-columns:1fr 125px}.avh-window .avh-height{grid-column:1/-1}}
     `;document.head.appendChild(st);
   }
   function card(id,title,kind){
@@ -232,12 +240,12 @@
   function renderKind(kind,rows,source){
     const now=rows[0]||null,peak=rows.reduce((a,b)=>!a||b.prob>a.prob?b:a,null),ws=windows(rows),isIce=kind==='ice';
     if(!peak){$(kind+'Windows').innerHTML='<div class="avh-window"><span>Brak wystarczającego profilu pionowego w aktualnym snapshotcie.</span></div>';return;}
-    $(kind+'Now').textContent=now?Math.round(now.prob)+'%':'—';$(kind+'NowSub').textContent=now?`${isIce?icingIntensity(now.sev,now.prob):turbIntensity(now.sev,now.prob)} · ${fmtHeight(now.band.lo,now.band.hi)}`:'—';
-    $(kind+'Peak').textContent=Math.round(peak.prob)+'%';$(kind+'PeakSub').textContent=fmtUtc(peak.time);
+    $(kind+'Now').textContent=now?`${Math.round(now.prob)}% · ${probabilityLabel(now.prob)}`:'—';$(kind+'NowSub').textContent=now?`${isIce?icingIntensity(now.sev,now.prob):turbIntensity(now.sev,now.prob)} · ${fmtHeight(now.band.lo,now.band.hi)}`:'—';
+    $(kind+'Peak').textContent=`${Math.round(peak.prob)}% · ${probabilityLabel(peak.prob)}`;$(kind+'PeakSub').textContent=fmtUtc(peak.time);
     $(kind+'Intensity').textContent=isIce?icingIntensity(peak.sev,peak.prob):turbIntensity(peak.sev,peak.prob);$(kind+'IntensitySub').textContent=`modele zgodne ${peak.supportModels}/${peak.availableModels}`;
     $(kind+'Height').textContent=fmtHeight(peak.band.lo,peak.band.hi);setRisk(kind+'NowTile',now?.prob||0);setRisk(kind+'PeakTile',peak.prob);
     if(ws.length){
-      $(kind+'Windows').innerHTML=ws.map(w=>{const p=w.peak,cls=riskClass(p.prob),intensity=isIce?icingIntensity(p.sev,p.prob):turbIntensity(p.sev,p.prob),end=w.end>w.start?` → ${fmtUtc(w.end)}`:'';return `<div class="avh-window avh-${cls}"><b>${fmtUtc(w.start)}${end}</b><b>${Math.round(p.prob)}%</b><span>${intensity}</span><span class="avh-height">${fmtHeight(p.band.lo,p.band.hi)} · zgodność ${p.supportModels}/${p.availableModels}</span></div>`;}).join('');
+      $(kind+'Windows').innerHTML=ws.map(w=>{const p=w.peak,cls=riskClass(p.prob),intensity=isIce?icingIntensity(p.sev,p.prob):turbIntensity(p.sev,p.prob),end=w.end>w.start?` → ${fmtUtc(w.end)}`:'';return `<div class="avh-window avh-${cls}"><b>${fmtUtc(w.start)}${end}</b><b>${Math.round(p.prob)}% · ${probabilityLabel(p.prob)}</b><span>${intensity}</span><span class="avh-height">${fmtHeight(p.band.lo,p.band.hi)} · zgodność ${p.supportModels}/${p.availableModels}</span></div>`;}).join('');
     }else $(kind+'Windows').innerHTML='<div class="avh-window avh-low"><b>Najbliższe 24 h</b><span>brak warstwy z prawdopodobieństwem ≥30%</span></div>';
     $(kind+'Source').textContent=`NWP ensemble · ${source}`;
   }
