@@ -8,6 +8,9 @@ because it happened to be verified on easier weather situations.
 
 Learned factors are recency weighted, shrunk towards the static/base weight
 when the effective sample is small, and clipped to conservative bounds.
+Visibility learning deliberately emphasizes observed reductions below 10 km
+and downweights censored METAR 9999 good-visibility cases so rare operationally
+important reductions are not drowned by hundreds of easy CAVOK/9999 samples.
 """
 from __future__ import annotations
 
@@ -26,6 +29,15 @@ MIN_FACTOR = 0.72
 MAX_FACTOR = 1.28
 PEER_SCALE_PCT = 32.0
 MIN_PEERS = 3
+
+# Visibility is operationally asymmetric at EPIR. METAR 9999 means a lower
+# bound (roughly >=10 km), not an exact 10 km measurement. Rare observed
+# reductions below 10 km therefore carry more learning mass, while censored
+# good-visibility cases remain useful but cannot dominate the component.
+VISIBILITY_LOW_THRESHOLD_M = 10000.0
+VISIBILITY_LOW_CASE_WEIGHT = 3.0
+VISIBILITY_CENSORED_GOOD_WEIGHT = 0.5
+VISIBILITY_EXACT_GOOD_WEIGHT = 1.0
 
 
 def clamp(v, a, b):
@@ -61,6 +73,35 @@ def weighted_mean(pairs):
     return sum(v * w for v, w in pairs if mv.finite(v) and mv.finite(w) and w > 0) / sw
 
 
+def visibility_learning_weight(m, s):
+    """Return extra learning weight for the observed visibility regime.
+
+    Priority mirrors component_scores(): METAR/SPECI first for visibility, then
+    SYNOP. An exact observed reduction below 10 km is emphasized. METAR 9999
+    (represented by visibility_lower_bound) proves good visibility but is not an
+    exact value, so it receives reduced learning weight.
+    """
+    row = None
+    if m and mv.finite(m.get("visibility_m")):
+        row = m
+    elif s and mv.finite(s.get("visibility_m")):
+        row = s
+    if not row:
+        return 1.0
+
+    vis = float(row.get("visibility_m"))
+    lower_bound = bool(row.get("visibility_lower_bound"))
+    if lower_bound:
+        if vis >= VISIBILITY_LOW_THRESHOLD_M:
+            return VISIBILITY_CENSORED_GOOD_WEIGHT
+        # A censored lower bound below 10 km cannot prove a reduction, so do
+        # not boost it as a low-visibility event.
+        return VISIBILITY_EXACT_GOOD_WEIGHT
+    if vis < VISIBILITY_LOW_THRESHOLD_M:
+        return VISIBILITY_LOW_CASE_WEIGHT
+    return VISIBILITY_EXACT_GOOD_WEIGHT
+
+
 def main():
     forecasts = mv.load_forecasts()
     metar_by_hour, synop_by_hour = mv.build_observation_maps()
@@ -72,6 +113,7 @@ def main():
     case_scores = defaultdict(list)         # (run,valid,bucket,comp) -> [(model,score,rw)]
     samples = defaultdict(int)
     source_hits = defaultdict(lambda: {"METAR": 0, "SPECI": 0, "SYNOP": 0})
+    visibility_regimes = defaultdict(lambda: {"low_lt_10km": 0, "censored_ge_10km": 0, "exact_ge_10km": 0})
 
     for f in forecasts:
         model = f.get("model")
@@ -104,10 +146,23 @@ def main():
         if s:
             source_hits[(model, bucket)]["SYNOP"] += 1
 
+        vis_row = m if m and mv.finite(m.get("visibility_m")) else (s if s and mv.finite(s.get("visibility_m")) else None)
+        if vis_row:
+            vis = float(vis_row.get("visibility_m"))
+            lower = bool(vis_row.get("visibility_lower_bound"))
+            if not lower and vis < VISIBILITY_LOW_THRESHOLD_M:
+                visibility_regimes[(model, bucket)]["low_lt_10km"] += 1
+            elif lower and vis >= VISIBILITY_LOW_THRESHOLD_M:
+                visibility_regimes[(model, bucket)]["censored_ge_10km"] += 1
+            elif not lower and vis >= VISIBILITY_LOW_THRESHOLD_M:
+                visibility_regimes[(model, bucket)]["exact_ge_10km"] += 1
+
+        vis_weight = visibility_learning_weight(m, s)
         for comp, score in scores.items():
-            abs_scores[(model, bucket, comp)].append((score, rw))
+            comp_rw = rw * (vis_weight if comp == "visibility" else 1.0)
+            abs_scores[(model, bucket, comp)].append((score, comp_rw))
             ckey = (f.get("run_time"), f.get("valid_time"), bucket, comp)
-            case_scores[ckey].append((model, score, rw))
+            case_scores[ckey].append((model, score, comp_rw))
 
     # Relative deltas against the same-case cohort median.
     relative = defaultdict(list)            # (model,bucket,comp) -> [(delta,rw)]
@@ -135,13 +190,21 @@ def main():
         "method": (
             "Archived operational forecasts verified against corresponding-hour EPIR METAR/SPECI and WMO 12342 SYNOP; "
             "parameter/lead factors use same-case model score minus peer median, exponential recency weighting, "
-            "sample-size shrinkage to base weights and conservative clipping"
+            "sample-size shrinkage to base weights and conservative clipping; visibility learning emphasizes exact "
+            "observed reductions below 10 km and downweights censored METAR 9999 good-visibility cases"
         ),
         "min_samples": MIN_SAMPLES,
         "full_samples": FULL_SAMPLES,
         "half_life_days": HALF_LIFE_DAYS,
         "minimum_peer_models": MIN_PEERS,
         "factor_bounds": [MIN_FACTOR, MAX_FACTOR],
+        "visibility_learning": {
+            "threshold_m": VISIBILITY_LOW_THRESHOLD_M,
+            "low_lt_10km_weight": VISIBILITY_LOW_CASE_WEIGHT,
+            "censored_ge_10km_weight": VISIBILITY_CENSORED_GOOD_WEIGHT,
+            "exact_ge_10km_weight": VISIBILITY_EXACT_GOOD_WEIGHT,
+            "reason": "METAR 9999 is a lower bound, while sub-10-km reductions are operationally more informative at EPIR",
+        },
         "models": {},
     }
 
@@ -181,6 +244,7 @@ def main():
             mout["lead_buckets"][bucket] = {
                 "forecast_samples": samples[(model, bucket)],
                 "sources": source_hits[(model, bucket)],
+                "visibility_regimes": visibility_regimes[(model, bucket)],
                 "weight_factor": round(overall, 4),
                 "effective_weight": round(base_weight * overall, 6),
                 "components": comps,
