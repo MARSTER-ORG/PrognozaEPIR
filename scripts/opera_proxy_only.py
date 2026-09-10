@@ -28,11 +28,14 @@ def frame_time(token: str) -> datetime:
 
 def upstream_url(token: str) -> str:
     dt = frame_time(token)
-    return f"{S3_BASE}/{dt:%Y/%m/%d}/OPERA/COMP/OPERA@{token}@0@DBZH.tiff"
+    # Official Open Radar Data GeoTIFF keys use an ISO-like T separator:
+    # OPERA@YYYYMMDDTHHMM@0@DBZH.tiff
+    stamp = dt.strftime("%Y%m%dT%H%M")
+    return f"{S3_BASE}/{dt:%Y/%m/%d}/OPERA/COMP/OPERA@{stamp}@0@DBZH.tiff"
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "PrognozaEPIR-OPERA-Proxy/1.0"
+    server_version = "PrognozaEPIR-OPERA-Proxy/1.1"
 
     def log_message(self, fmt: str, *args) -> None:
         print(f"[{utc_iso()}] {self.address_string()} {fmt % args}", flush=True)
@@ -72,7 +75,7 @@ class Handler(BaseHTTPRequestHandler):
 
         headers = {
             "Accept": "image/tiff,application/octet-stream;q=0.9,*/*;q=0.1",
-            "User-Agent": "PrognozaEPIR-OPERA-Proxy/1.0",
+            "User-Agent": "PrognozaEPIR-OPERA-Proxy/1.1",
         }
         requested_range = self.headers.get("Range")
         if requested_range:
@@ -123,6 +126,7 @@ class Handler(BaseHTTPRequestHandler):
         if path in {"/", "/health", "/opera/health"}:
             self.send_json(200, {
                 "service": "prognozaepir-opera-proxy",
+                "version": "1.1",
                 "ok": True,
                 "source": "EUMETNET OPERA openradar-24h DBZH GeoTIFF",
                 "range": True,
@@ -149,7 +153,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> int:
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"[{utc_iso()}] OPERA proxy listening on 0.0.0.0:{PORT}", flush=True)
+    print(f"[{utc_iso()}] OPERA proxy v1.1 listening on 0.0.0.0:{PORT}", flush=True)
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
