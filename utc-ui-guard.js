@@ -6,42 +6,16 @@
 (() => {
   'use strict';
 
-  if (window.__PROGNOZA_EPIR_UTC_GUARD__) return;
-  window.__PROGNOZA_EPIR_UTC_GUARD__ = true;
+  if (window.__PROGNOZA_EPIR_UTC_GUARD_V2__) return;
+  window.__PROGNOZA_EPIR_UTC_GUARD_V2__ = true;
 
   const CLOCK_RE = /\b((?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?)(?!\s*(?:UTC|Z)\b)/g;
-  const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'PRE', 'CODE']);
-  const WATCHED_ATTRS = ['title', 'aria-label', 'data-tooltip', 'data-title'];
+  const SKIP_TAGS = new Set(['SCRIPT','STYLE','TEXTAREA','PRE','CODE']);
+  const WATCHED_ATTRS = ['title','aria-label','data-tooltip','data-title'];
 
   function markUtc(text) {
     if (typeof text !== 'string' || !text.includes(':')) return text;
     return text.replace(CLOCK_RE, '$1 UTC');
-  }
-
-  // All locale-based Date formatting defaults to UTC, regardless of the
-  // browser/device timezone. Existing callers therefore cannot silently fall
-  // back to local time.
-  for (const name of ['toLocaleString', 'toLocaleDateString', 'toLocaleTimeString']) {
-    const original = Date.prototype[name];
-    if (typeof original !== 'function') continue;
-    Object.defineProperty(Date.prototype, name, {
-      configurable: true,
-      writable: true,
-      value: function prognozaUtcLocale(locales, options) {
-        return original.call(this, locales, { ...(options || {}), timeZone: 'UTC' });
-      }
-    });
-  }
-
-  // The same rule for direct Intl.DateTimeFormat users.
-  if (window.Intl && typeof Intl.DateTimeFormat === 'function') {
-    const NativeDateTimeFormat = Intl.DateTimeFormat;
-    function UtcDateTimeFormat(locales, options) {
-      return new NativeDateTimeFormat(locales, { ...(options || {}), timeZone: 'UTC' });
-    }
-    UtcDateTimeFormat.prototype = NativeDateTimeFormat.prototype;
-    Object.setPrototypeOf(UtcDateTimeFormat, NativeDateTimeFormat);
-    Intl.DateTimeFormat = UtcDateTimeFormat;
   }
 
   function shouldSkip(node) {
@@ -55,7 +29,7 @@
 
   function patchTextNode(node) {
     if (!node || node.nodeType !== Node.TEXT_NODE || shouldSkip(node)) return;
-    const before = node.nodeValue;
+    const before = node.nodeValue || '';
     const after = markUtc(before);
     if (after !== before) node.nodeValue = after;
   }
@@ -64,7 +38,7 @@
     if (!(el instanceof Element) || el.hasAttribute('data-no-utc-ui')) return;
     for (const attr of WATCHED_ATTRS) {
       if (!el.hasAttribute(attr)) continue;
-      const before = el.getAttribute(attr);
+      const before = el.getAttribute(attr) || '';
       const after = markUtc(before);
       if (after !== before) el.setAttribute(attr, after);
     }
@@ -93,47 +67,96 @@
     }
   }
 
-  // Dynamic modules, Leaflet popups/tooltips, generated tables and status
-  // labels are normalized immediately after insertion/update.
-  const observer = new MutationObserver(records => {
-    for (const record of records) {
-      if (record.type === 'characterData') {
-        patchTextNode(record.target);
-      } else if (record.type === 'attributes') {
-        patchAttributes(record.target);
-      } else {
-        record.addedNodes.forEach(scan);
+  function scanAll() {
+    try {
+      scan(document.body || document.documentElement);
+    } catch (_) { }
+  }
+
+  // Install the DOM protection first. Optional runtime monkey-patches below
+  // must never be able to disable visible UTC labelling.
+  function installObserver() {
+    try {
+      const root = document.documentElement;
+      if (!root || typeof MutationObserver !== 'function') return;
+      const observer = new MutationObserver(records => {
+        for (const record of records) {
+          if (record.type === 'characterData') {
+            patchTextNode(record.target);
+          } else if (record.type === 'attributes') {
+            patchAttributes(record.target);
+          } else {
+            record.addedNodes.forEach(scan);
+          }
+        }
+      });
+      observer.observe(root, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: WATCHED_ATTRS
+      });
+      window.__PROGNOZA_EPIR_UTC_OBSERVER__ = observer;
+    } catch (_) { }
+  }
+
+  installObserver();
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', scanAll, { once:true });
+  } else {
+    scanAll();
+  }
+
+  // Fallback for modules that replace large DOM fragments or are rendered by
+  // code paths that bypass MutationObserver timing. This is deliberately cheap.
+  [50,250,750,1500,3000,6000,12000].forEach(ms => setTimeout(scanAll, ms));
+  setInterval(scanAll, 30000);
+
+  // Locale Date methods default to UTC. Failure of any single patch is ignored
+  // so the visible UI guard above always remains active.
+  for (const name of ['toLocaleString','toLocaleDateString','toLocaleTimeString']) {
+    try {
+      const original = Date.prototype[name];
+      if (typeof original !== 'function') continue;
+      Object.defineProperty(Date.prototype, name, {
+        configurable:true,
+        writable:true,
+        value:function prognozaUtcLocale(locales, options) {
+          return original.call(this, locales, { ...(options || {}), timeZone:'UTC' });
+        }
+      });
+    } catch (_) { }
+  }
+
+  // Direct Intl.DateTimeFormat users are also forced to UTC, but this patch is
+  // optional because some browsers expose Intl constructors differently.
+  try {
+    if (window.Intl && typeof Intl.DateTimeFormat === 'function') {
+      const NativeDateTimeFormat = Intl.DateTimeFormat;
+      function UtcDateTimeFormat(locales, options) {
+        return new NativeDateTimeFormat(locales, { ...(options || {}), timeZone:'UTC' });
+      }
+      UtcDateTimeFormat.prototype = NativeDateTimeFormat.prototype;
+      try { Object.setPrototypeOf(UtcDateTimeFormat, NativeDateTimeFormat); } catch (_) { }
+      Intl.DateTimeFormat = UtcDateTimeFormat;
+    }
+  } catch (_) { }
+
+  // Canvas clocks (meteogram/chart axes and labels) are not DOM text.
+  try {
+    const CanvasProto = window.CanvasRenderingContext2D && CanvasRenderingContext2D.prototype;
+    if (CanvasProto && !CanvasProto.__prognozaUtcUiPatched) {
+      Object.defineProperty(CanvasProto,'__prognozaUtcUiPatched',{value:true});
+      for (const method of ['fillText','strokeText']) {
+        const original = CanvasProto[method];
+        if (typeof original !== 'function') continue;
+        CanvasProto[method] = function prognozaUtcCanvas(text, ...args) {
+          return original.call(this, markUtc(String(text)), ...args);
+        };
       }
     }
-  });
-  observer.observe(document.documentElement, {
-    subtree: true,
-    childList: true,
-    characterData: true,
-    attributes: true,
-    attributeFilter: WATCHED_ATTRS
-  });
+  } catch (_) { }
 
-  // Canvas clocks (meteogram/chart axes and labels) are not DOM text, so they
-  // need the same visible-clock rule at drawing time.
-  const CanvasProto = window.CanvasRenderingContext2D && CanvasRenderingContext2D.prototype;
-  if (CanvasProto && !CanvasProto.__prognozaUtcUiPatched) {
-    Object.defineProperty(CanvasProto, '__prognozaUtcUiPatched', { value: true });
-    for (const method of ['fillText', 'strokeText']) {
-      const original = CanvasProto[method];
-      if (typeof original !== 'function') continue;
-      CanvasProto[method] = function prognozaUtcCanvas(text, ...args) {
-        return original.call(this, markUtc(String(text)), ...args);
-      };
-    }
-  }
-
-  const initialScan = () => document.body && scan(document.body);
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initialScan, { once: true });
-  } else {
-    initialScan();
-  }
-
-  window.PrognozaUtcUI = Object.freeze({ markUtc, scan });
+  window.PrognozaUtcUI = Object.freeze({ markUtc, scan, scanAll });
 })();
