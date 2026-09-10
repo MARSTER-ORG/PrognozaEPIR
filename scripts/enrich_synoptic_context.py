@@ -44,7 +44,9 @@ def get_json(url, retries=5, timeout=80):
                 return json.loads(r.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             last = exc
-            if not transient_http(exc.code) and exc.code != 400:
+            if exc.code == 400:
+                raise
+            if not transient_http(exc.code):
                 raise
         except (urllib.error.URLError, socket.timeout, TimeoutError, json.JSONDecodeError, ValueError) as exc:
             last = exc

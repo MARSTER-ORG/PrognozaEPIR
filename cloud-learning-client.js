@@ -64,11 +64,14 @@
   const RAW_ROOT = 'https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/';
   const MODEL_SNAPSHOT_RAW = RAW_ROOT + 'data/runtime/models-latest.json';
   const ADAPTIVE_WEIGHTS_RAW = RAW_ROOT + 'data/learning/adaptive-weights.json';
+  const SYNOPTIC_SKILL_RAW = RAW_ROOT + 'data/learning/synoptic-regime-skill.json';
   const HOUR = 3600000;
   let snapshot = null;
   let adaptive = null;
+  let synopticSkill = null;
   let snapshotPromise = null;
   let adaptivePromise = null;
+  let synopticPromise = null;
 
   async function jsonWithTimeout(url, timeoutMs=5000) {
     const ctl = new AbortController();
@@ -115,6 +118,22 @@
     return adaptivePromise;
   }
 
+
+  function loadSynopticSkill() {
+    if (!synopticPromise) synopticPromise = jsonWithTimeout(SYNOPTIC_SKILL_RAW, 5500)
+      .then(j => {
+        if (j?.schema !== 'prognozaepir-synoptic-regime-learning-v1') throw new Error('bad synoptic skill schema');
+        synopticSkill = j;
+        return j;
+      })
+      .catch(e => {
+        console.warn('PrognozaEPIR synoptic-regime skill unavailable; contextual factor stays neutral', e);
+        synopticSkill = null;
+        return null;
+      });
+    return synopticPromise;
+  }
+
   function bucketForLead(h) {
     if (!Number.isFinite(h) || h < 0) return null;
     if (h < 3) return '0-3h';
@@ -136,6 +155,100 @@
     return null;
   }
 
+
+  const SYNOPTIC_DIMENSION_WEIGHTS = {
+    season:.25, daypart:.10, inflow_850:.25, stability_925:.20, moisture_low:.15, pressure_regime:.05
+  };
+
+  function clampNumber(v,a,b){ return Math.max(a,Math.min(b,v)); }
+
+  function weightedContextMean(items,key) {
+    let s=0,w=0;
+    for (const i of items||[]) {
+      const v=Number(i?.row?.[key]), ww=Number(i?.model?.w);
+      if (Number.isFinite(v) && Number.isFinite(ww) && ww>0) { s+=v*ww; w+=ww; }
+    }
+    return w ? s/w : null;
+  }
+
+  function weightedContextDirection(items,key) {
+    let sx=0,cy=0,w=0;
+    for (const i of items||[]) {
+      const d=Number(i?.row?.[key]), ww=Number(i?.model?.w);
+      if (!Number.isFinite(d) || !Number.isFinite(ww) || ww<=0) continue;
+      const r=d*Math.PI/180;
+      sx+=Math.sin(r)*ww; cy+=Math.cos(r)*ww; w+=ww;
+    }
+    if (!w || Math.hypot(sx,cy)<1e-9) return null;
+    return (Math.atan2(sx/w,cy/w)*180/Math.PI+360)%360;
+  }
+
+  function directionSector(deg) {
+    if (!Number.isFinite(deg)) return null;
+    const labels=['N','NE','E','SE','S','SW','W','NW'];
+    return labels[Math.floor((((deg%360)+360)%360+22.5)/45)%8];
+  }
+
+  function localMonthHour(targetMs) {
+    try {
+      const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Warsaw',month:'numeric',hour:'numeric',hourCycle:'h23'}).formatToParts(new Date(targetMs));
+      const get=t=>Number(parts.find(p=>p.type===t)?.value);
+      return {month:get('month'),hour:get('hour')};
+    } catch (_) {
+      const d=new Date(targetMs); return {month:d.getUTCMonth()+1,hour:d.getUTCHours()};
+    }
+  }
+
+  function contextForItems(items,targetMs) {
+    const {month,hour}=localMonthHour(targetMs);
+    const season=([12,1,2].includes(month)?'winter':([3,4,5].includes(month)?'spring':([6,7,8].includes(month)?'summer':'autumn')));
+    const daypart=hour<6?'night':(hour<12?'morning':(hour<18?'afternoon':'evening'));
+    const wd850=weightedContextDirection(items,'wind_direction_850hPa');
+    const t2=weightedContextMean(items,'temperature_2m');
+    const t925=weightedContextMean(items,'temperature_925hPa');
+    const z925=weightedContextMean(items,'geopotential_height_925hPa');
+    const terrain=weightedContextMean((items||[]).map(i=>({model:i.model,row:{terrain:Number(i.elevation)}})),'terrain');
+    let stability_925=null;
+    if (Number.isFinite(t2) && Number.isFinite(t925)) {
+      if (Number.isFinite(z925) && Number.isFinite(terrain) && z925>terrain+150) {
+        const lapse=(t2-t925)/(z925-terrain)*1000;
+        stability_925=lapse<0?'inversion':(lapse<4?'stable':(lapse<=8?'mixed_neutral':'unstable'));
+      } else {
+        const delta=t925-t2;
+        stability_925=delta>=0?'inversion':(delta>=-3?'stable':(delta>=-7?'mixed_neutral':'unstable'));
+      }
+    }
+    const rhs=[weightedContextMean(items,'relative_humidity_925hPa'),weightedContextMean(items,'relative_humidity_850hPa')].filter(Number.isFinite);
+    let moisture_low=null;
+    if (rhs.length) {
+      const rh=rhs.reduce((a,b)=>a+b,0)/rhs.length;
+      moisture_low=rh>=85?'very_moist_lower_troposphere':(rh>=70?'moist_lower_troposphere':(rh>=50?'moderate_lower_troposphere':'dry_lower_troposphere'));
+    }
+    const p=weightedContextMean(items,'pressure_msl');
+    const pressure_regime=!Number.isFinite(p)?null:(p>=1022?'high_pressure_environment':(p<=1005?'low_pressure_environment':'intermediate_pressure'));
+    return {season,daypart,inflow_850:directionSector(wd850),stability_925,moisture_low,pressure_regime};
+  }
+
+  function contextFactor(modelId,targetMs,key,ctx) {
+    if (!ctx || !synopticSkill) return 1;
+    const comp=componentForKey(key);
+    const bucket=bucketForLead(Math.max(0,(Number(targetMs)-Date.now())/HOUR));
+    const dims=bucket&&comp?synopticSkill?.models?.[modelId]?.lead_buckets?.[bucket]?.components?.[comp]?.dimensions:null;
+    if (!dims) return 1;
+    const weights=synopticSkill?.dimension_weights||SYNOPTIC_DIMENSION_WEIGHTS;
+    let logSum=0,totalWeight=0;
+    for (const [dim,defaultWeight] of Object.entries(SYNOPTIC_DIMENSION_WEIGHTS)) {
+      const dw=Number(weights?.[dim]);
+      const w=Number.isFinite(dw)&&dw>0?dw:defaultWeight;
+      totalWeight+=w;
+      const label=ctx?.[dim];
+      const f=Number(label?dims?.[dim]?.[label]?.factor:null);
+      if (Number.isFinite(f) && f>0) logSum+=Math.log(f)*w;
+    }
+    if (!totalWeight) return 1;
+    return clampNumber(Math.exp(logSum/totalWeight),.85,1.15);
+  }
+
   function rowFor(modelId, targetMs) {
     const leadH = Math.max(0, (Number(targetMs) - Date.now()) / HOUR);
     const bucket = bucketForLead(leadH);
@@ -150,11 +263,12 @@
     return Number.isFinite(v) ? Math.max(.70, Math.min(1.30, v)) : 1;
   }
 
-  function relativeFactor(modelId, targetMs, key) {
+  function relativeFactor(modelId, targetMs, key, ctx=null) {
     const overall = factor(modelId, targetMs, null);
     const specific = factor(modelId, targetMs, key);
     if (!Number.isFinite(overall) || overall <= 0) return 1;
-    return Math.max(.70/.30, Math.min(1.30/.70, specific / overall));
+    const contextual = contextFactor(modelId,targetMs,key,ctx);
+    return Math.max(.70/1.30, Math.min(1.30/.70, (specific / overall) * contextual));
   }
 
   function snapshotResponse(url) {
@@ -211,14 +325,19 @@
 
   window.PrognozaEPIRAdaptiveWeights = {
     load: loadAdaptive,
+    loadSynoptic: loadSynopticSkill,
     factor,
     relativeFactor,
+    contextFactor,
+    contextForItems,
     componentForKey,
-    get data(){ return adaptive; }
+    get data(){ return adaptive; },
+    get synopticData(){ return synopticSkill; }
   };
 
   loadSnapshot().catch(()=>{});
   loadAdaptive().catch(()=>{});
+  loadSynopticSkill().catch(()=>{});
 
   // Cloud Learning already has its own cloud-specific factor. Multiply it by
   // the historical all-parameter cloud factor relative to the overall weight,
