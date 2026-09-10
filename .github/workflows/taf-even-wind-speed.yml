@@ -1,0 +1,73 @@
+name: Apply even TAF wind speeds
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/taf-even-wind-speed.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Round encoded TAF wind speeds to even knots
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('taf.html')
+          s = p.read_text(encoding='utf-8')
+          old = "function ewin(z){let s=Math.round(kt(z.WS)||0),g=Math.round(kt(z.G)||0);if(s<1)return'00000KT';let d=s<3&&z.dirSpread>90?'VRB':pad((Math.round((z.WD||0)/10)*10)%360||360,3),o=d+pad(Math.min(s,99));if(g-s>=10)o+='G'+(g>99?'P99':pad(g));return o+'KT'}"
+          new = "function ewin(z){let sr=Math.round(kt(z.WS)||0),gr=Math.round(kt(z.G)||0);if(sr<1)return'00000KT';let s=sr%2?sr+1:sr,g=gr%2?gr+1:gr,d=sr<3&&z.dirSpread>90?'VRB':pad((Math.round((z.WD||0)/10)*10)%360||360,3),o=d+pad(Math.min(s,98));if(gr-sr>=10)o+='G'+(g>99?'P99':pad(g));return o+'KT'}"
+          if old not in s:
+              if new in s:
+                  print('taf.html already patched')
+              else:
+                  raise SystemExit('taf.html: ewin formatter signature not found')
+          else:
+              if s.count(old) != 1:
+                  raise SystemExit(f'taf.html: expected one ewin formatter, found {s.count(old)}')
+              p.write_text(s.replace(old, new, 1), encoding='utf-8')
+          PY
+
+      - name: Validate formatter
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('taf.html').read_text(encoding='utf-8')
+          assert "let sr=Math.round(kt(z.WS)||0),gr=Math.round(kt(z.G)||0)" in s
+          assert "let s=sr%2?sr+1:sr,g=gr%2?gr+1:gr" in s
+          assert "if(gr-sr>=10)" in s
+          assert "Math.min(s,98)" in s
+          PY
+          node - <<'JS'
+          const evenFromRounded = v => { const n=Math.round(v); return n % 2 ? n + 1 : n; };
+          const cases = [[7,8],[11,12],[14,14],[1,2],[0,0],[23,24]];
+          for (const [input, expected] of cases) {
+            const got=evenFromRounded(input);
+            if (got !== expected) throw new Error(`${input} -> ${got}, expected ${expected}`);
+          }
+          JS
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('taf.html').read_text(encoding='utf-8')
+          js=s.split('<script>',1)[1].split('</script>',1)[0]
+          Path('/tmp/taf-inline.js').write_text(js,encoding='utf-8')
+          PY
+          node --check /tmp/taf-inline.js
+
+      - name: Commit generator change
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add taf.html
+          git diff --cached --quiet && exit 0
+          git commit -m 'fix: round TAF wind speeds to even knots'
+          git push origin HEAD:main
