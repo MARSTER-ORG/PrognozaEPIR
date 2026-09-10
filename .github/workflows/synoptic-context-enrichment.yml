@@ -1,0 +1,52 @@
+name: Synoptic context enrichment
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '47 2 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: synoptic-context-enrichment
+  cancel-in-progress: false
+
+jobs:
+  enrich:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Enrich archived operational runs
+        run: python3 scripts/enrich_synoptic_context.py --max-runs 36 --workers 2
+      - name: Rebuild contextual skill
+        run: python3 scripts/build_synoptic_regime_learning.py
+      - name: Validate generated JSON
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('data/learning/synoptic-regime-skill.json')
+          j=json.loads(p.read_text())
+          assert j['schema']=='prognozaepir-synoptic-regime-learning-v1'
+          assert len(j.get('models',{})) >= 8
+          assert j.get('usable_cases',0) >= 100
+          print('usable_cases',j['usable_cases'])
+          PY
+      - name: Commit enrichment
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/learning/model-forecasts data/learning/synoptic-context-enrichment-state.json data/learning/synoptic-regime-skill.json
+          if git diff --cached --quiet; then
+            echo 'No contextual changes'
+            exit 0
+          fi
+          git commit -m 'weather: enrich historical synoptic context'
+          git push
