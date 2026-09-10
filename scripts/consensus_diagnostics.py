@@ -157,6 +157,25 @@ def _metar_weather_tokens(m):
     return tokens
 
 
+def precip_observation(m, s):
+    """Return precipitation occurrence and the source that established it."""
+    wet_codes = ("RA", "DZ", "SN", "SG", "PL", "GR", "GS", "UP")
+    if m:
+        wx = str(m.get("weather") or "").upper()
+        raw = str(m.get("raw") or "").upper()
+        if any(code in wx for code in wet_codes) or any(f" {code}" in raw for code in wet_codes):
+            return True, _source_name(m, "METAR_OR_SPECI")
+    if s and isinstance(s.get("present_weather_code"), int):
+        ww = int(s["present_weather_code"])
+        if 50 <= ww <= 99:
+            return True, "SYNOP"
+    if m:
+        return False, _source_name(m, "METAR_OR_SPECI")
+    if s:
+        return False, "SYNOP"
+    return None, None
+
+
 def fog_observation(m, s):
     tokens = _metar_weather_tokens(m)
     fog_tokens = ("FG", "MIFG", "BCFG", "PRFG", "FZFG")
@@ -165,10 +184,13 @@ def fog_observation(m, s):
         mifg = any("MIFG" in token for token in tokens)
         if present:
             return True, _source_name(m, "METAR_OR_SPECI"), mifg
-        # A METAR/SPECI without an FG-family code is a valid no-fog observation.
-        return False, _source_name(m, "METAR_OR_SPECI"), False
     if s and isinstance(s.get("present_weather_code"), int):
-        return 40 <= int(s["present_weather_code"]) <= 49, "SYNOP", False
+        if 40 <= int(s["present_weather_code"]) <= 49:
+            return True, "SYNOP", False
+    if m:
+        return False, _source_name(m, "METAR_OR_SPECI"), False
+    if s:
+        return False, "SYNOP", False
     return None, None, False
 
 
@@ -176,10 +198,16 @@ def thunderstorm_observation(m, s):
     tokens = _metar_weather_tokens(m)
     if m:
         present = any(token.startswith("TS") or "TS" in token for token in tokens)
-        return present, _source_name(m, "METAR_OR_SPECI")
+        if present:
+            return True, _source_name(m, "METAR_OR_SPECI")
     if s and isinstance(s.get("present_weather_code"), int):
         ww = int(s["present_weather_code"])
-        return ww == 17 or 95 <= ww <= 99, "SYNOP"
+        if ww == 17 or 95 <= ww <= 99:
+            return True, "SYNOP"
+    if m:
+        return False, _source_name(m, "METAR_OR_SPECI")
+    if s:
+        return False, "SYNOP"
     return None, None
 
 
@@ -231,7 +259,6 @@ def _add_continuous(acc, name, pred, obs, source=None, error_override=None):
 def _consume(acc, forecast, model_rows, m, s):
     acc["sample_n"] += 1
 
-    # SYNOP-first continuous surface references, matching model_verification.
     for name, key in (
         ("temperature", "temperature_c"),
         ("dew_point", "dew_point_c"),
@@ -240,8 +267,6 @@ def _consume(acc, forecast, model_rows, m, s):
         obs, source = _scalar_reference(m, s, key, synop_first=True)
         _add_continuous(acc, name, forecast.get(key), obs, source)
 
-    # RH is verified against RH derived from observed T/Td, because METAR/SYNOP
-    # archives do not need to carry a separate RH field.
     t_obs, t_source = _scalar_reference(m, s, "temperature_c", synop_first=True)
     td_obs, td_source = _scalar_reference(m, s, "dew_point_c", synop_first=True)
     if mv.finite(t_obs) and mv.finite(td_obs):
@@ -252,9 +277,6 @@ def _consume(acc, forecast, model_rows, m, s):
     gust_obs, gust_source = _scalar_reference(m, s, "wind_gust_ms", synop_first=False)
     _add_continuous(acc, "wind_gust", forecast.get("wind_gust_ms"), gust_obs, gust_source)
 
-    # Visibility: exact reports produce ordinary signed errors. Lower-bound
-    # observations (notably METAR 9999) only tell us whether the forecast fell
-    # below the known lower bound; positive bias cannot be estimated.
     vis = _visibility_reference(m, s)
     pred_vis = forecast.get("visibility_m")
     if vis and mv.finite(pred_vis):
@@ -269,9 +291,6 @@ def _consume(acc, forecast, model_rows, m, s):
             if vis["value_m"] < 10000.0:
                 _add_continuous(acc, "visibility_sub_10km", pred_vis, vis["value_m"], vis["source"])
 
-    # METAR cloud layers are categorical ranges in oktas. Signed error is the
-    # distance outside the reported range and is zero if the forecast lies in
-    # the reported FEW/SCT/BKN/OVC range.
     bands = mv.observed_cloud_bands(m)
     for band in ("low", "mid", "high"):
         pred_okta = mv.okta(forecast.get(f"{band}_pct"))
@@ -293,28 +312,26 @@ def _consume(acc, forecast, model_rows, m, s):
         pred_total = mv.okta(total_pct)
         _add_continuous(acc, "cloud_total", pred_total, s.get("total_cloud_oktas"), "SYNOP")
 
-    # Precipitation occurrence follows the existing >=0.1 mm consensus rule.
-    wet_obs = mv.precip_observed(m, s)
+    wet_obs, wet_source = precip_observation(m, s)
     wet_pred = None
     if mv.finite(forecast.get("precipitation_mm")):
         wet_pred = float(forecast["precipitation_mm"]) >= 0.1
     _add_event(acc["events"]["precipitation"], wet_pred, wet_obs)
-    if wet_obs is not None:
-        src = _source_name(m, "METAR_OR_SPECI") if m else "SYNOP"
-        acc["event_sources"]["precipitation"][src] += 1
+    if wet_pred is not None and wet_obs is not None and wet_source:
+        acc["event_sources"]["precipitation"][wet_source] += 1
 
     fog_pred, _fog_prob = weighted_weather_event(model_rows, FOG_CODES)
     fog_obs, fog_source, mifg = fog_observation(m, s)
     _add_event(acc["events"]["fog"], fog_pred, fog_obs)
-    if fog_obs is not None and fog_source:
+    if fog_pred is not None and fog_obs is not None and fog_source:
         acc["event_sources"]["fog"][fog_source] += 1
-    if mifg:
-        acc["fog_observed_mifg_n"] += 1
+        if mifg:
+            acc["fog_observed_mifg_n"] += 1
 
     ts_pred, _ts_prob = weighted_weather_event(model_rows, THUNDERSTORM_CODES)
     ts_obs, ts_source = thunderstorm_observation(m, s)
     _add_event(acc["events"]["thunderstorm"], ts_pred, ts_obs)
-    if ts_obs is not None and ts_source:
+    if ts_pred is not None and ts_obs is not None and ts_source:
         acc["event_sources"]["thunderstorm"][ts_source] += 1
 
 
@@ -408,8 +425,6 @@ def build_consensus_diagnostics(now=None):
     overall_summary = _summarize(overall)
     by_bucket_summary = {name: _summarize(by_bucket[name]) for _, _, name, _ in mv.LEAD_BUCKETS}
 
-    # Integrate wind into the same diagnostic view while retaining the legacy
-    # wind_bias block separately for compatibility with existing consumers.
     overall_summary["wind"] = wind["overall"]
     for _, _, name, _ in mv.LEAD_BUCKETS:
         by_bucket_summary[name]["wind"] = wind["by_lead_bucket"][name]
@@ -425,9 +440,9 @@ def build_consensus_diagnostics(now=None):
             "visibility": "METAR_SPECI_FIRST_SYNOP_FALLBACK_CENSORED_LOWER_BOUNDS",
             "cloud_low_mid_high": "METAR_SPECI_LAYER_OKTA_RANGES",
             "cloud_total": "SYNOP_TOTAL_OKTAS",
-            "precipitation": "METAR_SPECI_OR_SYNOP_PRESENT_WEATHER",
-            "fog": "METAR_SPECI_FG_FAMILY_OR_SYNOP_WW40_49",
-            "thunderstorm": "METAR_SPECI_TS_OR_SYNOP_WW17_95_99",
+            "precipitation": "METAR_SPECI_THEN_SYNOP_PRESENT_WEATHER",
+            "fog": "METAR_SPECI_FG_FAMILY_THEN_SYNOP_WW40_49",
+            "thunderstorm": "METAR_SPECI_TS_THEN_SYNOP_WW17_95_99",
             "wind_speed": wind["reference_policy"]["wind_speed"],
             "wind_direction": wind["reference_policy"]["wind_direction"],
         },
