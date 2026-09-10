@@ -1,0 +1,50 @@
+name: Add hazard probability labels
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/add_hazard_probability_labels.py'
+      - '.github/workflows/add-hazard-probability-labels.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Apply labels
+        run: |
+          python3 -m py_compile scripts/add_hazard_probability_labels.py
+          python3 scripts/add_hazard_probability_labels.py
+          node --check aviation-hazards.js
+          node --check warnings-readable.js
+          grep -F "function probabilityLabel(p)" aviation-hazards.js
+          grep -F "probabilityLabel(now.prob)" warnings-readable.js
+
+      - name: Commit labels
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add aviation-hazards.js warnings-readable.js
+          if git diff --cached --quiet; then
+            echo "Already applied"
+          else
+            git commit -m "weather: add verbal hazard probability scale"
+            for attempt in 1 2 3 4; do
+              if git pull --rebase origin main && git push origin HEAD:main; then
+                break
+              fi
+              echo "push retry $attempt"
+              sleep $((attempt*3))
+              test "$attempt" -lt 4 || exit 1
+            done
+          fi
