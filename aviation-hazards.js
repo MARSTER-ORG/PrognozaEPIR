@@ -39,7 +39,7 @@
     lo=Math.max(0,lo);hi=Math.max(lo,hi);
     const round30=m=>Math.round(m/30)*30;
     const mlo=round30(lo),mhi=Math.max(mlo,round30(hi));
-    const ft=m=>Math.round((m*3.28084)/10)*10;
+    const ft=m=>Math.round((m*3.28084)/100)*100;
     const flo=ft(mlo),fhi=ft(mhi);
     return mlo===mhi?`${mlo} m / ${flo} ft AMSL`:`${mlo}–${mhi} m / ${flo}–${fhi} ft AMSL`;
   }
