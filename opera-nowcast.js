@@ -6,14 +6,15 @@
 
   const API = 'https://api.meteogate.eu/eu-eumetnet-weather-radar/collections/observations/locations/0-20010-0-OPERA';
   const PROJ_OPERA = '+proj=laea +lat_0=55 +lon_0=10 +x_0=1950000 +y_0=-2100000 +ellps=WGS84 +units=m +no_defs';
+  const PROJ_3035 = '+proj=laea +lat_0=52 +lon_0=10 +x_0=4321000 +y_0=3210000 +ellps=GRS80 +units=m +no_defs';
   const PROJ_WGS84 = '+proj=longlat +datum=WGS84 +no_defs';
   const GEOTIFF_JS = 'https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js';
   const PROJ4_JS = 'https://cdn.jsdelivr.net/npm/proj4@2.22.0/dist/proj4.js';
-  const META_CACHE_KEY = 'prognozaepir:opera:frames:v1';
+  const META_CACHE_KEY = 'prognozaepir:opera:frames:v2';
   const META_CACHE_MS = 4 * 60 * 1000;
   const AUTO_MS = 5 * 60 * 1000;
-  const FRAME_WINDOW_MIN = 70;
-  const MAX_FRAMES = 9;
+  const FRAME_WINDOW_MIN = 55;
+  const MAX_FRAMES = 7;
   const GRID_STEP_KM = 4;
   const GRID_RADIUS_KM = 160;
   const GRID_N = Math.round(GRID_RADIUS_KM * 2 / GRID_STEP_KM) + 1;
@@ -41,20 +42,23 @@
   const compass16 = deg => {
     if (!finite(deg)) return '—';
     const names = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
-    return names[Math.round(((deg % 360) + 360) % 360 / 22.5) % 16];
+    return names[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16];
   };
   const bearingFromVector = (east, north) => (Math.atan2(east, north) * 180 / Math.PI + 360) % 360;
   const fmtUtcMs = ms => {
-    if (!finite(ms)) return '—';
-    const d = new Date(ms);
+    if (!finite(Number(ms))) return '—';
+    const d = new Date(Number(ms));
     return `${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')} UTC`;
   };
-  const dbzText = v => finite(v) ? `${Math.round(v)} dBZ` : '—';
+  const dbzText = v => finite(Number(v)) ? `${Math.round(Number(v))} dBZ` : '—';
 
   let running = false;
   let lastRun = 0;
   let latestOpera = null;
   let libPromise = null;
+  let operaLayer = null;
+  let mapEnabled = false;
+  let mapButton = null;
 
   function currentPoint() {
     try {
@@ -84,7 +88,7 @@
     if (libPromise) return libPromise;
     libPromise = (async () => {
       await Promise.all([
-        addScript(GEOTIFF_JS, () => !!window.GeoTIFF?.fromUrl),
+        addScript(GEOTIFF_JS, () => !!window.GeoTIFF?.fromUrl && !!window.GeoTIFF?.fromArrayBuffer),
         addScript(PROJ4_JS, () => typeof window.proj4 === 'function')
       ]);
       return true;
@@ -92,33 +96,90 @@
     return libPromise;
   }
 
+  function ensureMapButton() {
+    if (mapButton) return mapButton;
+    const mapbar = document.querySelector('.mapbar');
+    if (!mapbar) return null;
+    mapButton = $('operaCmaxToggle');
+    if (!mapButton) {
+      mapButton = document.createElement('button');
+      mapButton.id = 'operaCmaxToggle';
+      mapButton.type = 'button';
+      mapButton.textContent = 'OPERA CMAX';
+      mapButton.title = 'Pokaż/ukryj europejską warstwę OPERA CIRRUS CMAX';
+      const before = $('playRadar') || null;
+      before ? mapbar.insertBefore(mapButton, before) : mapbar.appendChild(mapButton);
+    }
+    mapButton.addEventListener('click', async () => {
+      mapEnabled = !mapEnabled;
+      mapButton.classList.toggle('active', mapEnabled);
+      if (!mapEnabled) {
+        try { if (operaLayer && typeof map !== 'undefined' && map.hasLayer(operaLayer)) map.removeLayer(operaLayer); } catch (_) {}
+        return;
+      }
+      if (latestOpera?.latest && !latestOpera.error) {
+        renderMapLayer(latestOpera.latest);
+      } else {
+        setStatus('OPERA: pobieranie danych do warstwy mapy…');
+        await run(true);
+      }
+    });
+    return mapButton;
+  }
+
   function ensureUi() {
+    ensureMapButton();
     if ($('operaNowcastCard')) return;
-    const host = $('rnCard') || [...document.querySelectorAll('.card')].find(c => /Radar Nowcast/i.test(c.textContent || ''));
+    const host = $('radarNowcastCard') || $('rnCard') || [...document.querySelectorAll('.card')].find(c => /Radar Nowcast/i.test(c.textContent || ''));
     const card = document.createElement('section');
     card.id = 'operaNowcastCard';
     card.className = 'card w12';
     card.innerHTML = `
-      <h2>OPERA CIRRUS · weryfikacja europejska</h2>
-      <div class="stats" style="grid-template-columns:repeat(4,minmax(0,1fr))">
-        <div><b>Klatka</b><strong id="opFrame">—</strong><small id="opFrames">—</small></div>
-        <div><b>Najbliższe ≥27 dBZ</b><strong id="opNearest">—</strong><small id="opNearestSub">—</small></div>
-        <div><b>Maksimum ≤160 km</b><strong id="opMax">—</strong><small id="opArea">—</small></div>
-        <div><b>Ruch</b><strong id="opMotion">—</strong><small id="opMotionSub">—</small></div>
-        <div><b>Trend komórki</b><strong id="opTrend">—</strong><small id="opTrendSub">—</small></div>
-        <div><b>Jakość QIND</b><strong id="opQind">—</strong><small id="opQindSub">jeśli band jest dostępny</small></div>
-        <div><b>Zgodność z POLRAD</b><strong id="opFusion">—</strong><small id="opFusionSub">—</small></div>
-        <div><b>Wsparcie TCU/CB</b><strong id="opConv">—</strong><small id="opConvSub">OPERA nie inicjuje sygnału samodzielnie</small></div>
+      <div class="op-head"><h2>OPERA CIRRUS</h2><span id="opState" class="op-badge">ŁĄCZENIE…</span><span id="opFrame" class="op-time">—</span></div>
+      <div id="opBody" class="op-grid">
+        <div><small>Najsilniejsze echo</small><strong id="opMax">—</strong><span id="opNearest">—</span></div>
+        <div><small>Ruch / trend</small><strong id="opMotion">—</strong><span id="opTrend">—</span></div>
+        <div><small>Porównanie z POLRAD</small><strong id="opFusion">—</strong><span id="opConv">—</span></div>
       </div>
-      <div class="note" style="margin-top:8px"><b>OPERA +15/+30/+45/+60 min:</b> <span id="opPred">—</span></div>
-      <div id="opSummary" class="note" style="margin-top:5px">Łączenie z EUMETNET Open Radar Data…</div>
-      <div id="opStatus" class="note" style="margin-top:4px">—</div>`;
+      <div id="opSummary" class="op-summary">Europejskie CMAX jest źródłem kontrolnym; POLRAD pozostaje podstawą.</div>
+      <details id="opDetails" class="op-details"><summary>Szczegóły techniczne</summary>
+        <div class="op-tech"><span id="opFrames">—</span><span id="opQind">—</span><span id="opArea">—</span><span id="opPred">—</span><span id="opFusionSub">—</span></div>
+      </details>
+      <div id="opStatus" class="op-status">—</div>`;
     if (host) host.insertAdjacentElement('afterend', card);
     else document.querySelector('.grid')?.appendChild(card);
 
     const style = document.createElement('style');
-    style.textContent = `#operaNowcastCard .stats strong{font-size:12px;display:block;margin-top:2px}#operaNowcastCard .stats small{display:block;color:var(--muted);font-size:9px;margin-top:2px}@media(max-width:760px){#operaNowcastCard .stats{grid-template-columns:repeat(2,minmax(0,1fr))!important}}`;
+    style.id = 'operaCompactStyle';
+    style.textContent = `
+      #operaNowcastCard{padding-bottom:5px!important}
+      #operaNowcastCard .op-head{display:flex;align-items:center;gap:7px;padding:7px 9px;border-bottom:1px solid var(--line)}
+      #operaNowcastCard .op-head h2{margin:0!important;padding:0!important;border:0!important;flex:1;font-size:12px!important}
+      #operaNowcastCard .op-badge{font-size:8px;font-weight:800;border:1px solid var(--line);border-radius:999px;padding:2px 6px}
+      #operaNowcastCard .op-badge.ok{color:#35b24a;border-color:#35b24a}.op-badge.bad{color:#f04444;border-color:#f04444}.op-badge.wait{color:#f59f00;border-color:#f59f00}
+      #operaNowcastCard .op-time{font-size:8px;color:var(--muted);white-space:nowrap}
+      #operaNowcastCard .op-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:var(--line)}
+      #operaNowcastCard .op-grid>div{background:var(--panel);padding:7px 8px;min-width:0}
+      #operaNowcastCard .op-grid small,#operaNowcastCard .op-grid span{display:block;color:var(--muted);font-size:8px;line-height:1.25}
+      #operaNowcastCard .op-grid strong{display:block;font-size:12px;line-height:1.25;margin:2px 0}
+      #operaNowcastCard .op-summary{padding:6px 9px;font-size:9px;line-height:1.35}
+      #operaNowcastCard .op-details{margin:0 9px 5px;font-size:8px;color:var(--muted)}
+      #operaNowcastCard .op-details summary{cursor:pointer;color:var(--muted);font-size:8px}
+      #operaNowcastCard .op-tech{display:grid;gap:2px;padding-top:4px}
+      #operaNowcastCard .op-status{padding:0 9px 5px;font-size:7.5px;color:var(--muted)}
+      #operaNowcastCard.op-error .op-grid,#operaNowcastCard.op-error .op-details{display:none!important}
+      @media(max-width:640px){#operaNowcastCard .op-grid{grid-template-columns:repeat(2,minmax(0,1fr))}#operaNowcastCard .op-grid>div:last-child{grid-column:1/-1}#operaNowcastCard .op-time{display:none}}
+    `;
     document.head.appendChild(style);
+  }
+
+  function setState(text, kind='wait') {
+    ensureUi();
+    const el = $('opState');
+    if (!el) return;
+    el.textContent = text;
+    el.classList.remove('ok','bad','wait');
+    el.classList.add(kind);
   }
 
   function setStatus(text) {
@@ -145,23 +206,25 @@
     const iso = Date.parse(s);
     if (finite(iso)) return iso;
     const m = s.match(/(20\d{2})(\d{2})(\d{2})T(\d{2})(\d{2})(?:\d{2})?/);
-    if (m) return Date.UTC(+m[1], +m[2]-1, +m[3], +m[4], +m[5]);
-    return NaN;
+    return m ? Date.UTC(+m[1], +m[2]-1, +m[3], +m[4], +m[5]) : NaN;
   }
 
   function extractFrames(payload) {
     const found = new Map();
     const seen = new Set();
-    const walk = (node, inheritedTime = NaN) => {
+    const add = (url, time, hint='') => {
+      const s = String(url || '').trim();
+      if (!/^https?:\/\//i.test(s)) return;
+      const h = String(hint || '').toLowerCase();
+      const looksTiff = /\.tiff?(?:$|[?#])/i.test(s) || /geotiff|image\/tiff|tiff/.test(h);
+      if (!looksTiff) return;
+      const key = s.split('#')[0];
+      const t = finite(time) ? time : parseTime(s);
+      found.set(key, {url:key, time:t});
+    };
+    const walk = (node, inheritedTime = NaN, inheritedHint='') => {
       if (node == null) return;
-      if (typeof node === 'string') {
-        if (/^https?:\/\//i.test(node) && /(?:\.tif{1,2})(?:$|[?#])/i.test(node)) {
-          const t = finite(inheritedTime) ? inheritedTime : parseTime(node);
-          const key = node.split('#')[0];
-          found.set(key, {url:key, time:t});
-        }
-        return;
-      }
+      if (typeof node === 'string') { add(node, inheritedTime, inheritedHint); return; }
       if (typeof node !== 'object' || seen.has(node)) return;
       seen.add(node);
       let ownTime = inheritedTime;
@@ -171,12 +234,9 @@
           if (finite(t)) { ownTime = t; break; }
         }
       }
-      if (typeof node.href === 'string' && /\.tif{1,2}(?:$|[?#])/i.test(node.href)) {
-        const t = finite(ownTime) ? ownTime : parseTime(node.href);
-        const key = node.href.split('#')[0];
-        found.set(key, {url:key, time:t});
-      }
-      for (const v of Object.values(node)) walk(v, ownTime);
+      const ownHint = [inheritedHint,node.type,node.format,node.title,node.rel,node['metocean:format']].filter(Boolean).join(' ');
+      for (const k of ['href','url','data']) if (typeof node[k] === 'string') add(node[k], ownTime, ownHint);
+      for (const v of Object.values(node)) walk(v, ownTime, ownHint);
     };
     walk(payload);
     return [...found.values()]
@@ -207,20 +267,58 @@
     const timer = setTimeout(() => c.abort(), 12000);
     try {
       const r = await fetch(apiUrl(), {cache:'no-store', signal:c.signal, headers:{Accept:'application/json'}});
-      if (r.status === 204) throw new Error('OPERA: brak danych w bieżącym oknie');
+      if (r.status === 204) throw new Error('brak danych OPERA w bieżącym oknie');
       if (!r.ok) throw new Error(`MeteoGate HTTP ${r.status}`);
       const payload = await r.json();
       const frames = extractFrames(payload);
-      if (frames.length < 3) throw new Error('OPERA: API nie zwróciło co najmniej 3 GeoTIFF');
+      if (frames.length < 3) throw new Error('API nie zwróciło co najmniej 3 klatek GeoTIFF');
       saveMetaCache(frames);
       return frames;
     } finally { clearTimeout(timer); }
   }
 
-  function projectedPoint(p) {
-    const xy = window.proj4(PROJ_WGS84, PROJ_OPERA, [p.lon, p.lat]);
-    if (!Array.isArray(xy) || !finite(xy[0]) || !finite(xy[1])) throw new Error('OPERA: błąd transformacji współrzędnych');
-    return {x:xy[0], y:xy[1]};
+  async function openTiff(url) {
+    let rangeError = null;
+    try {
+      return await window.GeoTIFF.fromUrl(url, {cache:true});
+    } catch (e) {
+      rangeError = e;
+    }
+    try {
+      const c = new AbortController();
+      const timer = setTimeout(() => c.abort(), 20000);
+      try {
+        const r = await fetch(url, {cache:'no-store', signal:c.signal});
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const buf = await r.arrayBuffer();
+        return await window.GeoTIFF.fromArrayBuffer(buf);
+      } finally { clearTimeout(timer); }
+    } catch (fullError) {
+      const err = new Error(`GeoTIFF niedostępny w przeglądarce (${fullError?.message || rangeError?.message || 'CORS'})`);
+      err.cause = {rangeError, fullError};
+      throw err;
+    }
+  }
+
+  function projectForBbox(p, bbox) {
+    const [minX,minY,maxX,maxY] = bbox;
+    const inside = xy => Array.isArray(xy) && finite(xy[0]) && finite(xy[1]) && xy[0] >= minX && xy[0] <= maxX && xy[1] >= minY && xy[1] <= maxY;
+    const candidates = [
+      {name:'OPERA-LAEA', proj:PROJ_OPERA},
+      {name:'EPSG:3035', proj:PROJ_3035},
+      {name:'WGS84', proj:PROJ_WGS84}
+    ];
+    for (const c of candidates) {
+      let xy;
+      try { xy = c.proj === PROJ_WGS84 ? [p.lon,p.lat] : window.proj4(PROJ_WGS84,c.proj,[p.lon,p.lat]); } catch (_) { continue; }
+      if (inside(xy)) return {...c,x:xy[0],y:xy[1]};
+    }
+    throw new Error('nie rozpoznano projekcji GeoTIFF');
+  }
+
+  function inversePoint(proj, x, y) {
+    if (proj === PROJ_WGS84) return [x,y];
+    return window.proj4(proj, PROJ_WGS84, [x,y]);
   }
 
   function metadataNumber(meta, names, fallback) {
@@ -237,13 +335,13 @@
   }
 
   async function readFrame(frame, p) {
-    const tiff = await window.GeoTIFF.fromUrl(frame.url, {cache:true});
+    const tiff = await openTiff(frame.url);
     const image = await tiff.getImage();
     const w = image.getWidth(), h = image.getHeight();
     const bbox = image.getBoundingBox();
-    if (!Array.isArray(bbox) || bbox.length !== 4) throw new Error('OPERA: GeoTIFF bez georeferencji');
+    if (!Array.isArray(bbox) || bbox.length !== 4 || !bbox.every(finite)) throw new Error('GeoTIFF bez poprawnej georeferencji');
     const [minX,minY,maxX,maxY] = bbox;
-    const pp = projectedPoint(p);
+    const pp = projectForBbox(p,bbox);
     const px = (pp.x - minX) / (maxX - minX) * w;
     const py = (maxY - pp.y) / (maxY - minY) * h;
     const scaleX = w / (maxX-minX), scaleY = h / (maxY-minY);
@@ -255,10 +353,11 @@
     const samples = spp >= 2 ? [0,1] : [0];
     const rasters = await image.readRasters({window:[x0,y0,x1,y1], samples, width:GRID_N, height:GRID_N, resampleMethod:'nearest'});
     const raw = rasters[0];
-    if (!raw || raw.length !== GRID_N*GRID_N) throw new Error('OPERA: niepoprawny raster DBZH');
+    if (!raw || raw.length !== GRID_N*GRID_N) throw new Error('niepoprawny raster DBZH');
     const qRaw = rasters[1] && rasters[1].length === raw.length ? rasters[1] : null;
-    const meta = await image.getGDALMetadata?.(0).catch?.(() => null) || null;
-    const datasetMeta = await image.getGDALMetadata?.(null).catch?.(() => null) || null;
+    let meta = null, datasetMeta = null;
+    try { meta = await image.getGDALMetadata?.(0); } catch (_) {}
+    try { datasetMeta = await image.getGDALMetadata?.(null); } catch (_) {}
     const gain = metadataNumber(meta, ['scale_factor','scale','gain'], metadataNumber(datasetMeta,['scale_factor','scale','gain'],1));
     const offset = metadataNumber(meta, ['add_offset','offset'], metadataNumber(datasetMeta,['add_offset','offset'],0));
     const nodata = typeof image.getGDALNoData === 'function' ? image.getGDALNoData() : null;
@@ -275,9 +374,9 @@
     let active=0, sum=0, max=-Infinity;
     const area = {ge35:0,ge40:0,ge45:0,ge50:0};
     for (let i=0;i<raw.length;i++) {
-      const r = Number(raw[i]);
-      if (!finite(r) || (nodata != null && r === Number(nodata))) { values[i]=NaN; continue; }
-      const v = r*gain+offset;
+      const rv = Number(raw[i]);
+      if (!finite(rv) || (nodata != null && rv === Number(nodata))) { values[i]=NaN; continue; }
+      const v = rv*gain+offset;
       if (!finite(v) || v < -100 || v > 100) { values[i]=NaN; continue; }
       values[i]=v;
       max=Math.max(max,v);
@@ -289,7 +388,16 @@
       if (qok && v>=50) area.ge50++;
     }
     if (!finite(max)) max=NaN;
-    return {time:frame.time, url:frame.url, values, mask, active, mean:active?sum/active:NaN, max, area, qMean, qUsable};
+
+    const wx0=minX+(x0/w)*(maxX-minX), wx1=minX+(x1/w)*(maxX-minX);
+    const wyTop=maxY-(y0/h)*(maxY-minY), wyBottom=maxY-(y1/h)*(maxY-minY);
+    const corners = [
+      inversePoint(pp.proj,wx0,wyTop), inversePoint(pp.proj,wx1,wyTop),
+      inversePoint(pp.proj,wx0,wyBottom), inversePoint(pp.proj,wx1,wyBottom)
+    ].filter(x=>Array.isArray(x)&&x.every(finite));
+    const lons=corners.map(x=>x[0]), lats=corners.map(x=>x[1]);
+    const geoBounds = corners.length===4 ? [[Math.min(...lats),Math.min(...lons)],[Math.max(...lats),Math.max(...lons)]] : null;
+    return {time:frame.time, url:frame.url, values, mask, active, mean:active?sum/active:NaN, max, area, qMean, qUsable, projection:pp.name, geoBounds};
   }
 
   function scoreShift(a,b,sx,sy) {
@@ -341,8 +449,8 @@
 
   function trendStats(grids) {
     const meanRate=linearRate(grids,g=>g.mean),maxRate=linearRate(grids,g=>g.max),area45Rate=linearRate(grids,g=>g.area.ge45);
-    let label='stabilna';
-    if((finite(maxRate)&&maxRate>=5)||(finite(area45Rate)&&area45Rate>=8))label='rozwój';
+    let label='stabilne';
+    if((finite(maxRate)&&maxRate>=5)||(finite(area45Rate)&&area45Rate>=8))label='rośnie';
     else if((finite(maxRate)&&maxRate<=-5)||(finite(area45Rate)&&area45Rate<=-8))label='słabnie';
     return {label,meanDbzPerH:meanRate,maxDbzPerH:maxRate,area45CellsPerH:area45Rate};
   }
@@ -390,7 +498,7 @@
 
   function confidence(grids,vector) {
     if(!vector)return 0;
-    const newest=grids.at(-1)?.time||0,age=(Date.now()-newest)/60000,fresh=clamp(1-age/MAX_FRAME_AGE_MIN,0,1),frames=clamp(grids.length/8,0,1),quality=finite(grids.at(-1)?.qMean)?clamp(grids.at(-1).qMean,0,1):.65;
+    const newest=grids.at(-1)?.time||0,age=(Date.now()-newest)/60000,fresh=clamp(1-age/MAX_FRAME_AGE_MIN,0,1),frames=clamp(grids.length/7,0,1),quality=finite(grids.at(-1)?.qMean)?clamp(grids.at(-1).qMean,0,1):.65;
     return Math.round(100*(.44*clamp(vector.score,0,1)+.27*vector.consistency+.17*fresh+.08*frames+.04*quality));
   }
 
@@ -409,12 +517,43 @@
     const ps=Number(pvec?.speedKmh),os=Number(ovec?.speedKmh),speedDiff=finite(ps)&&finite(os)?Math.abs(ps-os):NaN;
     const vectorAgree=finite(dirDiff)&&finite(speedDiff)&&dirDiff<=45&&speedDiff<=Math.max(25,ps*.6);
     const pSignal=polradSignal(polrad),oStrong=Number(opera?.approach?.value)>=35||Number(opera?.nearest?.value)>=40||Object.values(opera?.predictions||{}).some(v=>Number(v)>=35);
-    let convLevel='brak sygnału POLRAD';
-    if(pSignal&&oStrong&&vectorAgree)convLevel='silne potwierdzenie';
-    else if(pSignal&&oStrong)convLevel='częściowe potwierdzenie';
-    else if(pSignal&&!oStrong)convLevel='brak potwierdzenia OPERA';
+    let convLevel='brak sygnału do potwierdzenia';
+    if(pSignal&&oStrong&&vectorAgree)convLevel='potwierdza';
+    else if(pSignal&&oStrong)convLevel='częściowo potwierdza';
+    else if(pSignal&&!oStrong)convLevel='nie potwierdza';
     const level=!pvec||!ovec?'brak porównania':vectorAgree?'zgodne':finite(dirDiff)&&dirDiff<=70?'częściowo zgodne':'rozbieżne';
     return {updatedAt:new Date().toISOString(),level,vectorAgree,dirDiffDeg:dirDiff,speedDiffKmh:speedDiff,convectiveSupport:convLevel,polradSignal:pSignal,operaSignal:oStrong,primary:'POLRAD',secondary:'OPERA CIRRUS'};
+  }
+
+  function colorForDbz(v) {
+    if (!finite(v) || v < 5) return [0,0,0,0];
+    const palette = [
+      [62,245,140,255],[56,255,25,204],[50,230,0,89],[44,255,22,0],[38,255,136,0],
+      [32,255,242,0],[26,255,251,216],[20,184,244,241],[14,27,200,240],[8,0,51,232],[5,0,0,204]
+    ];
+    for (const p of palette) if (v >= p[0]) return [p[1],p[2],p[3],185];
+    return [0,0,170,150];
+  }
+
+  function rasterDataUrl(latest) {
+    const c=document.createElement('canvas');c.width=GRID_N;c.height=GRID_N;
+    const ctx=c.getContext('2d',{willReadFrequently:false});if(!ctx)return null;
+    const im=ctx.createImageData(GRID_N,GRID_N);
+    for(let i=0;i<latest.values.length;i++){
+      const [r,g,b,a]=colorForDbz(Number(latest.values[i]));const j=i*4;
+      im.data[j]=r;im.data[j+1]=g;im.data[j+2]=b;im.data[j+3]=a;
+    }
+    ctx.putImageData(im,0,0);
+    return c.toDataURL('image/png');
+  }
+
+  function renderMapLayer(latest) {
+    ensureMapButton();
+    if (!mapEnabled || !latest?.geoBounds || typeof L === 'undefined' || typeof map === 'undefined') return;
+    const url=rasterDataUrl(latest);if(!url)return;
+    try { if (operaLayer && map.hasLayer(operaLayer)) map.removeLayer(operaLayer); } catch (_) {}
+    operaLayer=L.imageOverlay(url,latest.geoBounds,{opacity:.52,interactive:false,attribution:'EUMETNET OPERA CIRRUS'});
+    operaLayer.addTo(map);
   }
 
   function publishOpera(result) {
@@ -433,71 +572,79 @@
   }
 
   function renderFusion(f) {
-    const a=$('opFusion'),b=$('opFusionSub'),c=$('opConv');
-    if(a)a.textContent=f.level;
-    if(b)b.textContent=finite(f.dirDiffDeg)?`Δ kier. ${Math.round(f.dirDiffDeg)}° · Δ V ${Math.round(f.speedDiffKmh)} km/h`:'wektor jednego źródła niedostępny';
-    if(c)c.textContent=f.convectiveSupport;
+    if($('opFusion'))$('opFusion').textContent=f.level;
+    if($('opConv'))$('opConv').textContent=f.convectiveSupport;
+    if($('opFusionSub'))$('opFusionSub').textContent=finite(f.dirDiffDeg)?`różnica kierunku ${Math.round(f.dirDiffDeg)}° · prędkości ${Math.round(f.speedDiffKmh)} km/h`:'wektor jednego źródła niedostępny';
   }
 
   function renderResult(r) {
     ensureUi();
+    const card=$('operaNowcastCard');if(card)card.classList.remove('op-error');
     const latest=r.latest;
+    setState('DZIAŁA','ok');
     $('opFrame').textContent=fmtUtcMs(latest.time);
-    $('opFrames').textContent=`${r.frames} klatek · ${fmtUtcMs(r.frameStart)}–${fmtUtcMs(r.frameEnd)}`;
-    $('opNearest').textContent=r.nearest?`${Math.round(r.nearest.distance)} km ${compass16(r.nearest.bearing)}`:'brak ≥27 dBZ';
-    $('opNearestSub').textContent=r.nearest?dbzText(r.nearest.value):'w promieniu 160 km';
+    $('opFrames').textContent=`Historia: ${r.frames} klatek · ${fmtUtcMs(r.frameStart)}–${fmtUtcMs(r.frameEnd)} · projekcja ${latest.projection}`;
     $('opMax').textContent=dbzText(latest.max);
-    $('opArea').textContent=`≥35: ${latest.area.ge35} · ≥40: ${latest.area.ge40} · ≥45: ${latest.area.ge45} · ≥50: ${latest.area.ge50} kom.`;
-    $('opMotion').textContent=r.vector?`${compass16(r.vector.bearingDeg)} · ${Math.round(r.vector.speedKmh)} km/h`:'—';
-    $('opMotionSub').textContent=r.vector?`${Math.round(r.vector.bearingDeg)}° · korelacja ${Math.round(r.vector.score*100)}/100`:'brak stabilnego wektora';
-    $('opTrend').textContent=r.trend.label;
-    $('opTrendSub').textContent=finite(r.trend.maxDbzPerH)?`max ${r.trend.maxDbzPerH>=0?'+':''}${r.trend.maxDbzPerH.toFixed(1)} dBZ/h`:'—';
-    $('opQind').textContent=latest.qUsable?`${Math.round(latest.qMean*100)}/100`:'niedostępny';
-    $('opQindSub').textContent=latest.qUsable?`piksele QIND < ${QIND_MIN.toFixed(2)} pomijane`:'DBZH analizowane bez dodatkowej maski QIND';
-    $('opPred').textContent=HORIZONS.map(h=>`+${h}: ${dbzText(r.predictions[h])}`).join(' · ');
+    $('opNearest').textContent=r.nearest?`najbliższe ≥27 dBZ: ${Math.round(r.nearest.distance)} km ${compass16(r.nearest.bearing)}`:'brak echa ≥27 dBZ do 160 km';
+    $('opMotion').textContent=r.vector?`${compass16(r.vector.bearingDeg)} · ${Math.round(r.vector.speedKmh)} km/h`:'brak stabilnego ruchu';
+    $('opTrend').textContent=`trend: ${r.trend.label}`;
+    $('opQind').textContent=latest.qUsable?`QIND: ${Math.round(latest.qMean*100)}/100 · odrzucono <${QIND_MIN}`:'QIND: brak osobnego pasma — bez dodatkowej maski';
+    $('opArea').textContent=`Obszar komórek: ≥35 ${latest.area.ge35} · ≥40 ${latest.area.ge40} · ≥45 ${latest.area.ge45} · ≥50 ${latest.area.ge50}`;
+    $('opPred').textContent=`Prognoza przy utrzymaniu ruchu: ${HORIZONS.map(h=>`+${h} min ${dbzText(r.predictions[h])}`).join(' · ')}`;
     const eta=r.approach?Math.round(r.approach.tHours*60):null;
     $('opSummary').textContent=r.approach
-      ? `OPERA wskazuje echo z ${compass16(r.approach.bearing)} z możliwym zbliżeniem do ≤30 km od punktu za około ${eta} min. Trend: ${r.trend.label}. OPERA jest źródłem weryfikacyjnym; podstawą decyzji pozostaje POLRAD.`
-      : `OPERA nie wskazuje obecnie trajektorii echa ≥27 dBZ przechodzącej w odległości ≤30 km od punktu w ciągu 90 min. Trend obszaru: ${r.trend.label}.`;
-    setStatus(`aktualizacja ${fmtUtcMs(Date.now())} · ostatnia klatka ${fmtUtcMs(latest.time)} · EUMETNET OPERA DBZH`);
+      ? `Echo może podejść na ≤30 km za ok. ${eta} min. OPERA służy jako kontrola wyniku POLRAD.`
+      : `Brak trajektorii echa ≥27 dBZ wchodzącej na ≤30 km w ciągu 90 min. OPERA służy jako kontrola wyniku POLRAD.`;
+    setStatus(`odświeżono ${fmtUtcMs(Date.now())} · klatka ${fmtUtcMs(latest.time)} · EUMETNET OPERA DBZH`);
+    renderMapLayer(latest);
+  }
+
+  function renderError(msg) {
+    ensureUi();
+    const card=$('operaNowcastCard');if(card)card.classList.add('op-error');
+    setState('NIEDOSTĘPNA','bad');
+    $('opFrame').textContent='—';
+    $('opSummary').textContent='OPERA jest chwilowo niedostępna. POLRAD działa normalnie i pozostaje źródłem podstawowym.';
+    setStatus(`błąd OPERA: ${msg}`);
+    try { if(operaLayer && typeof map!=='undefined' && map.hasLayer(operaLayer))map.removeLayer(operaLayer); } catch (_) {}
   }
 
   async function run(force=false) {
     ensureUi();
     if(running)return;
     if(!force&&Date.now()-lastRun<META_CACHE_MS)return;
-    const p=currentPoint();if(!p){setStatus('OPERA: brak poprawnego punktu');return;}
-    running=true;lastRun=Date.now();setStatus('OPERA: pobieranie metadanych GeoTIFF…');
+    const p=currentPoint();if(!p){renderError('brak poprawnego punktu');return;}
+    running=true;lastRun=Date.now();setState('POBIERANIE','wait');setStatus('OPERA: pobieranie klatek GeoTIFF…');
     try {
       await ensureLibraries();
       const frames=await fetchFrames(force);
       const grids=[];
+      let lastErr='';
       for(let i=0;i<frames.length;i++){
-        setStatus(`OPERA DBZH: klatka ${i+1}/${frames.length} · ${fmtUtcMs(frames[i].time)}`);
-        try{grids.push(await readFrame(frames[i],p));}catch(e){console.warn('OPERA frame skipped',frames[i],e);}
+        setStatus(`OPERA: odczyt ${i+1}/${frames.length} · ${fmtUtcMs(frames[i].time)}`);
+        try{grids.push(await readFrame(frames[i],p));}catch(e){lastErr=String(e?.message||e);console.warn('OPERA frame skipped',frames[i],e);}
       }
-      if(grids.length<3)throw new Error('OPERA: nie udało się odczytać historii GeoTIFF');
+      if(grids.length<3)throw new Error(lastErr || 'nie udało się odczytać historii GeoTIFF');
       const useful=grids.filter((g,i)=>g.active>=2||i===grids.length-1);
-      if(useful.length<3)throw new Error('OPERA: za mało użytecznych klatek');
+      if(useful.length<3)throw new Error('za mało użytecznych klatek');
       const latest=useful.at(-1),age=(Date.now()-latest.time)/60000;
-      if(age>45)throw new Error(`OPERA: ostatnia klatka ma ${Math.round(age)} min`);
+      if(age>45)throw new Error(`ostatnia klatka ma ${Math.round(age)} min`);
       const vector=vectorStats(useful),trend=trendStats(useful),nearest=nearestEcho(latest),approach=vector?approachEcho(latest,vector):null,predictions=vector?advect(latest,vector,trend):Object.fromEntries(HORIZONS.map(h=>[h,NaN])),conf=confidence(useful,vector);
       const result={updatedAt:new Date().toISOString(),point:p,source:'opera_cirrus_dbzh',frames:useful.length,frameStart:useful[0].time,frameEnd:latest.time,latest,vector:vector?{eastKmh:vector.east,northKmh:vector.north,speedKmh:vector.speed,bearingDeg:vector.bearing,score:vector.score,consistency:vector.consistency}:null,confidence:conf,trend,nearest,approach,etaMin:approach?approach.tHours*60:null,predictions,quality:{qindAvailable:latest.qUsable,qindMean:latest.qMean,qindThreshold:QIND_MIN}};
       renderResult(result);publishOpera(result);
     } catch(e) {
       console.error('OPERA Nowcast:',e);
       const msg=String(e?.message||e);
-      setStatus(`OPERA: ${msg}`);
-      $('opSummary').textContent=`OPERA chwilowo niedostępna (${msg}). POLRAD działa niezależnie i pozostaje źródłem podstawowym.`;
+      renderError(msg);
       publishOpera({updatedAt:new Date().toISOString(),point:p,error:msg,source:'opera_cirrus_dbzh'});
     } finally {running=false;}
   }
 
   ensureUi();
   window.addEventListener('prognozaepir:radar-nowcast-updated',publishFusion);
-  for(const id of ['apply','resetPoint','refresh'])$(id)?.addEventListener('click',()=>setTimeout(()=>run(true),800));
+  for(const id of ['apply','resetPoint','refresh'])$(id)?.addEventListener('click',()=>setTimeout(()=>run(true),650));
   document.addEventListener('visibilitychange',()=>{if(!document.hidden&&Date.now()-lastRun>AUTO_MS)run(false);});
-  setTimeout(()=>run(false),2600);
+  setTimeout(()=>run(false),1800);
   setInterval(()=>{if(!document.hidden)run(false);},AUTO_MS);
-  window.PrognozaEPIROperaNowcastEngine={refresh:()=>run(true),get:()=>window.PrognozaEPIROperaNowcast||null,getFusion:()=>window.PrognozaEPIRRadarFusion||null};
+  window.PrognozaEPIROperaNowcastEngine={refresh:()=>run(true),get:()=>window.PrognozaEPIROperaNowcast||null,getFusion:()=>window.PrognozaEPIRRadarFusion||null,toggleMap:()=>mapButton?.click()};
 })();
