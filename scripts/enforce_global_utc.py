@@ -3,18 +3,21 @@
 
 Rules:
 - application/runtime time is UTC, never Europe/Warsaw/local browser time;
-- visible clock values carry an explicit ``UTC`` suffix;
+- every user-facing clock value carries an explicit ``UTC`` suffix;
+- every user-facing HTML page loads the shared ``utc-ui-guard.js`` runtime guard;
 - raw aviation telegram syntax (for example DDHHMMZ) is left unchanged.
 """
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SELF = Path(__file__).resolve()
 TEXT_SUFFIXES = {'.html', '.js', '.mjs', '.cjs', '.py', '.yml', '.yaml'}
 SKIP_DIRS = {'.git', '.github', 'node_modules', 'data'}
+UTC_GUARD_NAME = 'utc-ui-guard.js'
 
 JS_DATE_REPLACEMENTS = (
     ('.getHours()', '.getUTCHours()'),
@@ -43,6 +46,29 @@ def source_files():
         if any(part in SKIP_DIRS for part in rel.parts):
             continue
         yield path
+
+
+def html_files():
+    return [p for p in source_files() if p.suffix.lower() == '.html']
+
+
+def guard_src(rel: str) -> str:
+    depth = len(Path(rel).parent.parts)
+    return '../' * depth + UTC_GUARD_NAME
+
+
+def ensure_utc_guard(text: str, rel: str) -> str:
+    """Load the shared guard early on every HTML page, including future pages."""
+    if not rel.lower().endswith('.html'):
+        return text
+    if re.search(r'<script\b[^>]*\bsrc=["\'][^"\']*utc-ui-guard\.js(?:[?#][^"\']*)?["\']', text, re.I):
+        return text
+    tag = f'<script src="{guard_src(rel)}"></script>'
+    if re.search(r'</title\s*>', text, re.I):
+        return re.sub(r'(</title\s*>)', r'\1\n' + tag, text, count=1, flags=re.I)
+    if re.search(r'</head\s*>', text, re.I):
+        return re.sub(r'(</head\s*>)', tag + r'\n\1', text, count=1, flags=re.I)
+    return tag + '\n' + text
 
 
 def patch_index(text: str) -> str:
@@ -97,6 +123,7 @@ def patch_radar(text: str) -> str:
     if marker in text and 'function fmtExternalUtc(' not in text:
         text = text.replace(marker, marker + "\nfunction fmtExternalUtc(value){if(!value)return '';const ms=Date.parse(value);return Number.isFinite(ms)?fmtTime(ms):String(value)}")
     text = text.replace("'<br><small>'+od+' → '+do_+'</small>'", "'<br><small>'+fmtExternalUtc(od)+' → '+fmtExternalUtc(do_)+'</small>'")
+    text = text.replace('<th>Czas</th><th>Temp.</th>', '<th>Czas UTC</th><th>Temp.</th>')
     return text
 
 
@@ -126,10 +153,32 @@ def apply() -> list[str]:
         if patcher:
             updated = patcher(updated)
         updated = normalize_utc(updated, path.suffix.lower())
+        if path.suffix.lower() == '.html':
+            updated = ensure_utc_guard(updated, rel)
         if updated != text:
             path.write_text(updated, encoding='utf-8')
             changed.append(rel)
     return changed
+
+
+def validate_guard(errors: list[str]) -> None:
+    guard = ROOT / UTC_GUARD_NAME
+    if not guard.exists():
+        errors.append(f'{UTC_GUARD_NAME}: missing global UTC UI guard')
+        return
+    text = guard.read_text(encoding='utf-8')
+    required = [
+        "timeZone: 'UTC'",
+        "MutationObserver",
+        "CanvasRenderingContext2D",
+        "markUtc",
+        "data-tooltip",
+        "toLocaleTimeString",
+        "Intl.DateTimeFormat",
+    ]
+    for token in required:
+        if token not in text:
+            errors.append(f'{UTC_GUARD_NAME}: missing runtime invariant {token}')
 
 
 def validate() -> list[str]:
@@ -146,11 +195,21 @@ def validate() -> list[str]:
             if token in text:
                 errors.append(f'{rel}: forbidden local-time token {token}')
 
+    validate_guard(errors)
+
+    # Every current and future user-facing HTML page must load the guard.
+    for path in html_files():
+        rel = path.relative_to(ROOT).as_posix()
+        text = path.read_text(encoding='utf-8')
+        expected = guard_src(rel)
+        if not re.search(r'<script\b[^>]*\bsrc=["\']' + re.escape(expected) + r'(?:[?#][^"\']*)?["\']', text, re.I):
+            errors.append(f'{rel}: missing global UTC UI guard ({expected})')
+
     required = {
         'index.html': ["tz:'UTC'", "?value+' UTC':value", "Aktualizacja: '+fmt(Date.now()"],
         'arch.html': ["replace('T',' ')+' UTC'"],
         'taf.html': [":00 UTC</td>", "$('st').textContent=fu(Date.now()).slice(6)"],
-        'radar.html': ["function fmtTime(ms)", "timeZone:'UTC'", ".format(new Date(ms))+' UTC'", 'function fmtUtc(sec)', 'fmtExternalUtc(od)'],
+        'radar.html': ["function fmtTime(ms)", "timeZone:'UTC'", ".format(new Date(ms))+' UTC'", 'function fmtUtc(sec)', 'fmtExternalUtc(od)', '<th>Czas UTC</th>'],
         'sat-fog.html': ["timeZone:'UTC'", "+' UTC'"],
     }
     for rel, tokens in required.items():
