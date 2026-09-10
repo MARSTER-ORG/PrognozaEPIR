@@ -3,16 +3,15 @@
 
 The labels are deliberately operational project regimes, not official WMO
 front/high/low analyses. Historical learning must derive them only from fields
-available in the archived operational forecast run being verified.
+available in the archived operational forecast run being verified. All time
+classification is UTC, matching the project-wide time standard.
 """
 from __future__ import annotations
 
 import math
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from datetime import datetime, timezone
 
-TZ = ZoneInfo("Europe/Warsaw")
-VERSION = "epir-synoptic-regime-v1"
+VERSION = "epir-synoptic-regime-v2-utc"
 LEVELS = (925, 850, 700, 500)
 DIMENSION_WEIGHTS = {
     "season": 0.25,
@@ -29,7 +28,7 @@ def finite(v):
 
 
 def season(dt: datetime) -> str:
-    m = dt.month
+    m = dt.astimezone(timezone.utc).month
     if m in (12, 1, 2):
         return "winter"
     if m in (3, 4, 5):
@@ -40,7 +39,7 @@ def season(dt: datetime) -> str:
 
 
 def daypart(dt: datetime) -> str:
-    h = dt.astimezone(TZ).hour
+    h = dt.astimezone(timezone.utc).hour
     if h < 6:
         return "night"
     if h < 12:
