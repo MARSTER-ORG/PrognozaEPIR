@@ -1,0 +1,87 @@
+name: Apply synoptic regime upgrade
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-synoptic-regime-upgrade.yml'
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fix enrichment HTTP 400 handling
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('scripts/enrich_synoptic_context.py')
+          s=p.read_text(encoding='utf-8')
+          old="""        except urllib.error.HTTPError as exc:\n            last = exc\n            if not transient_http(exc.code) and exc.code != 400:\n                raise\n"""
+          new="""        except urllib.error.HTTPError as exc:\n            last = exc\n            if exc.code == 400:\n                raise\n            if not transient_http(exc.code):\n                raise\n"""
+          if old not in s and new not in s:
+              raise SystemExit('HTTP 400 patch marker missing')
+          p.write_text(s.replace(old,new,1),encoding='utf-8')
+          PY
+      - name: Apply runtime integration
+        run: python3 scripts/apply_synoptic_regime_upgrade.py
+      - name: Validate Python
+        run: |
+          python3 -m py_compile \
+            scripts/synoptic_regime.py \
+            scripts/build_synoptic_regime_learning.py \
+            scripts/enrich_synoptic_context.py \
+            scripts/apply_adaptive_runtime_patch.py
+      - name: Seed operational context archive
+        run: python3 scripts/enrich_synoptic_context.py --max-runs 12 --workers 2
+      - name: Build contextual skill
+        run: python3 scripts/build_synoptic_regime_learning.py
+      - name: Validate runtime and skill
+        run: |
+          node --check cloud-learning-client.js
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          s=Path('index.html').read_text(encoding='utf-8')
+          js=s.split('<script>',1)[1].split('</script>',1)[0]
+          Path('/tmp/index-inline.js').write_text(js,encoding='utf-8')
+          c=Path('cloud-learning-client.js').read_text(encoding='utf-8')
+          assert 'REGIME_LEVELS=[925,850,700,500]' in s
+          assert 'contextForItems' in s
+          assert 'SYNOPTIC_SKILL_RAW' in c
+          assert '.70/1.30' in c
+          j=json.loads(Path('data/learning/synoptic-regime-skill.json').read_text(encoding='utf-8'))
+          assert j['schema']=='prognozaepir-synoptic-regime-learning-v1'
+          assert len(j.get('models',{}))>=8
+          assert j.get('usable_cases',0)>=100
+          print('synoptic usable cases',j['usable_cases'])
+          print('coverage',j.get('coverage'))
+          PY
+          node --check /tmp/index-inline.js
+      - name: Commit final upgrade
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          rm -f scripts/apply_synoptic_regime_upgrade.py .github/workflows/apply-synoptic-regime-upgrade.yml
+          rm -rf scripts/__pycache__
+          git add -A
+          git commit -m 'weather: enable seasonal synoptic regime learning'
+          for attempt in 1 2 3 4; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            sleep $((attempt*3))
+          done
+          exit 1
+      - name: Run full adaptive rollout
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run adaptive-runtime-rollout.yml --ref main
