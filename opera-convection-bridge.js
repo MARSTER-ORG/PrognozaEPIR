@@ -14,8 +14,8 @@
     const rewriteOperaUrl = value => {
       const url = String(value || '');
       if (!url.startsWith(OPERA_S3_PREFIX)) return null;
-      const m = url.match(/OPERA@(20\d{10})@0@DBZH\.tiff(?:[?#].*)?$/i);
-      return m ? `${OPERA_PROXY_PREFIX}${m[1]}.tiff` : null;
+      const m = url.match(/OPERA@(20\d{6})T(\d{4})@0@DBZH\.tiff(?:[?#].*)?$/i);
+      return m ? `${OPERA_PROXY_PREFIX}${m[1]}${m[2]}.tiff` : null;
     };
     window.fetch = function(input, init) {
       const rawUrl = typeof input === 'string' ? input : input instanceof URL ? input.href : input?.url;
