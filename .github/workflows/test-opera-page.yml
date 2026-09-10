@@ -7,6 +7,8 @@ on:
     paths:
       - '.github/workflows/test-opera-page.yml'
       - 'opera-convection-bridge.js'
+      - 'scripts/railway_ingestor_lowmem_server.py'
+      - 'scripts/opera_proxy_only.py'
 
 permissions:
   contents: read
@@ -16,6 +18,67 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
+      - name: Verify merged central OPERA proxy
+        shell: bash
+        env:
+          CENTRAL: https://central-ingestor-production.up.railway.app
+        run: |
+          set -euo pipefail
+          curl -fsS --connect-timeout 10 --max-time 30 "$CENTRAL/opera/health" -o /tmp/opera-health.json
+          python3 - <<'PY'
+          import json
+          p=json.load(open('/tmp/opera-health.json',encoding='utf-8'))
+          assert p.get('ok') is True, p
+          assert p.get('component') == 'opera-cmax-proxy', p
+          assert p.get('range') is True, p
+          print('PASS: central /opera/health reports merged OPERA CMAX proxy')
+          PY
+
+          python3 - <<'PY' >/tmp/opera-frames.txt
+          from datetime import datetime, timedelta, timezone
+          now=datetime.now(timezone.utc).replace(second=0,microsecond=0)
+          now-=timedelta(minutes=now.minute%5)
+          for i in range(19):
+              print((now-timedelta(minutes=5*i)).strftime('%Y%m%d%H%M'))
+          PY
+
+          found=0
+          while read -r frame; do
+            : >/tmp/opera-headers.txt
+            rm -f /tmp/opera-part.bin
+            code="$(curl -sS --connect-timeout 10 --max-time 30 \
+              -H 'Range: bytes=0-1023' \
+              -D /tmp/opera-headers.txt \
+              -o /tmp/opera-part.bin \
+              -w '%{http_code}' \
+              "$CENTRAL/opera/dbzh/$frame.tiff" || true)"
+            if [ "$code" != 200 ] && [ "$code" != 206 ]; then
+              continue
+            fi
+            if ! grep -qi '^access-control-allow-origin: \*' /tmp/opera-headers.txt; then
+              echo "Frame $frame lacks CORS header" >&2
+              continue
+            fi
+            if ! grep -qi '^accept-ranges: bytes' /tmp/opera-headers.txt; then
+              echo "Frame $frame lacks Range support" >&2
+              continue
+            fi
+            if python3 - <<'PY'
+          from pathlib import Path
+          b=Path('/tmp/opera-part.bin').read_bytes()[:4]
+          raise SystemExit(0 if b in (b'II*\x00', b'MM\x00*') else 1)
+          PY
+            then
+              echo "PASS: central OPERA GeoTIFF frame $frame UTC works with CORS + Range (HTTP $code)"
+              found=1
+              break
+            fi
+          done </tmp/opera-frames.txt
+          if [ "$found" != 1 ]; then
+            echo 'No valid recent OPERA GeoTIFF frame found through central ingestor.' >&2
+            exit 1
+          fi
+
       - name: Wait for Pages build containing this commit
         shell: bash
         env:
