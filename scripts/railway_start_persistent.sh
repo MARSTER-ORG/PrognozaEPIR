@@ -26,4 +26,4 @@ fi
 rm -rf "$SEED_ARCHIVE"
 ln -s "$PERSIST_ARCHIVE" "$SEED_ARCHIVE"
 
-exec python scripts/railway_ingestor_server.py
+exec python scripts/railway_opera_server.py
