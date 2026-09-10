@@ -1,0 +1,61 @@
+name: Test OPERA proxy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/test-opera-proxy.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify public health and a recent DBZH GeoTIFF range
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE='https://opera-cmax-live-production.up.railway.app'
+          echo 'Checking public health...'
+          curl -fSs --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 10 --max-time 60 "$BASE/health"
+          echo
+
+          python3 - <<'PY' >/tmp/opera_tokens.txt
+          from datetime import datetime, timezone, timedelta
+          now=datetime.now(timezone.utc).replace(second=0,microsecond=0)
+          now=now.replace(minute=(now.minute//5)*5)
+          for minutes in range(5, 125, 5):
+              print((now-timedelta(minutes=minutes)).strftime('%Y%m%d%H%M'))
+          PY
+
+          ok=0
+          while read -r token; do
+            url="$BASE/opera/dbzh/$token.tiff"
+            echo "Trying $token UTC..."
+            code="$(curl -sS --retry 2 --retry-all-errors --retry-delay 1 --connect-timeout 10 --max-time 45 \
+              -H 'Range: bytes=0-16383' -o /tmp/opera-frame.bin -w '%{http_code}' "$url" || true)"
+            if [ "$code" = '206' ] || [ "$code" = '200' ]; then
+              TOKEN="$token" python3 - <<'PY'
+          import os
+          from pathlib import Path
+          p=Path('/tmp/opera-frame.bin')
+          data=p.read_bytes()
+          if len(data) < 8:
+              raise SystemExit('response too short')
+          if not (data.startswith(b'II*\x00') or data.startswith(b'MM\x00*')):
+              raise SystemExit(f'not TIFF: first bytes={data[:8]!r}')
+          print(f"Valid TIFF range for {os.environ['TOKEN']} UTC: {len(data)} bytes")
+          PY
+              ok=1
+              break
+            fi
+          done </tmp/opera_tokens.txt
+
+          if [ "$ok" != '1' ]; then
+            echo 'No recent OPERA DBZH GeoTIFF could be fetched through the public proxy.' >&2
+            exit 1
+          fi
