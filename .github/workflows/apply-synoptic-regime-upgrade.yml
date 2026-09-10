@@ -1,6 +1,6 @@
 name: Apply synoptic regime upgrade
 
-# One-shot installer; deployment trigger 2026-09-10 UTC.
+# One-shot installer; deploy mechanism first, historical profiles can be supplied/enriched later.
 on:
   push:
     branches: [main]
@@ -14,7 +14,7 @@ permissions:
 jobs:
   apply:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -43,8 +43,8 @@ jobs:
             scripts/build_synoptic_regime_learning.py \
             scripts/enrich_synoptic_context.py \
             scripts/apply_adaptive_runtime_patch.py
-      - name: Seed operational context archive
-        run: python3 scripts/enrich_synoptic_context.py --max-runs 12 --workers 2
+      - name: Initialize context enrichment state
+        run: python3 scripts/enrich_synoptic_context.py --max-runs 0 --workers 1
       - name: Build contextual skill
         run: python3 scripts/build_synoptic_regime_learning.py
       - name: Validate runtime and skill
