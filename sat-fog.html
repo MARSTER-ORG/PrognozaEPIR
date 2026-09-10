@@ -16,7 +16,7 @@
 <body>
 <div class="app">
   <div class="top">
-    <div><div class="brand"><a href="index.html">PrognozaEPIR</a> <small>SAT / FOG EUMETSAT v1.3</small></div><div class="place">MTG / FCI · Fog / Low Clouds RGB · EPIR / Inowrocław</div></div>
+    <div><div class="brand"><a href="index.html">PrognozaEPIR</a> <small>SAT / FOG EUMETSAT v1.4</small></div><div class="place">MTG / FCI · Fog / Low Clouds RGB · EPIR / Inowrocław</div></div>
     <div class="status"><span id="badge" class="badge">ŁADOWANIE</span><div id="statusText">WMS EUMETSAT</div></div>
   </div>
   <div class="controls">
@@ -70,7 +70,7 @@
   const TITLE_RE=/fog\s*\/\s*low\s*clouds\s*rgb/i;
   const EPIR=[52.7989,18.2639];
   const $=id=>document.getElementById(id);
-  let map, layer=null, baseLayer=null, borderHaloLayer=null, borderLineLayer=null, bordersOn=true, inspectMarker=null, layerName='', times=[], timeIndex=-1, timer=0, currentTime='';
+  let map, layer=null, baseLayer=null, borderHaloLayer=null, borderLineLayer=null, bordersOn=true, inspectMarker=null, layerName='', times=[], timeIndex=-1, timer=0, currentTime='', playing=false, renderSeq=0;
 
   // Kotwice RGB zmierzone z pól referencyjnych Quick Guide EUMETSAT.
   // Dla klas, których barwa zależy silniej od sceny (np. pink-grey), stosujemy kilka kotwic.
@@ -140,12 +140,45 @@
     $('prev').disabled=times.length<2;$('next').disabled=times.length<2;$('play').disabled=times.length<2;$('latest').disabled=!times.length;
   }
   function wmsOptions(){const o={layers:layerName,format:'image/png',transparent:true,version:'1.3.0',opacity:1,attribution:'© EUMETSAT'};if(currentTime)o.time=currentTime;return o;}
-  function showTime(){ $('statusText').textContent=(currentTime?isoLabel(currentTime):'najnowsza klatka serwera')+' · '+layerName; }
-  function redraw(){
-    $('loading').hidden=false;if(layer)map.removeLayer(layer);layer=L.tileLayer.wms(WMS,wmsOptions());
-    layer.on('load',()=>{$('loading').hidden=true;badge('LIVE','ok');});layer.on('tileerror',()=>{badge('BŁĄD WMS','bad');$('loading').hidden=true;});layer.addTo(map);showTime();
-  }
-  function setIndex(i){if(!times.length)return;timeIndex=(i+times.length)%times.length;currentTime=times[timeIndex];$('timeSelect').value=String(timeIndex);redraw();}
+function showTime(){ $('statusText').textContent=(currentTime?isoLabel(currentTime):'najnowsza klatka serwera')+' · '+layerName; }
+function redraw(animation=false){
+  const seq=++renderSeq, previous=layer, candidate=L.tileLayer.wms(WMS,wmsOptions());
+  if(animation)candidate.setOpacity(0);else $('loading').hidden=false;
+  showTime();
+  return new Promise(resolve=>{
+    let settled=false;
+    const finish=(ok)=>{
+      if(settled)return;settled=true;
+      if(seq!==renderSeq){try{map.removeLayer(candidate)}catch(_){}resolve(false);return;}
+      if(ok){
+        if(previous&&previous!==candidate&&map.hasLayer(previous))map.removeLayer(previous);
+        candidate.setOpacity(1);layer=candidate;badge('LIVE','ok');
+      }else{
+        try{map.removeLayer(candidate)}catch(_){}
+        badge('BŁĄD WMS','bad');
+      }
+      $('loading').hidden=true;resolve(ok);
+    };
+    candidate.once('load',()=>finish(true));
+    candidate.on('tileerror',()=>badge('WMS: brak kafla','warn'));
+    candidate.addTo(map);
+    setTimeout(()=>finish(false),12000);
+  });
+}
+async function setIndex(i,animation=false){
+  if(!times.length)return false;
+  timeIndex=(i+times.length)%times.length;currentTime=times[timeIndex];$('timeSelect').value=String(timeIndex);
+  return redraw(animation);
+}
+function stopAnimation(){
+  playing=false;if(timer){clearTimeout(timer);timer=0;}$('play').textContent='▶ animacja';
+}
+async function animationStep(){
+  if(!playing||times.length<2)return;
+  const ok=await setIndex(timeIndex+1,true);
+  if(!playing)return;
+  timer=setTimeout(animationStep,ok?650:1400);
+}
   async function loadBorders(){
     const btn=$('borderToggle');
     try{
@@ -233,7 +266,7 @@
   $('baseToggle').addEventListener('click',()=>{const on=map?.hasLayer(baseLayer);if(on)map.removeLayer(baseLayer);else baseLayer.addTo(map);$('baseToggle').textContent='Tło mapy: '+(on?'OFF':'ON');$('baseToggle').setAttribute('aria-pressed',String(!on));});
   $('borderToggle').addEventListener('click',()=>{bordersOn=!bordersOn;if(borderHaloLayer&&borderLineLayer){if(bordersOn){borderHaloLayer.addTo(map);borderLineLayer.addTo(map);}else{map.removeLayer(borderHaloLayer);map.removeLayer(borderLineLayer);}}$('borderToggle').textContent='Granice: '+(bordersOn?'ON':'OFF');$('borderToggle').setAttribute('aria-pressed',String(bordersOn));});
   $('timeSelect').addEventListener('change',e=>{const i=+e.target.value;if(Number.isInteger(i))setIndex(i);});
-  $('play').addEventListener('click',()=>{if(timer){clearInterval(timer);timer=0;$('play').textContent='▶ animacja';return;}if(times.length<2)return;$('play').textContent='■ stop';timer=setInterval(()=>setIndex(timeIndex+1),850);});start();
+  $('play').addEventListener('click',()=>{if(playing){stopAnimation();return;}if(times.length<2)return;playing=true;$('play').textContent='■ stop';animationStep();});document.addEventListener('visibilitychange',()=>{if(document.hidden&&playing)stopAnimation();});start();
 })();
 </script>
 </body>
