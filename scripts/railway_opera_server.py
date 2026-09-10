@@ -2,7 +2,7 @@
 """Railway entrypoint extending the central ingestor with an OPERA DBZH proxy.
 
 The browser cannot reliably read the public CloudFerro OPERA GeoTIFF objects because
-of cross-origin/range-request restrictions on some clients.  This wrapper keeps the
+of cross-origin/range-request restrictions on some clients. This wrapper keeps the
 existing central-ingestor worker unchanged and adds one tightly-scoped, read-only
 endpoint with CORS and HTTP Range passthrough:
 
@@ -26,6 +26,7 @@ S3_BASE = "https://s3.waw3-1.cloudferro.com/openradar-24h"
 FRAME_RE = re.compile(r"^/opera/dbzh/(20\d{10})\.tiff$")
 MAX_AGE_SECONDS = 26 * 3600
 MAX_FUTURE_SECONDS = 15 * 60
+BUILD_TAG = "opera-proxy-v1"
 
 
 def _frame_time(token: str) -> datetime:
@@ -119,7 +120,6 @@ class Handler(base.Handler):
         except (URLError, TimeoutError, OSError) as exc:
             self._json({"error": f"OPERA upstream unavailable: {type(exc).__name__}"}, status=502, head_only=head_only)
         except (BrokenPipeError, ConnectionResetError):
-            # Client cancelled a range request; this is normal while GeoTIFF probes tiles.
             return
 
     def _dispatch(self, head_only: bool = False) -> None:
@@ -129,6 +129,7 @@ class Handler(base.Handler):
                 {
                     "service": "prognozaepir-opera-proxy",
                     "ok": True,
+                    "build": BUILD_TAG,
                     "source": "EUMETNET OPERA openradar-24h DBZH GeoTIFF",
                     "range": True,
                     "time": base.utc_iso(),
