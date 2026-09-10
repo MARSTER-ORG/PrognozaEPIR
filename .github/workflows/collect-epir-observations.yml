@@ -25,67 +25,64 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          from textwrap import dedent
           p=Path('sat-fog.html')
           s=p.read_text(encoding='utf-8')
           old_decl="let map, layer=null, baseLayer=null, borderHaloLayer=null, borderLineLayer=null, bordersOn=true, inspectMarker=null, layerName='', times=[], timeIndex=-1, timer=0, currentTime='';"
           new_decl="let map, layer=null, baseLayer=null, borderHaloLayer=null, borderLineLayer=null, bordersOn=true, inspectMarker=null, layerName='', times=[], timeIndex=-1, timer=0, currentTime='', playing=false, renderSeq=0;"
           if old_decl in s:
               s=s.replace(old_decl,new_decl,1)
-          old_block="""  function showTime(){ $('statusText').textContent=(currentTime?isoLabel(currentTime):'najnowsza klatka serwera')+' · '+layerName; }
-  function redraw(){
-    $('loading').hidden=false;if(layer)map.removeLayer(layer);layer=L.tileLayer.wms(WMS,wmsOptions());
-    layer.on('load',()=>{$('loading').hidden=true;badge('LIVE','ok');});layer.on('tileerror',()=>{badge('BŁĄD WMS','bad');$('loading').hidden=true;});layer.addTo(map);showTime();
-  }
-  function setIndex(i){if(!times.length)return;timeIndex=(i+times.length)%times.length;currentTime=times[timeIndex];$('timeSelect').value=String(timeIndex);redraw();}
-"""
-          new_block="""  function showTime(){ $('statusText').textContent=(currentTime?isoLabel(currentTime):'najnowsza klatka serwera')+' · '+layerName; }
-  function redraw(animation=false){
-    const seq=++renderSeq, previous=layer, candidate=L.tileLayer.wms(WMS,wmsOptions());
-    if(animation)candidate.setOpacity(0);else $('loading').hidden=false;
-    showTime();
-    return new Promise(resolve=>{
-      let settled=false;
-      const finish=(ok)=>{
-        if(settled)return;settled=true;
-        if(seq!==renderSeq){try{map.removeLayer(candidate)}catch(_){}resolve(false);return;}
-        if(ok){
-          if(previous&&previous!==candidate&&map.hasLayer(previous))map.removeLayer(previous);
-          candidate.setOpacity(1);layer=candidate;badge('LIVE','ok');
-        }else{
-          try{map.removeLayer(candidate)}catch(_){}
-          badge('BŁĄD WMS','bad');
-        }
-        $('loading').hidden=true;resolve(ok);
-      };
-      candidate.once('load',()=>finish(true));
-      candidate.on('tileerror',()=>badge('WMS: brak kafla','warn'));
-      candidate.addTo(map);
-      setTimeout(()=>finish(false),12000);
-    });
-  }
-  async function setIndex(i,animation=false){
-    if(!times.length)return false;
-    timeIndex=(i+times.length)%times.length;currentTime=times[timeIndex];$('timeSelect').value=String(timeIndex);
-    return redraw(animation);
-  }
-  function stopAnimation(){
-    playing=false;if(timer){clearTimeout(timer);timer=0;}$('play').textContent='▶ animacja';
-  }
-  async function animationStep(){
-    if(!playing||times.length<2)return;
-    const ok=await setIndex(timeIndex+1,true);
-    if(!playing)return;
-    timer=setTimeout(animationStep,ok?650:1400);
-  }
-"""
-          if old_block in s:
-              s=s.replace(old_block,new_block,1)
+          if 'function animationStep()' not in s:
+              a=s.index("  function showTime(){")
+              b=s.index("  async function loadBorders(){",a)
+              replacement=dedent("""\
+                function showTime(){ $('statusText').textContent=(currentTime?isoLabel(currentTime):'najnowsza klatka serwera')+' · '+layerName; }
+                function redraw(animation=false){
+                  const seq=++renderSeq, previous=layer, candidate=L.tileLayer.wms(WMS,wmsOptions());
+                  if(animation)candidate.setOpacity(0);else $('loading').hidden=false;
+                  showTime();
+                  return new Promise(resolve=>{
+                    let settled=false;
+                    const finish=(ok)=>{
+                      if(settled)return;settled=true;
+                      if(seq!==renderSeq){try{map.removeLayer(candidate)}catch(_){}resolve(false);return;}
+                      if(ok){
+                        if(previous&&previous!==candidate&&map.hasLayer(previous))map.removeLayer(previous);
+                        candidate.setOpacity(1);layer=candidate;badge('LIVE','ok');
+                      }else{
+                        try{map.removeLayer(candidate)}catch(_){}
+                        badge('BŁĄD WMS','bad');
+                      }
+                      $('loading').hidden=true;resolve(ok);
+                    };
+                    candidate.once('load',()=>finish(true));
+                    candidate.on('tileerror',()=>badge('WMS: brak kafla','warn'));
+                    candidate.addTo(map);
+                    setTimeout(()=>finish(false),12000);
+                  });
+                }
+                async function setIndex(i,animation=false){
+                  if(!times.length)return false;
+                  timeIndex=(i+times.length)%times.length;currentTime=times[timeIndex];$('timeSelect').value=String(timeIndex);
+                  return redraw(animation);
+                }
+                function stopAnimation(){
+                  playing=false;if(timer){clearTimeout(timer);timer=0;}$('play').textContent='▶ animacja';
+                }
+                async function animationStep(){
+                  if(!playing||times.length<2)return;
+                  const ok=await setIndex(timeIndex+1,true);
+                  if(!playing)return;
+                  timer=setTimeout(animationStep,ok?650:1400);
+                }
+              """)
+              s=s[:a]+replacement+s[b:]
           old_play="$('play').addEventListener('click',()=>{if(timer){clearInterval(timer);timer=0;$('play').textContent='▶ animacja';return;}if(times.length<2)return;$('play').textContent='■ stop';timer=setInterval(()=>setIndex(timeIndex+1),850);});start();"
           new_play="$('play').addEventListener('click',()=>{if(playing){stopAnimation();return;}if(times.length<2)return;playing=true;$('play').textContent='■ stop';animationStep();});document.addEventListener('visibilitychange',()=>{if(document.hidden&&playing)stopAnimation();});start();"
           if old_play in s:
               s=s.replace(old_play,new_play,1)
           s=s.replace('SAT / FOG EUMETSAT v1.3','SAT / FOG EUMETSAT v1.4',1)
-          if 'function animationStep()' not in s:
+          if 'function animationStep()' not in s or 'playing=false, renderSeq=0' not in s:
               raise SystemExit('SAT/FOG animation patch failed')
           p.write_text(s,encoding='utf-8')
           PY
