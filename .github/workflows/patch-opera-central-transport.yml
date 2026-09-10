@@ -1,0 +1,96 @@
+name: Patch OPERA central transport
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/patch-opera-central-transport.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Patch OPERA nowcast to use central ingestor directly
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path('opera-nowcast.js')
+          s=p.read_text(encoding='utf-8')
+          replacements=[
+            (
+              "  // OPERA CIRRUS/NIMBUS: public 24 h CloudFerro cache, no MeteoGate metadata request.\n  // Real object pattern: YYYY/MM/DD/OPERA/COMP/OPERA@YYYYMMDDTHHMM@0@DBZH.tiff\n  const S3_BASE = 'https://s3.waw3-1.cloudferro.com/openradar-24h';",
+              "  // OPERA CIRRUS/NIMBUS: the browser reads GeoTIFF only through the merged\n  // central-ingestor CORS/Range proxy. CloudFerro remains upstream server-side.\n  const OPERA_PROXY_BASE = 'https://central-ingestor-production.up.railway.app/opera/dbzh';"
+            ),
+            (
+              "  function frameUrl(ms){\n    const d=new Date(ms),Y=d.getUTCFullYear(),M=pad2(d.getUTCMonth()+1),D=pad2(d.getUTCDate()),h=pad2(d.getUTCHours()),m=pad2(d.getUTCMinutes());\n    return `${S3_BASE}/${Y}/${M}/${D}/OPERA/COMP/OPERA@${Y}${M}${D}T${h}${m}@0@DBZH.tiff`;\n  }",
+              "  function frameUrl(ms){\n    const d=new Date(ms),Y=d.getUTCFullYear(),M=pad2(d.getUTCMonth()+1),D=pad2(d.getUTCDate()),h=pad2(d.getUTCHours()),m=pad2(d.getUTCMinutes());\n    return `${OPERA_PROXY_BASE}/${Y}${M}${D}${h}${m}.tiff`;\n  }"
+            ),
+            (
+              "bezpośredni GeoTIFF OPERA niedostępny",
+              "GeoTIFF OPERA przez central-ingestor niedostępny"
+            ),
+            (
+              "setStatus(`klatka ${fmtUtcMs(latest.time)} · bezpośredni OPERA S3 DBZH.tiff`);",
+              "setStatus(`klatka ${fmtUtcMs(latest.time)} · central-ingestor · OPERA DBZH GeoTIFF`);"
+            ),
+            (
+              "source:'opera_cirrus_dbzh_s3'",
+              "source:'opera_cirrus_dbzh_central'"
+            ),
+          ]
+          for old,new in replacements:
+              count=s.count(old)
+              if count < 1:
+                  raise SystemExit(f'Expected OPERA transport pattern not found: {old[:80]!r}')
+              s=s.replace(old,new)
+          if 's3.waw3-1.cloudferro.com/openradar-24h' in s:
+              raise SystemExit('Direct CloudFerro runtime URL still present in opera-nowcast.js')
+          if 'central-ingestor-production.up.railway.app/opera/dbzh' not in s:
+              raise SystemExit('Central OPERA proxy URL missing after patch')
+          p.write_text(s,encoding='utf-8')
+
+          q=Path('.github/workflows/test-opera-page.yml')
+          t=q.read_text(encoding='utf-8')
+          needle="      - 'opera-convection-bridge.js'\n"
+          add="      - 'opera-convection-bridge.js'\n      - 'opera-nowcast.js'\n"
+          if "      - 'opera-nowcast.js'\n" not in t:
+              if needle not in t:
+                  raise SystemExit('E2E path insertion point missing')
+              t=t.replace(needle,add,1)
+              q.write_text(t,encoding='utf-8')
+          PY
+          node --check opera-nowcast.js
+          grep -F 'central-ingestor-production.up.railway.app/opera/dbzh' opera-nowcast.js
+          ! grep -F 's3.waw3-1.cloudferro.com/openradar-24h' opera-nowcast.js
+
+      - name: Commit guarded migration
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- opera-nowcast.js .github/workflows/test-opera-page.yml; then
+            echo 'OPERA transport already migrated.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add opera-nowcast.js .github/workflows/test-opera-page.yml
+          git commit -m 'Route OPERA nowcast directly through central ingestor'
+          for n in 1 2 3 4 5; do
+            git fetch origin main
+            if git rebase origin/main && git push origin HEAD:main; then
+              exit 0
+            fi
+            git rebase --abort >/dev/null 2>&1 || true
+            sleep $((n*2))
+          done
+          exit 1
