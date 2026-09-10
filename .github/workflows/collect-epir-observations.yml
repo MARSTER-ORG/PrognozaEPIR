@@ -7,6 +7,8 @@ on:
       - 'data/messages/**'
       - 'scripts/model_verification.py'
       - 'scripts/model_verification_realtime.py'
+      - 'scripts/consensus_wind_bias.py'
+      - 'scripts/test_consensus_wind_bias.py'
       - '.github/workflows/collect-epir-observations.yml'
 permissions:
   contents: write
@@ -23,9 +25,21 @@ jobs:
           fetch-depth: 0
       - name: Verify only from central archive
         run: |
+          python3 -m py_compile scripts/model_verification.py scripts/model_verification_realtime.py scripts/consensus_wind_bias.py scripts/test_consensus_wind_bias.py
+          python3 scripts/test_consensus_wind_bias.py
           python3 scripts/message_archive.py --validate-only
           grep -F 'SPECI_DIR = ROOT / "data" / "messages" / "speci"' scripts/model_verification.py
           python3 scripts/model_verification_realtime.py --summary-only
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          j=json.loads(Path('data/learning/model-verification.json').read_text(encoding='utf-8'))
+          bias=((j.get('models') or {}).get('consensus') or {}).get('wind_bias') or {}
+          assert bias.get('schema') == 'prognozaepir-consensus-wind-bias-v1'
+          assert bias.get('definition') == 'forecast_minus_observed'
+          assert set((bias.get('by_lead_bucket') or {}).keys()) == {'0-3h','3-6h','6-12h','12-24h','24-48h','48-120h'}
+          print('consensus wind bias samples:', bias.get('eligible_consensus_samples'))
+          PY
           python3 scripts/embed_model_verification.py
       - name: Commit verification data
         run: |
