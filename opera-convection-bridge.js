@@ -5,10 +5,10 @@
   window.__epirOperaConvectionBridgeLoaded = true;
 
   // Transport shim: CloudFerro OPERA objects are not reliably readable with
-  // browser CORS/Range on all mobile clients.  Rewrite only the strict DBZH
-  // GeoTIFF object pattern to our read-only Railway range proxy.
+  // browser CORS/Range on all mobile clients. Rewrite only the strict DBZH
+  // GeoTIFF object pattern to the dedicated read-only Railway range proxy.
   const OPERA_S3_PREFIX = 'https://s3.waw3-1.cloudferro.com/openradar-24h/';
-  const OPERA_PROXY_PREFIX = 'https://central-ingestor-production.up.railway.app/opera/dbzh/';
+  const OPERA_PROXY_PREFIX = 'https://opera-cmax-live-production.up.railway.app/opera/dbzh/';
   if (!window.__epirOperaFetchProxyInstalled) {
     const nativeFetch = window.fetch.bind(window);
     const rewriteOperaUrl = value => {
