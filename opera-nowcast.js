@@ -248,6 +248,7 @@
     const eta=r.approach?Math.round(r.approach.tHours*60):null;$('opSummary').textContent=r.approach?`Podejście ≤30 km za ok. ${eta} min.`:'Brak echa ≥27 dBZ na torze ≤30 km w ciągu 90 min.';setStatus(`klatka ${fmtUtcMs(latest.time)} · central-ingestor · OPERA DBZH GeoTIFF`);renderMapLayer(latest);
   }
   function renderError(msg){ensureUi();$('operaNowcastCard')?.classList.add('op-error');setState('NIEDOSTĘPNA','bad');$('opFrame').textContent='—';$('opSummary').textContent='OPERA niedostępna. POLRAD działa niezależnie.';setStatus(`OPERA: ${msg}`);try{if(operaLayer&&typeof map!=='undefined'&&map.hasLayer(operaLayer))map.removeLayer(operaLayer)}catch(_){}
+  }
 
   async function run(force=false){
     ensureUi();if(running)return;if(!force&&Date.now()-lastRun<AUTO_MS-15000)return;const p=currentPoint();if(!p){renderError('brak poprawnego punktu');return}
