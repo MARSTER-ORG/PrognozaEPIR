@@ -1,18 +1,18 @@
 name: Fix SAT FOG animation
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/fix-sat-animation.yml'
+  workflow_run:
+    workflows: ['Deploy PrognozaEPIR to GitHub Pages']
+    types: [completed]
   workflow_dispatch:
 
 permissions:
   contents: write
 
-# This workflow patches the legacy inline animation without replacing sat-fog.html through the API.
+# One-shot source repair. It becomes a no-op after sat-fog.html is patched.
 jobs:
   fix:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,9 +29,8 @@ jobs:
 
           old_decl = "let map, layer=null, baseLayer=null, borderHaloLayer=null, borderLineLayer=null, bordersOn=true, inspectMarker=null, layerName='', times=[], timeIndex=-1, timer=0, currentTime='';"
           new_decl = "let map, layer=null, baseLayer=null, borderHaloLayer=null, borderLineLayer=null, bordersOn=true, inspectMarker=null, layerName='', times=[], timeIndex=-1, timer=0, currentTime='', playing=false, renderSeq=0;"
-          if old_decl not in s:
-              raise SystemExit('animation state declaration not found')
-          s = s.replace(old_decl, new_decl, 1)
+          if old_decl in s:
+              s = s.replace(old_decl, new_decl, 1)
 
           old_block = """  function showTime(){ $('statusText').textContent=(currentTime?isoLabel(currentTime):'najnowsza klatka serwera')+' · '+layerName; }
   function redraw(){
@@ -80,17 +79,18 @@ jobs:
     timer=setTimeout(animationStep,ok?650:1400);
   }
 """
-          if old_block not in s:
-              raise SystemExit('redraw/setIndex block not found')
-          s = s.replace(old_block, new_block, 1)
+          if old_block in s:
+              s = s.replace(old_block, new_block, 1)
 
           old_play = "$('play').addEventListener('click',()=>{if(timer){clearInterval(timer);timer=0;$('play').textContent='▶ animacja';return;}if(times.length<2)return;$('play').textContent='■ stop';timer=setInterval(()=>setIndex(timeIndex+1),850);});start();"
           new_play = "$('play').addEventListener('click',()=>{if(playing){stopAnimation();return;}if(times.length<2)return;playing=true;$('play').textContent='■ stop';animationStep();});document.addEventListener('visibilitychange',()=>{if(document.hidden&&playing)stopAnimation();});start();"
-          if old_play not in s:
-              raise SystemExit('play handler not found')
-          s = s.replace(old_play, new_play, 1)
+          if old_play in s:
+              s = s.replace(old_play, new_play, 1)
 
           s = s.replace('SAT / FOG EUMETSAT v1.3', 'SAT / FOG EUMETSAT v1.4', 1)
+
+          if 'function animationStep()' not in s:
+              raise SystemExit('SAT/FOG animation patch did not apply')
           p.write_text(s, encoding='utf-8')
           PY
 
