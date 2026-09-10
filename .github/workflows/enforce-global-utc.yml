@@ -3,9 +3,6 @@ name: Enforce global UTC policy
 on:
   push:
     branches: [main]
-    paths:
-      - 'scripts/enforce_global_utc.py'
-      - '.github/workflows/enforce-global-utc.yml'
   workflow_dispatch:
 
 permissions:
@@ -17,6 +14,7 @@ concurrency:
 
 jobs:
   enforce:
+    if: github.actor != 'github-actions[bot]' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
