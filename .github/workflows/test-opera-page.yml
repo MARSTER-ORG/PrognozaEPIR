@@ -1,0 +1,93 @@
+name: Test OPERA radar page
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/test-opera-page.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Wait for Pages build containing this commit
+        shell: bash
+        env:
+          SITE: https://marster-org.github.io/PrognozaEPIR
+        run: |
+          set -euo pipefail
+          echo "Waiting for radar.html from $GITHUB_SHA"
+          ok=0
+          for i in $(seq 1 45); do
+            curl -fsS --connect-timeout 10 --max-time 30 "$SITE/radar.html?e2e=$GITHUB_SHA-$i" -o /tmp/radar.html || true
+            if grep -Fq "opera-convection-bridge.js?v=$GITHUB_SHA" /tmp/radar.html 2>/dev/null; then
+              ok=1
+              echo "Pages contains current asset version after attempt $i"
+              break
+            fi
+            sleep 3
+          done
+          if [ "$ok" != 1 ]; then
+            echo 'Current Pages build was not published in time.' >&2
+            grep -o 'opera-convection-bridge.js?v=[^"[:space:]]*' /tmp/radar.html || true
+            exit 1
+          fi
+
+      - name: Run radar page in headless Chrome
+        shell: bash
+        env:
+          SITE: https://marster-org.github.io/PrognozaEPIR
+        run: |
+          set -euo pipefail
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)"
+          if [ -z "$CHROME" ]; then
+            echo 'Chrome/Chromium not installed on runner.' >&2
+            exit 1
+          fi
+          URL="$SITE/radar.html?e2e=$GITHUB_SHA"
+          echo "Browser: $CHROME"
+          echo "URL: $URL"
+          set +e
+          timeout 150s "$CHROME" \
+            --headless=new \
+            --no-sandbox \
+            --disable-gpu \
+            --disable-dev-shm-usage \
+            --disable-background-networking \
+            --window-size=1280,2200 \
+            --virtual-time-budget=90000 \
+            --dump-dom "$URL" >/tmp/dom.html 2>/tmp/chrome.log
+          rc=$?
+          set -e
+          echo "Chrome exit code: $rc"
+          tail -n 120 /tmp/chrome.log || true
+          python3 - <<'PY'
+          import html, re
+          from pathlib import Path
+          dom=Path('/tmp/dom.html').read_text(encoding='utf-8',errors='replace')
+          def text_for(id_):
+              m=re.search(rf'<[^>]+id=["\']{re.escape(id_)}["\'][^>]*>(.*?)</[^>]+>',dom,re.I|re.S)
+              if not m: return None
+              return re.sub(r'<[^>]+>','',html.unescape(m.group(1))).strip()
+          state=text_for('opState')
+          status=text_for('opStatus')
+          frame=text_for('opFrame')
+          summary=text_for('opSummary')
+          print('opState =',repr(state))
+          print('opFrame =',repr(frame))
+          print('opStatus =',repr(status))
+          print('opSummary =',repr(summary))
+          if state != 'DZIAŁA':
+              # Keep a compact diagnostic around the OPERA card.
+              pos=dom.find('id="operaNowcastCard"')
+              if pos>=0: print(dom[pos:pos+5000])
+              raise SystemExit('OPERA page did not reach DZIAŁA')
+          if not frame or 'UTC' not in frame:
+              raise SystemExit('OPERA frame time missing explicit UTC')
+          print('PASS: published radar page reached OPERA DZIAŁA')
+          PY
