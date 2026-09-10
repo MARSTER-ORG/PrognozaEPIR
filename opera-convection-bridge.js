@@ -4,6 +4,42 @@
   if (window.__epirOperaConvectionBridgeLoaded) return;
   window.__epirOperaConvectionBridgeLoaded = true;
 
+  // Transport shim: CloudFerro OPERA objects are not reliably readable with
+  // browser CORS/Range on all mobile clients.  Rewrite only the strict DBZH
+  // GeoTIFF object pattern to our read-only Railway range proxy.
+  const OPERA_S3_PREFIX = 'https://s3.waw3-1.cloudferro.com/openradar-24h/';
+  const OPERA_PROXY_PREFIX = 'https://central-ingestor-production.up.railway.app/opera/dbzh/';
+  if (!window.__epirOperaFetchProxyInstalled) {
+    const nativeFetch = window.fetch.bind(window);
+    const rewriteOperaUrl = value => {
+      const url = String(value || '');
+      if (!url.startsWith(OPERA_S3_PREFIX)) return null;
+      const m = url.match(/OPERA@(20\d{10})@0@DBZH\.tiff(?:[?#].*)?$/i);
+      return m ? `${OPERA_PROXY_PREFIX}${m[1]}.tiff` : null;
+    };
+    window.fetch = function(input, init) {
+      const rawUrl = typeof input === 'string' ? input : input instanceof URL ? input.href : input?.url;
+      const proxyUrl = rewriteOperaUrl(rawUrl);
+      if (!proxyUrl) return nativeFetch(input, init);
+      if (typeof Request !== 'undefined' && input instanceof Request) {
+        const headers = new Headers(input.headers);
+        if (init?.headers) new Headers(init.headers).forEach((v,k) => headers.set(k,v));
+        return nativeFetch(proxyUrl, {
+          method: input.method || 'GET',
+          headers,
+          mode: 'cors',
+          credentials: 'omit',
+          cache: init?.cache || input.cache,
+          redirect: input.redirect,
+          referrerPolicy: input.referrerPolicy,
+          signal: init?.signal || input.signal
+        });
+      }
+      return nativeFetch(proxyUrl, init);
+    };
+    window.__epirOperaFetchProxyInstalled = true;
+  }
+
   const $ = id => document.getElementById(id);
   const finite = Number.isFinite;
   const risk = v => Number(v) >= 75 ? 'wysokie' : Number(v) >= 50 ? 'podwyższone' : 'niskie';
