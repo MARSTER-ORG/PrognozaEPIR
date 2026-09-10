@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/test-opera-page.yml'
+      - 'opera-convection-bridge.js'
 
 permissions:
   contents: read
@@ -92,6 +93,7 @@ jobs:
           visible=attr(button,'data-opera-visible-pixels')
           significant=attr(button,'data-opera-significant-pixels')
           map_frame=attr(button,'data-opera-frame-utc')
+          palette=attr(button,'data-opera-palette')
           pane_present='leaflet-operacmax-pane' in dom.lower()
           overlay_present='opera-cmax-fixed-overlay' in dom
 
@@ -102,6 +104,7 @@ jobs:
           print('map button class =',repr(classes))
           print('map rendered =',repr(rendered))
           print('map frame =',repr(map_frame))
+          print('map palette =',repr(palette))
           print('visible pixels =',repr(visible),'significant =',repr(significant))
           print('pane present =',pane_present,'image overlay present =',overlay_present)
 
@@ -119,6 +122,8 @@ jobs:
               raise SystemExit('OPERA CMAX map renderer did not report rendered=1')
           if not map_frame or 'UTC' not in map_frame:
               raise SystemExit('OPERA CMAX map frame missing explicit UTC')
+          if palette != 'POLRAD CMAX':
+              raise SystemExit('OPERA CMAX map is not using POLRAD CMAX palette')
           if not pane_present:
               raise SystemExit('OPERA CMAX Leaflet pane missing')
           try:
@@ -127,5 +132,5 @@ jobs:
               visible_n=0
           if visible_n > 0 and not overlay_present:
               raise SystemExit('OPERA has visible pixels but Leaflet image overlay is missing')
-          print('PASS: published radar page rendered OPERA CMAX map layer')
+          print('PASS: published radar page rendered OPERA CMAX map layer with POLRAD palette')
           PY
