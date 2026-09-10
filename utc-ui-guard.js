@@ -123,7 +123,7 @@
         configurable:true,
         writable:true,
         value:function prognozaUtcLocale(locales, options) {
-          return original.call(this, locales, { ...(options || {}), timeZone:'UTC' });
+          return original.call(this, locales, { ...(options || {}), timeZone: 'UTC' });
         }
       });
     } catch (_) { }
@@ -135,7 +135,7 @@
     if (window.Intl && typeof Intl.DateTimeFormat === 'function') {
       const NativeDateTimeFormat = Intl.DateTimeFormat;
       function UtcDateTimeFormat(locales, options) {
-        return new NativeDateTimeFormat(locales, { ...(options || {}), timeZone:'UTC' });
+        return new NativeDateTimeFormat(locales, { ...(options || {}), timeZone: 'UTC' });
       }
       UtcDateTimeFormat.prototype = NativeDateTimeFormat.prototype;
       try { Object.setPrototypeOf(UtcDateTimeFormat, NativeDateTimeFormat); } catch (_) { }
