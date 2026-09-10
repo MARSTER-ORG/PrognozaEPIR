@@ -1,6 +1,6 @@
 name: Apply synoptic regime upgrade
 
-# One-shot installer; deploy mechanism first, historical profiles can be supplied/enriched later.
+# One-shot installer. Runtime/data are committed by Actions; workflow integration is committed separately.
 on:
   push:
     branches: [main]
@@ -35,7 +35,9 @@ jobs:
           p.write_text(s.replace(old,new,1),encoding='utf-8')
           PY
       - name: Apply runtime integration
-        run: python3 scripts/apply_synoptic_regime_upgrade.py
+        run: |
+          python3 scripts/apply_synoptic_regime_upgrade.py
+          git restore .github/workflows/adaptive-runtime-rollout.yml
       - name: Validate Python
         run: |
           python3 -m py_compile \
@@ -69,20 +71,25 @@ jobs:
           print('coverage',j.get('coverage'))
           PY
           node --check /tmp/index-inline.js
-      - name: Commit final upgrade
+      - name: Commit runtime and contextual learning
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          rm -f scripts/apply_synoptic_regime_upgrade.py .github/workflows/apply-synoptic-regime-upgrade.yml
           rm -rf scripts/__pycache__
-          git add -A
+          git add \
+            index.html \
+            cloud-learning-client.js \
+            scripts/apply_adaptive_runtime_patch.py \
+            scripts/enrich_synoptic_context.py \
+            data/learning/synoptic-context-enrichment-state.json \
+            data/learning/synoptic-regime-skill.json
+          if git diff --cached --quiet; then
+            echo 'Runtime already installed'
+            exit 0
+          fi
           git commit -m 'weather: enable seasonal synoptic regime learning'
           for attempt in 1 2 3 4; do
             git pull --rebase origin main && git push origin HEAD:main && exit 0
             sleep $((attempt*3))
           done
           exit 1
-      - name: Run full adaptive rollout
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run adaptive-runtime-rollout.yml --ref main
