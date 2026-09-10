@@ -9,10 +9,10 @@
 
   function localHour(t) {
     try {
-      const tz = (typeof PLACE !== 'undefined' && PLACE?.tz) ? PLACE.tz : 'UTC';
-      return new Intl.DateTimeFormat('pl-PL',{timeZone:tz,hour:'2-digit',minute:'2-digit'}).format(new Date(t));
+      return new Intl.DateTimeFormat('pl-PL',{timeZone:'UTC',hour:'2-digit',minute:'2-digit'}).format(new Date(t));
     } catch (_) {
-      return new Date(t).toLocaleTimeString('pl-PL',{hour:'2-digit',minute:'2-digit'});
+      const d = new Date(t);
+      return String(d.getUTCHours()).padStart(2,'0') + ':' + String(d.getUTCMinutes()).padStart(2,'0');
     }
   }
 
@@ -82,12 +82,12 @@
     const range = ev.peakFrom === null
       ? localHour(ev.peak.t)
       : localHour(ev.peakFrom) + '–' + localHour(ev.peakTo);
-    return fmt0(ev.peak.score) + '/100 · ' + range;
+    return fmt0(ev.peak.score) + '/100 · ' + range + ' UTC';
   }
 
   function whenDetail(ev) {
     if (!ev || ev.peak.score < THRESHOLD || ev.onset === null) return 'brak sygnału ≥40 w 48 h';
-    return localHour(ev.onset) + ' → ' + (ev.end === null ? 'dalej' : localHour(ev.end));
+    return localHour(ev.onset) + ' → ' + (ev.end === null ? 'dalej' : localHour(ev.end)) + ' UTC';
   }
 
   function card(label,value,detail,score=null) {
