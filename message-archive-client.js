@@ -2,11 +2,12 @@
 (() => {
   // Frontend boundary: this client reads the central archive only. It must never
   // contact IMGW, AWC, PilotHub or any other bulletin provider directly.
-  const LIVE_ROOT = String(
-    window.PROGNOZAEPIR_ARCHIVE_ROOT ||
-    'https://central-ingestor-production.up.railway.app/data/messages'
-  ).replace(/\/+$/,'');
+  // Railway is the authoritative acquisition engine; GitHub is the durable
+  // published archive consumed by browser modules.
+  const GITHUB_ROOT = 'https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/messages';
   const STATIC_ROOT = 'data/messages';
+  const RAILWAY_ROOT = 'https://central-ingestor-production.up.railway.app/data/messages';
+  const PRIMARY_ROOT = String(window.PROGNOZAEPIR_ARCHIVE_ROOT || GITHUB_ROOT).replace(/\/+$/,'');
   const TTL_MS = 30_000;
   const cache = new Map();
   const norm = value => String(value || '').toUpperCase();
@@ -32,25 +33,20 @@
     const hit = cache.get(name);
     if(!force && hit && now - hit.at < TTL_MS) return hit.value;
 
-    let value;
-    let source = LIVE_ROOT;
-    try {
-      value = await fetchFrom(LIVE_ROOT, name, now);
-    } catch (liveError) {
-      // GitHub Pages snapshot is intentionally read-only emergency fallback.
-      // It is not an acquisition source and never writes into the archive.
-      source = STATIC_ROOT;
+    const roots = [...new Set([PRIMARY_ROOT, STATIC_ROOT, RAILWAY_ROOT].filter(Boolean))];
+    const errors = [];
+    for(const root of roots){
       try {
-        value = await fetchFrom(STATIC_ROOT, name, now);
-      } catch (staticError) {
-        const error = new Error(`MessageArchive ${name}: live and static archive unavailable`);
-        error.cause = {liveError, staticError};
-        throw error;
+        const value = await fetchFrom(root, name, now);
+        cache.set(name, {at: now, value, source: root});
+        return value;
+      } catch(error){
+        errors.push({root, error});
       }
     }
-
-    cache.set(name, {at: now, value, source});
-    return value;
+    const error = new Error(`MessageArchive ${name}: GitHub/static/Railway archive unavailable`);
+    error.cause = errors;
+    throw error;
   }
 
   async function latest(force=false){
@@ -89,8 +85,9 @@
   }
 
   const api = Object.freeze({
-    root: LIVE_ROOT,
+    root: PRIMARY_ROOT,
     fallbackRoot: STATIC_ROOT,
+    railwayRoot: RAILWAY_ROOT,
     latest,
     recent,
     status: (force=false) => fetchJson('status.json', force),
