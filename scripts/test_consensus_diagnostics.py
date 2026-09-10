@@ -96,6 +96,35 @@ class ConsensusDiagnosticsTests(unittest.TestCase):
         self.assertFalse(fog)
         self.assertFalse(mifg)
 
+    def test_synop_can_establish_event_when_metar_has_no_event_code(self):
+        m = {"raw": "METAR EPIR 101200Z 22008KT 9999 SCT020 18/10 Q1012="}
+        s_fog = {"present_weather_code": 45}
+        fog, source, _ = cd.fog_observation(m, s_fog)
+        self.assertTrue(fog)
+        self.assertEqual(source, "SYNOP")
+
+        s_ts = {"present_weather_code": 95}
+        ts, source = cd.thunderstorm_observation(m, s_ts)
+        self.assertTrue(ts)
+        self.assertEqual(source, "SYNOP")
+
+    def test_event_sources_count_only_samples_with_prediction_and_observation(self):
+        acc = cd._new_accumulator()
+        forecast = {
+            "temperature_c": None,
+            "dew_point_c": None,
+            "pressure_hpa": None,
+            "relative_humidity_pct": None,
+            "wind_gust_ms": None,
+            "visibility_m": None,
+            "precipitation_mm": None,
+        }
+        m = {"raw": "METAR EPIR 101200Z 22008KT 9999 NSC 18/10 Q1012=", "clouds": []}
+        cd._consume(acc, forecast, [], m, None)
+        self.assertEqual(sum(acc["event_sources"]["precipitation"].values()), 0)
+        self.assertEqual(sum(acc["event_sources"]["fog"].values()), 0)
+        self.assertEqual(sum(acc["event_sources"]["thunderstorm"].values()), 0)
+
     def test_thunderstorm_observation(self):
         ts, source = cd.thunderstorm_observation({"raw": "METAR EPIR 101400Z 22012KT 5000 TSRA BKN020CB 20/17 Q1008="}, None)
         self.assertTrue(ts)
