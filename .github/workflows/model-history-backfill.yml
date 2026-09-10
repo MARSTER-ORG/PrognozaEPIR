@@ -46,8 +46,11 @@ jobs:
             scripts/backfill_model_history.py \
             scripts/model_verification.py \
             scripts/consensus_wind_bias.py \
+            scripts/consensus_diagnostics.py \
+            scripts/test_consensus_diagnostics.py \
             scripts/build_adaptive_weights.py \
             scripts/build_fog_event_learning.py
+          python3 scripts/test_consensus_diagnostics.py
 
       - name: Decide whether scheduled recovery is needed
         id: recovery_gate
@@ -106,7 +109,7 @@ jobs:
         if: steps.recovery_gate.outputs.needed == 'true'
         run: |
           python3 scripts/model_verification.py
-          python3 scripts/consensus_wind_bias.py
+          python3 scripts/consensus_diagnostics.py
 
       - name: Rebuild robust adaptive consensus weights
         if: steps.recovery_gate.outputs.needed == 'true'
@@ -144,7 +147,9 @@ jobs:
           weights=json.loads(Path('data/learning/adaptive-weights.json').read_text(encoding='utf-8'))
           fog=json.loads(Path('data/learning/fog-event-skill.json').read_text(encoding='utf-8'))
           verification=json.loads(Path('data/learning/model-verification.json').read_text(encoding='utf-8'))
-          bias=((verification.get('models') or {}).get('consensus') or {}).get('wind_bias') or {}
+          consensus=((verification.get('models') or {}).get('consensus') or {})
+          bias=consensus.get('wind_bias') or {}
+          diagnostics=consensus.get('diagnostics') or {}
           assert state.get('schema') in {'prognozaepir-model-backfill-state-v1','prognozaepir-model-backfill-state-v2'}
           assert weights.get('schema') == 'prognozaepir-adaptive-weights-v1'
           assert len(weights.get('models') or {}) >= 8
@@ -152,9 +157,12 @@ jobs:
           assert fog.get('observation_inventory',{}).get('speci',0) >= 1
           assert bias.get('schema') == 'prognozaepir-consensus-wind-bias-v1'
           assert bias.get('definition') == 'forecast_minus_observed'
+          assert diagnostics.get('schema') == 'prognozaepir-consensus-diagnostics-v1'
+          assert diagnostics.get('continuous_error_definition') == 'forecast_minus_observed'
           print('validated historical forecast rows:', rows)
           print('backfill completeness:', state.get('completeness_pct', 'legacy-state'))
           print('fog observation inventory:', fog.get('observation_inventory'))
+          print('consensus diagnostics samples:', (diagnostics.get('overall') or {}).get('eligible_samples'))
           print('consensus wind bias samples:', bias.get('eligible_consensus_samples'))
           PY
 
