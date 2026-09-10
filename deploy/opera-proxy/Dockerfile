@@ -7,6 +7,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# Dedicated image: only the OPERA CMAX proxy, no bulletin ingestor.
 COPY server.py /app/server.py
 
 EXPOSE 8080
