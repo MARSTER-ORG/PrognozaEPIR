@@ -34,17 +34,8 @@ p.write_text(s, encoding='utf-8')
 
 # Keep altitude formatting consistent in both the source module and the bundled
 # copy. Heights are rounded to 30 m steps first; feet are then derived only from
-# those rounded metre values and rounded to 100 ft. This prevents mismatched
-# pairs such as 600 m / 1800 ft.
+# those displayed metre values and rounded to 10 ft.
 old_height = '''  function fmtHeight(lo,hi){
-    if(!Number.isFinite(lo)&&!Number.isFinite(hi))return'—';
-    if(!Number.isFinite(lo))lo=hi;if(!Number.isFinite(hi))hi=lo;
-    lo=Math.max(0,lo);hi=Math.max(lo,hi);
-    const mlo=Math.round(lo/100)*100,mhi=Math.round(hi/100)*100;
-    const flo=Math.round((lo*3.28084)/100)*100,fhi=Math.round((hi*3.28084)/100)*100;
-    return mlo===mhi?`${mlo} m / ${flo} ft AMSL`:`${mlo}–${mhi} m / ${flo}–${fhi} ft AMSL`;
-  }'''
-new_height = '''  function fmtHeight(lo,hi){
     if(!Number.isFinite(lo)&&!Number.isFinite(hi))return'—';
     if(!Number.isFinite(lo))lo=hi;if(!Number.isFinite(hi))hi=lo;
     lo=Math.max(0,lo);hi=Math.max(lo,hi);
@@ -54,12 +45,22 @@ new_height = '''  function fmtHeight(lo,hi){
     const flo=ft(mlo),fhi=ft(mhi);
     return mlo===mhi?`${mlo} m / ${flo} ft AMSL`:`${mlo}–${mhi} m / ${flo}–${fhi} ft AMSL`;
   }'''
+new_height = '''  function fmtHeight(lo,hi){
+    if(!Number.isFinite(lo)&&!Number.isFinite(hi))return'—';
+    if(!Number.isFinite(lo))lo=hi;if(!Number.isFinite(hi))hi=lo;
+    lo=Math.max(0,lo);hi=Math.max(lo,hi);
+    const round30=m=>Math.round(m/30)*30;
+    const mlo=round30(lo),mhi=Math.max(mlo,round30(hi));
+    const ft=m=>Math.round((m*3.28084)/10)*10;
+    const flo=ft(mlo),fhi=ft(mhi);
+    return mlo===mhi?`${mlo} m / ${flo} ft AMSL`:`${mlo}–${mhi} m / ${flo}–${fhi} ft AMSL`;
+  }'''
 
 source = ROOT / 'aviation-hazards.js'
 a = source.read_text(encoding='utf-8')
 if old_height in a:
     a = a.replace(old_height, new_height, 1)
-elif 'const round30=m=>Math.round(m/30)*30;' not in a:
+elif 'const ft=m=>Math.round((m*3.28084)/10)*10;' not in a:
     raise SystemExit('aviation-hazards fmtHeight hook not found')
 source.write_text(a, encoding='utf-8')
 
@@ -73,7 +74,7 @@ if marker not in w:
     w += '\n\n' + module + '\n'
 elif old_height in w:
     w = w.replace(old_height, new_height, 1)
-elif 'const round30=m=>Math.round(m/30)*30;' not in w:
+elif 'const ft=m=>Math.round((m*3.28084)/10)*10;' not in w:
     raise SystemExit('warnings-readable fmtHeight hook not found')
 target.write_text(w, encoding='utf-8')
 
