@@ -8,6 +8,7 @@ on:
       - 'scripts/model_verification.py'
       - 'scripts/model_verification_realtime.py'
       - 'scripts/consensus_wind_bias.py'
+      - 'scripts/test_consensus_wind_bias.py'
       - '.github/workflows/collect-epir-observations.yml'
 permissions:
   contents: write
@@ -24,7 +25,8 @@ jobs:
           fetch-depth: 0
       - name: Verify only from central archive
         run: |
-          python3 -m py_compile scripts/model_verification.py scripts/model_verification_realtime.py scripts/consensus_wind_bias.py
+          python3 -m py_compile scripts/model_verification.py scripts/model_verification_realtime.py scripts/consensus_wind_bias.py scripts/test_consensus_wind_bias.py
+          python3 scripts/test_consensus_wind_bias.py
           python3 scripts/message_archive.py --validate-only
           grep -F 'SPECI_DIR = ROOT / "data" / "messages" / "speci"' scripts/model_verification.py
           python3 scripts/model_verification_realtime.py --summary-only
