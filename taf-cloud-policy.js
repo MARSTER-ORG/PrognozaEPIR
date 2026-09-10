@@ -6,6 +6,7 @@
   const SIG_CLOUD_FT = 1500;
   const ORDINARY_MIN_M = 450;
   const ORDINARY_MAX_M = 1500;
+  const BASE_CLOUD_DOMINANCE = .50;
   const CONV_PROB_RAW = 50;
   const CONV_TEMPO_RAW = 75;
   const MAX_CHANGE_GROUPS = 5;
@@ -118,10 +119,12 @@
     const scope = series.filter(z => z.t < stop);
     if (!scope.length) return [];
 
-    const hourWeights = scope.map((z, i) => {
+    // Dla zwykłych chmur stan bazowy ma reprezentować przeważającą część
+    // okresu, a nie preferować pierwsze godziny. Ważymy jedynie jakością
+    // konsensusu modeli; warstwa musi występować przez >50% ważonego okna.
+    const hourWeights = scope.map(z => {
       const countFactor = finite(Number(z.count)) ? clamp(Number(z.count) / 8, .75, 1.25) : 1;
-      const timeFactor = 1 + .25 * Math.exp(-i / 4);
-      return countFactor * timeFactor;
+      return countFactor;
     });
     const totalW = hourWeights.reduce((a, b) => a + b, 0) || 1;
     const samples = [];
@@ -177,7 +180,7 @@
       const presence = presentW / totalW;
       const hM = heightDen ? heightNum / heightDen : NaN;
       const code = amountCode(avgOkta);
-      if (!code || presence < .25 || !finite(hM)) return null;
+      if (!code || presence <= BASE_CLOUD_DOMINANCE || !finite(hM)) return null;
       const ft100 = clamp(Math.round(hM * FT_PER_M / 100), 1, 999);
       return {code, avgOkta, presence, hM, token: code + pad(ft100, 3)};
     }).filter(Boolean).sort((a, b) => a.hM - b.hM);
@@ -410,7 +413,7 @@
     if (!box) return;
     const extra = [];
     if (reps.length) {
-      extra.push(`Chmury zwykłe 450–1500 m: zamiast kopiować pierwszą godzinę użyto średniej ważonej czasu, liczby modeli, wielkości i wysokości warstwy: ${reps.map(r => `${r.token} (śr. ${r.avgOkta.toFixed(1)}/8, obecność ${Math.round(r.presence*100)}%)`).join(', ')}. Sama zmiana wysokości w tym zakresie nie tworzy grupy zmian TAF.`);
+      extra.push(`Chmury zwykłe 450–1500 m: warstwa bazowa musi dominować przez >50% ważonego okresu; następnie użyto średniej ważonej liczby modeli, wielkości i wysokości warstwy: ${reps.map(r => `${r.token} (śr. ${r.avgOkta.toFixed(1)}/8, obecność ${Math.round(r.presence*100)}%)`).join(', ')}. Sama zmiana wysokości w tym zakresie nie tworzy grupy zmian TAF.`);
     }
     for (const g of conv) {
       extra.push(`${g.kind} ${ddhh(g.s)}/${ddhh(g.e,true)} ${g.cloud}: silnik Radar TCU/CB indeks ${g.index}/100 → skalibrowane P(TAF) ~${Math.round(g.tafProb)}%; typ ${g.type}${finite(g.support)?`, wsparcie modeli ${Math.round(g.support*100)}%`:''}.`);
@@ -431,7 +434,7 @@
       s.appendChild(p);
     }
     const conf = $('conf');
-    if (conf && !/Chmury zwykłe:/.test(conf.textContent)) conf.textContent += ' Chmury zwykłe: średnia ważona w nieistotnym operacyjnie zakresie 450–1500 m; TCU/CB: wspólny silnik Radary + modele.';
+    if (conf && !/Chmury zwykłe:/.test(conf.textContent)) conf.textContent += ' Chmury zwykłe: stan dominujący >50% ważonego okresu w zakresie 450–1500 m; TCU/CB: wspólny silnik Radary + modele.';
   }
 
   async function processOriginal(original) {
@@ -473,7 +476,7 @@
   function install() {
     const tafEl = $('taf');
     if (!tafEl) return;
-    new MutationObserver(onTafChanged).observe(tafEl, {childList:true, characterData:true, subtree:true});
+    new MutationObserver(onTafChanged).observe(tafEl, {childList:true, characterData:true,subtree:true});
     const copy = $('copy');
     copy?.addEventListener('click', async e => {
       if (!lastEnhanced) return;
