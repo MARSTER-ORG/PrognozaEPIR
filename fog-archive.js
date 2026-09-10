@@ -75,7 +75,7 @@
     const visM=Number(document.getElementById('fogObsVis')?.value);
     const t=time ? Date.parse(time) : NaN;
     if(!finite(t)||!finite(T)||!finite(Td)||!finite(visM)||visM<=0||Td>T+1) return null;
-    const place=typeof PLACE!=='undefined'?PLACE:{lat:52.7989,lon:18.2639,tz:'Europe/Warsaw'};
+    const place=typeof PLACE!=='undefined'?PLACE:{lat:52.7989,lon:18.2639,tz:'UTC'};
     return {
       schema:'epir-fog-observation-v1',
       observed_at:new Date(t).toISOString(),

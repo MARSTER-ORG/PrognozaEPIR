@@ -263,7 +263,7 @@
 
   function fmtTime(sec){
     try {
-      return new Intl.DateTimeFormat('pl-PL',{timeZone:'Europe/Warsaw',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(Number(sec)*1000));
+      return new Intl.DateTimeFormat('pl-PL',{timeZone:'UTC',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(Number(sec)*1000));
     } catch (_) { return 'aktualna'; }
   }
 

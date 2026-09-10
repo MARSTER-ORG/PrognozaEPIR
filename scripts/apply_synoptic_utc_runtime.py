@@ -11,8 +11,8 @@ TARGETS = (
 )
 
 REPLACEMENTS = (
-    ("timeZone:'Europe/Warsaw'", "timeZone:'UTC'"),
-    ('timeZone:"Europe/Warsaw"', 'timeZone:"UTC"'),
+    ("timeZone:'UTC'", "timeZone:'UTC'"),
+    ('timeZone:"UTC"', 'timeZone:"UTC"'),
 )
 
 

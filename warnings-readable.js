@@ -91,7 +91,7 @@
   function riskName(v){const n=Number(v);return n>=75?'high':n>=50?'mid':'low';}
   function riskLabel(v){const r=riskName(v);return r==='high'?'wysokie':r==='mid'?'podwyższone':'niskie';}
   function fmtLocal(sec){
-    try{return new Intl.DateTimeFormat('pl-PL',{timeZone:'Europe/Warsaw',hour:'2-digit',minute:'2-digit'}).format(new Date(Number(sec)*1000));}catch(_){return'—';}
+    try{return new Intl.DateTimeFormat('pl-PL',{timeZone:'UTC',hour:'2-digit',minute:'2-digit'}).format(new Date(Number(sec)*1000));}catch(_){return'—';}
   }
 
   function ensureStyle(){
@@ -359,7 +359,7 @@
   let installed=false,playing=false,timer=0,currentLayer=null,currentPack=null,currentIndex=0,transitionSeq=0,internalRange=false;
 
   function fmtTime(sec){
-    try{return new Intl.DateTimeFormat('pl-PL',{timeZone:'Europe/Warsaw',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(Number(sec)*1000));}
+    try{return new Intl.DateTimeFormat('pl-PL',{timeZone:'UTC',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(Number(sec)*1000));}
     catch(_){return new Date(Number(sec)*1000).toLocaleTimeString('pl-PL');}
   }
   function productLabel(p){

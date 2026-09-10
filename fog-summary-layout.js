@@ -9,7 +9,7 @@
 
   function localHour(t) {
     try {
-      const tz = (typeof PLACE !== 'undefined' && PLACE?.tz) ? PLACE.tz : 'Europe/Warsaw';
+      const tz = (typeof PLACE !== 'undefined' && PLACE?.tz) ? PLACE.tz : 'UTC';
       return new Intl.DateTimeFormat('pl-PL',{timeZone:tz,hour:'2-digit',minute:'2-digit'}).format(new Date(t));
     } catch (_) {
       return new Date(t).toLocaleTimeString('pl-PL',{hour:'2-digit',minute:'2-digit'});

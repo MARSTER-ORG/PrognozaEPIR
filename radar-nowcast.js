@@ -77,7 +77,7 @@
   }
 
   function setStatus(s){const e=$n('rnStatus');if(e)e.textContent=s;}
-  function fmtLocal(sec){try{return new Intl.DateTimeFormat('pl-PL',{timeZone:'Europe/Warsaw',hour:'2-digit',minute:'2-digit'}).format(new Date(sec*1000));}catch(_){return new Date(sec*1000).toLocaleTimeString('pl-PL',{hour:'2-digit',minute:'2-digit'});}}
+  function fmtLocal(sec){try{return new Intl.DateTimeFormat('pl-PL',{timeZone:'UTC',hour:'2-digit',minute:'2-digit'}).format(new Date(sec*1000));}catch(_){return new Date(sec*1000).toLocaleTimeString('pl-PL',{hour:'2-digit',minute:'2-digit'});}}
   function compass16(deg){const d=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];return d[Math.round((((deg%360)+360)%360)/22.5)%16];}
   function bearingFromVector(east,north){return (Math.atan2(east,north)*180/Math.PI+360)%360;}
   function median(a){if(!a.length)return null;const b=a.slice().sort((x,y)=>x-y),m=Math.floor(b.length/2);return b.length%2?b[m]:(b[m-1]+b[m])/2;}

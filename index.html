@@ -55,7 +55,7 @@
 </div>
 <script>
 'use strict';
-const PLACE={lat:52.7989,lon:18.2639,tz:'Europe/Warsaw'};
+const PLACE={lat:52.7989,lon:18.2639,tz:'UTC'};
 const SURFACE=['temperature_2m','dew_point_2m','relative_humidity_2m','precipitation','pressure_msl','visibility','wind_speed_10m','wind_direction_10m','wind_gusts_10m','weather_code'];
 const LEVELS=[1000,975,950,925,900,850,800,750,700,650,600,550,500,450,400,350,300,250,200,150];
 const ALADIN_LEVELS=[1000,950,925,850,800,700,600,500,450,400,350,300,275,250,200,150];
@@ -76,7 +76,7 @@ const MODELS=[
 const $=id=>document.getElementById(id), finite=Number.isFinite, clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 let datasets=new Map(),consensus=[],horizon=48,selected='consensus',demo=false,failures=[];
 function parseUTC(s){return Date.parse(s.endsWith('Z')?s:s+'Z')}
-const _fmtCache=new Map();function fmt(ms,opt){const k=JSON.stringify(opt);let x=_fmtCache.get(k);if(!x){x=new Intl.DateTimeFormat('pl-PL',{timeZone:PLACE.tz,...opt});_fmtCache.set(k,x)}return x.format(new Date(ms))}
+const _fmtCache=new Map();function fmt(ms,opt={}){const k=JSON.stringify(opt);let x=_fmtCache.get(k);if(!x){x=new Intl.DateTimeFormat('pl-PL',{timeZone:'UTC',...opt});_fmtCache.set(k,x)}const value=x.format(new Date(ms));return ('hour'in opt||'minute'in opt||'second'in opt)?value+' UTC':value}
 function f(v,d=1){return finite(v)?Number(v).toFixed(d):'—'}
 function uv(s,d){const r=d*Math.PI/180;return{u:-s*Math.sin(r),v:-s*Math.cos(r)}}
 function sd(u,v){return{speed:Math.hypot(u,v),dir:(Math.atan2(-u,-v)*180/Math.PI+360)%360}}
@@ -132,7 +132,7 @@ function setBadge(t,cls){$('badge').textContent=t;$('badge').className='badge '+
 function populateView(){const sel=$('view'),old=sel.value;sel.innerHTML='<option value="consensus">PrognozaEPIR CONSENSUS</option>';for(const m of MODELS){const o=document.createElement('option');o.value=m.id;o.textContent=m.name+(datasets.has(m.id)?'':' — brak danych');o.disabled=!datasets.has(m.id);sel.appendChild(o)}sel.value=[...sel.options].some(o=>o.value===old&&!o.disabled)?old:'consensus';selected=sel.value}
 function modelSeries(id){const ds=datasets.get(id);if(!ds)return[];const t=timeline();return t.map(x=>{const r=sample(ds,x);if(!r)return null;const pr=profile([{row:r,w:1,elevation:ds.elevation}],finite(ds.elevation)?ds.elevation:90),ceil=ceiling(pr),low=band(pr,0,2000),mid=band(pr,2000,6000),high=band(pr,6000,13001),oktaL=toOkta(low),oktaM=toOkta(mid),oktaH=toOkta(high),lowH=bandHeightForAmount(pr,0,2000,oktaL),midH=bandHeightForAmount(pr,2000,6000,oktaM),highH=bandHeightForAmount(pr,6000,13001,oktaH);return{t:x,T:r.temperature_2m,Td:r.dew_point_2m,RH:r.relative_humidity_2m,RR:r.precipitation,P:r.pressure_msl,VIS:r.visibility,WS:r.wind_speed_10m,WD:r.wind_direction_10m,G:r.wind_gusts_10m,low,mid,high,lowH,midH,highH,oktaL,oktaM,oktaH,wet:finite(r.precipitation)?(r.precipitation>=.1?100:0):null,storm:finite(r.weather_code)?([95,96,99].includes(Math.round(r.weather_code))?100:0):null,profile:pr,ceiling:ceil,count:1,stormCount:finite(r.weather_code)?1:0}}).filter(Boolean)}
 function dataVisible(){const src=selected==='consensus'?consensus:modelSeries(selected),end=Date.now()+horizon*3600e3;return src.filter(x=>x.t<=end)}
-function render(){setBadge('LIVE','live');$('updated').textContent=new Date().toLocaleString('pl-PL');$('models').textContent='Modele: '+MODELS.map(m=>datasets.has(m.id)?m.name+' ✓':m.name+' ×').join(' · ');if(failures.length){$('errors').style.display='block';$('errors').textContent='Nie załadowano modeli podstawowych:\n'+failures.join('\n')}else $('errors').style.display='none';draw()}
+function render(){setBadge('LIVE','live');$('updated').textContent='Aktualizacja: '+fmt(Date.now(),{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});$('models').textContent='Modele: '+MODELS.map(m=>datasets.has(m.id)?m.name+' ✓':m.name+' ×').join(' · ');if(failures.length){$('errors').style.display='block';$('errors').textContent='Nie załadowano modeli podstawowych:\n'+failures.join('\n')}else $('errors').style.display='none';draw()}
 const cv=$('meteo'),ctx=cv.getContext('2d'),viewport=$('canvasViewport'),stage=$('canvasStage');
 function systemDark(){return window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches}
 function activeTheme(){return document.documentElement.dataset.theme||(systemDark()?'dark':'light')}

@@ -43,7 +43,7 @@
   }
   function localHourNumber(t){
     try{return Number(new Intl.DateTimeFormat('en-GB',{timeZone:PLACE.tz,hour:'2-digit',hourCycle:'h23'}).format(new Date(t)));}
-    catch(_){return new Date(t).getHours();}
+    catch(_){return new Date(t).getUTCHours();}
   }
   function riskText(s){
     if(!finite(s))return 'brak danych';

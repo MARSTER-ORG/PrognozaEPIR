@@ -106,7 +106,7 @@
 
   function localTime(v){
     const t=Date.parse(v||''); if(!finite(t)) return '—';
-    try{return new Intl.DateTimeFormat('pl-PL',{timeZone:'Europe/Warsaw',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(t));}
+    try{return new Intl.DateTimeFormat('pl-PL',{timeZone:'UTC',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(t));}
     catch(_){return new Date(t).toLocaleString('pl-PL');}
   }
 

@@ -238,7 +238,7 @@
   }
 
   function warsawLabel(ms) {
-    return new Intl.DateTimeFormat('pl-PL', {timeZone:'Europe/Warsaw', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}).format(new Date(ms)).replace(/\s/g, '');
+    return new Intl.DateTimeFormat('pl-PL', {timeZone:'UTC', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}).format(new Date(ms)).replace(/\s/g, '');
   }
 
   function parseRadarRows(doc) {

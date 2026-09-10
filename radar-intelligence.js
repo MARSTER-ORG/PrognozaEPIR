@@ -63,7 +63,7 @@
 
   const setPolradStatus = text => { if (polradStatus) polradStatus.textContent = text; };
   const fmtRadarTime = sec => new Intl.DateTimeFormat('pl-PL', {
-    timeZone:'Europe/Warsaw', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'
+    timeZone:'UTC', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'
   }).format(new Date(Number(sec) * 1000));
 
   // Existing "Radar" remains as a point-dBZ/fallback source, but is no longer the default map layer.
