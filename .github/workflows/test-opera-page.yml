@@ -21,11 +21,12 @@ jobs:
           SITE: https://marster-org.github.io/PrognozaEPIR
         run: |
           set -euo pipefail
-          echo "Waiting for radar.html from $GITHUB_SHA"
+          ASSET_V="${GITHUB_SHA:0:12}"
+          echo "Waiting for radar.html asset version $ASSET_V"
           ok=0
           for i in $(seq 1 45); do
             curl -fsS --connect-timeout 10 --max-time 30 "$SITE/radar.html?e2e=$GITHUB_SHA-$i" -o /tmp/radar.html || true
-            if grep -Fq "opera-convection-bridge.js?v=$GITHUB_SHA" /tmp/radar.html 2>/dev/null; then
+            if grep -Fq "opera-convection-bridge.js?v=$ASSET_V" /tmp/radar.html 2>/dev/null; then
               ok=1
               echo "Pages contains current asset version after attempt $i"
               break
@@ -83,7 +84,6 @@ jobs:
           print('opStatus =',repr(status))
           print('opSummary =',repr(summary))
           if state != 'DZIAŁA':
-              # Keep a compact diagnostic around the OPERA card.
               pos=dom.find('id="operaNowcastCard"')
               if pos>=0: print(dom[pos:pos+5000])
               raise SystemExit('OPERA page did not reach DZIAŁA')
