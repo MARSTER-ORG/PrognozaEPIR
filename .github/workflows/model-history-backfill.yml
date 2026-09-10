@@ -45,6 +45,7 @@ jobs:
           python3 -m py_compile \
             scripts/backfill_model_history.py \
             scripts/model_verification.py \
+            scripts/consensus_wind_bias.py \
             scripts/build_adaptive_weights.py \
             scripts/build_fog_event_learning.py
 
@@ -103,7 +104,9 @@ jobs:
 
       - name: Rebuild full model verification from METAR SPECI and SYNOP
         if: steps.recovery_gate.outputs.needed == 'true'
-        run: python3 scripts/model_verification.py
+        run: |
+          python3 scripts/model_verification.py
+          python3 scripts/consensus_wind_bias.py
 
       - name: Rebuild robust adaptive consensus weights
         if: steps.recovery_gate.outputs.needed == 'true'
@@ -140,14 +143,19 @@ jobs:
           state=json.loads(Path('data/learning/model-backfill-state.json').read_text(encoding='utf-8'))
           weights=json.loads(Path('data/learning/adaptive-weights.json').read_text(encoding='utf-8'))
           fog=json.loads(Path('data/learning/fog-event-skill.json').read_text(encoding='utf-8'))
+          verification=json.loads(Path('data/learning/model-verification.json').read_text(encoding='utf-8'))
+          bias=((verification.get('models') or {}).get('consensus') or {}).get('wind_bias') or {}
           assert state.get('schema') in {'prognozaepir-model-backfill-state-v1','prognozaepir-model-backfill-state-v2'}
           assert weights.get('schema') == 'prognozaepir-adaptive-weights-v1'
           assert len(weights.get('models') or {}) >= 8
           assert fog.get('schema') == 'prognozaepir-fog-event-skill-v1'
           assert fog.get('observation_inventory',{}).get('speci',0) >= 1
+          assert bias.get('schema') == 'prognozaepir-consensus-wind-bias-v1'
+          assert bias.get('definition') == 'forecast_minus_observed'
           print('validated historical forecast rows:', rows)
           print('backfill completeness:', state.get('completeness_pct', 'legacy-state'))
           print('fog observation inventory:', fog.get('observation_inventory'))
+          print('consensus wind bias samples:', bias.get('eligible_consensus_samples'))
           PY
 
       - name: Commit historical learning data
