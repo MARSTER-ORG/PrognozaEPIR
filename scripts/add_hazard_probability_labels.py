@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from pathlib import Path
 
+# This installer is intentionally idempotent; touching it also gives Pages an
+# explicit user-authored deploy trigger after workflow-generated code changes.
 ROOT = Path(__file__).resolve().parents[1]
 FILES = [ROOT / 'aviation-hazards.js', ROOT / 'warnings-readable.js']
 
