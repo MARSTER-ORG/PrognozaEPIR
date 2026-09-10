@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/test-opera-page.yml'
+      - 'utc-ui-guard.js'
       - 'opera-nowcast.js'
       - 'opera-convection-bridge.js'
       - 'scripts/railway_ingestor_lowmem_server.py'
@@ -110,7 +111,9 @@ jobs:
             echo 'Published OPERA nowcast still contains direct CloudFerro runtime transport.' >&2
             exit 1
           fi
-          echo 'PASS: published OPERA nowcast uses central-ingestor transport only'
+          curl -fsS --connect-timeout 10 --max-time 30 "$SITE/utc-ui-guard.js?v=$ASSET_V" -o /tmp/utc-ui-guard.js
+          grep -Fq "const LIVE_PROXY = 'https://central-ingestor-production.up.railway.app/opera/dbzh/'" /tmp/utc-ui-guard.js
+          echo 'PASS: published OPERA runtime transport points to central-ingestor'
 
       - name: Run radar page in headless Chrome
         shell: bash
