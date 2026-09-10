@@ -33,7 +33,10 @@
     const hit = cache.get(name);
     if(!force && hit && now - hit.at < TTL_MS) return hit.value;
 
-    const roots = [...new Set([PRIMARY_ROOT, STATIC_ROOT, RAILWAY_ROOT].filter(Boolean))];
+    // GitHub is authoritative for browser reads. If it is temporarily
+    // unavailable, prefer the fresh Railway copy before the deployed Pages
+    // snapshot, which may lag a commit.
+    const roots = [...new Set([PRIMARY_ROOT, RAILWAY_ROOT, STATIC_ROOT].filter(Boolean))];
     const errors = [];
     for(const root of roots){
       try {
@@ -44,7 +47,7 @@
         errors.push({root, error});
       }
     }
-    const error = new Error(`MessageArchive ${name}: GitHub/static/Railway archive unavailable`);
+    const error = new Error(`MessageArchive ${name}: GitHub/Railway/static archive unavailable`);
     error.cause = errors;
     throw error;
   }
@@ -55,6 +58,15 @@
 
   async function recent(force=false){
     return fetchJson('recent.json', force);
+  }
+
+  async function status(force=false){
+    const now = Date.now();
+    try {
+      return await fetchFrom(RAILWAY_ROOT, 'status.json', now);
+    } catch (_) {
+      return fetchJson('status.json', force);
+    }
   }
 
   function strictLatest(payload, type, station){
@@ -86,11 +98,11 @@
 
   const api = Object.freeze({
     root: PRIMARY_ROOT,
-    fallbackRoot: STATIC_ROOT,
-    railwayRoot: RAILWAY_ROOT,
+    fallbackRoot: RAILWAY_ROOT,
+    staticFallbackRoot: STATIC_ROOT,
     latest,
     recent,
-    status: (force=false) => fetchJson('status.json', force),
+    status,
     async getLatest(type, station='', force=false){
       return strictLatest(await latest(force), type, station);
     },
