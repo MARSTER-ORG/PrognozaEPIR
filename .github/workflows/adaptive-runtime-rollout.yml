@@ -10,10 +10,12 @@ on:
       - 'scripts/apply_adaptive_runtime_patch_v2.py'
       - 'scripts/apply_fog_learning_upgrade.py'
       - 'scripts/apply_fog_event_skill_patch.py'
+      - 'scripts/apply_metar_wind_direction_patch.py'
       - 'scripts/build_fog_event_learning.py'
       - 'scripts/build_model_snapshot.py'
       - 'scripts/build_adaptive_weights.py'
       - 'scripts/cloud_learning_backfill.py'
+      - 'scripts/model_verification.py'
       - '.github/workflows/adaptive-runtime-rollout.yml'
   workflow_dispatch:
 
@@ -35,8 +37,10 @@ jobs:
           ref: ${{ github.ref_name }}
           fetch-depth: 0
 
-      - name: Apply frontend/runtime and fog patches
-        run: python3 scripts/apply_adaptive_runtime_patch_v2.py
+      - name: Apply frontend/runtime, fog and wind patches
+        run: |
+          python3 scripts/apply_adaptive_runtime_patch_v2.py
+          python3 scripts/apply_metar_wind_direction_patch.py
 
       - name: Validate Python syntax
         run: |
@@ -45,12 +49,27 @@ jobs:
             scripts/apply_adaptive_runtime_patch_v2.py \
             scripts/apply_fog_learning_upgrade.py \
             scripts/apply_fog_event_skill_patch.py \
+            scripts/apply_metar_wind_direction_patch.py \
             scripts/build_fog_event_learning.py \
             scripts/build_model_snapshot.py \
             scripts/build_adaptive_weights.py \
             scripts/cloud_learning_backfill.py \
             scripts/cloud_learning.py \
             scripts/model_verification.py
+
+      - name: Validate METAR wind-direction reference
+        run: |
+          python3 - <<'PY'
+          import math
+          import sys
+          sys.path.insert(0, 'scripts')
+          import model_verification as mv
+          d = mv.circular_mean_deg([350.0, 10.0, 20.0])
+          assert d is not None and mv.circular_error(d, 6.7) < 0.2, d
+          assert mv.circular_error(350.0, 10.0) == 20.0
+          assert mv.WIND_DIRECTION_REFERENCE_VERSION == 'metar-3-circular-v1'
+          print('3-METAR circular mean:', round(d, 2))
+          PY
 
       - name: Rebuild learning from archive
         run: |
@@ -77,6 +96,7 @@ jobs:
           weights=json.loads(Path('data/learning/adaptive-weights.json').read_text(encoding='utf-8'))
           fog=json.loads(Path('data/learning/fog-event-skill.json').read_text(encoding='utf-8'))
           cloud=json.loads(Path('data/learning/cloud-skill.json').read_text(encoding='utf-8'))
+          verify=json.loads(Path('data/learning/model-verification.json').read_text(encoding='utf-8'))
           assert snap.get('schema') == 'prognozaepir-model-snapshot-v1'
           assert len(snap.get('models') or {}) >= 3, snap.get('failures')
           assert weights.get('schema') == 'prognozaepir-adaptive-weights-v1'
@@ -84,11 +104,13 @@ jobs:
           assert fog.get('schema') == 'prognozaepir-fog-event-skill-v1'
           assert fog.get('observation_inventory',{}).get('speci',0) >= 1
           assert cloud.get('schema') == 'prognozaepir-cloud-learning-v1'
+          assert '3-METAR circular mean' in str(verify.get('method') or '')
           cloud_samples=sum((b.get('n') or 0) for m in cloud.get('models',{}).values() for b in (m.get('lead_buckets') or {}).values())
           assert cloud_samples >= 100, cloud_samples
           print('snapshot models:', len(snap.get('models') or {}))
           print('cloud learning samples:', cloud_samples)
           print('fog observation inventory:', fog.get('observation_inventory'))
+          print('wind verification method:', verify.get('method'))
           PY
 
       - name: Validate frontend JavaScript
@@ -130,12 +152,13 @@ jobs:
           git add \
             index.html rh-axis-fix.js cloud-learning-client.js fog-engine.js \
             scripts/cloud_learning.py \
+            scripts/model_verification.py \
             data/runtime \
             data/learning
           if git diff --cached --quiet; then
             echo "No rollout changes"
           else
-            git commit -m "weather: activate robust consensus and SPECI fog learning"
+            git commit -m "weather: activate robust consensus and METAR wind correction"
             git reset --hard HEAD
             git clean -fd
             for attempt in 1 2 3 4; do
