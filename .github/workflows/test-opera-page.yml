@@ -75,19 +75,57 @@ jobs:
               m=re.search(rf'<[^>]+id=["\']{re.escape(id_)}["\'][^>]*>(.*?)</[^>]+>',dom,re.I|re.S)
               if not m: return None
               return re.sub(r'<[^>]+>','',html.unescape(m.group(1))).strip()
+          def tag_for_id(id_):
+              m=re.search(rf'<[^>]+id=["\']{re.escape(id_)}["\'][^>]*>',dom,re.I|re.S)
+              return m.group(0) if m else ''
+          def attr(tag,name):
+              m=re.search(rf'\b{re.escape(name)}=["\']([^"\']*)["\']',tag,re.I)
+              return html.unescape(m.group(1)) if m else None
+
           state=text_for('opState')
           status=text_for('opStatus')
           frame=text_for('opFrame')
           summary=text_for('opSummary')
+          button=tag_for_id('operaCmaxToggle')
+          classes=attr(button,'class') or ''
+          rendered=attr(button,'data-opera-map-rendered')
+          visible=attr(button,'data-opera-visible-pixels')
+          significant=attr(button,'data-opera-significant-pixels')
+          map_frame=attr(button,'data-opera-frame-utc')
+          pane_present='leaflet-operacmaxpane-pane' in dom.lower()
+          overlay_present='opera-cmax-fixed-overlay' in dom
+
           print('opState =',repr(state))
           print('opFrame =',repr(frame))
           print('opStatus =',repr(status))
           print('opSummary =',repr(summary))
+          print('map button class =',repr(classes))
+          print('map rendered =',repr(rendered))
+          print('map frame =',repr(map_frame))
+          print('visible pixels =',repr(visible),'significant =',repr(significant))
+          print('pane present =',pane_present,'image overlay present =',overlay_present)
+
           if state != 'DZIAŁA':
               pos=dom.find('id="operaNowcastCard"')
               if pos>=0: print(dom[pos:pos+5000])
               raise SystemExit('OPERA page did not reach DZIAŁA')
           if not frame or 'UTC' not in frame:
               raise SystemExit('OPERA frame time missing explicit UTC')
-          print('PASS: published radar page reached OPERA DZIAŁA')
+          if not button:
+              raise SystemExit('OPERA CMAX map button missing')
+          if 'active' not in classes.split():
+              raise SystemExit('OPERA CMAX map did not auto-enable')
+          if rendered != '1':
+              raise SystemExit('OPERA CMAX map renderer did not report rendered=1')
+          if not map_frame or 'UTC' not in map_frame:
+              raise SystemExit('OPERA CMAX map frame missing explicit UTC')
+          if not pane_present:
+              raise SystemExit('OPERA CMAX Leaflet pane missing')
+          try:
+              visible_n=int(visible or '0')
+          except ValueError:
+              visible_n=0
+          if visible_n > 0 and not overlay_present:
+              raise SystemExit('OPERA has visible pixels but Leaflet image overlay is missing')
+          print('PASS: published radar page rendered OPERA CMAX map layer')
           PY
