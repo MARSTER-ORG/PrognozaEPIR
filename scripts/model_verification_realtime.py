@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 
+import consensus_wind_bias as cwb
 import model_verification as mv
 
 DENSE_HOURS = 6.25
@@ -67,6 +68,7 @@ def main():
     if not args.summary_only:
         archive_dense_short_range()
     mv.build_summary()
+    cwb.enrich_summary()
 
     try:
         summary = json.loads(mv.SUMMARY_PATH.read_text(encoding='utf-8'))
@@ -75,6 +77,7 @@ def main():
                 'score': v.get('score_pct'),
                 'visibility': (v.get('components') or {}).get('visibility'),
                 'cloud': (v.get('components') or {}).get('cloud'),
+                'wind_bias': v.get('wind_bias') if k == 'consensus' else None,
             }
             for k, v in (summary.get('models') or {}).items()
         }
