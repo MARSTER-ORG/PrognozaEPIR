@@ -10,21 +10,20 @@
   window.__PROGNOZA_EPIR_UTC_GUARD_V2__ = true;
 
   // Radar-only OPERA transport guard. It is installed in <head>, before any
-  // GeoTIFF/radar module. Both the original CloudFerro object URL and the old
-  // central-ingestor proxy URL are rewritten to the dedicated Railway proxy.
-  // This also makes stale cached versions of later radar bridges harmless.
+  // GeoTIFF/radar module. Direct CloudFerro and legacy Railway proxy URLs are
+  // normalized to the merged central-ingestor endpoint.
   try {
     if (/\/radar\.html$/i.test(location.pathname) && !window.__PROGNOZA_EPIR_OPERA_EARLY_PROXY__) {
       const nativeFetch = window.fetch.bind(window);
-      const LIVE_PROXY = 'https://opera-cmax-live-production.up.railway.app/opera/dbzh/';
-      const OLD_PROXY = 'https://central-ingestor-production.up.railway.app/opera/dbzh/';
+      const LIVE_PROXY = 'https://central-ingestor-production.up.railway.app/opera/dbzh/';
+      const LEGACY_PROXY = 'https://opera-cmax-live-production.up.railway.app/opera/dbzh/';
       const S3_PREFIX = 'https://s3.waw3-1.cloudferro.com/openradar-24h/';
       const operaToken = value => {
         const url = String(value || '');
         let m = url.match(/OPERA@(20\d{6})T(\d{4})@0@DBZH\.tiff(?:[?#].*)?$/i);
         if (m && url.startsWith(S3_PREFIX)) return m[1] + m[2];
         m = url.match(/\/opera\/dbzh\/(20\d{10})\.tiff(?:[?#].*)?$/i);
-        if (m && (url.startsWith(OLD_PROXY) || url.startsWith(LIVE_PROXY))) return m[1];
+        if (m && (url.startsWith(LIVE_PROXY) || url.startsWith(LEGACY_PROXY))) return m[1];
         return null;
       };
       window.fetch = function prognozaOperaFetch(input, init) {
