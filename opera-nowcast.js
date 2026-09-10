@@ -4,9 +4,9 @@
   if (window.__epirOperaNowcastLoaded) return;
   window.__epirOperaNowcastLoaded = true;
 
-  // OPERA CIRRUS/NIMBUS: public 24 h CloudFerro cache, no MeteoGate metadata request.
-  // Real object pattern: YYYY/MM/DD/OPERA/COMP/OPERA@YYYYMMDDTHHMM@0@DBZH.tiff
-  const S3_BASE = 'https://s3.waw3-1.cloudferro.com/openradar-24h';
+  // OPERA CIRRUS/NIMBUS: the browser reads GeoTIFF only through the merged
+  // central-ingestor CORS/Range proxy. CloudFerro remains upstream server-side.
+  const OPERA_PROXY_BASE = 'https://central-ingestor-production.up.railway.app/opera/dbzh';
   const PROJ_OPERA = '+proj=laea +lat_0=55 +lon_0=10 +x_0=1950000 +y_0=-2100000 +ellps=WGS84 +units=m +no_defs';
   const PROJ_3035 = '+proj=laea +lat_0=52 +lon_0=10 +x_0=4321000 +y_0=3210000 +ellps=GRS80 +units=m +no_defs';
   const PROJ_WGS84 = '+proj=longlat +datum=WGS84 +no_defs';
@@ -126,7 +126,7 @@
 
   function frameUrl(ms){
     const d=new Date(ms),Y=d.getUTCFullYear(),M=pad2(d.getUTCMonth()+1),D=pad2(d.getUTCDate()),h=pad2(d.getUTCHours()),m=pad2(d.getUTCMinutes());
-    return `${S3_BASE}/${Y}/${M}/${D}/OPERA/COMP/OPERA@${Y}${M}${D}T${h}${m}@0@DBZH.tiff`;
+    return `${OPERA_PROXY_BASE}/${Y}${M}${D}${h}${m}.tiff`;
   }
   function candidateFrames(){
     const step=5*60000,base=Math.floor(Date.now()/step)*step;
@@ -147,7 +147,7 @@
         const buf=await r.arrayBuffer();
         return await window.GeoTIFF.fromArrayBuffer(buf);
       }finally{clearTimeout(timer)}
-    }catch(fullError){throw new Error(`bezpośredni GeoTIFF OPERA niedostępny (${fullError?.message||rangeError?.message||'CORS'})`)}
+    }catch(fullError){throw new Error(`GeoTIFF OPERA przez central-ingestor niedostępny (${fullError?.message||rangeError?.message||'CORS'})`)}
   }
 
   function projectForBbox(p,bbox){
@@ -245,13 +245,13 @@
   function renderFusion(f){if($('opFusion'))$('opFusion').textContent=f.level;if($('opConv'))$('opConv').textContent=f.convectiveSupport;if($('opFusionSub'))$('opFusionSub').textContent=finite(f.dirDiffDeg)?`różnica kierunku ${Math.round(f.dirDiffDeg)}° · prędkości ${Math.round(f.speedDiffKmh)} km/h`:'wektor jednego źródła niedostępny'}
   function renderResult(r){
     ensureUi();$('operaNowcastCard')?.classList.remove('op-error');const latest=r.latest;setState('DZIAŁA','ok');$('opFrame').textContent=fmtUtcMs(latest.time);$('opFrames').textContent=`Historia: ${r.frames} klatek · ${fmtUtcMs(r.frameStart)}–${fmtUtcMs(r.frameEnd)}`;$('opMax').textContent=dbzText(latest.max);$('opNearest').textContent=r.nearest?`${Math.round(r.nearest.distance)} km ${compass16(r.nearest.bearing)} · ${dbzText(r.nearest.value)}`:'brak ≥27 dBZ do 160 km';$('opMotion').textContent=r.vector?`${compass16(r.vector.bearingDeg)} · ${Math.round(r.vector.speedKmh)} km/h`:'brak stabilnego ruchu';$('opTrend').textContent=`trend: ${r.trend.label}`;$('opQind').textContent=latest.qUsable?`QIND ${Math.round(latest.qMean*100)}/100`:'QIND bez osobnego pasma';$('opArea').textContent=`≥35 ${latest.area.ge35} · ≥40 ${latest.area.ge40} · ≥45 ${latest.area.ge45} · ≥50 ${latest.area.ge50}`;$('opPred').textContent=HORIZONS.map(h=>`+${h} ${dbzText(r.predictions[h])}`).join(' · ');
-    const eta=r.approach?Math.round(r.approach.tHours*60):null;$('opSummary').textContent=r.approach?`Podejście ≤30 km za ok. ${eta} min.`:'Brak echa ≥27 dBZ na torze ≤30 km w ciągu 90 min.';setStatus(`klatka ${fmtUtcMs(latest.time)} · bezpośredni OPERA S3 DBZH.tiff`);renderMapLayer(latest);
+    const eta=r.approach?Math.round(r.approach.tHours*60):null;$('opSummary').textContent=r.approach?`Podejście ≤30 km za ok. ${eta} min.`:'Brak echa ≥27 dBZ na torze ≤30 km w ciągu 90 min.';setStatus(`klatka ${fmtUtcMs(latest.time)} · central-ingestor · OPERA DBZH GeoTIFF`);renderMapLayer(latest);
   }
-  function renderError(msg){ensureUi();$('operaNowcastCard')?.classList.add('op-error');setState('NIEDOSTĘPNA','bad');$('opFrame').textContent='—';$('opSummary').textContent='OPERA niedostępna. POLRAD działa niezależnie.';setStatus(`OPERA: ${msg}`);try{if(operaLayer&&typeof map!=='undefined'&&map.hasLayer(operaLayer))map.removeLayer(operaLayer)}catch(_){}}
+  function renderError(msg){ensureUi();$('operaNowcastCard')?.classList.add('op-error');setState('NIEDOSTĘPNA','bad');$('opFrame').textContent='—';$('opSummary').textContent='OPERA niedostępna. POLRAD działa niezależnie.';setStatus(`OPERA: ${msg}`);try{if(operaLayer&&typeof map!=='undefined'&&map.hasLayer(operaLayer))map.removeLayer(operaLayer)}catch(_){}
 
   async function run(force=false){
     ensureUi();if(running)return;if(!force&&Date.now()-lastRun<AUTO_MS-15000)return;const p=currentPoint();if(!p){renderError('brak poprawnego punktu');return}
-    running=true;lastRun=Date.now();setState('POBIERANIE','wait');setStatus('OPERA: szukanie najnowszych klatek w openradar-24h…');
+    running=true;lastRun=Date.now();setState('POBIERANIE','wait');setStatus('OPERA: szukanie najnowszych klatek przez central-ingestor…');
     try{
       await ensureLibraries();const frames=await fetchFrames(),grids=[];let lastErr='';
       // Probe from newest backwards; stop after 7 real frames. Missing newest slots are normal production latency.
@@ -262,9 +262,9 @@
       grids.sort((a,b)=>a.time-b.time);if(grids.length<3)throw new Error(lastErr||'nie znaleziono 3 dostępnych klatek DBZH.tiff');
       const latest=grids.at(-1),age=(Date.now()-latest.time)/60000;if(age>50)throw new Error(`ostatnia klatka ma ${Math.round(age)} min`);
       const vector=vectorStats(grids),trend=trendStats(grids),nearest=nearestEcho(latest),approach=vector?approachEcho(latest,vector):null,predictions=vector?advect(latest,vector,trend):Object.fromEntries(HORIZONS.map(h=>[h,NaN])),conf=confidence(grids,vector);
-      const result={updatedAt:new Date().toISOString(),point:p,source:'opera_cirrus_dbzh_s3',frames:grids.length,frameStart:grids[0].time,frameEnd:latest.time,latest,vector:vector?{eastKmh:vector.east,northKmh:vector.north,speedKmh:vector.speed,bearingDeg:vector.bearing,score:vector.score,consistency:vector.consistency}:null,confidence:conf,trend,nearest,approach,etaMin:approach?approach.tHours*60:null,predictions,quality:{qindAvailable:latest.qUsable,qindMean:latest.qMean,qindThreshold:QIND_MIN}};
+      const result={updatedAt:new Date().toISOString(),point:p,source:'opera_cirrus_dbzh_central',frames:grids.length,frameStart:grids[0].time,frameEnd:latest.time,latest,vector:vector?{eastKmh:vector.east,northKmh:vector.north,speedKmh:vector.speed,bearingDeg:vector.bearing,score:vector.score,consistency:vector.consistency}:null,confidence:conf,trend,nearest,approach,etaMin:approach?approach.tHours*60:null,predictions,quality:{qindAvailable:latest.qUsable,qindMean:latest.qMean,qindThreshold:QIND_MIN}};
       renderResult(result);publishOpera(result);
-    }catch(e){console.error('OPERA Nowcast:',e);const msg=String(e?.message||e);renderError(msg);publishOpera({updatedAt:new Date().toISOString(),point:p,error:msg,source:'opera_cirrus_dbzh_s3'})}finally{running=false}
+    }catch(e){console.error('OPERA Nowcast:',e);const msg=String(e?.message||e);renderError(msg);publishOpera({updatedAt:new Date().toISOString(),point:p,error:msg,source:'opera_cirrus_dbzh_central'})}finally{running=false}
   }
 
   ensureUi();window.addEventListener('prognozaepir:radar-nowcast-updated',publishFusion);for(const id of ['apply','resetPoint','refresh'])$(id)?.addEventListener('click',()=>setTimeout(()=>run(true),650));document.addEventListener('visibilitychange',()=>{if(!document.hidden&&Date.now()-lastRun>AUTO_MS)run(false)});setTimeout(()=>run(false),1200);setInterval(()=>{if(!document.hidden)run(false)},AUTO_MS);
