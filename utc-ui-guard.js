@@ -9,6 +9,49 @@
   if (window.__PROGNOZA_EPIR_UTC_GUARD_V2__) return;
   window.__PROGNOZA_EPIR_UTC_GUARD_V2__ = true;
 
+  // Radar-only OPERA transport guard. It is installed in <head>, before any
+  // GeoTIFF/radar module. Both the original CloudFerro object URL and the old
+  // central-ingestor proxy URL are rewritten to the dedicated Railway proxy.
+  // This also makes stale cached versions of later radar bridges harmless.
+  try {
+    if (/\/radar\.html$/i.test(location.pathname) && !window.__PROGNOZA_EPIR_OPERA_EARLY_PROXY__) {
+      const nativeFetch = window.fetch.bind(window);
+      const LIVE_PROXY = 'https://opera-cmax-live-production.up.railway.app/opera/dbzh/';
+      const OLD_PROXY = 'https://central-ingestor-production.up.railway.app/opera/dbzh/';
+      const S3_PREFIX = 'https://s3.waw3-1.cloudferro.com/openradar-24h/';
+      const operaToken = value => {
+        const url = String(value || '');
+        let m = url.match(/OPERA@(20\d{10})@0@DBZH\.tiff(?:[?#].*)?$/i);
+        if (m && url.startsWith(S3_PREFIX)) return m[1];
+        m = url.match(/\/opera\/dbzh\/(20\d{10})\.tiff(?:[?#].*)?$/i);
+        if (m && (url.startsWith(OLD_PROXY) || url.startsWith(LIVE_PROXY))) return m[1];
+        return null;
+      };
+      window.fetch = function prognozaOperaFetch(input, init) {
+        const rawUrl = typeof input === 'string' ? input : input instanceof URL ? input.href : input?.url;
+        const token = operaToken(rawUrl);
+        if (!token) return nativeFetch(input, init);
+        const proxyUrl = `${LIVE_PROXY}${token}.tiff`;
+        if (typeof Request !== 'undefined' && input instanceof Request) {
+          const headers = new Headers(input.headers);
+          if (init?.headers) new Headers(init.headers).forEach((v,k) => headers.set(k,v));
+          return nativeFetch(proxyUrl, {
+            method: input.method || 'GET',
+            headers,
+            mode: 'cors',
+            credentials: 'omit',
+            cache: init?.cache || input.cache,
+            redirect: input.redirect,
+            referrerPolicy: input.referrerPolicy,
+            signal: init?.signal || input.signal
+          });
+        }
+        return nativeFetch(proxyUrl, init);
+      };
+      window.__PROGNOZA_EPIR_OPERA_EARLY_PROXY__ = true;
+    }
+  } catch (_) { }
+
   const CLOCK_RE = /\b((?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?)(?!\s*(?:UTC|Z)\b)/g;
   const SKIP_TAGS = new Set(['SCRIPT','STYLE','TEXTAREA','PRE','CODE']);
   const WATCHED_ATTRS = ['title','aria-label','data-tooltip','data-title'];
