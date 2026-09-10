@@ -44,12 +44,24 @@ jobs:
           git add scripts/build_model_snapshot.py warnings-readable.js
           if git diff --cached --quiet; then
             echo "Already installed"
-            exit 0
+          else
+            git commit -m "weather: add icing and turbulence diagnostics"
+            for attempt in 1 2 3 4; do
+              if git pull --rebase origin main && git push origin HEAD:main; then
+                break
+              fi
+              echo "push retry $attempt"
+              sleep $((attempt*3))
+              test "$attempt" -lt 4 || exit 1
+            done
           fi
-          git commit -m "weather: add icing and turbulence diagnostics"
-          for attempt in 1 2 3 4; do
-            git pull --rebase origin main && git push origin HEAD:main && exit 0
-            echo "push retry $attempt"
-            sleep $((attempt*3))
-          done
-          exit 1
+
+      - name: Refresh vertical model snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run model-snapshot.yml --ref main
+
+      - name: Deploy refreshed radar page
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main
