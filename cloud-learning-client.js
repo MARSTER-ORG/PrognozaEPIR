@@ -191,7 +191,7 @@
 
   function localMonthHour(targetMs) {
     try {
-      const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Warsaw',month:'numeric',hour:'numeric',hourCycle:'h23'}).formatToParts(new Date(targetMs));
+      const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'UTC',month:'numeric',hour:'numeric',hourCycle:'h23'}).formatToParts(new Date(targetMs));
       const get=t=>Number(parts.find(p=>p.type===t)?.value);
       return {month:get('month'),hour:get('hour')};
     } catch (_) {
