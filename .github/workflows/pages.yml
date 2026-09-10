@@ -34,7 +34,7 @@ jobs:
              index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js meteogram-visfog-split.js meteogram-visfog-cleanup.js \
              rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js shortcut-mode.js utc-ui-guard.js \
              cloud-learning-client.js message-archive-client.js taf-instruction-guard.js \
-             radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js opera-nowcast.js \
+             radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js opera-nowcast.js opera-convection-bridge.js \
              lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
           cp -R data/messages/. _site/data/messages/
           cp data/learning/cloud-skill.json data/learning/adaptive-weights.json data/learning/fog-event-skill.json _site/data/learning/
@@ -53,6 +53,7 @@ jobs:
           fog_overlay_addon = '<script src="fog-meteogram-overlay.js"></script>'
           mifg_addon = f'<script src="mifg-engine.js?v={ASSET_V}"></script>'
           opera_addon = f'<script src="opera-nowcast.js?v={ASSET_V}"></script>'
+          opera_convection_addon = f'<script src="opera-convection-bridge.js?v={ASSET_V}"></script>'
 
           p=Path('_site/index.html')
           s=p.read_text(encoding='utf-8')
@@ -165,6 +166,7 @@ jobs:
               '<script src="analysis-plus.js"></script>',
               '<script src="range-rings-reset.js"></script>',
               opera_addon,
+              opera_convection_addon,
               shortcut_addon,
           ]
           for addon in radar_addons:
@@ -190,7 +192,7 @@ jobs:
 
       - name: Validate JavaScript
         run: |
-          for f in index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js meteogram-visfog-split.js meteogram-visfog-cleanup.js rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js shortcut-mode.js utc-ui-guard.js cloud-learning-client.js message-archive-client.js taf-instruction-guard.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js opera-nowcast.js; do
+          for f in index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js meteogram-visfog-split.js meteogram-visfog-cleanup.js rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js shortcut-mode.js utc-ui-guard.js cloud-learning-client.js message-archive-client.js taf-instruction-guard.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js opera-nowcast.js opera-convection-bridge.js; do
             node --check "$f"
           done
           node --check _site/meteogram-visfog-split.js
@@ -204,6 +206,7 @@ jobs:
           node --check _site/taf-instruction-guard.js
           node --check _site/utc-ui-guard.js
           node --check _site/opera-nowcast.js
+          node --check _site/opera-convection-bridge.js
           python3 - <<'PY'
           from pathlib import Path
           s=Path('_site/taf.html').read_text(encoding='utf-8')
@@ -234,6 +237,7 @@ jobs:
           test -s _site/taf-instruction-guard.js
           test -s _site/utc-ui-guard.js
           test -s _site/opera-nowcast.js
+          test -s _site/opera-convection-bridge.js
           test -s _site/data/messages/latest.json
           test -s _site/data/messages/recent.json
           test -s _site/data/messages/status.json
@@ -314,6 +318,7 @@ jobs:
           grep -F 'src="opera-nowcast.js?v=' _site/radar.html
           grep -F 'OPERA CIRRUS · weryfikacja europejska' _site/opera-nowcast.js
           grep -F 'prognozaepir:radar-fusion-updated' _site/opera-nowcast.js
+          grep -F 'PrognozaEPIRConvectionRadarEvidence' _site/opera-convection-bridge.js
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
