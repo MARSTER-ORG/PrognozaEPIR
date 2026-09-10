@@ -1,6 +1,6 @@
 'use strict';
 (() => {
-  const VERSION='TAF Verification v2.1';
+  const VERSION='TAF Verification v2.2';
   const BLOCKED_SKILL_KEY='prognozaepir-taf-skill-v1';
   const LIVE_ARCHIVE_BASE='https://central-ingestor-production.up.railway.app/data/messages/';
   const CENTRAL_RAW_BASE='https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/messages/';
@@ -9,6 +9,7 @@
   const PARAMS=['wind','vis','ceiling','wx'];
   const LABELS={wind:'Wiatr',vis:'Widzialność',ceiling:'Pułap',wx:'Pogoda'};
   const GROUP_ELEMENT_PENALTY=10;
+  const GROUP_PENALTY_WEIGHTS=Object.freeze({FM:1,BECMG:1,TEMPO:.6,PROB30:.3,'PROB30 TEMPO':.25});
   const $=id=>document.getElementById(id);
   const finite=Number.isFinite;
   const pad=(n,w=2)=>String(n).padStart(w,'0');
@@ -302,23 +303,28 @@
     }
     return false;
   }
+  function groupPenaltyWeight(kind){return GROUP_PENALTY_WEIGHTS[kind]??1}
+  function groupPenaltyReady(e){
+    const now=Date.now();
+    return e.kind==='FM'?now>=e.s:now>=(e.e||e.s);
+  }
   function groupElementPenalties(p,obs){
     const groups=[],byToken=new Map();let total=0;
     const changeCount=Math.max(1,p.events.length);
     for(const e of p.events){
       const relevant=obs.filter(o=>o.t>=e.s&&o.t<(e.e||p.ve));
-      const keys=groupElementKeys(e.state);
-      if(!relevant.length||!keys.length){
-        const item={token:e.token,kind:e.kind,missing:[],penalty:0,elements:keys.length,verifiable:relevant.length>0};
+      const keys=groupElementKeys(e.state),weight=groupPenaltyWeight(e.kind),ready=groupPenaltyReady(e);
+      if(!relevant.length||!keys.length||!ready){
+        const item={token:e.token,kind:e.kind,missing:[],penalty:0,elements:keys.length,verifiable:relevant.length>0,pending:!ready,weight};
         groups.push(item);byToken.set(e.token,item);continue;
       }
       const missing=keys.filter(k=>!relevant.some(o=>groupElementMatch(e.state,o,k)));
-      // Each missing element costs 10 points, normalized by number of change groups.
-      // Example: one group, VIS + WX + CLOUD all missing => (10 * 3) / 1 = -30.
-      // With two change groups the same three misses contribute -15 points.
-      const penalty=Math.round((GROUP_ELEMENT_PENALTY*missing.length/changeCount)*10)/10;
+      // Missing elements are weighted by the certainty of the change group.
+      // FM/BECMG = 1.00, TEMPO = 0.60, PROB30 = 0.30, PROB30 TEMPO = 0.25.
+      // Time-window groups are not penalized before their validity window ends.
+      const penalty=Math.round((GROUP_ELEMENT_PENALTY*missing.length*weight/changeCount)*10)/10;
       total+=penalty;
-      const item={token:e.token,kind:e.kind,missing,penalty,elements:keys.length,verifiable:true};
+      const item={token:e.token,kind:e.kind,missing,penalty,elements:keys.length,verifiable:true,pending:false,weight};
       groups.push(item);byToken.set(e.token,item);
     }
     return{total:Math.round(total*10)/10,groups,byToken};
@@ -327,8 +333,8 @@
     const out=[],penalties=groupElementPenalties(p,obs).byToken;
     for(const e of p.events){
       const relevant=obs.filter(o=>o.t>=e.s&&o.t<(e.e||p.ve));
-      const gp=penalties.get(e.token)||{missing:[],penalty:0};
-      const penaltyText=gp.penalty?` · nie wystąpiło: ${gp.missing.join(', ')} · -${gp.penalty} pkt`:'';
+      const gp=penalties.get(e.token)||{missing:[],penalty:0,pending:false,weight:1};
+      const penaltyText=gp.penalty?` · nie wystąpiło: ${gp.missing.join(', ')} · waga ${gp.weight.toFixed(2)} · -${gp.penalty} pkt`:'';
       if(!relevant.length){out.push({kind:e.kind,token:e.token,status:'brak METAR w okresie — bez kary',ok:null,penalty:0,missing:[]});continue}
       if(e.kind==='FM'||e.kind==='BECMG'){
         let good=0,total=0;
@@ -336,12 +342,13 @@
           const h=componentHits(statesAt(p,o.t).base,o);
           for(const k of PARAMS)if(typeof h[k]==='boolean'){total++;if(h[k])good++}
         }
-        out.push({kind:e.kind,token:e.token,status:(total?`${pct(good,total)}% zgodności po zmianie`:'brak danych')+penaltyText,ok:total?good/total>=.75:null,penalty:gp.penalty,missing:gp.missing});
+        const pendingText=gp.pending?' · okres zmiany w toku — bez kary do zakończenia':'';
+        out.push({kind:e.kind,token:e.token,status:(total?`${pct(good,total)}% zgodności po zmianie`:'brak danych')+pendingText+penaltyText,ok:total?good/total>=.75:null,penalty:gp.penalty,missing:gp.missing});
       }else{
         let observed=false;
         for(const o of relevant){if(strictGroupMatch(e.state,o)){observed=true;break}}
         const prob=e.kind.startsWith('PROB30');
-        let status=observed?'warunki grupy zaobserwowano':prob?'warunków grupy nie zaobserwowano':'grupy nie potwierdzono';
+        let status=observed?'warunki grupy zaobserwowano':gp.pending?'okres grupy w toku — bez kary do zakończenia':prob?'warunków grupy nie zaobserwowano':'grupy nie potwierdzono';
         status+=penaltyText;
         out.push({kind:e.kind,token:e.token,status,ok:prob?null:observed,penalty:gp.penalty,missing:gp.missing});
       }
@@ -401,7 +408,7 @@
       <div id="tafDayMeta" class="note" style="margin-top:7px"></div>
       <div class="scroll" style="margin-top:8px"><table style="min-width:980px"><thead><tr><th>Cykl / wydanie</th><th>Źródło</th><th>METAR</th><th>Wynik</th><th>Wiatr</th><th>VIS</th><th>Pułap</th><th>WX</th><th>Status</th></tr></thead><tbody id="tafDayRows"><tr><td colspan="9">Wybierz dzień i kliknij „Policz sprawdzalność”.</td></tr></tbody></table></div>
       <div id="tafDayDetails" style="margin-top:8px"></div>
-      <div class="note" style="margin-top:8px">Kryteria: wiatr — prędkość &lt;10 kt różnicy i kierunek &lt;60° przy istotnym wietrze; VIS — zgodność przedziału 800/1500/3000/5000 m; pułap — zgodność przedziału 200/300/500/1000/1500 ft; WX — zgodność głównej rodziny zjawiska. TEMPO/PROB30 może pokryć obserwowane odchylenie. Status „warunki grupy zaobserwowano” wymaga jednego METAR/SPECI w okresie, który jednocześnie spełnia wszystkie jawnie prognozowane elementy grupy: VIS, dokładny rodzaj WX oraz CB/TCU z ilością i podstawą. PROB30 nie jest oceniane jako „trafione/nietrafione” na podstawie jednego przypadku.</div>`;
+      <div class="note" style="margin-top:8px">Kryteria: wiatr — prędkość &lt;10 kt różnicy i kierunek &lt;60° przy istotnym wietrze; VIS — zgodność przedziału 800/1500/3000/5000 m; pułap — zgodność przedziału 200/300/500/1000/1500 ft; WX — zgodność głównej rodziny zjawiska. TEMPO/PROB30 może pokryć obserwowane odchylenie. Kara za niepotwierdzone elementy grup jest ważona: FM/BECMG 1,00; TEMPO 0,60; PROB30 0,30; PROB30 TEMPO 0,25. Dla BECMG, TEMPO i PROB30 kara pojawia się dopiero po zakończeniu okna grupy. Status „warunki grupy zaobserwowano” wymaga jednego METAR/SPECI w okresie, który jednocześnie spełnia wszystkie jawnie prognozowane elementy grupy: VIS, dokładny rodzaj WX oraz CB/TCU z ilością i podstawą.</div>`;
     grid.appendChild(s);
     const input=$('tafVerifyDay');input.max=utcDate(Date.now());input.value=utcDate(Date.now());
     $('tafDayPrev').onclick=()=>{input.value=shiftDay(input.value,-1);refreshDay()};
