@@ -21,8 +21,8 @@
       const S3_PREFIX = 'https://s3.waw3-1.cloudferro.com/openradar-24h/';
       const operaToken = value => {
         const url = String(value || '');
-        let m = url.match(/OPERA@(20\d{10})@0@DBZH\.tiff(?:[?#].*)?$/i);
-        if (m && url.startsWith(S3_PREFIX)) return m[1];
+        let m = url.match(/OPERA@(20\d{6})T(\d{4})@0@DBZH\.tiff(?:[?#].*)?$/i);
+        if (m && url.startsWith(S3_PREFIX)) return m[1] + m[2];
         m = url.match(/\/opera\/dbzh\/(20\d{10})\.tiff(?:[?#].*)?$/i);
         if (m && (url.startsWith(OLD_PROXY) || url.startsWith(LIVE_PROXY))) return m[1];
         return null;
