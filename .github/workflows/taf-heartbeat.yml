@@ -24,7 +24,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Check freshness and trigger the single ingestor if needed
+      - name: Check TAF freshness and refresh GitHub only from Railway
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -33,6 +33,6 @@ jobs:
             echo 'TAF archive is fresh.'
             exit 0
           fi
-          echo '::warning::TAF archive stale; triggering central ingestor'
-          gh workflow run message-archive.yml --repo "${{ github.repository }}" --ref main
+          echo '::warning::TAF archive stale; requesting a validated Railway-to-GitHub mirror refresh'
+          gh workflow run mirror-central-archive.yml --repo "${{ github.repository }}" --ref main
           exit 1
