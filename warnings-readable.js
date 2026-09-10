@@ -545,8 +545,10 @@
     if(!Number.isFinite(lo)&&!Number.isFinite(hi))return'—';
     if(!Number.isFinite(lo))lo=hi;if(!Number.isFinite(hi))hi=lo;
     lo=Math.max(0,lo);hi=Math.max(lo,hi);
-    const mlo=Math.round(lo/100)*100,mhi=Math.round(hi/100)*100;
-    const flo=Math.round((lo*3.28084)/100)*100,fhi=Math.round((hi*3.28084)/100)*100;
+    const round30=m=>Math.round(m/30)*30;
+    const mlo=round30(lo),mhi=Math.max(mlo,round30(hi));
+    const ft=m=>Math.round((m*3.28084)/100)*100;
+    const flo=ft(mlo),fhi=ft(mhi);
     return mlo===mhi?`${mlo} m / ${flo} ft AMSL`:`${mlo}–${mhi} m / ${flo}–${fhi} ft AMSL`;
   }
   function riskClass(p){return p>=75?'high':p>=50?'mid':'low';}
