@@ -15,54 +15,33 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Probe official MeteoGate GeoTIFF catalogue
+      - name: Verify public v1.1 proxy and real GeoTIFF range
         shell: bash
         run: |
           set -euo pipefail
-          API='https://api.meteogate.eu/eu-eumetnet-weather-radar/collections/observations/locations/0-20010-0-OPERA'
-          read -r START END < <(python3 - <<'PY'
-          from datetime import datetime, timezone, timedelta
-          end=datetime.now(timezone.utc).replace(second=0,microsecond=0)-timedelta(minutes=10)
-          start=end-timedelta(hours=3)
-          print(start.strftime('%Y-%m-%dT%H:%MZ'), end.strftime('%Y-%m-%dT%H:%MZ'))
-          PY
-          )
-          echo "Query window: $START - $END UTC"
-          code="$(curl -sS -G --connect-timeout 10 --max-time 60 \
-            -D /tmp/catalog.headers -o /tmp/catalog.json -w '%{http_code}' \
-            --data-urlencode "datetime=$START/$END" \
-            --data-urlencode 'f=CoverageJSON' \
-            --data-urlencode 'standard_name=DBZH' \
-            --data-urlencode 'format=GeoTIFF' \
-            --data-urlencode 'method=comp' \
-            "$API")"
-          echo "MeteoGate HTTP $code"
-          cat /tmp/catalog.headers
-          echo '--- catalogue response ---'
-          head -c 30000 /tmp/catalog.json || true
+          BASE='https://opera-cmax-live-v2-production.up.railway.app'
+          echo 'Health:'
+          curl -fSs --retry 8 --retry-all-errors --retry-delay 2 --connect-timeout 10 --max-time 90 "$BASE/health"
           echo
-          CODE="$code" python3 - <<'PY'
-          import json, os, sys
+
+          # MeteoGate confirmed this OPERA COG exists. The proxy accepts recent
+          # frames for 26 h, so it is deterministic for this deployment test.
+          TOKEN='202609101905'
+          URL="$BASE/opera/dbzh/$TOKEN.tiff"
+          echo "Range test: $TOKEN UTC"
+          code="$(curl -sS --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 10 --max-time 90 \
+            -D /tmp/h -H 'Range: bytes=0-16383' -o /tmp/frame.bin -w '%{http_code}' "$URL")"
+          cat /tmp/h
+          echo "HTTP $code"
+          test "$code" = '206' -o "$code" = '200'
+          TOKEN="$TOKEN" python3 - <<'PY'
+          import os
           from pathlib import Path
-          if os.environ['CODE'] not in {'200','206'}:
-              raise SystemExit(f"MeteoGate returned HTTP {os.environ['CODE']}")
-          raw=Path('/tmp/catalog.json').read_text(encoding='utf-8',errors='replace')
-          try:
-              doc=json.loads(raw)
-          except Exception as exc:
-              raise SystemExit(f'not JSON: {exc}')
-          print('Top-level:', type(doc).__name__, list(doc)[:30] if isinstance(doc,dict) else '')
-          found=[]
-          def walk(v,path='$'):
-              if isinstance(v,dict):
-                  for k,x in v.items(): walk(x,f'{path}.{k}')
-              elif isinstance(v,list):
-                  for i,x in enumerate(v): walk(x,f'{path}[{i}]')
-              elif isinstance(v,str) and ('http' in v.lower() or 'tif' in v.lower() or 'geotiff' in v.lower()):
-                  found.append((path,v))
-          walk(doc)
-          print('Relevant strings:')
-          for p,v in found[:100]: print(p, '=', v)
-          if not found:
-              print('No URL/GeoTIFF strings found')
+          data=Path('/tmp/frame.bin').read_bytes()
+          print('bytes=',len(data),'magic=',repr(data[:8]))
+          if len(data) < 8:
+              raise SystemExit('GeoTIFF response too short')
+          if not (data.startswith(b'II*\x00') or data.startswith(b'MM\x00*')):
+              raise SystemExit('Response is not a TIFF')
+          print(f"PASS: valid OPERA GeoTIFF range for {os.environ['TOKEN']} UTC")
           PY
