@@ -1,141 +1,50 @@
-name: Central METAR SPECI TAF SYNOP ingestor
+name: Verify central METAR SPECI TAF SYNOP archive
 
 on:
-  schedule:
-    # GitHub Actions is the backup scheduler. Run every 5 minutes so a routine
-    # :00/:30 EPIR METAR is normally collected within one scheduler interval.
-    # Preferred production mode remains scripts/central_ingestor.py --daemon
-    # on an external systemd host, where GitHub scheduler delays do not apply.
-    - cron: '*/5 * * * *'
   workflow_dispatch:
   push:
     branches: [main]
     paths:
-      - 'data/import/**'
-      - 'data/observations/manual/**'
-      - 'scripts/central_ingestor.py'
-      - 'scripts/check_archive_boundaries.py'
-      - 'scripts/apply_shared_archive_client.py'
-      - 'scripts/apply_cloud_archive_client.py'
-      - 'scripts/message_archive.py'
-      - 'scripts/metar_armored.py'
-      - 'scripts/collect_epir_observations.py'
-      - 'scripts/supplement_synop_12342.py'
-      - 'scripts/collect_neighbor_tafs.py'
-      - 'scripts/repair_awc_tafs.py'
-      - 'scripts/sanitize_neighbor_tafs.py'
-      - 'scripts/check_epir_archive_freshness.py'
-      - 'scripts/finalize_central_message_architecture.py'
-      - 'scripts/ensure_taf_native_archive.py'
+      - 'data/messages/**'
       - 'message-archive-client.js'
-      - 'observation-engine.js'
-      - 'cloud-learning-client.js'
-      - 'api/taf-proxy.js'
+      - 'scripts/message_archive.py'
+      - 'scripts/check_archive_boundaries.py'
       - '.github/workflows/message-archive.yml'
 
 permissions:
-  contents: write
-  actions: write
+  contents: read
 
 concurrency:
-  group: prognozaepir-central-ingestor
-  cancel-in-progress: false
+  group: prognozaepir-central-archive-verify
+  cancel-in-progress: true
 
 jobs:
-  ingest:
+  verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
-          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      - name: Enforce shared archive consumers
+      - name: Verify consumer and archive syntax
         run: |
-          python3 -m py_compile scripts/apply_shared_archive_client.py scripts/apply_cloud_archive_client.py
-          python3 scripts/apply_shared_archive_client.py
-          python3 scripts/apply_cloud_archive_client.py
-          node --check observation-engine.js
-          node --check cloud-learning-client.js
-
-      - name: Validate central architecture
-        run: |
-          python3 -m py_compile \
-            scripts/central_ingestor.py \
-            scripts/check_archive_boundaries.py \
-            scripts/apply_shared_archive_client.py \
-            scripts/apply_cloud_archive_client.py \
-            scripts/message_archive.py \
-            scripts/metar_armored.py \
-            scripts/collect_epir_observations.py \
-            scripts/supplement_synop_12342.py \
-            scripts/collect_neighbor_tafs.py \
-            scripts/repair_awc_tafs.py \
-            scripts/sanitize_neighbor_tafs.py \
-            scripts/check_epir_archive_freshness.py \
-            scripts/finalize_central_message_architecture.py \
-            scripts/ensure_taf_native_archive.py
           node --check message-archive-client.js
-          node --check api/taf-proxy.js
-          node --check observation-engine.js
-          node --check cloud-learning-client.js
-          python3 scripts/check_archive_boundaries.py
+          python3 -m py_compile scripts/message_archive.py scripts/check_archive_boundaries.py
 
-      - name: Run the only archive ingest mechanism
+      - name: Validate mirrored Railway archive
         run: |
-          python3 scripts/central_ingestor.py --once --state-file /tmp/prognozaepir-ingest-state.json
-          cat /tmp/prognozaepir-ingest-state.json
           test -s data/messages/latest.json
           test -s data/messages/recent.json
-          test -s data/messages/status.json
           test -s data/messages/taf-neighbors.json
           python3 scripts/message_archive.py --validate-only
           python3 scripts/check_archive_boundaries.py
 
-      - name: Commit authoritative archive and enforced consumer boundary
-        id: publish
-        shell: bash
+      - name: Confirm acquisition boundary
         run: |
-          set -euo pipefail
-          paths=(data/messages observation-engine.js cloud-learning-client.js)
-          if git diff --quiet -- "${paths[@]}"; then
-            echo 'Central archive and consumers already up to date.'
-            echo 'changed=false' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add "${paths[@]}"
-          git commit -m 'weather: central ingestor archive update'
-
-          # Source adapters intentionally use legacy staging paths during one
-          # ingest cycle. They are never authoritative and must not block a
-          # rebase when another workflow advances main meanwhile.
-          git reset --hard HEAD
-          git clean -fd
-
-          for attempt in 1 2 3 4 5; do
-            git fetch origin main
-            if git rebase origin/main && git push origin HEAD:main; then
-              echo 'changed=true' >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            git rebase --abort 2>/dev/null || true
-            sleep $((attempt * 3))
-          done
-          echo 'Unable to publish authoritative archive after 5 attempts.' >&2
-          exit 1
-
-      - name: Refresh archive consumers
-        if: steps.publish.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh workflow run pages.yml --repo "${{ github.repository }}" --ref main
-          gh workflow run collect-epir-observations.yml --repo "${{ github.repository }}" --ref main
+          echo 'Railway central-ingestor is the only automatic bulletin acquisition engine.'
+          echo 'This workflow validates GitHub archive content only and never contacts bulletin providers.'
