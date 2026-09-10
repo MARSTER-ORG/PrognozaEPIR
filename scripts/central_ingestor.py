@@ -204,7 +204,7 @@ def cycle(*, publish: bool, state_path: Path) -> dict:
         results.append(run_step("architecture-boundary", script("check_archive_boundaries.py"), attempts=1, timeout=60, critical=True))
 
         results.append(run_step("metar-freshness", script("check_epir_archive_freshness.py", "--metar-only"), attempts=1, timeout=60))
-        results.append(run_step("synop-freshness", script("check_synop_archive_freshness.py"), attempts=1, timeout=60))
+        results.append(run_step("synop-archive-audit", script("check_synop_archive_freshness.py"), attempts=1, timeout=60))
         results.append(run_step("taf-freshness", script("check_epir_archive_freshness.py", "--taf-only", "--all-tafs"), attempts=1, timeout=60))
 
         cleanup_staging()
