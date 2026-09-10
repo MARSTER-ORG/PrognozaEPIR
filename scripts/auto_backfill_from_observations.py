@@ -13,7 +13,7 @@ import argparse
 import json
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 from pathlib import Path
 
 import backfill_model_history as bh
@@ -54,10 +54,11 @@ def observation_days():
 
 def required_run_days(obs_days):
     out = set()
+    today = mv.utcnow().date()
     for d in obs_days:
         for n in range(LOOKBACK_DAYS + 1):
             rd = d - timedelta(days=n)
-            if rd < mv.utcnow().date():
+            if rd < today:
                 out.add(rd)
     return out
 
@@ -86,6 +87,7 @@ def archive_groups():
 
 def coverage_for_days(days):
     groups = archive_groups()
+    now = mv.utcnow()
     out = {}
     for d in days:
         surface_models = set()
@@ -95,7 +97,16 @@ def coverage_for_days(days):
             if not rows:
                 continue
             surface_models.add(model)
-            if all(esc.has_context(r) for r in rows):
+            elapsed = []
+            for row in rows:
+                valid = mv.parse_dt(row.get("valid_time"))
+                run = mv.parse_dt(row.get("run_time"))
+                if valid and run and run < valid <= now:
+                    elapsed.append(row)
+            # Future valid times are deliberately ignored here. The pressure
+            # enrichment code also ignores them until they become verifiable,
+            # so they must not make a recent historical run look incomplete.
+            if elapsed and all(esc.has_context(r) for r in elapsed):
                 context_models.add(model)
         out[d] = {
             "surface_models": len(surface_models),
@@ -243,7 +254,7 @@ def main():
     obs = observation_days()
     required = required_run_days(obs)
     previous = load_state()
-    selected, before = select_days(required, previous, args.max_days)
+    selected, _before = select_days(required, previous, args.max_days)
 
     if not selected:
         print(json.dumps({
