@@ -1,0 +1,104 @@
+name: Optimize central-ingestor memory
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/optimize-central-ingestor-memory.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Apply low-memory HTTP optimizations
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path('scripts/railway_ingestor_lowmem_server.py')
+          s=p.read_text(encoding='utf-8')
+
+          # Remove the generic mimetypes database; this server only serves JSON/JSONL.
+          s=s.replace('import mimetypes\n','',1)
+
+          old='''import opera_proxy_only as opera\n\nROOT = Path(__file__).resolve().parents[1]\n'''
+          new='''ROOT = Path(__file__).resolve().parents[1]\n\nOPERA_S3_BASE = "https://s3.waw3-1.cloudferro.com/openradar-24h"\nOPERA_FRAME_RE = re.compile(r"^/opera/dbzh/(20\\d{10})\\.tiff$")\nOPERA_MAX_AGE_SECONDS = 26 * 3600\nOPERA_MAX_FUTURE_SECONDS = 15 * 60\nHTTP_MAX_THREADS = max(2, int(os.environ.get("HTTP_MAX_THREADS", "8")))\nHTTP_THREAD_STACK_BYTES = max(262144, int(os.environ.get("HTTP_THREAD_STACK_BYTES", str(512 * 1024))))\n\ndef opera_frame_time(token: str) -> datetime:\n    return datetime.strptime(token, "%Y%m%d%H%M").replace(tzinfo=timezone.utc)\n\ndef opera_upstream_url(token: str) -> str:\n    dt = opera_frame_time(token)\n    stamp = dt.strftime("%Y%m%dT%H%M")\n    return f"{OPERA_S3_BASE}/{dt:%Y/%m/%d}/OPERA/COMP/OPERA@{stamp}@0@DBZH.tiff"\n\n'''
+          if old not in s:
+              raise SystemExit('opera import insertion point missing')
+          s=s.replace(old,new,1)
+
+          s=s.replace('for chunk in iter(lambda: handle.read(1024 * 1024), b""):', 'for chunk in iter(lambda: handle.read(128 * 1024), b""):', 1)
+
+          s=s.replace('return json.loads(json.dumps(_runtime))', 'return dict(_runtime)', 1)
+
+          # Inline OPERA helpers so the live process does not import the legacy proxy module.
+          replacements={
+            'opera.FRAME_RE':'OPERA_FRAME_RE',
+            'opera.frame_time':'opera_frame_time',
+            'opera.MAX_AGE_SECONDS':'OPERA_MAX_AGE_SECONDS',
+            'opera.MAX_FUTURE_SECONDS':'OPERA_MAX_FUTURE_SECONDS',
+            'opera.upstream_url':'opera_upstream_url',
+          }
+          for a,b in replacements.items():
+              s=s.replace(a,b)
+
+          old='''class Handler(BaseHTTPRequestHandler):\n'''
+          new='''class LowMemThreadingHTTPServer(ThreadingHTTPServer):\n    daemon_threads = True\n    block_on_close = False\n    request_queue_size = 16\n\n    def __init__(self, server_address, handler_class):\n        self._thread_slots = threading.BoundedSemaphore(HTTP_MAX_THREADS)\n        super().__init__(server_address, handler_class)\n\n    def process_request(self, request, client_address):\n        self._thread_slots.acquire()\n        try:\n            super().process_request(request, client_address)\n        except BaseException:\n            self._thread_slots.release()\n            raise\n\n    def process_request_thread(self, request, client_address):\n        try:\n            super().process_request_thread(request, client_address)\n        finally:\n            self._thread_slots.release()\n\n\nclass Handler(BaseHTTPRequestHandler):\n'''
+          if old not in s:
+              raise SystemExit('Handler insertion point missing')
+          s=s.replace(old,new,1)
+
+          old='''        try:\n            body = candidate.read_bytes()\n        except OSError as exc:\n            self._json({"error": f"read failed: {exc}"}, 500, head_only)\n            return\n        content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"\n        if candidate.suffix.lower() == ".json":\n            content_type = "application/json; charset=utf-8"\n        elif candidate.suffix.lower() == ".jsonl":\n            content_type = "application/x-ndjson; charset=utf-8"\n        self._headers(200, content_type, len(body))\n        if not head_only:\n            self.wfile.write(body)\n'''
+          new='''        try:\n            handle = candidate.open("rb")\n            size = os.fstat(handle.fileno()).st_size\n        except OSError as exc:\n            self._json({"error": f"read failed: {exc}"}, 500, head_only)\n            return\n        content_type = "application/json; charset=utf-8" if candidate.suffix.lower() == ".json" else "application/x-ndjson; charset=utf-8"\n        self._headers(200, content_type, size)\n        if head_only:\n            handle.close()\n            return\n        try:\n            with handle:\n                while True:\n                    chunk = handle.read(64 * 1024)\n                    if not chunk:\n                        break\n                    self.wfile.write(chunk)\n        except (BrokenPipeError, ConnectionResetError):\n            return\n'''
+          if old not in s:
+              raise SystemExit('file serving block missing')
+          s=s.replace(old,new,1)
+
+          old='''def main() -> int:\n    worker = threading.Thread(target=run_worker, name="central-ingestor-lowmem", daemon=True)\n    worker.start()\n    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)\n    print(f"[{utc_iso()}] http server listening on 0.0.0.0:{PORT}; OPERA CMAX proxy merged", flush=True)\n'''
+          new='''def main() -> int:\n    worker = threading.Thread(target=run_worker, name="central-ingestor-lowmem", daemon=True)\n    worker.start()\n    try:\n        threading.stack_size(HTTP_THREAD_STACK_BYTES)\n    except (ValueError, RuntimeError):\n        pass\n    server = LowMemThreadingHTTPServer(("0.0.0.0", PORT), Handler)\n    print(f"[{utc_iso()}] http server listening on 0.0.0.0:{PORT}; OPERA CMAX proxy merged; max_http_threads={HTTP_MAX_THREADS}; thread_stack={HTTP_THREAD_STACK_BYTES}", flush=True)\n'''
+          if old not in s:
+              raise SystemExit('main server block missing')
+          s=s.replace(old,new,1)
+
+          p.write_text(s,encoding='utf-8')
+          PY
+
+          python3 -m py_compile scripts/railway_ingestor_lowmem_server.py
+          grep -F 'class LowMemThreadingHTTPServer' scripts/railway_ingestor_lowmem_server.py
+          grep -F 'handle.read(64 * 1024)' scripts/railway_ingestor_lowmem_server.py
+          grep -F 'HTTP_THREAD_STACK_BYTES' scripts/railway_ingestor_lowmem_server.py
+          if grep -Fq 'import opera_proxy_only' scripts/railway_ingestor_lowmem_server.py; then
+            echo 'legacy OPERA module import still present' >&2
+            exit 1
+          fi
+          if grep -Fq 'mimetypes' scripts/railway_ingestor_lowmem_server.py; then
+            echo 'mimetypes still present' >&2
+            exit 1
+          fi
+
+      - name: Commit optimized server
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add scripts/railway_ingestor_lowmem_server.py
+          git commit -m 'Reduce central-ingestor HTTP memory footprint'
+          for n in 1 2 3 4 5; do
+            git fetch origin main
+            if git rebase origin/main && git push origin HEAD:main; then
+              exit 0
+            fi
+            git rebase --abort >/dev/null 2>&1 || true
+            sleep $((n*2))
+          done
+          exit 1
