@@ -137,7 +137,7 @@
     const etaAt = etaMin !== null && finite(Number(opera.frameEnd)) ? Number(opera.frameEnd) + etaMin * 60000 : null;
     const maxDbz = Number(opera?.latest?.max);
     return {
-      updatedAt:new Date().toISOString(), source:'OPERA CIRRUS DBZH', primaryRadar:'POLRAD', probabilitiesAdjusted:false,
+      updatedAt:new Date().toISOString(), source:'OPERA CIRRUS DBZH', primaryRadar:'POLRAD', operaRole:'secondary_verification_backup', probabilitiesAdjusted:false,
       supportLevel:fusion.convectiveSupport || 'brak', vectorAgreement:!!fusion.vectorAgree,
       directionDifferenceDeg:finite(Number(fusion.dirDiffDeg))?Number(fusion.dirDiffDeg):null,
       speedDifferenceKmh:finite(Number(fusion.speedDiffKmh))?Number(fusion.speedDiffKmh):null,
@@ -169,7 +169,8 @@
     if(e.polradSignal&&e.operaSignal&&e.vectorAgreement)lead='potwierdza POLRAD';
     else if(e.polradSignal&&e.operaSignal)lead='częściowo potwierdza POLRAD';
     else if(e.polradSignal&&!e.operaSignal)lead='nie potwierdza silnego echa POLRAD';
-    const parts=[`<b>OPERA:</b> ${lead}`];
+    else if(!e.polradSignal&&e.operaSignal)lead='echo tylko w OPERA — informacja pomocnicza';
+    const parts=[`<b>OPERA Europa:</b> ${lead}`];
     if(e.operaMaxDbz!==null)parts.push(`maks. ${Math.round(e.operaMaxDbz)} dBZ`);
     if(e.etaMin!==null)parts.push(`ETA ≤30 km: ${Math.round(e.etaMin)} min (${fmtUtc(e.etaAt)})`);
     if(e.trend)parts.push(`trend: ${e.trend}`);
@@ -206,13 +207,17 @@
   const PROJ_WGS84 = '+proj=longlat +datum=WGS84 +no_defs';
   const $ = id => document.getElementById(id);
   const finite = Number.isFinite;
+  // OPERA is a secondary Europe-wide control layer. Keep raw values for analysis,
+  // but suppress weak isolated pixels only in the visual map rendering.
+  const VISUAL_MIN_DBZ = 18;
+  const VISUAL_STRONG_DBZ = 27;
+  const VISUAL_NEIGHBOURS = 2;
   let fixedLayer = null;
   let outlineLayer = null;
   let lastOpera = null;
   let lastRaster = null;
   let lastBounds = null;
   let boundButton = null;
-  let autoEnabled = false;
 
   function getMap() {
     try { return typeof map !== 'undefined' && map ? map : null; }
@@ -253,16 +258,29 @@
     [30,[0,170,255,195]],
     [27,[0,80,255,180]],
     [20,[0,0,210,145]],
-    [14,[0,0,145,105]],
-    [8,[0,0,85,65]]
+    [18,[0,0,145,90]]
   ];
 
   function colorForDbz(v) {
-    if (!finite(v) || v < 8) return [0,0,0,0];
+    if (!finite(v) || v < VISUAL_MIN_DBZ) return [0,0,0,0];
     for (const [minimum,rgba] of POLRAD_CMAX_PALETTE) {
       if (v >= minimum) return rgba;
     }
     return [0,0,0,0];
+  }
+
+  function isVisualEcho(values,n,i,v) {
+    if (!finite(v) || v < VISUAL_MIN_DBZ) return false;
+    if (v >= VISUAL_STRONG_DBZ) return true;
+    const x=i%n,y=Math.floor(i/n);
+    let neighbours=0;
+    for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++) {
+      if(!dx&&!dy) continue;
+      const xx=x+dx,yy=y+dy;
+      if(xx<0||yy<0||xx>=n||yy>=n) continue;
+      if(Number(values[yy*n+xx])>=VISUAL_MIN_DBZ) neighbours++;
+    }
+    return neighbours>=VISUAL_NEIGHBOURS;
   }
 
   function rasterFor(latest) {
@@ -281,7 +299,7 @@
     for (let i=0;i<len;i++) {
       const v = Number(values[i]);
       if (finite(v)) max = Math.max(max,v);
-      const [r,g,b,a] = colorForDbz(v);
+      const [r,g,b,a] = isVisualEcho(values,n,i,v) ? colorForDbz(v) : [0,0,0,0];
       if (a) visible++;
       if (finite(v) && v >= 27) significant++;
       const j=i*4;
@@ -376,7 +394,7 @@
   function showPointPopup(m,latlng,raster,bounds,opera) {
     const v=sampleRaster(latlng,raster,bounds),frame=fmtUtc(opera?.frameEnd||opera?.latest?.time);
     const value=finite(v)?`${Math.round(v)} dBZ`:'brak danych';
-    const html=`<div><b>OPERA CMAX</b><div class="op-value">${value}</div><div>${echoLabel(v)}</div><div class="op-meta">${Number(latlng.lat).toFixed(4)}°, ${Number(latlng.lng).toFixed(4)}° · ${frame}</div></div>`;
+    const html=`<div><b>OPERA Europa CMAX</b><div class="op-value">${value}</div><div>${echoLabel(v)}</div><div class="op-meta">${Number(latlng.lat).toFixed(4)}°, ${Number(latlng.lng).toFixed(4)}° · ${frame}<br>warstwa pomocnicza · POLRAD ma priorytet nad Polską</div></div>`;
     L.popup({className:'opera-cmax-popup',maxWidth:260,closeButton:true}).setLatLng(latlng).setContent(html).openOn(m);
   }
 
@@ -435,8 +453,8 @@
     const frameUtc = fmtUtc(opera.frameEnd || opera.latest.time);
     const rendered = !!fixedLayer || !!outlineLayer;
     button.title = raster.visible > 0
-      ? `OPERA CMAX · ${raster.pixelKm} km/piksel · ${frameUtc} · dotknij mapy, aby odczytać dBZ`
-      : `OPERA CMAX · ${raster.pixelKm} km/piksel · ${frameUtc} · dotknij mapy, aby sprawdzić punkt`;
+      ? `OPERA Europa CMAX · ${raster.pixelKm} km/piksel · ${frameUtc} · filtr mapy ≥${VISUAL_MIN_DBZ} dBZ · dotknij mapy, aby odczytać dBZ`
+      : `OPERA Europa CMAX · ${raster.pixelKm} km/piksel · ${frameUtc} · filtr mapy ≥${VISUAL_MIN_DBZ} dBZ · dotknij mapy, aby sprawdzić punkt`;
     publishState(button,{
       enabled:true,
       rendered,
@@ -448,7 +466,10 @@
       pane:PANE,
       palette:'POLRAD CMAX',
       interactive:true,
-      resolutionKm:raster.pixelKm
+      resolutionKm:raster.pixelKm,
+      visualThresholdDbz:VISUAL_MIN_DBZ,
+      role:'secondary_europe_control',
+      primaryOverPoland:'POLRAD'
     });
   }
 
@@ -456,6 +477,8 @@
     const button = $('operaCmaxToggle');
     if (!button || button === boundButton) return !!button;
     boundButton = button;
+    button.textContent = 'OPERA Europa CMAX';
+    button.title = 'Europejska warstwa kontrolna/backup; nad Polską priorytet ma POLRAD';
     button.setAttribute('aria-pressed',button.classList.contains('active')?'true':'false');
     button.addEventListener('click',ev => {
       if (ev.isTrusted) button.dataset.operaUserTouched = '1';
@@ -472,12 +495,7 @@
     bindButton();
     const button = $('operaCmaxToggle');
     if (!button) return;
-    if (!autoEnabled && lastOpera?.latest && !lastOpera.error && button.dataset.operaUserTouched !== '1') {
-      autoEnabled = true;
-      if (!button.classList.contains('active')) button.click();
-      else renderMap(lastOpera);
-      return;
-    }
+    // Secondary layer: never auto-enable it over POLRAD. Render only when the user explicitly activates it.
     renderMap(lastOpera);
   }
 
