@@ -92,7 +92,10 @@
     const ai = document.getElementById('aiText');
     if (!ai) return;
     const before = ai.innerHTML;
-    const after = before.replace(/(grad\s*<b>)(\d+)(%<\/b>)/i, `$1${score}$3`);
+    const after = before.replace(
+      /(grad\s*<b>)(\d+)(%<\/b>)/i,
+      (_match, prefix, _oldScore, suffix) => `${prefix}${score}${suffix}`
+    );
     if (after !== before) ai.innerHTML = after;
   }
 
