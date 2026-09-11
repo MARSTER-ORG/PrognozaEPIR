@@ -115,8 +115,6 @@
     } catch (_) { }
   }
 
-  // Install the DOM protection first. Optional runtime monkey-patches below
-  // must never be able to disable visible UTC labelling.
   function installObserver() {
     try {
       const root = document.documentElement;
@@ -150,13 +148,9 @@
     scanAll();
   }
 
-  // Fallback for modules that replace large DOM fragments or are rendered by
-  // code paths that bypass MutationObserver timing. This is deliberately cheap.
   [50,250,750,1500,3000,6000,12000].forEach(ms => setTimeout(scanAll, ms));
   setInterval(scanAll, 30000);
 
-  // Locale Date methods default to UTC. Failure of any single patch is ignored
-  // so the visible UI guard above always remains active.
   for (const name of ['toLocaleString','toLocaleDateString','toLocaleTimeString']) {
     try {
       const original = Date.prototype[name];
@@ -171,8 +165,6 @@
     } catch (_) { }
   }
 
-  // Direct Intl.DateTimeFormat users are also forced to UTC, but this patch is
-  // optional because some browsers expose Intl constructors differently.
   try {
     if (window.Intl && typeof Intl.DateTimeFormat === 'function') {
       const NativeDateTimeFormat = Intl.DateTimeFormat;
@@ -185,7 +177,6 @@
     }
   } catch (_) { }
 
-  // Canvas clocks (meteogram/chart axes and labels) are not DOM text.
   try {
     const CanvasProto = window.CanvasRenderingContext2D && window.CanvasRenderingContext2D.prototype;
     if (CanvasProto && !CanvasProto.__prognozaUtcUiPatched) {
@@ -200,16 +191,13 @@
     }
   } catch (_) { }
 
-  // taf.html is intentionally small at the top of <head>. Load the generator
-  // policy from here so the final TAF is guarded even when the inline generator
-  // changes. The policy itself is idempotent and only runs on /taf.html.
   function loadTafGeneratorPolicy() {
     if (!/\/taf\.html$/i.test(location.pathname) || window.__PROGNOZA_EPIR_TAF_POLICY_LOADER__) return;
     window.__PROGNOZA_EPIR_TAF_POLICY_LOADER__ = true;
     const load = () => {
       if (document.querySelector('script[data-taf-generator-policy]')) return;
       const s = document.createElement('script');
-      s.src = 'taf-generator-policy.js?v=20260911-vrb02-speed-v3';
+      s.src = 'taf-generator-policy.js?v=20260911-observation-anchor-v5';
       s.async = false;
       s.dataset.tafGeneratorPolicy = '1';
       (document.head || document.documentElement).appendChild(s);
@@ -219,8 +207,6 @@
   }
   loadTafGeneratorPolicy();
 
-  // radar.html uses heuristic 0–99 risk scores. The hail policy requires a
-  // convective trigger, and weak scores below 40/100 do not draw a colored bar.
   function loadRadarRiskPolicy() {
     if (!/\/radar\.html$/i.test(location.pathname) || window.__PROGNOZA_EPIR_RADAR_RISK_POLICY_LOADER__) return;
     window.__PROGNOZA_EPIR_RADAR_RISK_POLICY_LOADER__ = true;
