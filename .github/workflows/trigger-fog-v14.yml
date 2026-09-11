@@ -1,0 +1,26 @@
+name: Trigger fog v1.4 migration
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/trigger-fog-v14.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Trigger one-time migration
+        run: |
+          git config user.name 'PrognozaEPIR bot'
+          git config user.email 'actions@users.noreply.github.com'
+          printf '\n# trigger v1.4\n' >> .github/workflows/one-time-fog-v14.yml
+          git add .github/workflows/one-time-fog-v14.yml
+          git commit -m 'ci: trigger fog v1.4 reliability migration'
+          git push origin HEAD:main
