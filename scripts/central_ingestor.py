@@ -91,7 +91,12 @@ def run_step(name: str, argv: list[str], *, attempts: int = 1, timeout: int = 90
     for attempt in range(1, attempts + 1):
         try:
             log(f"{name}: attempt {attempt}/{attempts}")
-            proc = run_cmd(argv, timeout=timeout)
+            proc = subprocess.run(
+                argv,
+                cwd=ROOT,
+                timeout=timeout,
+                check=False,
+            )
             if proc.returncode == 0:
                 return StepResult(name, True, attempt, round(time.monotonic() - started, 3))
             last_error = f"exit {proc.returncode}"
