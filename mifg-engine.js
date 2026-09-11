@@ -49,11 +49,11 @@
     if(!finite(s))return 'brak danych';
     if(s>=80)return 'bardzo wysokie';
     if(s>=60)return 'wysokie';
-    if(s>=40)return 'umiarkowane';
+    if(s>=50)return 'umiarkowane';
     if(s>=20)return 'małe';
     return 'bardzo małe';
   }
-  function riskCss(s){return s>=75?'fog-risk-vhigh':s>=60?'fog-risk-high':s>=40?'fog-risk-mid':'fog-risk-low';}
+  function riskCss(s){return s>=75?'fog-risk-vhigh':s>=60?'fog-risk-high':s>=50?'fog-risk-mid':'fog-risk-low';}
 
   // MIFG is a very shallow surface-layer phenomenon. Visibility is deliberately
   // not used as a primary predictor; a METAR can still report 9999 while shallow
@@ -278,7 +278,7 @@
 
   function operationalText(score){
     if(!finite(score))return 'BRAK DANYCH';
-    if(score<40)return 'NIE';
+    if(score<50)return 'NIE';
     if(score<60)return 'MOŻLIWE';
     if(score<80)return 'PRAWDOPODOBNE';
     return 'BARDZO PRAWDOPODOBNE';
@@ -290,7 +290,7 @@
     document.getElementById('mifgCard')?.remove();
     for(const oldCard of [...summary.children]){
       const small=oldCard.querySelector?.('small');
-      if(small&&/MIFG/i.test(small.textContent||''))oldCard.remove();
+      if(small&&/\bMIFG\b/i.test(small.textContent||''))oldCard.remove();
     }
     const now=Date.now();
     const current=series.reduce((a,b)=>Math.abs(b.t-now)<Math.abs(a.t-now)?b:a,series[0]);
@@ -299,13 +299,13 @@
     const obs=obsHasMifg(latestObs)&&obsAgeHours(latestObs)<=2;
     const card=document.createElement('div');
     card.id='mifgCard';
-    card.className='fog-card '+(current.score>=80?'fog-risk-vhigh':current.score>=60?'fog-risk-high':current.score>=40?'fog-risk-mid':'');
-    const currentDetail=current.score>=40
+    card.className='fog-card '+(current.score>=80?'fog-risk-vhigh':current.score>=60?'fog-risk-high':current.score>=50?'fog-risk-mid':'');
+    const currentDetail=current.score>=50
       ?Math.round(current.score)+'/100'
-      :'wynik <40/100 pominięty';
-    const peakDetail=peak.score>=40
+      :'wynik <50/100 pominięty';
+    const peakDetail=peak.score>=50
       ?' · maks. 12 h '+Math.round(peak.score)+'/100 '+localHour(peak.t)
-      :' · brak sygnału ≥40 w 12 h';
+      :' · brak sygnału ≥50 w 12 h';
     card.innerHTML='<small>MIFG</small><strong>'+operationalText(current.score)+'</strong>'+
       '<em>'+currentDetail+peakDetail+(obs?' · MIFG OBS':'')+'</em>';
     summary.appendChild(card);
