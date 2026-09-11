@@ -101,6 +101,13 @@
       const lead = Math.max(0, Number(row.lead) || 0);
       score = Math.max(score, 75 * Math.exp(-lead / 4));
     }
+    // Operational BR requires actual 1–5 km visibility evidence or strong saturation.
+    // Do not let the FG score alone create BR >=50.
+    const modelVis = Number(row.vis);
+    if (phen !== 'BR' && (!finite(modelVis) || modelVis >= 5000) && (band ?? 0) < 30 && (sat ?? 0) < 70)
+      score = Math.min(score,49);
+    if (row.obsUsed && phen.includes('BEZ FG/BR') && Number(row.lead||0) <= 3 && finite(Number(row.obsVisM)) && Number(row.obsVisM) >= 5000 && (band ?? 0) < 50)
+      score = Math.min(score,49);
     return clip(score,0,100);
   }
 

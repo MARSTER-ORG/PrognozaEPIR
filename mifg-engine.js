@@ -133,10 +133,11 @@
 
   async function fetchObs(){
     try{
-      const r=await fetch('data/observations/latest.json?v='+Date.now(),{cache:'no-store'});
+      const r=await fetch('data/messages/latest.json?v='+Date.now(),{cache:'no-store'});
       if(!r.ok)throw new Error('HTTP '+r.status);
       const j=await r.json();
-      latestObs=j?.metar||null;
+      const a=[j?.speci,j?.metar,j?.aviation].filter(Boolean).sort((x,y)=>Date.parse(y?.obs_time||y?.message_time||'')-Date.parse(x?.obs_time||x?.message_time||''));
+      latestObs=(a[0]&&obsAgeHours(a[0])<=3)?a[0]:null;
     }catch(_){latestObs=null;}
   }
 
@@ -208,6 +209,9 @@
       ]);
       score=finite(score)?score*100:null;
       score=applyObsBoost(score,x.t,now);
+      const observed=obsHasMifg(latestObs)&&obsAgeHours(latestObs)<=3;
+      const surfaceEvidence=Math.max(finite(ss)?ss:0,finite(fog2)?fog2:0,finite(rhs)?rhs:0);
+      if(finite(score)&&!observed&&surfaceEvidence<.45)score=Math.min(score,49);
       return {...x,score,source:'DMI HARMONIE AROME',components:{fog2,surfaceSat:ss,airSat:as,rh:rhs,wind,inv,sky,cool,moist,dark}};
     });
   }
@@ -247,6 +251,9 @@
       ]);
       score=finite(score)?score*100:null;
       score=applyObsBoost(score,x.t,now);
+      const observed=obsHasMifg(latestObs)&&obsAgeHours(latestObs)<=3;
+      const moistureEvidence=Math.max(finite(as)?as:0,finite(rhs)?rhs:0);
+      if(finite(score)&&!observed&&moistureEvidence<.50)score=Math.min(score,49);
       return {...x,Tskin:null,T50:null,T100:null,SW:null,isDay:null,FOG2:null,score,
         source:'PrognozaEPIR multimodel fallback',
         components:{fog2:null,surfaceSat:null,airSat:as,rh:rhs,wind,inv:null,sky,cool,moist,dark}};

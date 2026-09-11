@@ -3,13 +3,15 @@
   if (typeof PLACE === 'undefined') return;
 
   const APP_VERSION = 'v0.10.24 HTML';
-  const ENGINE_VERSION = 'EPIR FOG ENGINE v1.3';
+  const ENGINE_VERSION = 'EPIR FOG ENGINE v1.4';
   // Legacy Pages compatibility markers only; runtime v1.3 logic is authoritative.
   // EPIR FOG ENGINE v1.2
   // fogSeries=out;renderFog();
   const HOUR = 3600e3;
   const OBS_KEY = 'prognozaepir-fog-observations-v2';
   const MAX_OBS = 60;
+  const AUTO_OBS_MAX_AGE = 3*HOUR;
+  const OBS_SNAPSHOT_URL = 'data/messages/latest.json';
   const DMI_MODEL = 'dmi_harmonie_arome_europe';
   const KNMI_MODEL = 'knmi_harmonie_arome_europe';
   const ADAPTIVE_WEIGHTS_URL = 'data/learning/adaptive-weights.json';
@@ -47,6 +49,8 @@
   let engineError = '';
   let lastCoreSize = -1;
   let fetchBusy = false;
+  let archiveObservation = null;
+  let archiveObsStatus = {ready:false,fresh:false,source:null,ageHours:null,synopFresh:false,synopAgeHours:null,synopStale:false,error:null};
 
   const clip = (v,a,b) => Math.max(a,Math.min(b,v));
   const finite = Number.isFinite;
@@ -280,6 +284,56 @@
   }
   function parseLocalInput(v){return v?Date.parse(v):NaN;}
   function setDefaultObsTime(){const x=document.getElementById('fogObsTime');if(x&&!x.value)x.value=localInputValue(Date.now());}
+  function publishObsStatus(){
+    window.PrognozaEPIRFogObsStatus={...archiveObsStatus};
+  }
+  function rowAgeHours(row){
+    const t=Date.parse(row?.obs_time||row?.message_time||'');
+    return finite(t)?Math.max(0,(Date.now()-t)/HOUR):Infinity;
+  }
+  function archiveRowToObs(row,sourceType){
+    if(!row)return null;
+    const t=Date.parse(row.obs_time||row.message_time||'');
+    if(!finite(t))return null;
+    return {
+      t,T:n(row.temperature_c),Td:n(row.dew_point_c),visM:n(row.visibility_m),
+      automatic:true,sourceType,source:row.source||sourceType,raw:row.canonical_raw||row.raw||'',
+      fog:Boolean(row.fog),freezingFog:Boolean(row.freezing_fog),mist:Boolean(row.mist)
+    };
+  }
+  async function fetchArchiveObservation(){
+    try{
+      const sep=OBS_SNAPSHOT_URL.includes('?')?'&':'?';
+      const r=await fetch(OBS_SNAPSHOT_URL+sep+'_='+Date.now(),{cache:'no-store'});
+      const j=await r.json().catch(()=>null);
+      if(!r.ok||!j)throw new Error('archive obs HTTP '+r.status);
+      const aviation=[];
+      for(const [kind,row] of [['SPECI',j.speci],['METAR',j.metar],['METAR',j.aviation]]){
+        if(!row)continue;
+        const age=rowAgeHours(row);
+        if(age<=3)aviation.push({kind,row,age,t:Date.parse(row.obs_time||row.message_time||'')});
+      }
+      aviation.sort((a,b)=>b.t-a.t);
+      const av=aviation[0]||null;
+      const syn=j.synop||null,synAge=rowAgeHours(syn),synFresh=Boolean(syn&&synAge<=3);
+      const selected=av||(synFresh?{kind:'SYNOP',row:syn,age:synAge}:null);
+      archiveObservation=selected?archiveRowToObs(selected.row,selected.kind):null;
+      archiveObsStatus={
+        ready:true,fresh:Boolean(archiveObservation),source:selected?.kind||null,ageHours:selected?.age??null,
+        synopFresh,synopAgeHours:finite(synAge)?synAge:null,synopStale:Boolean(syn&&!synFresh),
+        aviationFresh:Boolean(av),aviationAgeHours:av?.age??null,error:null
+      };
+    }catch(e){
+      archiveObservation=null;
+      archiveObsStatus={ready:true,fresh:false,source:null,ageHours:null,synopFresh:false,synopAgeHours:null,synopStale:false,error:String(e?.message||e)};
+    }
+    publishObsStatus();
+  }
+  function engineObservations(){
+    const a=getObservations().filter(o=>o&&!o.automatic);
+    if(archiveObservation)a.push(archiveObservation);
+    return a.filter(o=>finite(o.t)).sort((x,y)=>x.t-y.t);
+  }
   function getObservations(){
     try{const a=JSON.parse(localStorage.getItem(OBS_KEY)||'[]');return Array.isArray(a)?a.filter(o=>finite(o.t)).slice(-MAX_OBS):[];}catch(_){return[];}
   }
@@ -397,7 +451,8 @@
         ...ids.map(fetchSupplement),
         fetchKnmi().catch(e=>{knmiRows=[];console.warn('KNMI fog supplement:',e)}),
         fetchAdaptiveWeights().catch(e=>{adaptiveWeights=null;console.warn('fog adaptive weights:',e)}),
-        fetchFogEventSkill().catch(e=>{fogEventSkill=null;console.warn('fog event skill:',e)})
+        fetchFogEventSkill().catch(e=>{fogEventSkill=null;console.warn('fog event skill:',e)}),
+        fetchArchiveObservation()
       ]);
     }catch(e){engineError=e?.message||String(e);}
     finally{fetchBusy=false;rebuildEngine();}
@@ -562,10 +617,10 @@
   }
   function recentObservation(){
     const now=Date.now()+10*60e3;
-    return getObservations().filter(o=>o.t<=now&&now-o.t<=6*HOUR).sort((a,b)=>b.t-a.t)[0]||null;
+    return engineObservations().filter(o=>o.t<=now&&now-o.t<=6*HOUR).sort((a,b)=>b.t-a.t)[0]||null;
   }
   function observationTrend(){
-    const a=getObservations().filter(o=>Date.now()-o.t<=8*HOUR).sort((x,y)=>x.t-y.t);
+    const a=engineObservations().filter(o=>Date.now()-o.t<=8*HOUR).sort((x,y)=>x.t-y.t);
     if(a.length<2)return null;
     const p=a[a.length-2],q=a[a.length-1];
     const dp=(q.T-q.Td)-(p.T-p.Td),dv=q.visM-p.visM;
@@ -643,6 +698,7 @@
     else if(lead<=6)final=weightedAvailable([{v:obsTrend,w:.12},{v:directFog,w:.18},{v:phys,w:.35},{v:nwp,w:.35}]);
     else if(lead<=12)final=weightedAvailable([{v:directFog,w:.12},{v:phys,w:.39},{v:nwp,w:.39},{v:obsTrend,w:.10}]);
     else final=weightedAvailable([{v:directFog,w:.06},{v:phys,w:.47},{v:nwp,w:.47}]);
+    let finalScore=final.v;
 
     const sat=weightedAvailable(models.map(m=>({v:mean([m.components.SD,m.components.SRH]),w:fogModelWeight(m.id,lead)}))).v;
     const data=clip(mean(models.map(m=>m.coverage))??0,0,1);
@@ -659,8 +715,8 @@
     const visRisk = thr => {
       const lower=thr<=500;
       const parts=lower
-        ?[{v:modelProb(thr),w:.65},{v:final.v,w:.18},{v:obsVisRisk(thr),w:.12},{v:finite(sat)?sat*100:null,w:.05}]
-        :[{v:modelProb(thr),w:.55},{v:final.v,w:.25},{v:obsVisRisk(thr),w:.10},{v:finite(sat)?sat*100:null,w:.10}];
+        ?[{v:modelProb(thr),w:.65},{v:finalScore,w:.18},{v:obsVisRisk(thr),w:.12},{v:finite(sat)?sat*100:null,w:.05}]
+        :[{v:modelProb(thr),w:.55},{v:finalScore,w:.25},{v:obsVisRisk(thr),w:.10},{v:finite(sat)?sat*100:null,w:.10}];
       return weightedAvailable(parts).v;
     };
     let vis=weightedModelMedian(visModels,'VIS',lead);
@@ -670,13 +726,29 @@
       const dmiNow=nearest(dmiRows,obs.obs.t,90*60e3);
       if(finite(dmiNow?.VIS)&&dmiNow.VIS>0)vis=clip(vis*Math.pow(clip(obs.obs.visM/dmiNow.VIS,.25,4),decay),50,50000);
     }
+
+    // Operational evidence gate: physics alone must not create an FG event when
+    // visibility and saturation evidence remain weak. A fresh FG/FZFG observation
+    // can override this conservative gate.
+    const sat100=finite(sat)?sat*100:null;
+    const obsPhen=String(obs?.phenomenon||'').toUpperCase();
+    const observedFog=obsPhen==='FG'||obsPhen==='FZFG';
+    const observedMist=obsPhen==='BR';
+    if(finite(finalScore)&&!observedFog){
+      const weakModelVis=!finite(vis)||vis>=5000;
+      const weakSat=!finite(sat100)||sat100<70;
+      const weakDirect=!finite(directFog)||directFog<50;
+      if(weakModelVis&&weakSat&&weakDirect)finalScore=Math.min(finalScore,49);
+      if(lead<=3&&obs?.obs?.automatic&&!observedMist&&finite(obs.obs.visM)&&obs.obs.visM>=5000&&weakModelVis&&(!finite(directFog)||directFog<60))
+        finalScore=Math.min(finalScore,49);
+    }
     const type=typeFromMechanisms(models,lead);
     const T=weightedModelMean(models,'T',lead);
-    const fzfg=finite(final.v)&&final.v>=60&&finite(T)?(T<=0?'TAK':T<=1?'RYZYKO':'NIE'):'NIE';
+    const fzfg=finite(finalScore)&&finalScore>=60&&finite(T)?(T<=0?'TAK':T<=1?'RYZYKO':'NIE'):'NIE';
     return {
-      t,lead,score:final.v,PHYS:phys,NWP:nwp,agreement:agree,data,confidence:conf,type,models,
+      t,lead,score:finalScore,PHYS:phys,NWP:nwp,agreement:agree,data,confidence:conf,type,models,
       vis,vis1500:visRisk(1500),vis1000:visRisk(1000),vis500:visRisk(500),vis200:visRisk(200),
-      T,fzfg,obsScore:obs?.raw??null,obsUsed:Boolean(obs),obsPhenomenon:obs?.phenomenon??null,sat:finite(sat)?sat*100:null,
+      T,fzfg,obsScore:obs?.raw??null,obsUsed:Boolean(obs),obsPhenomenon:obs?.phenomenon??null,obsVisM:obs?.obs?.visM??null,obsSource:obs?.obs?.sourceType??null,sat:finite(sat)?sat*100:null,
       dmiFog:models.find(m=>m.id===DMI_MODEL)?.directFog??null,
       FSI:mean(models.map(m=>m.fsi).filter(finite))
     };
@@ -735,8 +807,8 @@
       <div class="fog-card"><small>VIS &lt;1500 / &lt;200 m</small><strong>${fmt0(current.vis1500)}/100 · ${fmt0(current.vis200)}/100</strong><em>osobne zagrożenia</em></div>
       <div class="fog-card"><small>Mgła marznąca</small><strong>${freeze}</strong><em>T przy maksimum ${fmt1(peak.T)}°C</em></div>
       <div class="fog-card"><small>Pewność prognozy</small><strong>${confidenceLabel(current.confidence)}</strong><em>${fmt0((current.confidence??0)*100)}% wskaźnika CONF</em></div>`;
-    if(source)source.textContent=`${ENGINE_VERSION} · ${current.models.length} modeli${current.obsUsed?' · OBS '+(current.obsPhenomenon||'aktywne'):''}`;
-    if(note)note.innerHTML=`<b>Dostępność danych:</b> ${fmt0(current.data*100)}% · zgodność modeli ${fmt0((current.agreement??0)*100)}% · DMI fog 2 m · KNMI HARMONIE · lokalna kalibracja METAR/SPECI · obserwacje: ${current.obsUsed?'użyte w nowcaście ('+(current.obsPhenomenon||'OBS')+')':'brak świeżej obserwacji'}. DMI 2 m fog: ${finite(current.dmiFog)?fmt0(current.dmiFog)+'%':'—'}.`;
+    if(source){const os=archiveObsStatus;const tag=os.ready?(os.fresh?' · OBS '+(os.source||'świeża')+(os.synopStale?' · SYNOP >3 h odrzucony':''):' · OBS BRAK ≤3 h'):' · OBS ładowanie';source.textContent=`${ENGINE_VERSION} · ${current.models.length} modeli${tag}`;}
+    if(note){const syn=archiveObsStatus.synopStale?' · SYNOP starszy niż 3 h: odrzucony':'';note.innerHTML=`<b>Dostępność danych:</b> ${fmt0(current.data*100)}% · zgodność modeli ${fmt0((current.agreement??0)*100)}% · DMI fog 2 m · KNMI HARMONIE · obserwacja: ${archiveObsStatus.fresh?(archiveObsStatus.source||'świeża'):'BRAK ≤3 h'}${syn}. DMI 2 m fog: ${finite(current.dmiFog)?fmt0(current.dmiFog)+'%':'—'}.`;}
     if(hours){
       hours.innerHTML=future.slice(0,13).map(x=>`<div class="fog-hour ${riskCss(x.score)}"><b>${localHour(x.t)}</b><div class="p">${scoreClass(x.score)}</div><small>${x.score>=50?fmt0(x.score)+'/100':'&lt;50 · pominięte'}</small><small>${x.score>=50?(x.type?.text||'—'):'bez sygnału operacyjnego'}</small><small>VIS ${fmtM(x.vis)}</small><small>&lt;1km ${fmt0(x.vis1000)}/100</small></div>`).join('');
     }

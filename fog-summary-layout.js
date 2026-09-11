@@ -132,6 +132,13 @@
       const lead = Math.max(0, Number(row.lead) || 0);
       score = Math.max(score, 75 * Math.exp(-lead / 4));
     }
+    // Operational BR requires actual 1–5 km visibility evidence or strong saturation.
+    // Do not let the FG score alone create BR >=50.
+    const modelVis = Number(row.vis);
+    if (phen !== 'BR' && (!finite(modelVis) || modelVis >= 5000) && (band ?? 0) < 30 && (sat ?? 0) < 70)
+      score = Math.min(score,49);
+    if (row.obsUsed && phen.includes('BEZ FG/BR') && Number(row.lead||0) <= 3 && finite(Number(row.obsVisM)) && Number(row.obsVisM) >= 5000 && (band ?? 0) < 50)
+      score = Math.min(score,49);
     return clip(score,0,100);
   }
 
@@ -212,7 +219,7 @@
     return {panel,aux};
   }
 
-  function renderPhenomenon(title,kind,ev,diagnostic) {
+  function renderPhenomenon(title,kind,ev,diagnostic,noFreshObs=false) {
     if (!ev) {
       return '<section class="fog-phen-row"><div class="fog-phen-title">'+esc(title)+'</div><div class="fog-phen-grid">'+
         card((kind==='FG'?'MGŁA':kind)+' W CIĄGU NAJBLIŻSZEJ GODZINY','BRAK DANYCH','oczekiwanie na dane')+
@@ -222,10 +229,16 @@
       '</div></section>';
     }
     const diag = diagnostic(ev.current,ev.peak);
+    const nowCard=noFreshObs
+      ?card((kind==='FG'?'MGŁA':kind)+' W CIĄGU NAJBLIŻSZEJ GODZINY','BRAK DANYCH','brak świeżej obserwacji ≤3 h')
+      :card((kind==='FG'?'MGŁA':kind)+' W CIĄGU NAJBLIŻSZEJ GODZINY',classText(ev.current.score,kind),currentDetail(ev.current.score),ev.current.score);
+    const whenCard=noFreshObs
+      ?card('KIEDY '+kind+'?','BRAK DANYCH','brak świeżej obserwacji ≤3 h')
+      :card('KIEDY '+kind+'?',whenDetail(ev),'próg operacyjny 50/100',ev.peak.score);
     return '<section class="fog-phen-row"><div class="fog-phen-title">'+esc(title)+'</div><div class="fog-phen-grid">'+
-      card((kind==='FG'?'MGŁA':kind)+' W CIĄGU NAJBLIŻSZEJ GODZINY',classText(ev.current.score,kind),currentDetail(ev.current.score),ev.current.score)+
+      nowCard+
       card('MAKSIMUM W 48 H',classText(ev.peak.score,kind),peakDetail(ev),ev.peak.score)+
-      card('KIEDY '+kind+'?',whenDetail(ev),'próg operacyjny 50/100',ev.peak.score)+
+      whenCard+
       card(diag.label,diag.value,diag.detail,diag.score ?? null)+
     '</div></section>';
   }
@@ -237,22 +250,24 @@
     const fg = eventInfo(fogRows());
     const br = eventInfo(brRows());
     const mi = eventInfo(mifgRows());
+    const os=window.PrognozaEPIRFogObsStatus||null;
+    const noFreshObs=Boolean(os?.ready&&!os?.fresh);
 
     const fgHtml = renderPhenomenon('MGŁA (FG)','FG',fg,(current,peak) => ({
       label:'TYP PROCESU',
       value:peak?.type?.text || current?.type?.text || '—',
       detail:peak?.type?.secondary ? 'wtórny: '+(({RAD:'radiacyjna',ADV:'adwekcyjna',CBL:'obniżanie Stratusa',PCP:'opadowa'})[peak.type.secondary] || peak.type.secondary) : 'dominujący mechanizm'
-    }));
+    }),noFreshObs);
 
     const brHtml = renderPhenomenon('BR — ZAMGLENIE','BR',br,(current) => {
       const d = brDiagnostic(current);
       return {label:'DIAGNOSTYKA BR',value:d.value,detail:d.detail};
-    });
+    },noFreshObs);
 
     const miHtml = renderPhenomenon('MIFG — NISKA MGŁA','MIFG',mi,(current) => {
       const d = mifgDiagnostic(current);
       return {label:'DIAGNOSTYKA MIFG',value:d.value,detail:d.detail};
-    });
+    },noFreshObs);
 
     target.panel.innerHTML = fgHtml + brHtml + miHtml;
 
