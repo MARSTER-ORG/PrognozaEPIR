@@ -1,16 +1,10 @@
 'use strict';
 (() => {
-  // Frontend boundary: this client reads the central archive only. It must never
-  // contact IMGW, AWC, PilotHub or any other bulletin provider directly.
-  // Railway is the authoritative live acquisition engine. GitHub is the durable
-  // published mirror and must only be used as a fallback for current reads.
+  // Bulletin consumers read only the durable GitHub archive.
+  // Railway is ingestion-only and mirrors new records into this repository.
   const GITHUB_ROOT = 'https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/messages';
   const STATIC_ROOT = 'data/messages';
-  const RAILWAY_ROOT = 'https://central-ingestor-production.up.railway.app/data/messages';
-  const CUSTOM_ROOT = window.PROGNOZAEPIR_ARCHIVE_ROOT
-    ? String(window.PROGNOZAEPIR_ARCHIVE_ROOT).replace(/\/+$/,'')
-    : '';
-  const PRIMARY_ROOT = CUSTOM_ROOT || RAILWAY_ROOT;
+  const PRIMARY_ROOT = STATIC_ROOT;
   const TTL_MS = 30_000;
   const cache = new Map();
   const norm = value => String(value || '').toUpperCase();
@@ -32,15 +26,7 @@
   }
 
   function readRoots(){
-    // Explicit override wins when configured. Otherwise always ask the live
-    // Railway archive first; the GitHub/raw and deployed Pages copies are
-    // durable fallbacks and can legitimately lag the acquisition engine.
-    return [...new Set([
-      CUSTOM_ROOT,
-      RAILWAY_ROOT,
-      GITHUB_ROOT,
-      STATIC_ROOT
-    ].filter(Boolean))];
+    return [STATIC_ROOT, GITHUB_ROOT];
   }
 
   async function fetchJson(name, force=false){
@@ -59,7 +45,7 @@
         errors.push({root, error});
       }
     }
-    const error = new Error(`MessageArchive ${name}: live/GitHub/static archive unavailable`);
+    const error = new Error(`MessageArchive ${name}: GitHub archive unavailable`);
     error.cause = errors;
     throw error;
   }
@@ -73,12 +59,7 @@
   }
 
   async function status(force=false){
-    const now = Date.now();
-    try {
-      return await fetchFrom(RAILWAY_ROOT, 'status.json', now);
-    } catch (_) {
-      return fetchJson('status.json', force);
-    }
+    return fetchJson('status.json', force);
   }
 
   function strictLatest(payload, type, station){
@@ -110,7 +91,7 @@
 
   const api = Object.freeze({
     root: PRIMARY_ROOT,
-    liveRoot: RAILWAY_ROOT,
+    liveRoot: STATIC_ROOT,
     githubRoot: GITHUB_ROOT,
     fallbackRoot: GITHUB_ROOT,
     staticFallbackRoot: STATIC_ROOT,

@@ -2,7 +2,7 @@
 (() => {
   const VERSION='TAF Verification v2.2';
   const BLOCKED_SKILL_KEY='prognozaepir-taf-skill-v1';
-  const LIVE_ARCHIVE_BASE='https://central-ingestor-production.up.railway.app/data/messages/';
+  const GITHUB_PAGES_BASE='data/messages/';
   const CENTRAL_RAW_BASE='https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/messages/';
   const VIS_BANDS=[800,1500,3000,5000];
   const CEIL_BANDS=[200,300,500,1000,1500];
@@ -209,8 +209,7 @@
   function centralDayUrls(kind,day){
     const [y,m,d]=day.split('-'),stamp=Date.now();
     return [
-      `${LIVE_ARCHIVE_BASE}${kind}/${y}/${m}/${d}.jsonl?live=${stamp}`,
-      `data/messages/${kind}/${y}/${m}/${d}.jsonl?pages=${stamp}`,
+      `${GITHUB_PAGES_BASE}${kind}/${y}/${m}/${d}.jsonl?pages=${stamp}`,
       `${CENTRAL_RAW_BASE}${kind}/${y}/${m}/${d}.jsonl?raw=${stamp}`
     ];
   }

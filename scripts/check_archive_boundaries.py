@@ -2,8 +2,8 @@
 """Fail CI if browser/API code bypasses the central message archive.
 
 Bulletin providers are allowed only in server-side source adapters under scripts/.
-Frontend code and Vercel API handlers must read data/messages via the shared
-MessageArchive client, never acquire METAR/TAF directly.
+Frontend code and Vercel API handlers must read the GitHub data/messages archive,
+never Railway or bulletin providers directly.
 """
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ FORBIDDEN = {
     "AWC METAR/TAF API": re.compile(r"aviationweather\.gov/api/data/(?:metar|taf)", re.I),
     "PilotHub bulletin source": re.compile(r"pilothub\.pl", re.I),
     "legacy TAF proxy": re.compile(r"/api/taf-proxy", re.I),
+    "Railway central archive": re.compile(r"central-ingestor-production\.up\.railway\.app/data/messages", re.I),
 }
 
 TARGETS = [
