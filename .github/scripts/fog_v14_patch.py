@@ -1,0 +1,240 @@
+from pathlib import Path
+import re
+
+
+def replace_once(s, old, new, label):
+    if old not in s:
+        if new in s:
+            return s
+        raise SystemExit(f'{label}: pattern not found')
+    return s.replace(old, new, 1)
+
+
+# ---------- fog-engine.js ----------
+p = Path('fog-engine.js')
+s = p.read_text(encoding='utf-8')
+s = replace_once(s, "const ENGINE_VERSION = 'EPIR FOG ENGINE v1.3';", "const ENGINE_VERSION = 'EPIR FOG ENGINE v1.4';", 'engine version')
+s = replace_once(s, "  const MAX_OBS = 60;\n", "  const MAX_OBS = 60;\n  const AUTO_OBS_MAX_AGE = 3*HOUR;\n  const OBS_SNAPSHOT_URL = 'data/messages/latest.json';\n", 'obs constants')
+s = replace_once(s, "  let fetchBusy = false;\n", "  let fetchBusy = false;\n  let archiveObservation = null;\n  let archiveObsStatus = {ready:false,fresh:false,source:null,ageHours:null,synopFresh:false,synopAgeHours:null,synopStale:false,error:null};\n", 'obs state')
+
+marker = "  function getObservations(){\n"
+helpers = r'''  function publishObsStatus(){
+    window.PrognozaEPIRFogObsStatus={...archiveObsStatus};
+  }
+  function rowAgeHours(row){
+    const t=Date.parse(row?.obs_time||row?.message_time||'');
+    return finite(t)?Math.max(0,(Date.now()-t)/HOUR):Infinity;
+  }
+  function archiveRowToObs(row,sourceType){
+    if(!row)return null;
+    const t=Date.parse(row.obs_time||row.message_time||'');
+    if(!finite(t))return null;
+    return {
+      t,T:n(row.temperature_c),Td:n(row.dew_point_c),visM:n(row.visibility_m),
+      automatic:true,sourceType,source:row.source||sourceType,raw:row.canonical_raw||row.raw||'',
+      fog:Boolean(row.fog),freezingFog:Boolean(row.freezing_fog),mist:Boolean(row.mist)
+    };
+  }
+  async function fetchArchiveObservation(){
+    try{
+      const sep=OBS_SNAPSHOT_URL.includes('?')?'&':'?';
+      const r=await fetch(OBS_SNAPSHOT_URL+sep+'_='+Date.now(),{cache:'no-store'});
+      const j=await r.json().catch(()=>null);
+      if(!r.ok||!j)throw new Error('archive obs HTTP '+r.status);
+      const aviation=[];
+      for(const [kind,row] of [['SPECI',j.speci],['METAR',j.metar],['METAR',j.aviation]]){
+        if(!row)continue;
+        const age=rowAgeHours(row);
+        if(age<=3)aviation.push({kind,row,age,t:Date.parse(row.obs_time||row.message_time||'')});
+      }
+      aviation.sort((a,b)=>b.t-a.t);
+      const av=aviation[0]||null;
+      const syn=j.synop||null,synAge=rowAgeHours(syn),synFresh=Boolean(syn&&synAge<=3);
+      const selected=av||(synFresh?{kind:'SYNOP',row:syn,age:synAge}:null);
+      archiveObservation=selected?archiveRowToObs(selected.row,selected.kind):null;
+      archiveObsStatus={
+        ready:true,fresh:Boolean(archiveObservation),source:selected?.kind||null,ageHours:selected?.age??null,
+        synopFresh,synopAgeHours:finite(synAge)?synAge:null,synopStale:Boolean(syn&&!synFresh),
+        aviationFresh:Boolean(av),aviationAgeHours:av?.age??null,error:null
+      };
+    }catch(e){
+      archiveObservation=null;
+      archiveObsStatus={ready:true,fresh:false,source:null,ageHours:null,synopFresh:false,synopAgeHours:null,synopStale:false,error:String(e?.message||e)};
+    }
+    publishObsStatus();
+  }
+  function engineObservations(){
+    const a=getObservations().filter(o=>o&&!o.automatic);
+    if(archiveObservation)a.push(archiveObservation);
+    return a.filter(o=>finite(o.t)).sort((x,y)=>x.t-y.t);
+  }
+'''
+if 'function fetchArchiveObservation()' not in s:
+    if marker not in s:
+        raise SystemExit('getObservations marker missing')
+    s = s.replace(marker, helpers + marker, 1)
+
+s = replace_once(s, "    return getObservations().filter(o=>o.t<=now&&now-o.t<=6*HOUR).sort((a,b)=>b.t-a.t)[0]||null;", "    return engineObservations().filter(o=>o.t<=now&&now-o.t<=6*HOUR).sort((a,b)=>b.t-a.t)[0]||null;", 'recent obs')
+s = replace_once(s, "    const a=getObservations().filter(o=>Date.now()-o.t<=8*HOUR).sort((x,y)=>x.t-y.t);", "    const a=engineObservations().filter(o=>Date.now()-o.t<=8*HOUR).sort((x,y)=>x.t-y.t);", 'obs trend')
+s = replace_once(s, "        fetchFogEventSkill().catch(e=>{fogEventSkill=null;console.warn('fog event skill:',e)})", "        fetchFogEventSkill().catch(e=>{fogEventSkill=null;console.warn('fog event skill:',e)}),\n        fetchArchiveObservation()", 'refresh archive obs')
+
+s = replace_once(s, "    else final=weightedAvailable([{v:directFog,w:.06},{v:phys,w:.47},{v:nwp,w:.47}]);\n\n    const sat=", "    else final=weightedAvailable([{v:directFog,w:.06},{v:phys,w:.47},{v:nwp,w:.47}]);\n    let finalScore=final.v;\n\n    const sat=", 'final score var')
+s = s.replace('{v:final.v,w:.18}', '{v:finalScore,w:.18}')
+s = s.replace('{v:final.v,w:.25}', '{v:finalScore,w:.25}')
+
+gate_old = """    if(obs?.obs&&finite(vis)){
+      const ageLead=Math.max(0,t-obs.obs.t);
+      const decay=Math.exp(-ageLead/(6*HOUR));
+      const dmiNow=nearest(dmiRows,obs.obs.t,90*60e3);
+      if(finite(dmiNow?.VIS)&&dmiNow.VIS>0)vis=clip(vis*Math.pow(clip(obs.obs.visM/dmiNow.VIS,.25,4),decay),50,50000);
+    }
+    const type=typeFromMechanisms(models,lead);
+    const T=weightedModelMean(models,'T',lead);
+    const fzfg=finite(final.v)&&final.v>=60&&finite(T)?(T<=0?'TAK':T<=1?'RYZYKO':'NIE'):'NIE';
+"""
+gate_new = """    if(obs?.obs&&finite(vis)){
+      const ageLead=Math.max(0,t-obs.obs.t);
+      const decay=Math.exp(-ageLead/(6*HOUR));
+      const dmiNow=nearest(dmiRows,obs.obs.t,90*60e3);
+      if(finite(dmiNow?.VIS)&&dmiNow.VIS>0)vis=clip(vis*Math.pow(clip(obs.obs.visM/dmiNow.VIS,.25,4),decay),50,50000);
+    }
+
+    // Operational evidence gate: physics alone must not create an FG event when
+    // visibility and saturation evidence remain weak. A fresh FG/FZFG observation
+    // can override this conservative gate.
+    const sat100=finite(sat)?sat*100:null;
+    const obsPhen=String(obs?.phenomenon||'').toUpperCase();
+    const observedFog=obsPhen==='FG'||obsPhen==='FZFG';
+    const observedMist=obsPhen==='BR';
+    if(finite(finalScore)&&!observedFog){
+      const weakModelVis=!finite(vis)||vis>=5000;
+      const weakSat=!finite(sat100)||sat100<70;
+      const weakDirect=!finite(directFog)||directFog<50;
+      if(weakModelVis&&weakSat&&weakDirect)finalScore=Math.min(finalScore,49);
+      if(lead<=3&&obs?.obs?.automatic&&!observedMist&&finite(obs.obs.visM)&&obs.obs.visM>=5000&&weakModelVis&&(!finite(directFog)||directFog<60))
+        finalScore=Math.min(finalScore,49);
+    }
+    const type=typeFromMechanisms(models,lead);
+    const T=weightedModelMean(models,'T',lead);
+    const fzfg=finite(finalScore)&&finalScore>=60&&finite(T)?(T<=0?'TAK':T<=1?'RYZYKO':'NIE'):'NIE';
+"""
+s = replace_once(s, gate_old, gate_new, 'FG evidence gate')
+s = replace_once(s, "      t,lead,score:final.v,PHYS:phys,NWP:nwp,agreement:agree,data,confidence:conf,type,models,", "      t,lead,score:finalScore,PHYS:phys,NWP:nwp,agreement:agree,data,confidence:conf,type,models,", 'FG returned score')
+s = replace_once(s, "      T,fzfg,obsScore:obs?.raw??null,obsUsed:Boolean(obs),obsPhenomenon:obs?.phenomenon??null,sat:finite(sat)?sat*100:null,", "      T,fzfg,obsScore:obs?.raw??null,obsUsed:Boolean(obs),obsPhenomenon:obs?.phenomenon??null,obsVisM:obs?.obs?.visM??null,obsSource:obs?.obs?.sourceType??null,sat:finite(sat)?sat*100:null,", 'FG obs metadata')
+s = replace_once(s, "    if(source)source.textContent=`${ENGINE_VERSION} · ${current.models.length} modeli${current.obsUsed?' · OBS '+(current.obsPhenomenon||'aktywne'):''}`;", "    if(source){const os=archiveObsStatus;const tag=os.ready?(os.fresh?' · OBS '+(os.source||'świeża')+(os.synopStale?' · SYNOP >3 h odrzucony':''):' · OBS BRAK ≤3 h'):' · OBS ładowanie';source.textContent=`${ENGINE_VERSION} · ${current.models.length} modeli${tag}`;}", 'source status')
+s = replace_once(s, "    if(note)note.innerHTML=`<b>Dostępność danych:</b> ${fmt0(current.data*100)}% · zgodność modeli ${fmt0((current.agreement??0)*100)}% · DMI fog 2 m · KNMI HARMONIE · lokalna kalibracja METAR/SPECI · obserwacje: ${current.obsUsed?'użyte w nowcaście ('+(current.obsPhenomenon||'OBS')+')':'brak świeżej obserwacji'}. DMI 2 m fog: ${finite(current.dmiFog)?fmt0(current.dmiFog)+'%':'—'}.`;", "    if(note){const syn=archiveObsStatus.synopStale?' · SYNOP starszy niż 3 h: odrzucony':'';note.innerHTML=`<b>Dostępność danych:</b> ${fmt0(current.data*100)}% · zgodność modeli ${fmt0((current.agreement??0)*100)}% · DMI fog 2 m · KNMI HARMONIE · obserwacja: ${archiveObsStatus.fresh?(archiveObsStatus.source||'świeża'):'BRAK ≤3 h'}${syn}. DMI 2 m fog: ${finite(current.dmiFog)?fmt0(current.dmiFog)+'%':'—'}.`;}", 'data note')
+p.write_text(s, encoding='utf-8')
+
+
+# ---------- MIFG ----------
+p = Path('mifg-engine.js')
+s = p.read_text(encoding='utf-8')
+s = replace_once(s, "      const r=await fetch('data/observations/latest.json?v='+Date.now(),{cache:'no-store'});", "      const r=await fetch('data/messages/latest.json?v='+Date.now(),{cache:'no-store'});", 'MIFG obs source')
+s = replace_once(s, "      latestObs=j?.metar||null;", "      const a=[j?.speci,j?.metar,j?.aviation].filter(Boolean).sort((x,y)=>Date.parse(y?.obs_time||y?.message_time||'')-Date.parse(x?.obs_time||x?.message_time||''));\n      latestObs=(a[0]&&obsAgeHours(a[0])<=3)?a[0]:null;", 'MIFG fresh obs')
+old = """      score=finite(score)?score*100:null;
+      score=applyObsBoost(score,x.t,now);
+      return {...x,score,source:'DMI HARMONIE AROME',components:{fog2,surfaceSat:ss,airSat:as,rh:rhs,wind,inv,sky,cool,moist,dark}};
+"""
+new = """      score=finite(score)?score*100:null;
+      score=applyObsBoost(score,x.t,now);
+      const observed=obsHasMifg(latestObs)&&obsAgeHours(latestObs)<=3;
+      const surfaceEvidence=Math.max(finite(ss)?ss:0,finite(fog2)?fog2:0,finite(rhs)?rhs:0);
+      if(finite(score)&&!observed&&surfaceEvidence<.45)score=Math.min(score,49);
+      return {...x,score,source:'DMI HARMONIE AROME',components:{fog2,surfaceSat:ss,airSat:as,rh:rhs,wind,inv,sky,cool,moist,dark}};
+"""
+s = replace_once(s, old, new, 'MIFG DMI gate')
+old = """      score=finite(score)?score*100:null;
+      score=applyObsBoost(score,x.t,now);
+      return {...x,Tskin:null,T50:null,T100:null,SW:null,isDay:null,FOG2:null,score,
+"""
+new = """      score=finite(score)?score*100:null;
+      score=applyObsBoost(score,x.t,now);
+      const observed=obsHasMifg(latestObs)&&obsAgeHours(latestObs)<=3;
+      const moistureEvidence=Math.max(finite(as)?as:0,finite(rhs)?rhs:0);
+      if(finite(score)&&!observed&&moistureEvidence<.50)score=Math.min(score,49);
+      return {...x,Tskin:null,T50:null,T100:null,SW:null,isDay:null,FOG2:null,score,
+"""
+s = replace_once(s, old, new, 'MIFG fallback gate')
+p.write_text(s, encoding='utf-8')
+
+
+# ---------- BR in overlay and structured summary ----------
+for fn in ['fog-meteogram-overlay.js', 'fog-summary-layout.js']:
+    p = Path(fn)
+    s = p.read_text(encoding='utf-8')
+    anchor = """    if (phen === 'BR' && row.obsUsed) {
+      const lead = Math.max(0, Number(row.lead) || 0);
+      score = Math.max(score, 75 * Math.exp(-lead / 4));
+    }
+    return clip(score,0,100);
+"""
+    patched = """    if (phen === 'BR' && row.obsUsed) {
+      const lead = Math.max(0, Number(row.lead) || 0);
+      score = Math.max(score, 75 * Math.exp(-lead / 4));
+    }
+    // Operational BR requires actual 1–5 km visibility evidence or strong saturation.
+    // Do not let the FG score alone create BR >=50.
+    const modelVis = Number(row.vis);
+    if (phen !== 'BR' && (!finite(modelVis) || modelVis >= 5000) && (band ?? 0) < 30 && (sat ?? 0) < 70)
+      score = Math.min(score,49);
+    if (row.obsUsed && phen.includes('BEZ FG/BR') && Number(row.lead||0) <= 3 && finite(Number(row.obsVisM)) && Number(row.obsVisM) >= 5000 && (band ?? 0) < 50)
+      score = Math.min(score,49);
+    return clip(score,0,100);
+"""
+    s = replace_once(s, anchor, patched, fn + ' BR gate')
+    p.write_text(s, encoding='utf-8')
+
+
+# ---------- structured cards: no fresh observation => no operational now/when ----------
+p = Path('fog-summary-layout.js')
+s = p.read_text(encoding='utf-8')
+s = replace_once(s, "  function renderPhenomenon(title,kind,ev,diagnostic) {", "  function renderPhenomenon(title,kind,ev,diagnostic,noFreshObs=false) {", 'summary signature')
+old = """    const diag = diagnostic(ev.current,ev.peak);
+    return '<section class=\"fog-phen-row\"><div class=\"fog-phen-title\">'+esc(title)+'</div><div class=\"fog-phen-grid\">'+
+      card((kind==='FG'?'MGŁA':kind)+' W CIĄGU NAJBLIŻSZEJ GODZINY',classText(ev.current.score,kind),currentDetail(ev.current.score),ev.current.score)+
+      card('MAKSIMUM W 48 H',classText(ev.peak.score,kind),peakDetail(ev),ev.peak.score)+
+      card('KIEDY '+kind+'?',whenDetail(ev),'próg operacyjny 50/100',ev.peak.score)+
+      card(diag.label,diag.value,diag.detail,diag.score ?? null)+
+    '</div></section>';
+"""
+new = """    const diag = diagnostic(ev.current,ev.peak);
+    const nowCard=noFreshObs
+      ?card((kind==='FG'?'MGŁA':kind)+' W CIĄGU NAJBLIŻSZEJ GODZINY','BRAK DANYCH','brak świeżej obserwacji ≤3 h')
+      :card((kind==='FG'?'MGŁA':kind)+' W CIĄGU NAJBLIŻSZEJ GODZINY',classText(ev.current.score,kind),currentDetail(ev.current.score),ev.current.score);
+    const whenCard=noFreshObs
+      ?card('KIEDY '+kind+'?','BRAK DANYCH','brak świeżej obserwacji ≤3 h')
+      :card('KIEDY '+kind+'?',whenDetail(ev),'próg operacyjny 50/100',ev.peak.score);
+    return '<section class=\"fog-phen-row\"><div class=\"fog-phen-title\">'+esc(title)+'</div><div class=\"fog-phen-grid\">'+
+      nowCard+
+      card('MAKSIMUM W 48 H',classText(ev.peak.score,kind),peakDetail(ev),ev.peak.score)+
+      whenCard+
+      card(diag.label,diag.value,diag.detail,diag.score ?? null)+
+    '</div></section>';
+"""
+s = replace_once(s, old, new, 'summary no-data cards')
+s = replace_once(s, "    const mi = eventInfo(mifgRows());\n\n", "    const mi = eventInfo(mifgRows());\n    const os=window.PrognozaEPIRFogObsStatus||null;\n    const noFreshObs=Boolean(os?.ready&&!os?.fresh);\n\n", 'summary obs status')
+s = replace_once(s, "    }));\n\n    const brHtml = renderPhenomenon", "    }),noFreshObs);\n\n    const brHtml = renderPhenomenon", 'FG no-data arg')
+s = replace_once(s, "      return {label:'DIAGNOSTYKA BR',value:d.value,detail:d.detail};\n    });", "      return {label:'DIAGNOSTYKA BR',value:d.value,detail:d.detail};\n    },noFreshObs);", 'BR no-data arg')
+s = replace_once(s, "      return {label:'DIAGNOSTYKA MIFG',value:d.value,detail:d.detail};\n    });", "      return {label:'DIAGNOSTYKA MIFG',value:d.value,detail:d.detail};\n    },noFreshObs);", 'MIFG no-data arg')
+p.write_text(s, encoding='utf-8')
+
+
+# ---------- index: force current fog modules, cache-busted ----------
+p = Path('index.html')
+s = p.read_text(encoding='utf-8')
+names = ['fog-engine.js', 'mifg-engine.js', 'fog-meteogram-overlay.js', 'fog-summary-layout.js']
+for name in names:
+    s = re.sub(r'<script\s+src=[\"\']' + re.escape(name) + r'(?:\?[^\"\']*)?[\"\']\s*></script>\s*', '', s, flags=re.I)
+block = '\n'.join(f'<script src="{name}?v=20260911-7"></script>' for name in names)
+if '</body>' not in s:
+    raise SystemExit('index body marker missing')
+s = s.replace('</body>', block + '\n</body>', 1)
+p.write_text(s, encoding='utf-8')
+
+
+# ---------- assertions ----------
+assert "const THRESHOLD = 50;" in Path('fog-summary-layout.js').read_text(encoding='utf-8')
+assert "FOG_INFO_THRESHOLD = 50" in Path('fog-meteogram-overlay.js').read_text(encoding='utf-8')
+assert "AUTO_OBS_MAX_AGE = 3*HOUR" in Path('fog-engine.js').read_text(encoding='utf-8')
+assert "SYNOP >3 h odrzucony" in Path('fog-engine.js').read_text(encoding='utf-8')
+print('fog v1.4 patch complete')
