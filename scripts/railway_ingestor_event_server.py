@@ -8,8 +8,8 @@ wrapper adds three durability/efficiency layers:
 2. rebuild the Railway archive manifest incrementally, hashing only files whose
    size/mtime changed since the previous cycle;
 3. when configured with a GitHub dispatch token, notify the mirror only after
-   substantive archive data changes. Dynamic latest/recent view timestamps do
-   not trigger GitHub; durable JSONL and the neighbor TAF snapshot do.
+   substantive archive data changes. Dynamic latest/recent timestamps and the
+   volatile top-level timestamp in the neighbor TAF snapshot do not trigger it.
 """
 from __future__ import annotations
 
@@ -216,9 +216,27 @@ def _dispatch_archive_changed(generated_at: str, fingerprint: str) -> dict:
         return {"enabled": True, "sent": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
-def _dispatch_relevant(rel: str) -> bool:
-    """Return True only for data whose change merits an immediate GitHub mirror."""
-    return rel.endswith(".jsonl") or rel == "taf-neighbors.json"
+def _dispatch_signature(item: dict) -> tuple[str, str] | None:
+    """Return a stable semantic signature for data that merits an immediate mirror."""
+    rel = str(item.get("path") or "")
+    if rel.endswith(".jsonl"):
+        return rel, str(item.get("sha256") or "")
+    if rel != "taf-neighbors.json":
+        return None
+
+    # The finalizer can refresh this technical timestamp on each ingest cycle
+    # even when the neighbor TAF bulletins are byte-for-byte equivalent. Ignore
+    # only that volatile field; any station/raw/source/message change still
+    # changes this semantic digest and immediately dispatches the mirror.
+    try:
+        payload = json.loads((base.ARCHIVE / rel).read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            payload = dict(payload)
+            payload.pop("updated_at", None)
+        material = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return rel, hashlib.sha256(material.encode("utf-8")).hexdigest()
+    except Exception:
+        return rel, str(item.get("sha256") or "")
 
 
 def rebuild_manifest_incremental() -> None:
@@ -262,12 +280,9 @@ def rebuild_manifest_incremental() -> None:
         "generated_at": generated_at,
         "files": files,
     }
-    dispatch_files = [item for item in files if _dispatch_relevant(item["path"])]
+    signatures = [sig for item in files if (sig := _dispatch_signature(item)) is not None]
     fingerprint = hashlib.sha256(
-        json.dumps(
-            [(item["path"], item["size"], item["sha256"]) for item in dispatch_files],
-            separators=(",", ":"),
-        ).encode("utf-8")
+        json.dumps(signatures, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
 
     with base._manifest_lock:
