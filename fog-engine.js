@@ -729,7 +729,7 @@
     summary.innerHTML=`
       <div class="fog-card ${riskCss(current.score)}"><small>MGŁA W CIĄGU NAJBLIŻSZEJ GODZINY</small><strong>${scoreClass(current.score)}</strong><em>${current.score>=50?fmt0(current.score)+'/100':'wynik <50/100 pominięty'}</em></div>
       <div class="fog-card"><small>Typ procesu</small><strong>${type}</strong><em>${peak.type?.secondary?'wtórny: '+mechanismName(peak.type.secondary):'dominujący mechanizm'}</em></div>
-      <div class="fog-card"><small>Kiedy mgła?</small><strong>${ev.onset?localHour(ev.onset)+' → '+(ev.end?localHour(ev.end):'dalej'):'brak sygnału ≥50 w 48 h'}</strong><em>próg operacyjny 40/100</em></div>
+      <div class="fog-card"><small>Kiedy mgła?</small><strong>${ev.onset?localHour(ev.onset)+' → '+(ev.end?localHour(ev.end):'dalej'):'brak sygnału ≥50 w 48 h'}</strong><em>próg operacyjny 50/100</em></div>
       <div class="fog-card ${riskCss(peak.score)}"><small>Maksimum w 48 h</small><strong>${peak.score>=50?scoreClass(peak.score):'PONIŻEJ PROGU'}</strong><em>${peak.score>=50?fmt0(peak.score)+'/100 · '+(ev.peakFrom?localHour(ev.peakFrom)+'–'+localHour(ev.peakTo):localHour(peak.t)):'brak operacyjnej mgły'}</em></div>
       <div class="fog-card"><small>VIS &lt;1000 / &lt;500 m</small><strong>${fmt0(current.vis1000)}/100 · ${fmt0(current.vis500)}/100</strong><em>VIS EPIR ${fmtM(current.vis)}</em></div>
       <div class="fog-card"><small>VIS &lt;1500 / &lt;200 m</small><strong>${fmt0(current.vis1500)}/100 · ${fmt0(current.vis200)}/100</strong><em>osobne zagrożenia</em></div>
