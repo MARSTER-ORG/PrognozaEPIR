@@ -1,0 +1,104 @@
+name: Verify OPERA map detail
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/verify-opera-map-detail.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate source
+        run: |
+          set -euo pipefail
+          node --check opera-nowcast.js
+          node --check opera-convection-bridge.js
+          grep -Fq 'const MAP_STEP_KM = 1;' opera-nowcast.js
+          grep -Fq "width:MAP_N,height:MAP_N" opera-nowcast.js
+          grep -Fq 'image-rendering:pixelated' opera-convection-bridge.js
+          grep -Fq 'interactive:true' opera-convection-bridge.js
+          grep -Fq "fixedLayer.on('click'" opera-convection-bridge.js
+          grep -Fq "className:'opera-cmax-popup'" opera-convection-bridge.js
+          grep -Fq 'samplePoint:' opera-convection-bridge.js
+          echo 'PASS: source has 1 km raster, crisp rendering and point popup'
+
+      - name: Wait for current Pages build
+        env:
+          SITE: https://marster-org.github.io/PrognozaEPIR
+        run: |
+          set -euo pipefail
+          ASSET_V="${GITHUB_SHA:0:12}"
+          ok=0
+          for i in $(seq 1 50); do
+            curl -fsS --connect-timeout 10 --max-time 30 "$SITE/radar.html?verify=$GITHUB_SHA-$i" -o /tmp/radar.html || true
+            if grep -Fq "opera-convection-bridge.js?v=$ASSET_V" /tmp/radar.html 2>/dev/null; then
+              ok=1
+              echo "Pages contains current build after attempt $i"
+              break
+            fi
+            sleep 3
+          done
+          test "$ok" = 1
+          curl -fsS "$SITE/opera-nowcast.js?v=$ASSET_V" -o /tmp/opera-nowcast.js
+          curl -fsS "$SITE/opera-convection-bridge.js?v=$ASSET_V" -o /tmp/opera-convection-bridge.js
+          grep -Fq 'const MAP_STEP_KM = 1;' /tmp/opera-nowcast.js
+          grep -Fq 'image-rendering:pixelated' /tmp/opera-convection-bridge.js
+          grep -Fq "fixedLayer.on('click'" /tmp/opera-convection-bridge.js
+          grep -Fq "className:'opera-cmax-popup'" /tmp/opera-convection-bridge.js
+          echo 'PASS: current Pages assets contain OPERA map fix'
+
+      - name: Verify runtime in headless Chrome
+        env:
+          SITE: https://marster-org.github.io/PrognozaEPIR
+        run: |
+          set -euo pipefail
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)"
+          test -n "$CHROME"
+          URL="$SITE/radar.html?verify-runtime=$GITHUB_SHA"
+          set +e
+          timeout 160s "$CHROME" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --disable-background-networking --window-size=1280,2200 --virtual-time-budget=110000 --dump-dom "$URL" >/tmp/dom.html 2>/tmp/chrome.log
+          rc=$?
+          set -e
+          echo "Chrome exit code: $rc"
+          tail -n 100 /tmp/chrome.log || true
+          python3 - <<'PY'
+          import html,re
+          from pathlib import Path
+          dom=Path('/tmp/dom.html').read_text(encoding='utf-8',errors='replace')
+          def text_for(id_):
+              m=re.search(rf'<[^>]+id=["\']{re.escape(id_)}["\'][^>]*>(.*?)</[^>]+>',dom,re.I|re.S)
+              return re.sub(r'<[^>]+>','',html.unescape(m.group(1))).strip() if m else None
+          def tag_for(id_):
+              m=re.search(rf'<[^>]+id=["\']{re.escape(id_)}["\'][^>]*>',dom,re.I|re.S)
+              return m.group(0) if m else ''
+          def attr(tag,name):
+              m=re.search(rf'\b{re.escape(name)}=["\']([^"\']*)["\']',tag,re.I)
+              return html.unescape(m.group(1)) if m else None
+          state=text_for('opState')
+          frame=text_for('opFrame')
+          button=tag_for('operaCmaxToggle')
+          rendered=attr(button,'data-opera-map-rendered')
+          interactive=attr(button,'data-opera-interactive')
+          resolution=attr(button,'data-opera-resolution-km')
+          visible=attr(button,'data-opera-visible-pixels')
+          overlay='opera-cmax-fixed-overlay' in dom
+          print('state=',state,'frame=',frame,'rendered=',rendered,'interactive=',interactive,'resolution=',resolution,'visible=',visible,'overlay=',overlay)
+          if state!='DZIAŁA': raise SystemExit('OPERA did not reach DZIAŁA')
+          if not frame or 'UTC' not in frame: raise SystemExit('OPERA frame is not explicit UTC')
+          if rendered!='1': raise SystemExit('OPERA map was not rendered')
+          if interactive!='1': raise SystemExit('OPERA map is not interactive')
+          try: res=float(resolution or '99')
+          except ValueError: res=99
+          if res>1.1: raise SystemExit(f'Expected 1 km display raster, got {resolution!r}')
+          if not overlay: raise SystemExit('OPERA image overlay missing')
+          print('PASS: runtime OPERA CMAX is rendered at 1 km/pixel and interactive')
+          PY
