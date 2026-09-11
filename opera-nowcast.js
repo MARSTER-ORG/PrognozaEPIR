@@ -17,13 +17,16 @@
   const MAX_FRAMES = 7;
   const MAX_CANDIDATES = 18;
   const GRID_STEP_KM = 4;
-  const GRID_RADIUS_KM = 160;
+  const ANALYSIS_RADIUS_KM = 250;
+  const OPERATIONAL_RADIUS_KM = 160;
+  const GRID_RADIUS_KM = ANALYSIS_RADIUS_KM;
   const GRID_N = Math.round(GRID_RADIUS_KM * 2 / GRID_STEP_KM) + 1;
-  const CENTER = Math.floor(GRID_N / 2);
-  // Analysis stays at 4 km for mobile performance. Only the newest frame gets
-  // a separate 1 km display raster so the Leaflet CMAX layer is readable.
+  const CENTER = (GRID_N - 1) / 2;
+  // Motion/history scans a wider 250 km radius at 4 km resolution. The local
+  // operational zone and the detailed 1 km map remain limited to 160 km.
   const MAP_STEP_KM = 1;
-  const MAP_N = Math.round(GRID_RADIUS_KM * 2 / MAP_STEP_KM) + 1;
+  const MAP_RADIUS_KM = OPERATIONAL_RADIUS_KM;
+  const MAP_N = Math.round(MAP_RADIUS_KM * 2 / MAP_STEP_KM) + 1;
   const DBZ_THRESHOLD = 27;
   const SEARCH_SHIFT = 6;
   const MAX_FRAME_AGE_MIN = 35;
@@ -88,7 +91,7 @@
     mapButton=$('operaCmaxToggle');
     if(!mapButton){
       mapButton=document.createElement('button');mapButton.id='operaCmaxToggle';mapButton.type='button';
-      mapButton.textContent = 'OPERA CMAX';
+      mapButton.textContent = 'OPERA Europa CMAX';
       mapButton.title='Pokaż/ukryj europejską warstwę OPERA CMAX';
       const before=$('playRadar')||null;before?mapbar.insertBefore(mapButton,before):mapbar.appendChild(mapButton);
     }
@@ -169,6 +172,16 @@
     return fallback;
   }
 
+  function zoneStats(values,mask,minKm=0,maxKm=ANALYSIS_RADIUS_KM){
+    const area={ge35:0,ge40:0,ge45:0,ge50:0};let active=0,sum=0,max=-Infinity;
+    for(let gy=0;gy<GRID_N;gy++)for(let gx=0;gx<GRID_N;gx++){
+      const east=(gx-CENTER)*GRID_STEP_KM,north=-(gy-CENTER)*GRID_STEP_KM,d=Math.hypot(east,north);
+      if(d<minKm||d>maxKm)continue;const i=gy*GRID_N+gx,v=Number(values[i]);if(!finite(v))continue;max=Math.max(max,v);
+      if(mask[i]){active++;sum+=v;if(v>=35)area.ge35++;if(v>=40)area.ge40++;if(v>=45)area.ge45++;if(v>=50)area.ge50++;}
+    }
+    return{active,mean:active?sum/active:NaN,max:finite(max)?max:NaN,area};
+  }
+
   async function readFrame(frame,p){
     const tiff=await openTiff(frame.url),image=await tiff.getImage(),w=image.getWidth(),h=image.getHeight(),bbox=image.getBoundingBox();
     if(!Array.isArray(bbox)||bbox.length!==4||!bbox.every(finite))throw new Error('GeoTIFF bez georeferencji');
@@ -195,14 +208,16 @@
     const wx0=minX+(x0/w)*(maxX-minX),wx1=minX+(x1/w)*(maxX-minX),wyTop=maxY-(y0/h)*(maxY-minY),wyBottom=maxY-(y1/h)*(maxY-minY);
     const corners=[inversePoint(pp.proj,wx0,wyTop),inversePoint(pp.proj,wx1,wyTop),inversePoint(pp.proj,wx0,wyBottom),inversePoint(pp.proj,wx1,wyBottom)].filter(x=>Array.isArray(x)&&x.every(finite));
     const lons=corners.map(x=>x[0]),lats=corners.map(x=>x[1]),geoBounds=corners.length===4?[[Math.min(...lats),Math.min(...lons)],[Math.max(...lats),Math.max(...lons)]]:null;
-    return{time:frame.time,url:frame.url,values,mask,active,mean:active?sum/active:NaN,max,area,qMean,qUsable,projection:pp.name,geoBounds};
+    const operational=zoneStats(values,mask,0,OPERATIONAL_RADIUS_KM);
+    const scout=zoneStats(values,mask,OPERATIONAL_RADIUS_KM+0.01,ANALYSIS_RADIUS_KM);
+    return{time:frame.time,url:frame.url,values,mask,active,mean:active?sum/active:NaN,max,area,operational,scout,qMean,qUsable,projection:pp.name,geoBounds};
   }
 
   async function readDisplayRaster(frame,p){
     const tiff=await openTiff(frame.url),image=await tiff.getImage(),w=image.getWidth(),h=image.getHeight(),bbox=image.getBoundingBox();
     if(!Array.isArray(bbox)||bbox.length!==4||!bbox.every(finite))throw new Error('GeoTIFF bez georeferencji');
     const[minX,minY,maxX,maxY]=bbox,pp=projectForBbox(p,bbox),px=(pp.x-minX)/(maxX-minX)*w,py=(maxY-pp.y)/(maxY-minY)*h;
-    const scaleX=w/(maxX-minX),scaleY=h/(maxY-minY),rx=GRID_RADIUS_KM*1000*scaleX,ry=GRID_RADIUS_KM*1000*scaleY;
+    const scaleX=w/(maxX-minX),scaleY=h/(maxY-minY),rx=MAP_RADIUS_KM*1000*scaleX,ry=MAP_RADIUS_KM*1000*scaleY;
     const x0=clamp(Math.floor(px-rx),0,w-2),x1=clamp(Math.ceil(px+rx),x0+1,w),y0=clamp(Math.floor(py-ry),0,h-2),y1=clamp(Math.ceil(py+ry),y0+1,h);
     const rasters=await image.readRasters({window:[x0,y0,x1,y1],samples:[0],width:MAP_N,height:MAP_N,resampleMethod:'nearest'}),raw=rasters[0];
     if(!raw||raw.length!==MAP_N*MAP_N)throw new Error('niepoprawny raster mapowy DBZH');
@@ -239,11 +254,11 @@
   function trendStats(grids){
     const meanRate=linearRate(grids,g=>g.mean),maxRate=linearRate(grids,g=>g.max),area45Rate=linearRate(grids,g=>g.area.ge45);let label='stabilne';if((finite(maxRate)&&maxRate>=5)||(finite(area45Rate)&&area45Rate>=8))label='rośnie';else if((finite(maxRate)&&maxRate<=-5)||(finite(area45Rate)&&area45Rate<=-8))label='słabnie';return{label,meanDbzPerH:meanRate,maxDbzPerH:maxRate,area45CellsPerH:area45Rate};
   }
-  function nearestEcho(latest){
-    let best=null;for(let gy=0;gy<GRID_N;gy++)for(let gx=0;gx<GRID_N;gx++){const i=gy*GRID_N+gx,v=latest.values[i];if(!finite(v)||v<DBZ_THRESHOLD||!latest.mask[i])continue;const east=(gx-CENTER)*GRID_STEP_KM,north=-(gy-CENTER)*GRID_STEP_KM,d=Math.hypot(east,north);if(!best||d<best.distance||(d===best.distance&&v>best.value))best={east,north,distance:d,value:v,bearing:bearingFromVector(east,north)}}return best;
+  function nearestEcho(latest,minDistance=0,maxDistance=ANALYSIS_RADIUS_KM){
+    let best=null;for(let gy=0;gy<GRID_N;gy++)for(let gx=0;gx<GRID_N;gx++){const i=gy*GRID_N+gx,v=latest.values[i];if(!finite(v)||v<DBZ_THRESHOLD||!latest.mask[i])continue;const east=(gx-CENTER)*GRID_STEP_KM,north=-(gy-CENTER)*GRID_STEP_KM,d=Math.hypot(east,north);if(d<minDistance||d>maxDistance)continue;if(!best||d<best.distance||(d===best.distance&&v>best.value))best={east,north,distance:d,value:v,bearing:bearingFromVector(east,north)}}return best;
   }
-  function approachEcho(latest,vector){
-    if(!vector||vector.speed<4)return null;let best=null,vsq=vector.east**2+vector.north**2;for(let gy=0;gy<GRID_N;gy++)for(let gx=0;gx<GRID_N;gx++){const i=gy*GRID_N+gx,v=latest.values[i];if(!finite(v)||v<DBZ_THRESHOLD||!latest.mask[i])continue;const east=(gx-CENTER)*GRID_STEP_KM,north=-(gy-CENTER)*GRID_STEP_KM,t=-(east*vector.east+north*vector.north)/vsq;if(t<-.05||t>1.5)continue;const tt=Math.max(0,t),cpa=Math.hypot(east+vector.east*tt,north+vector.north*tt);if(cpa>30)continue;const c={east,north,value:v,tHours:tt,cpa,distance:Math.hypot(east,north),bearing:bearingFromVector(east,north)};if(!best||c.tHours<best.tHours-.05||(Math.abs(c.tHours-best.tHours)<.05&&c.cpa<best.cpa))best=c}return best;
+  function approachEcho(latest,vector,minDistance=0,maxDistance=ANALYSIS_RADIUS_KM,maxHours=1.5){
+    if(!vector||vector.speed<4)return null;let best=null,vsq=vector.east**2+vector.north**2;for(let gy=0;gy<GRID_N;gy++)for(let gx=0;gx<GRID_N;gx++){const i=gy*GRID_N+gx,v=latest.values[i];if(!finite(v)||v<DBZ_THRESHOLD||!latest.mask[i])continue;const east=(gx-CENTER)*GRID_STEP_KM,north=-(gy-CENTER)*GRID_STEP_KM,distance=Math.hypot(east,north);if(distance<minDistance||distance>maxDistance)continue;const t=-(east*vector.east+north*vector.north)/vsq;if(t<-.05||t>maxHours)continue;const tt=Math.max(0,t),cpa=Math.hypot(east+vector.east*tt,north+vector.north*tt);if(cpa>30)continue;const c={east,north,value:v,tHours:tt,cpa,distance,bearing:bearingFromVector(east,north)};if(!best||c.tHours<best.tHours-.05||(Math.abs(c.tHours-best.tHours)<.05&&c.cpa<best.cpa))best=c}return best;
   }
   function gridSample(latest,east,north){
     const gx=CENTER+east/GRID_STEP_KM,gy=CENTER-north/GRID_STEP_KM;if(gx<1||gy<1||gx>GRID_N-2||gy>GRID_N-2)return NaN;let best=NaN;for(let y=Math.floor(gy)-1;y<=Math.ceil(gy)+1;y++)for(let x=Math.floor(gx)-1;x<=Math.ceil(gx)+1;x++){const v=latest.values[y*GRID_N+x];if(finite(v)&&(!finite(best)||v>best))best=v}return best;
@@ -267,8 +282,8 @@
   function publishFusion(){if(!latestOpera)return;const fusion=fuse(latestOpera,window.PrognozaEPIRRadarNowcast||null);window.PrognozaEPIRRadarFusion=fusion;window.dispatchEvent(new CustomEvent('prognozaepir:radar-fusion-updated',{detail:fusion}));renderFusion(fusion)}
   function renderFusion(f){if($('opFusion'))$('opFusion').textContent=f.level;if($('opConv'))$('opConv').textContent=f.convectiveSupport;if($('opFusionSub'))$('opFusionSub').textContent=finite(f.dirDiffDeg)?`różnica kierunku ${Math.round(f.dirDiffDeg)}° · prędkości ${Math.round(f.speedDiffKmh)} km/h`:'wektor jednego źródła niedostępny'}
   function renderResult(r){
-    ensureUi();$('operaNowcastCard')?.classList.remove('op-error');const latest=r.latest;setState('DZIAŁA','ok');$('opFrame').textContent=fmtUtcMs(latest.time);$('opFrames').textContent=`Historia: ${r.frames} klatek · ${fmtUtcMs(r.frameStart)}–${fmtUtcMs(r.frameEnd)}`;$('opMax').textContent=dbzText(latest.max);$('opNearest').textContent=r.nearest?`${Math.round(r.nearest.distance)} km ${compass16(r.nearest.bearing)} · ${dbzText(r.nearest.value)}`:'brak ≥27 dBZ do 160 km';$('opMotion').textContent=r.vector?`${compass16(r.vector.bearingDeg)} · ${Math.round(r.vector.speedKmh)} km/h`:'brak stabilnego ruchu';$('opTrend').textContent=`trend: ${r.trend.label}`;$('opQind').textContent=latest.qUsable?`QIND ${Math.round(latest.qMean*100)}/100`:'QIND bez osobnego pasma';$('opArea').textContent=`≥35 ${latest.area.ge35} · ≥40 ${latest.area.ge40} · ≥45 ${latest.area.ge45} · ≥50 ${latest.area.ge50}`;$('opPred').textContent=HORIZONS.map(h=>`+${h} ${dbzText(r.predictions[h])}`).join(' · ');
-    const eta=r.approach?Math.round(r.approach.tHours*60):null;$('opSummary').textContent=r.approach?`Podejście ≤30 km za ok. ${eta} min.`:'Brak echa ≥27 dBZ na torze ≤30 km w ciągu 90 min.';setStatus(`klatka ${fmtUtcMs(latest.time)} · central-ingestor · OPERA DBZH GeoTIFF`);renderMapLayer(latest);
+    ensureUi();$('operaNowcastCard')?.classList.remove('op-error');const latest=r.latest;setState('DZIAŁA','ok');$('opFrame').textContent=fmtUtcMs(latest.time);$('opFrames').textContent=`Historia: ${r.frames} klatek · ${fmtUtcMs(r.frameStart)}–${fmtUtcMs(r.frameEnd)}`;$('opMax').textContent=dbzText(latest.operational?.max);$('opNearest').textContent=r.nearest?`${Math.round(r.nearest.distance)} km ${compass16(r.nearest.bearing)} · ${dbzText(r.nearest.value)}`:r.scoutNearest?`wczesne: ${Math.round(r.scoutNearest.distance)} km ${compass16(r.scoutNearest.bearing)} · ${dbzText(r.scoutNearest.value)}`:'brak ≥27 dBZ do 250 km';$('opMotion').textContent=r.vector?`${compass16(r.vector.bearingDeg)} · ${Math.round(r.vector.speedKmh)} km/h`:'brak stabilnego ruchu';$('opTrend').textContent=`trend: ${r.trend.label}`;$('opQind').textContent=latest.qUsable?`QIND ${Math.round(latest.qMean*100)}/100`:'QIND bez osobnego pasma';const oa=latest.operational?.area||{ge35:0,ge40:0,ge45:0,ge50:0};$('opArea').textContent=`0–160 km: ≥35 ${oa.ge35} · ≥40 ${oa.ge40} · ≥45 ${oa.ge45} · ≥50 ${oa.ge50}`;$('opPred').textContent=HORIZONS.map(h=>`+${h} ${dbzText(r.predictions[h])}`).join(' · ');
+    const eta=r.approach?Math.round(r.approach.tHours*60):null,scoutEta=r.scoutApproach?Math.round(r.scoutApproach.tHours*60):null;$('opSummary').textContent=r.approach?`Podejście ≤30 km za ok. ${eta} min.`:r.scoutApproach?`Wczesne wykrycie 160–250 km: możliwe podejście ≤30 km za ok. ${scoutEta} min.`:'Brak echa ≥27 dBZ na torze do EPIR w analizie 250 km.';setStatus(`klatka ${fmtUtcMs(latest.time)} · analiza 250 km · operacyjna 160 km · central-ingestor`);renderMapLayer(latest);
   }
   function renderError(msg){ensureUi();$('operaNowcastCard')?.classList.add('op-error');setState('NIEDOSTĘPNA','bad');$('opFrame').textContent='—';$('opSummary').textContent='OPERA niedostępna. POLRAD działa niezależnie.';setStatus(`OPERA: ${msg}`);try{if(operaLayer&&typeof map!=='undefined'&&map.hasLayer(operaLayer))map.removeLayer(operaLayer)}catch(_){}
   }
@@ -287,8 +302,8 @@
       const latest=grids.at(-1),age=(Date.now()-latest.time)/60000;if(age>50)throw new Error(`ostatnia klatka ma ${Math.round(age)} min`);
       setStatus(`OPERA: przygotowuję czytelną warstwę 1 km · ${fmtUtcMs(latest.time)}`);
       try{latest.display=await readDisplayRaster(latest,p)}catch(e){console.warn('OPERA 1 km display raster unavailable; using 4 km fallback',e)}
-      const vector=vectorStats(grids),trend=trendStats(grids),nearest=nearestEcho(latest),approach=vector?approachEcho(latest,vector):null,predictions=vector?advect(latest,vector,trend):Object.fromEntries(HORIZONS.map(h=>[h,NaN])),conf=confidence(grids,vector);
-      const result={updatedAt:new Date().toISOString(),point:p,source:'opera_cirrus_dbzh_central',frames:grids.length,frameStart:grids[0].time,frameEnd:latest.time,latest,vector:vector?{eastKmh:vector.east,northKmh:vector.north,speedKmh:vector.speed,bearingDeg:vector.bearing,score:vector.score,consistency:vector.consistency}:null,confidence:conf,trend,nearest,approach,etaMin:approach?approach.tHours*60:null,predictions,quality:{qindAvailable:latest.qUsable,qindMean:latest.qMean,qindThreshold:QIND_MIN}};
+      const vector=vectorStats(grids),trend=trendStats(grids),nearest=nearestEcho(latest,0,OPERATIONAL_RADIUS_KM),scoutNearest=nearestEcho(latest,OPERATIONAL_RADIUS_KM+0.01,ANALYSIS_RADIUS_KM),approach=vector?approachEcho(latest,vector,0,OPERATIONAL_RADIUS_KM,1.5):null,scoutApproach=vector?approachEcho(latest,vector,OPERATIONAL_RADIUS_KM+0.01,ANALYSIS_RADIUS_KM,3):null,predictions=vector?advect(latest,vector,trend):Object.fromEntries(HORIZONS.map(h=>[h,NaN])),conf=confidence(grids,vector);
+      const result={updatedAt:new Date().toISOString(),point:p,source:'opera_cirrus_dbzh_central',analysisRadiusKm:ANALYSIS_RADIUS_KM,operationalRadiusKm:OPERATIONAL_RADIUS_KM,frames:grids.length,frameStart:grids[0].time,frameEnd:latest.time,latest,vector:vector?{eastKmh:vector.east,northKmh:vector.north,speedKmh:vector.speed,bearingDeg:vector.bearing,score:vector.score,consistency:vector.consistency}:null,confidence:conf,trend,nearest,scoutNearest,approach,scoutApproach,etaMin:approach?approach.tHours*60:null,scoutEtaMin:scoutApproach?scoutApproach.tHours*60:null,predictions,quality:{qindAvailable:latest.qUsable,qindMean:latest.qMean,qindThreshold:QIND_MIN}};
       renderResult(result);publishOpera(result);
     }catch(e){console.error('OPERA Nowcast:',e);const msg=String(e?.message||e);renderError(msg);publishOpera({updatedAt:new Date().toISOString(),point:p,error:msg,source:'opera_cirrus_dbzh_central'})}finally{running=false}
   }

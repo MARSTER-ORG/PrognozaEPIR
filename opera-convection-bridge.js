@@ -135,14 +135,14 @@
     if (!fusion || !opera || opera.error || !conv) return null;
     const etaMin = finite(Number(opera.etaMin)) ? Number(opera.etaMin) : null;
     const etaAt = etaMin !== null && finite(Number(opera.frameEnd)) ? Number(opera.frameEnd) + etaMin * 60000 : null;
-    const maxDbz = Number(opera?.latest?.max);
+    const maxDbz = Number(opera?.latest?.operational?.max ?? opera?.latest?.max);
     return {
       updatedAt:new Date().toISOString(), source:'OPERA CIRRUS DBZH', primaryRadar:'POLRAD', operaRole:'secondary_verification_backup', probabilitiesAdjusted:false,
       supportLevel:fusion.convectiveSupport || 'brak', vectorAgreement:!!fusion.vectorAgree,
       directionDifferenceDeg:finite(Number(fusion.dirDiffDeg))?Number(fusion.dirDiffDeg):null,
       speedDifferenceKmh:finite(Number(fusion.speedDiffKmh))?Number(fusion.speedDiffKmh):null,
       polradSignal:!!fusion.polradSignal, operaSignal:!!fusion.operaSignal,
-      operaMaxDbz:finite(maxDbz)?maxDbz:null, etaMin, etaAt, trend:opera?.trend?.label||null,
+      operaMaxDbz:finite(maxDbz)?maxDbz:null, etaMin, etaAt, scoutEtaMin:finite(Number(opera.scoutEtaMin))?Number(opera.scoutEtaMin):null, scoutNearest:opera.scoutNearest||null, analysisRadiusKm:Number(opera.analysisRadiusKm)||250, operationalRadiusKm:Number(opera.operationalRadiusKm)||160, trend:opera?.trend?.label||null,
       predictions:{...(opera.predictions||{})}, baseTcuProbability:Number(conv.tcuProbability), baseCbProbability:Number(conv.cbProbability)
     };
   }
@@ -173,6 +173,8 @@
     const parts=[`<b>OPERA Europa:</b> ${lead}`];
     if(e.operaMaxDbz!==null)parts.push(`maks. ${Math.round(e.operaMaxDbz)} dBZ`);
     if(e.etaMin!==null)parts.push(`ETA ≤30 km: ${Math.round(e.etaMin)} min (${fmtUtc(e.etaAt)})`);
+    if(e.scoutEtaMin!==null)parts.push(`wczesne echo 160–250 km: ETA ~${Math.round(e.scoutEtaMin)} min`);
+    else if(e.scoutNearest)parts.push(`najbliższe echo poza strefą operacyjną: ${Math.round(e.scoutNearest.distance)} km`);
     if(e.trend)parts.push(`trend: ${e.trend}`);
     box.innerHTML=parts.join(' · ')+'.';
   }
