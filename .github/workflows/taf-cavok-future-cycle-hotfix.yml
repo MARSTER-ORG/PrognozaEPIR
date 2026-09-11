@@ -1,0 +1,95 @@
+name: Fix future-cycle CAVOK and archive consumers
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/taf-cavok-future-cycle-hotfix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Patch TAF CAVOK and archive consumers
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          # TAF: for a future validity start, use the freshest observations
+          # actually available now, not observations that do not exist yet.
+          p=Path('taf.html')
+          s=p.read_text(encoding='utf-8')
+          pattern=re.compile(r"function tafObsClearEvidence\(start\)\{.*?\}\s*function tafWeakFewStart\(\)",re.S)
+          replacement=r'''function tafObsClearEvidence(start){let cutoff=Math.min(start,Date.now()),a=tafRecentAviation(recent).map(x=>({x,t:tafMsgTime(x)})).filter(q=>fin(q.t)&&q.t<=cutoff&&q.t>=cutoff-6*36e5).sort((x,y)=>y.t-x.t).slice(0,8);if(a.length<3)return null;let c=a.filter(q=>{let r=String(q.x.raw||q.x.canonical_raw||'');return /\bCAVOK\b/.test(r)||(/\b9999\b/.test(r)&&/\bNSC\b/.test(r)&&!/(FEW|SCT|BKN|OVC)\d{3}/.test(r))}),share=c.length/a.length,lead=Math.max(0,(start-a[0].t)/36e5);return c.length>=3&&share>=.75&&lead<=8?{count:c.length,total:a.length,share,age:lead,lead}:null}function tafWeakFewStart()'''
+          s,n=pattern.subn(replacement,s,count=1)
+          if n!=1: raise SystemExit(f'taf CAVOK patch count={n}')
+          # Make the page pull the live-first archive client even through an old cache.
+          s=re.sub(r'message-archive-client\.js\?v=[^"\']+','message-archive-client.js?v=live-first-v5',s,count=1)
+          p.write_text(s,encoding='utf-8')
+
+          # Main page observation/fog engine uses the same shared client.
+          p=Path('observation-engine.js')
+          s=p.read_text(encoding='utf-8')
+          s=s.replace("script.src='message-archive-client.js';","script.src='message-archive-client.js?v=live-first-v5';")
+          s=s.replace("script.src='message-archive-client.js?v=live-first-v4';","script.src='message-archive-client.js?v=live-first-v5';")
+          p.write_text(s,encoding='utf-8')
+
+          # ARCH: Railway live first, GitHub durable mirror second, deployed
+          # Pages copy last. This keeps all depesz consumers on one hierarchy.
+          p=Path('arch.html')
+          s=p.read_text(encoding='utf-8')
+          if "const GITHUB_ROOT='https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/messages';" not in s:
+              s=s.replace("  const STATIC_ROOT='data/messages';",
+                          "  const GITHUB_ROOT='https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/messages';\n  const STATIC_ROOT='data/messages';",1)
+          old="async function fetchArchiveFile(path){const stamp=Date.now();let liveError=null;try{return await fetchText(`${LIVE_ROOT}/${path}?v=${stamp}`)}catch(e){liveError=e}try{return await fetchText(`${STATIC_ROOT}/${path}?v=${stamp}`)}catch(e){if(liveError?.status===404&&e?.status===404)return '';throw new Error(`Nie udało się odczytać ${path} z archiwum live ani kopii statycznej.`)}}"
+          new="async function fetchArchiveFile(path){const stamp=Date.now();let liveError=null,githubError=null;try{return await fetchText(`${LIVE_ROOT}/${path}?v=${stamp}`)}catch(e){liveError=e}try{return await fetchText(`${GITHUB_ROOT}/${path}?v=${stamp}`)}catch(e){githubError=e}try{return await fetchText(`${STATIC_ROOT}/${path}?v=${stamp}`)}catch(e){if(liveError?.status===404&&githubError?.status===404&&e?.status===404)return '';throw new Error(`Nie udało się odczytać ${path} z archiwum live, GitHub ani kopii statycznej.`)}}"
+          if old in s:
+              s=s.replace(old,new,1)
+          elif 'githubError' not in s:
+              raise SystemExit('ARCH fetch fallback pattern not found')
+          p.write_text(s,encoding='utf-8')
+          PY
+
+      - name: Validate changed JavaScript
+        shell: bash
+        run: |
+          node --check observation-engine.js
+          python3 - <<'PY'
+          from pathlib import Path
+          for name in ('taf.html','arch.html'):
+              s=Path(name).read_text(encoding='utf-8')
+              pos=0; i=0
+              while True:
+                  a=s.find('<script>',pos)
+                  if a<0: break
+                  b=s.find('</script>',a)
+                  if b<0: raise SystemExit(f'{name}: unclosed script')
+                  Path(f'/tmp/{name}-{i}.js').write_text(s[a+8:b],encoding='utf-8')
+                  pos=b+9; i+=1
+          PY
+          for f in /tmp/taf.html-*.js /tmp/arch.html-*.js; do node --check "$f"; done
+
+      - name: Commit fixes
+        shell: bash
+        run: |
+          git config user.name 'PrognozaEPIR bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add taf.html arch.html observation-engine.js
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'archive: align live consumers and fix future-cycle CAVOK'
+          for n in 1 2 3 4 5; do
+            git pull --rebase origin main || { git rebase --abort >/dev/null 2>&1 || true; sleep $((n*2)); continue; }
+            if git push origin HEAD:main; then exit 0; fi
+            sleep $((n*2))
+          done
+          exit 1
