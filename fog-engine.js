@@ -96,7 +96,7 @@
   }
   function scoreClass(s){
     if(!finite(s))return 'BRAK DANYCH';
-    if(s<40)return 'NIE';
+    if(s<50)return 'NIE';
     if(s<60)return 'MOŻLIWA';
     if(s<80)return 'PRAWDOPODOBNA';
     return 'BARDZO PRAWDOPODOBNA';
@@ -110,7 +110,7 @@
     return 'bardzo niska';
   }
   function riskCss(s){
-    if(!finite(s)||s<40)return '';
+    if(!finite(s)||s<50)return '';
     return s>=80?'fog-risk-vhigh':s>=60?'fog-risk-high':'fog-risk-mid';
   }
   function mechanismName(k){
@@ -251,7 +251,7 @@
     el.innerHTML=`
       <div class="fog-head"><b>${ENGINE_VERSION}</b><span id="fogSource">physics + NWP ensemble + obserwacje</span></div>
       <div id="fogSummary" class="fog-summary"><div class="fog-card"><small>Status</small><strong>Ładowanie…</strong></div></div>
-      <div class="fog-thresholds"><b>Interpretacja operacyjna:</b> &lt;40 = MGŁA: NIE (wynik pomijany) · 40–59 = MOŻLIWA · 60–79 = PRAWDOPODOBNA · 80–100 = BARDZO PRAWDOPODOBNA. <b>Kolor i komunikat wynikają wyłącznie z końcowego EPIR score.</b> Wynik /100 jest score ryzyka, nie skalibrowanym procentem P(FG).</div>
+      <div class="fog-thresholds"><b>Interpretacja operacyjna:</b> &lt;50 = MGŁA: NIE (wynik pomijany) · 50–59 = MOŻLIWA · 60–79 = PRAWDOPODOBNA · 80–100 = BARDZO PRAWDOPODOBNA. <b>Kolor i komunikat wynikają wyłącznie z końcowego EPIR score.</b> Wynik /100 jest score ryzyka, nie skalibrowanym procentem P(FG).</div>
       <div id="fogDataNote" class="fog-data-note">Brak danych nie jest traktowany jako zero — składniki niedostępne są usuwane, a wagi renormalizowane.</div>
       <div id="fogStrip" class="fog-strip" hidden><div id="fogHours" class="fog-hours"></div></div>
       <details class="fog-diag"><summary>Diagnostyka EPIR v1.1</summary><div id="fogDiag" class="fog-diag-grid"></div></details>
@@ -693,18 +693,18 @@
   }
 
   function onsetAndDissipation(series){
-    const idx=series.findIndex(x=>finite(x?.score)&&x.score>=40);
+    const idx=series.findIndex(x=>finite(x?.score)&&x.score>=50);
     const onset=idx>=0?series[idx].t:null;
     let end=null;
     if(idx>=0){
       let last=idx;
-      while(last+1<series.length&&finite(series[last+1]?.score)&&series[last+1].score>=40)last++;
+      while(last+1<series.length&&finite(series[last+1]?.score)&&series[last+1].score>=50)last++;
       end=series[last+1]?.t??null;
     }
     const peak=series.reduce((a,b)=>!a||b.score>a.score?b:a,null);
     let peakFrom=null,peakTo=null;
-    if(peak&&peak.score>=40){
-      const thr=Math.max(40,.85*peak.score),pi=series.indexOf(peak);let a=pi,b=pi;
+    if(peak&&peak.score>=50){
+      const thr=Math.max(50,.85*peak.score),pi=series.indexOf(peak);let a=pi,b=pi;
       while(a>0&&series[a-1].score>=thr)a--;
       while(b<series.length-1&&series[b+1].score>=thr)b++;
       peakFrom=series[a].t;peakTo=series[b].t;
@@ -727,10 +727,10 @@
     const type=peak.type?.text||current.type?.text||'—';
     const freeze=peak.fzfg;
     summary.innerHTML=`
-      <div class="fog-card ${riskCss(current.score)}"><small>MGŁA W CIĄGU NAJBLIŻSZEJ GODZINY</small><strong>${scoreClass(current.score)}</strong><em>${current.score>=40?fmt0(current.score)+'/100':'wynik <40/100 pominięty'}</em></div>
+      <div class="fog-card ${riskCss(current.score)}"><small>MGŁA W CIĄGU NAJBLIŻSZEJ GODZINY</small><strong>${scoreClass(current.score)}</strong><em>${current.score>=50?fmt0(current.score)+'/100':'wynik <50/100 pominięty'}</em></div>
       <div class="fog-card"><small>Typ procesu</small><strong>${type}</strong><em>${peak.type?.secondary?'wtórny: '+mechanismName(peak.type.secondary):'dominujący mechanizm'}</em></div>
-      <div class="fog-card"><small>Kiedy mgła?</small><strong>${ev.onset?localHour(ev.onset)+' → '+(ev.end?localHour(ev.end):'dalej'):'brak sygnału ≥40 w 48 h'}</strong><em>próg operacyjny 40/100</em></div>
-      <div class="fog-card ${riskCss(peak.score)}"><small>Maksimum w 48 h</small><strong>${peak.score>=40?scoreClass(peak.score):'PONIŻEJ PROGU'}</strong><em>${peak.score>=40?fmt0(peak.score)+'/100 · '+(ev.peakFrom?localHour(ev.peakFrom)+'–'+localHour(ev.peakTo):localHour(peak.t)):'brak operacyjnej mgły'}</em></div>
+      <div class="fog-card"><small>Kiedy mgła?</small><strong>${ev.onset?localHour(ev.onset)+' → '+(ev.end?localHour(ev.end):'dalej'):'brak sygnału ≥50 w 48 h'}</strong><em>próg operacyjny 40/100</em></div>
+      <div class="fog-card ${riskCss(peak.score)}"><small>Maksimum w 48 h</small><strong>${peak.score>=50?scoreClass(peak.score):'PONIŻEJ PROGU'}</strong><em>${peak.score>=50?fmt0(peak.score)+'/100 · '+(ev.peakFrom?localHour(ev.peakFrom)+'–'+localHour(ev.peakTo):localHour(peak.t)):'brak operacyjnej mgły'}</em></div>
       <div class="fog-card"><small>VIS &lt;1000 / &lt;500 m</small><strong>${fmt0(current.vis1000)}/100 · ${fmt0(current.vis500)}/100</strong><em>VIS EPIR ${fmtM(current.vis)}</em></div>
       <div class="fog-card"><small>VIS &lt;1500 / &lt;200 m</small><strong>${fmt0(current.vis1500)}/100 · ${fmt0(current.vis200)}/100</strong><em>osobne zagrożenia</em></div>
       <div class="fog-card"><small>Mgła marznąca</small><strong>${freeze}</strong><em>T przy maksimum ${fmt1(peak.T)}°C</em></div>
@@ -738,7 +738,7 @@
     if(source)source.textContent=`${ENGINE_VERSION} · ${current.models.length} modeli${current.obsUsed?' · OBS '+(current.obsPhenomenon||'aktywne'):''}`;
     if(note)note.innerHTML=`<b>Dostępność danych:</b> ${fmt0(current.data*100)}% · zgodność modeli ${fmt0((current.agreement??0)*100)}% · DMI fog 2 m · KNMI HARMONIE · lokalna kalibracja METAR/SPECI · obserwacje: ${current.obsUsed?'użyte w nowcaście ('+(current.obsPhenomenon||'OBS')+')':'brak świeżej obserwacji'}. DMI 2 m fog: ${finite(current.dmiFog)?fmt0(current.dmiFog)+'%':'—'}.`;
     if(hours){
-      hours.innerHTML=future.slice(0,13).map(x=>`<div class="fog-hour ${riskCss(x.score)}"><b>${localHour(x.t)}</b><div class="p">${scoreClass(x.score)}</div><small>${x.score>=40?fmt0(x.score)+'/100':'&lt;40 · pominięte'}</small><small>${x.score>=40?(x.type?.text||'—'):'bez sygnału operacyjnego'}</small><small>VIS ${fmtM(x.vis)}</small><small>&lt;1km ${fmt0(x.vis1000)}/100</small></div>`).join('');
+      hours.innerHTML=future.slice(0,13).map(x=>`<div class="fog-hour ${riskCss(x.score)}"><b>${localHour(x.t)}</b><div class="p">${scoreClass(x.score)}</div><small>${x.score>=50?fmt0(x.score)+'/100':'&lt;50 · pominięte'}</small><small>${x.score>=50?(x.type?.text||'—'):'bez sygnału operacyjnego'}</small><small>VIS ${fmtM(x.vis)}</small><small>&lt;1km ${fmt0(x.vis1000)}/100</small></div>`).join('');
     }
     if(strip)strip.hidden=false;
     if(diag){

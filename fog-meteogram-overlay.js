@@ -3,9 +3,9 @@
   const FOG_DRAW_THRESHOLD = 60;
   const MIFG_DRAW_THRESHOLD = 60;
   const BR_DRAW_THRESHOLD = 60;
-  const FOG_INFO_THRESHOLD = 40;
-  const MIFG_INFO_THRESHOLD = 40;
-  const BR_INFO_THRESHOLD = 40;
+  const FOG_INFO_THRESHOLD = 50;
+  const MIFG_INFO_THRESHOLD = 50;
+  const BR_INFO_THRESHOLD = 50;
   const BR_COLOR = '#c084fc';
   // Legacy Pages verifier markers only; runtime thresholds above are authoritative.
   // FOG_DRAW_THRESHOLD = 40
@@ -368,7 +368,7 @@
     const values = box.querySelector('.section-values');
     if (!values) return;
     const help = box.querySelector('.section-help');
-    if (help) help.textContent = 'Pomarańczowa linia pokazuje widzialność konsensusu. Na meteogramie FOG, MIFG i BR są rysowane dopiero od 60/100; w informacji godziny FOG, MIFG i BR są pokazywane od 40/100.';
+    if (help) help.textContent = 'Pomarańczowa linia pokazuje widzialność konsensusu. Na meteogramie FOG, MIFG i BR są rysowane dopiero od 60/100; w informacji godziny FOG, MIFG i BR są pokazywane od 50/100.';
     if (fog && fog.score >= FOG_INFO_THRESHOLD && !values.querySelector('[data-fog-risk="1"]')) {
       const cell = document.createElement('div');
       cell.className = 'section-value';
