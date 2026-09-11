@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>PrognozaEPIR — alarm wyładowań 50 km</title>
+<style>
+:root{--bg:#f4f4f2;--panel:#fff;--panel2:#f7f7f7;--ink:#232323;--muted:#6e6e6e;--line:#b5b5b5;--blue:#1f2a75;--green:#0a8d30;--red:#c83d31}
+@media(prefers-color-scheme:dark){:root{--bg:#111418;--panel:#181c21;--panel2:#20252b;--ink:#e7e9ed;--muted:#a6acb5;--line:#4e5660;--blue:#9aabff;--green:#62c980;--red:#ff8076}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Arial,sans-serif}.app{max-width:680px;margin:auto;padding:10px}.card{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:12px;margin:8px 0}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.tile{background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:9px}.tile small{display:block;color:var(--muted);font-size:10px}.tile b{display:block;margin-top:3px}.ok{color:var(--green)}.bad{color:var(--red)}button{border:1px solid var(--line);background:var(--panel2);color:var(--ink);border-radius:7px;padding:10px;font-size:12px}button.primary{background:var(--blue);border-color:var(--blue);color:#fff}.actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}.msg{font-size:11px;color:var(--muted);line-height:1.4;margin-top:8px}.back{color:var(--blue);text-decoration:none;font-size:12px}@media(max-width:520px){.grid{grid-template-columns:1fr}.actions button{flex:1 1 45%}}
+</style>
+</head>
+<body>
+<div class="app">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><div><b>PrognozaEPIR · alarm wyładowań</b><div class="msg">stały punkt EPIR · bez GPS</div></div><a class="back" href="../../radar.html">← RADAR</a></div>
+  <section class="card">
+    <div class="grid">
+      <div class="tile"><small>Punkt</small><b>EPIR</b><span class="msg">52.8275, 18.3175</span></div>
+      <div class="tile"><small>Promień</small><b>50 km</b><span class="msg">MTG LI LFL</span></div>
+      <div class="tile"><small>Lokalizacja telefonu</small><b class="ok">NIEUŻYWANA</b><span class="msg">brak GPS</span></div>
+      <div class="tile"><small>Powiadomienia</small><b id="pushState">—</b><span id="pushSub" class="msg">sprawdzanie…</span></div>
+    </div>
+    <div class="actions">
+      <button id="enable" class="primary">Włącz powiadomienia</button>
+      <button id="disable">Wyłącz</button>
+      <button id="testLocal">Test telefonu</button>
+      <button id="refresh">Odśwież status</button>
+    </div>
+    <div id="message" class="msg"></div>
+  </section>
+  <section class="card"><b>Stan serwera</b><div id="serverStatus" class="msg">Sprawdzanie Cloudflare…</div></section>
+</div>
+<script>
+'use strict';
+(()=>{
+const API='https://epir-lightning-alerts.mat-mobilny.workers.dev';
+const $=id=>document.getElementById(id);
+const msg=(t,b=false)=>{const e=$('message');e.textContent=t;e.className='msg '+(b?'bad':'')};
+const b64=v=>{const p='='.repeat((4-v.length%4)%4),r=atob((v+p).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from([...r],c=>c.charCodeAt(0))};
+async function reg(){return navigator.serviceWorker.register('lightning-alert-sw.js',{scope:'./'}).then(()=>navigator.serviceWorker.ready)}
+async function sub(){const r=await navigator.serviceWorker.getRegistration('./')||await navigator.serviceWorker.getRegistration();return r?.pushManager?.getSubscription()||null}
+async function render(){const supported='serviceWorker'in navigator&&'PushManager'in window&&'Notification'in window;if(!supported){$('pushState').textContent='NIEOBSŁUGIWANE';$('pushState').className='bad';$('enable').disabled=true;return}const s=await sub();const p=Notification.permission;$('pushState').textContent=s&&p==='granted'?'WŁĄCZONE':p==='denied'?'ZABLOKOWANE':'WYŁĄCZONE';$('pushState').className=s&&p==='granted'?'ok':p==='denied'?'bad':'';$('pushSub').textContent=s?'subskrypcja aktywna':'brak subskrypcji'}
+async function status(){try{const [h,s]=await Promise.all([fetch(API+'/health',{cache:'no-store'}),fetch(API+'/status',{cache:'no-store'})]);if(!h.ok||!s.ok)throw new Error('HTTP '+(!h.ok?h.status:s.status));const j=await s.json();const r=j.lastResult;const out=[`Cloudflare: OK · subskrypcje: ${j.subscriptions??0}`,`promień: ${j.radiusKm||50} km`];if(r?.at)out.push(`ostatnie sprawdzenie: ${new Date(r.at).toISOString().slice(11,16)} UTC`);$('serverStatus').textContent=out.join(' · ')}catch(e){$('serverStatus').textContent='Backend niedostępny: '+(e?.message||e)}}
+async function enable(){try{msg('Konfigurowanie…');const c=await fetch(API+'/config',{cache:'no-store'});if(!c.ok)throw new Error('/config HTTP '+c.status);const cfg=await c.json();const p=await Notification.requestPermission();if(p!=='granted')throw new Error('Brak zgody na powiadomienia.');const r=await reg();let s=await r.pushManager.getSubscription();if(!s)s=await r.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64(cfg.vapidPublicKey)});const q=await fetch(API+'/subscribe',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(s)});if(!q.ok)throw new Error('/subscribe HTTP '+q.status);msg('Alarm 50 km od EPIR jest aktywny.');await render();await status()}catch(e){msg(e?.message||String(e),true);await render()}}
+async function disable(){try{const s=await sub();if(s){await fetch(API+'/unsubscribe',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({endpoint:s.endpoint})}).catch(()=>{});await s.unsubscribe()}msg('Powiadomienia wyłączone.');await render();await status()}catch(e){msg(e?.message||String(e),true)}}
+async function testLocal(){try{if(Notification.permission!=='granted')throw new Error('Najpierw włącz powiadomienia.');const r=await reg();await r.showNotification('⚡ PrognozaEPIR · test',{body:'Kanał powiadomień działa. Alarm właściwy: wyładowania do 50 km od EPIR.',icon:'../../epir-icon-192.png',tag:'epir-lightning-test',data:{url:'https://marster-org.github.io/PrognozaEPIR/radar.html'}});msg('Wysłano lokalne powiadomienie testowe.')}catch(e){msg(e?.message||String(e),true)}}
+$('enable').onclick=enable;$('disable').onclick=disable;$('testLocal').onclick=testLocal;$('refresh').onclick=status;render();status();
+})();
+</script>
+</body>
+</html>
