@@ -1,10 +1,15 @@
 # Railway is the sole bulletin acquisition source. This workflow only mirrors
 # a validated completed snapshot into the GitHub archive.
+#
+# Normal path: Railway emits repository_dispatch only after the archive changes.
+# Safety path: one lightweight hourly reconciliation catches missed events.
 name: Mirror central archive from Railway
 
 on:
+  repository_dispatch:
+    types: [archive-updated]
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: '7 * * * *'
   workflow_dispatch:
   push:
     branches: [main]
@@ -50,7 +55,7 @@ jobs:
               last=None
               for i in range(attempts):
                   try:
-                      req=urllib.request.Request(url,headers={'Accept':'application/json','User-Agent':'PrognozaEPIR-GitHub-Mirror/1'})
+                      req=urllib.request.Request(url,headers={'Accept':'application/json','User-Agent':'PrognozaEPIR-GitHub-Mirror/2'})
                       with urllib.request.urlopen(req,timeout=20) as r:
                           return r.read()
                   except Exception as exc:
@@ -96,6 +101,73 @@ jobs:
 
       - name: Validate central archive before commit
         run: python3 scripts/message_archive.py --validate-only
+
+      - name: Rebuild authoritative archive status
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root=Path('data/messages')
+          folders={
+              'metar':'METAR',
+              'speci':'SPECI',
+              'synop':'SYNOP',
+              'taf':'TAF',
+          }
+          counts={}
+          latest={}
+
+          for folder,kind in folders.items():
+              count=0
+              newest=None
+              base=root/folder
+              if base.exists():
+                  for path in sorted(base.rglob('*.jsonl')):
+                      for raw_line in path.read_text(encoding='utf-8').splitlines():
+                          if not raw_line.strip():
+                              continue
+                          row=json.loads(raw_line)
+                          if row.get('type')!=kind:
+                              raise SystemExit(f'unexpected type in {path}: {row.get("type")} != {kind}')
+                          if kind=='TAF' and str(row.get('station') or '').upper()!='EPIR':
+                              raise SystemExit(f'neighbor TAF leaked into history: {path}')
+                          count+=1
+                          message_time=str(row.get('message_time') or '')
+                          if message_time and (newest is None or message_time>newest):
+                              newest=message_time
+              counts[folder]=count
+              latest[folder]=newest
+
+          latest_view={}
+          latest_path=root/'latest.json'
+          if latest_path.exists():
+              latest_view=json.loads(latest_path.read_text(encoding='utf-8'))
+          archive_updated_at=latest_view.get('updated_at') or max((x for x in latest.values() if x),default=None)
+
+          payload={
+              'schema':'prognozaepir-message-archive-status-v1',
+              'archive':'data/messages',
+              'types':['METAR','SPECI','TAF','SYNOP'],
+              'counts':counts,
+              'latest':latest,
+              'archive_updated_at':archive_updated_at,
+              'deduplication':'sha256(type + station + canonical_raw)',
+              'legacy_archives_authoritative':False,
+              'taf_history_scope':'EPIR only',
+              'taf_neighbors':'current snapshot only; not archived; not learning data',
+          }
+          dest=root/'status.json'
+          text=json.dumps(payload,ensure_ascii=False,indent=2,sort_keys=True)+'\n'
+          if not dest.exists() or dest.read_text(encoding='utf-8')!=text:
+              tmp=dest.with_name('.status.json.rebuild.tmp')
+              tmp.write_text(text,encoding='utf-8')
+              os.replace(tmp,dest)
+              print('status.json rebuilt from physical JSONL records:',counts)
+          else:
+              print('status.json already correct:',counts)
+          PY
 
       - name: Commit only complete message changes
         run: |
