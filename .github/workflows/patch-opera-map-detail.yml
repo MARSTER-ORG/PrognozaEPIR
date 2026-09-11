@@ -1,0 +1,172 @@
+name: Patch OPERA map detail
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/patch-opera-map-detail.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Add 1 km OPERA map raster and point popup
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # --- opera-nowcast.js: keep 4 km analysis, add 1 km display raster ---
+          p=Path('opera-nowcast.js')
+          s=p.read_text(encoding='utf-8')
+
+          old="""  const GRID_N = Math.round(GRID_RADIUS_KM * 2 / GRID_STEP_KM) + 1;\n  const CENTER = Math.floor(GRID_N / 2);\n"""
+          new="""  const GRID_N = Math.round(GRID_RADIUS_KM * 2 / GRID_STEP_KM) + 1;\n  const CENTER = Math.floor(GRID_N / 2);\n  // Analysis stays at 4 km for mobile performance. Only the newest frame gets\n  // a separate 1 km display raster so the Leaflet CMAX layer is readable.\n  const MAP_STEP_KM = 1;\n  const MAP_N = Math.round(GRID_RADIUS_KM * 2 / MAP_STEP_KM) + 1;\n"""
+          if old not in s:
+              raise SystemExit('OPERA grid constants insertion point missing')
+          s=s.replace(old,new,1)
+
+          marker="""    return{time:frame.time,url:frame.url,values,mask,active,mean:active?sum/active:NaN,max,area,qMean,qUsable,projection:pp.name,geoBounds};\n  }\n\n  function scoreShift"""
+          insert="""    return{time:frame.time,url:frame.url,values,mask,active,mean:active?sum/active:NaN,max,area,qMean,qUsable,projection:pp.name,geoBounds};\n  }\n\n  async function readDisplayRaster(frame,p){\n    const tiff=await openTiff(frame.url),image=await tiff.getImage(),w=image.getWidth(),h=image.getHeight(),bbox=image.getBoundingBox();\n    if(!Array.isArray(bbox)||bbox.length!==4||!bbox.every(finite))throw new Error('GeoTIFF bez georeferencji');\n    const[minX,minY,maxX,maxY]=bbox,pp=projectForBbox(p,bbox),px=(pp.x-minX)/(maxX-minX)*w,py=(maxY-pp.y)/(maxY-minY)*h;\n    const scaleX=w/(maxX-minX),scaleY=h/(maxY-minY),rx=GRID_RADIUS_KM*1000*scaleX,ry=GRID_RADIUS_KM*1000*scaleY;\n    const x0=clamp(Math.floor(px-rx),0,w-2),x1=clamp(Math.ceil(px+rx),x0+1,w),y0=clamp(Math.floor(py-ry),0,h-2),y1=clamp(Math.ceil(py+ry),y0+1,h);\n    const rasters=await image.readRasters({window:[x0,y0,x1,y1],samples:[0],width:MAP_N,height:MAP_N,resampleMethod:'nearest'}),raw=rasters[0];\n    if(!raw||raw.length!==MAP_N*MAP_N)throw new Error('niepoprawny raster mapowy DBZH');\n    let meta=null,datasetMeta=null;try{meta=await image.getGDALMetadata?.(0)}catch(_){}try{datasetMeta=await image.getGDALMetadata?.(null)}catch(_){}\n    const gain=metadataNumber(meta,['scale_factor','scale','gain'],metadataNumber(datasetMeta,['scale_factor','scale','gain'],1));\n    const offset=metadataNumber(meta,['add_offset','offset'],metadataNumber(datasetMeta,['add_offset','offset'],0));\n    const nodata=typeof image.getGDALNoData==='function'?image.getGDALNoData():null,values=new Float32Array(raw.length);\n    for(let i=0;i<raw.length;i++){const rv=Number(raw[i]);if(!finite(rv)||(nodata!=null&&rv===Number(nodata))){values[i]=NaN;continue}const v=rv*gain+offset;values[i]=finite(v)&&v>=-100&&v<=100?v:NaN}\n    const wx0=minX+(x0/w)*(maxX-minX),wx1=minX+(x1/w)*(maxX-minX),wyTop=maxY-(y0/h)*(maxY-minY),wyBottom=maxY-(y1/h)*(maxY-minY);\n    const corners=[inversePoint(pp.proj,wx0,wyTop),inversePoint(pp.proj,wx1,wyTop),inversePoint(pp.proj,wx0,wyBottom),inversePoint(pp.proj,wx1,wyBottom)].filter(x=>Array.isArray(x)&&x.every(finite));\n    const lons=corners.map(x=>x[0]),lats=corners.map(x=>x[1]),geoBounds=corners.length===4?[[Math.min(...lats),Math.min(...lons)],[Math.max(...lats),Math.max(...lons)]]:null;\n    return{time:frame.time,values,width:MAP_N,height:MAP_N,pixelKm:MAP_STEP_KM,projection:pp.name,proj:pp.proj,projectedBounds:{x0:wx0,x1:wx1,yTop:wyTop,yBottom:wyBottom},geoBounds};\n  }\n\n  function scoreShift"""
+          if marker not in s:
+              raise SystemExit('readDisplayRaster insertion point missing')
+          s=s.replace(marker,insert,1)
+
+          old="""      const latest=grids.at(-1),age=(Date.now()-latest.time)/60000;if(age>50)throw new Error(`ostatnia klatka ma ${Math.round(age)} min`);\n      const vector=vectorStats(grids),trend=trendStats(grids),nearest=nearestEcho(latest),approach=vector?approachEcho(latest,vector):null,predictions=vector?advect(latest,vector,trend):Object.fromEntries(HORIZONS.map(h=>[h,NaN])),conf=confidence(grids,vector);\n"""
+          new="""      const latest=grids.at(-1),age=(Date.now()-latest.time)/60000;if(age>50)throw new Error(`ostatnia klatka ma ${Math.round(age)} min`);\n      setStatus(`OPERA: przygotowuję czytelną warstwę 1 km · ${fmtUtcMs(latest.time)}`);\n      try{latest.display=await readDisplayRaster(latest,p)}catch(e){console.warn('OPERA 1 km display raster unavailable; using 4 km fallback',e)}\n      const vector=vectorStats(grids),trend=trendStats(grids),nearest=nearestEcho(latest),approach=vector?approachEcho(latest,vector):null,predictions=vector?advect(latest,vector,trend):Object.fromEntries(HORIZONS.map(h=>[h,NaN])),conf=confidence(grids,vector);\n"""
+          if old not in s:
+              raise SystemExit('latest display hook insertion point missing')
+          s=s.replace(old,new,1)
+          p.write_text(s,encoding='utf-8')
+
+          # --- opera-convection-bridge.js: crisp renderer + interactive point popup ---
+          q=Path('opera-convection-bridge.js')
+          t=q.read_text(encoding='utf-8')
+
+          old="""  const RADIUS_KM = 160;\n  const PANE = 'operaCmaxPane';\n"""
+          new="""  const RADIUS_KM = 160;\n  const PANE = 'operaCmaxPane';\n  const PROJ_WGS84 = '+proj=longlat +datum=WGS84 +no_defs';\n"""
+          if old not in t: raise SystemExit('bridge constants insertion point missing')
+          t=t.replace(old,new,1)
+
+          old="""  let fixedLayer = null;\n  let outlineLayer = null;\n  let lastOpera = null;\n"""
+          new="""  let fixedLayer = null;\n  let outlineLayer = null;\n  let lastOpera = null;\n  let lastRaster = null;\n  let lastBounds = null;\n"""
+          if old not in t: raise SystemExit('bridge state insertion point missing')
+          t=t.replace(old,new,1)
+
+          old="""  const POLRAD_CMAX_PALETTE = [\n    [58,[255,0,255,255]],\n    [52,[255,0,0,255]],\n    [47,[255,128,0,255]],\n    [44,[255,220,0,255]],\n    [41,[160,255,0,255]],\n    [38,[0,200,0,255]],\n    [34,[0,255,255,255]],\n    [30,[0,170,255,255]],\n    [27,[0,80,255,255]],\n    [20,[0,0,210,255]],\n    [14,[0,0,145,255]],\n    [8,[0,0,85,255]]\n  ];\n"""
+          new="""  const POLRAD_CMAX_PALETTE = [\n    [58,[255,0,255,255]],\n    [52,[255,0,0,248]],\n    [47,[255,128,0,242]],\n    [44,[255,220,0,236]],\n    [41,[160,255,0,230]],\n    [38,[0,200,0,220]],\n    [34,[0,255,255,210]],\n    [30,[0,170,255,195]],\n    [27,[0,80,255,180]],\n    [20,[0,0,210,145]],\n    [14,[0,0,145,105]],\n    [8,[0,0,85,65]]\n  ];\n"""
+          if old not in t: raise SystemExit('palette block missing')
+          t=t.replace(old,new,1)
+
+          old="""  function rasterFor(latest) {\n    const values = latest?.values;\n    const len = Number(values?.length || 0);\n    const n = Math.round(Math.sqrt(len));\n"""
+          new="""  function rasterFor(latest) {\n    const display = latest?.display || null;\n    const values = display?.values || latest?.values;\n    const len = Number(values?.length || 0);\n    const n = Number(display?.width || Math.round(Math.sqrt(len)));\n"""
+          if old not in t: raise SystemExit('rasterFor header missing')
+          t=t.replace(old,new,1)
+
+          old="""    ctx.putImageData(image,0,0);\n    return {url:canvas.toDataURL('image/png'),visible,significant,max,n};\n  }\n"""
+          new="""    ctx.putImageData(image,0,0);\n    return {url:canvas.toDataURL('image/png'),visible,significant,max,n,values,pixelKm:Number(display?.pixelKm||4),geoBounds:display?.geoBounds||latest?.geoBounds||null,proj:display?.proj||null,projectedBounds:display?.projectedBounds||null};\n  }\n"""
+          if old not in t: raise SystemExit('rasterFor return missing')
+          t=t.replace(old,new,1)
+
+          old="""    pane.style.zIndex = '480';\n    pane.style.pointerEvents = 'none';\n    return pane;\n"""
+          new="""    pane.style.zIndex = '480';\n    pane.style.pointerEvents = 'auto';\n    return pane;\n"""
+          if old not in t: raise SystemExit('pane pointer-events block missing')
+          t=t.replace(old,new,1)
+
+          marker="""  function renderMap(opera = lastOpera) {\n"""
+          helpers="""  function ensureMapStyle() {\n    if ($('operaCmaxMapStyle')) return;\n    const style=document.createElement('style');\n    style.id='operaCmaxMapStyle';\n    style.textContent=`.opera-cmax-fixed-overlay{image-rendering:pixelated!important;image-rendering:crisp-edges!important;cursor:crosshair!important}.opera-cmax-popup .leaflet-popup-content{margin:10px 12px;line-height:1.35}.opera-cmax-popup .op-value{font-size:18px;font-weight:800}.opera-cmax-popup .op-meta{font-size:11px;opacity:.78;margin-top:3px}`;\n    document.head.appendChild(style);\n  }\n\n  function sampleRaster(latlng,raster,bounds) {\n    if (!latlng || !raster?.values || !raster.n) return NaN;\n    let gx=NaN,gy=NaN;\n    const pb=raster.projectedBounds;\n    if (pb && raster.proj && typeof window.proj4==='function') {\n      try {\n        const xy=window.proj4(PROJ_WGS84,raster.proj,[Number(latlng.lng),Number(latlng.lat)]);\n        gx=(xy[0]-pb.x0)/(pb.x1-pb.x0)*(raster.n-1);\n        gy=(pb.yTop-xy[1])/(pb.yTop-pb.yBottom)*(raster.n-1);\n      } catch (_) {}\n    }\n    if (!finite(gx)||!finite(gy)) {\n      const south=Number(bounds?.[0]?.[0]),west=Number(bounds?.[0]?.[1]),north=Number(bounds?.[1]?.[0]),east=Number(bounds?.[1]?.[1]);\n      if (![south,west,north,east].every(finite)||east===west||north===south) return NaN;\n      gx=(Number(latlng.lng)-west)/(east-west)*(raster.n-1);\n      gy=(north-Number(latlng.lat))/(north-south)*(raster.n-1);\n    }\n    const x=Math.round(gx),y=Math.round(gy);\n    if(x<0||y<0||x>=raster.n||y>=raster.n)return NaN;\n    const v=Number(raster.values[y*raster.n+x]);\n    return finite(v)?v:NaN;\n  }\n\n  function echoLabel(v) {\n    if(!finite(v))return 'brak danych';\n    if(v<8)return 'brak istotnego echa';\n    if(v<20)return 'słabe echo';\n    if(v<30)return 'umiarkowane echo';\n    if(v<40)return 'silne echo';\n    if(v<50)return 'bardzo silne echo';\n    return 'ekstremalnie silne echo';\n  }\n\n  function showPointPopup(m,latlng,raster,bounds,opera) {\n    const v=sampleRaster(latlng,raster,bounds),frame=fmtUtc(opera?.frameEnd||opera?.latest?.time);\n    const value=finite(v)?`${Math.round(v)} dBZ`:'brak danych';\n    const html=`<div><b>OPERA CMAX</b><div class=\"op-value\">${value}</div><div>${echoLabel(v)}</div><div class=\"op-meta\">${Number(latlng.lat).toFixed(4)}°, ${Number(latlng.lng).toFixed(4)}° · ${frame}</div></div>`;\n    L.popup({className:'opera-cmax-popup',maxWidth:260,closeButton:true}).setLatLng(latlng).setContent(html).openOn(m);\n  }\n\n  function renderMap(opera = lastOpera) {\n"""
+          if marker not in t: raise SystemExit('renderMap insertion point missing')
+          t=t.replace(marker,helpers,1)
+
+          old="""    ensurePane(m);\n    clearFixed(m);\n    removeLegacyOpera(m);\n    const bounds = localBounds(p);\n\n    if (raster.visible > 0) {\n      fixedLayer = L.imageOverlay(raster.url,bounds,{\n        pane:PANE,\n        opacity:.68,\n        interactive:false,\n        className:'opera-cmax-fixed-overlay',\n        attribution:'EUMETNET OPERA CIRRUS'\n      }).addTo(m);\n    }\n    outlineLayer = L.rectangle(bounds,{\n"""
+          new="""    ensurePane(m);\n    ensureMapStyle();\n    clearFixed(m);\n    removeLegacyOpera(m);\n    const bounds = raster.geoBounds || localBounds(p);\n    lastRaster=raster;lastBounds=bounds;\n\n    fixedLayer = L.imageOverlay(raster.url,bounds,{\n      pane:PANE,\n      opacity:.88,\n      interactive:true,\n      className:'opera-cmax-fixed-overlay',\n      attribution:'EUMETNET OPERA CIRRUS'\n    }).addTo(m);\n    fixedLayer.on('click',ev=>{\n      try{if(ev?.originalEvent&&L?.DomEvent)L.DomEvent.stopPropagation(ev.originalEvent)}catch(_){}\n      showPointPopup(m,ev.latlng,raster,bounds,opera);\n    });\n    outlineLayer = L.rectangle(bounds,{\n"""
+          if old not in t: raise SystemExit('image overlay block missing')
+          t=t.replace(old,new,1)
+
+          old="""      opacity:.35,\n"""
+          new="""      opacity:.16,\n"""
+          if old not in t: raise SystemExit('outline opacity missing')
+          t=t.replace(old,new,1)
+
+          old="""    button.title = raster.visible > 0\n      ? `OPERA CMAX · skala POLRAD · ${frameUtc} · widoczne piksele: ${raster.visible}`\n      : `OPERA CMAX · skala POLRAD · ${frameUtc} · brak echa ≥8 dBZ w promieniu 160 km`;\n"""
+          new="""    button.title = raster.visible > 0\n      ? `OPERA CMAX · ${raster.pixelKm} km/piksel · ${frameUtc} · dotknij mapy, aby odczytać dBZ`\n      : `OPERA CMAX · ${raster.pixelKm} km/piksel · ${frameUtc} · dotknij mapy, aby sprawdzić punkt`;\n"""
+          if old not in t: raise SystemExit('button title block missing')
+          t=t.replace(old,new,1)
+
+          old="""      pane:PANE,\n      palette:'POLRAD CMAX'\n"""
+          new="""      pane:PANE,\n      palette:'POLRAD CMAX',\n      interactive:true,\n      resolutionKm:raster.pixelKm\n"""
+          if old not in t: raise SystemExit('publish state tail missing')
+          t=t.replace(old,new,1)
+
+          old="""    button.dataset.operaPalette = state.palette || '';\n"""
+          new="""    button.dataset.operaPalette = state.palette || '';\n    button.dataset.operaInteractive = state.interactive ? '1' : '0';\n    button.dataset.operaResolutionKm = state.resolutionKm != null ? String(state.resolutionKm) : '';\n"""
+          if old not in t: raise SystemExit('publishState dataset block missing')
+          t=t.replace(old,new,1)
+
+          old="""  window.PrognozaEPIROperaMapLayer = {\n    refresh:() => renderMap(window.PrognozaEPIROperaNowcast || lastOpera),\n    get:() => window.PrognozaEPIROperaMapState || null\n  };\n"""
+          new="""  window.PrognozaEPIROperaMapLayer = {\n    refresh:() => renderMap(window.PrognozaEPIROperaNowcast || lastOpera),\n    get:() => window.PrognozaEPIROperaMapState || null,\n    samplePoint:(lat,lon)=>lastRaster&&lastBounds?sampleRaster({lat:Number(lat),lng:Number(lon)},lastRaster,lastBounds):NaN\n  };\n"""
+          if old not in t: raise SystemExit('map API block missing')
+          t=t.replace(old,new,1)
+          q.write_text(t,encoding='utf-8')
+
+          # --- strengthen E2E for readability + interaction ---
+          r=Path('.github/workflows/test-opera-page.yml')
+          u=r.read_text(encoding='utf-8')
+          old="""          grep -Fq 'central-ingestor-production.up.railway.app/opera/dbzh' /tmp/opera-nowcast.js\n"""
+          new="""          grep -Fq 'central-ingestor-production.up.railway.app/opera/dbzh' /tmp/opera-nowcast.js\n          grep -Fq 'const MAP_STEP_KM = 1;' /tmp/opera-nowcast.js\n"""
+          if old not in u: raise SystemExit('E2E nowcast grep insertion point missing')
+          u=u.replace(old,new,1)
+          old="""          echo 'PASS: published OPERA runtime transport points to central-ingestor'\n"""
+          new="""          curl -fsS --connect-timeout 10 --max-time 30 \"$SITE/opera-convection-bridge.js?v=$ASSET_V\" -o /tmp/opera-convection-bridge.js\n          grep -Fq 'interactive:true' /tmp/opera-convection-bridge.js\n          grep -Fq 'image-rendering:pixelated' /tmp/opera-convection-bridge.js\n          grep -Fq 'opera-cmax-popup' /tmp/opera-convection-bridge.js\n          echo 'PASS: published OPERA runtime transport, 1 km map raster and popup code are present'\n"""
+          if old not in u: raise SystemExit('E2E bridge static checks insertion point missing')
+          u=u.replace(old,new,1)
+          old="""          palette=attr(button,'data-opera-palette')\n"""
+          new="""          palette=attr(button,'data-opera-palette')\n          interactive=attr(button,'data-opera-interactive')\n          resolution=attr(button,'data-opera-resolution-km')\n"""
+          if old not in u: raise SystemExit('E2E runtime attr insertion point missing')
+          u=u.replace(old,new,1)
+          old="""          print('map palette =',repr(palette))\n"""
+          new="""          print('map palette =',repr(palette))\n          print('map interactive =',repr(interactive),'resolution km =',repr(resolution))\n"""
+          if old not in u: raise SystemExit('E2E print insertion point missing')
+          u=u.replace(old,new,1)
+          old="""          if palette != 'POLRAD CMAX':\n              raise SystemExit('OPERA CMAX map is not using POLRAD CMAX palette')\n"""
+          new="""          if palette != 'POLRAD CMAX':\n              raise SystemExit('OPERA CMAX map is not using POLRAD CMAX palette')\n          if interactive != '1':\n              raise SystemExit('OPERA CMAX map is not interactive')\n          try:\n              resolution_n=float(resolution or '99')\n          except ValueError:\n              resolution_n=99\n          if resolution_n > 1.1:\n              raise SystemExit(f'OPERA CMAX map did not load 1 km display raster: {resolution!r}')\n"""
+          if old not in u: raise SystemExit('E2E assertion insertion point missing')
+          u=u.replace(old,new,1)
+          r.write_text(u,encoding='utf-8')
+          PY
+
+          node --check opera-nowcast.js
+          node --check opera-convection-bridge.js
+          grep -F 'const MAP_STEP_KM = 1;' opera-nowcast.js
+          grep -F 'interactive:true' opera-convection-bridge.js
+          grep -F 'opera-cmax-popup' opera-convection-bridge.js
+
+      - name: Commit guarded OPERA map fix
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- opera-nowcast.js opera-convection-bridge.js .github/workflows/test-opera-page.yml; then
+            echo 'OPERA map detail already applied.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add opera-nowcast.js opera-convection-bridge.js .github/workflows/test-opera-page.yml
+          git commit -m 'Improve OPERA CMAX map detail and point readout'
+          for n in 1 2 3 4 5; do
+            git fetch origin main
+            if git rebase origin/main && git push origin HEAD:main; then
+              exit 0
+            fi
+            git rebase --abort >/dev/null 2>&1 || true
+            sleep $((n*2))
+          done
+          exit 1
