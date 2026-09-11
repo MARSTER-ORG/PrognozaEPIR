@@ -8,7 +8,8 @@ wrapper adds three durability/efficiency layers:
 2. rebuild the Railway archive manifest incrementally, hashing only files whose
    size/mtime changed since the previous cycle;
 3. when configured with a GitHub dispatch token, notify the mirror only after
-   the archive fingerprint actually changes. GitHub keeps a scheduled fallback.
+   substantive archive data changes. Dynamic latest/recent view timestamps do
+   not trigger GitHub; durable JSONL and the neighbor TAF snapshot do.
 """
 from __future__ import annotations
 
@@ -215,6 +216,11 @@ def _dispatch_archive_changed(generated_at: str, fingerprint: str) -> dict:
         return {"enabled": True, "sent": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
+def _dispatch_relevant(rel: str) -> bool:
+    """Return True only for data whose change merits an immediate GitHub mirror."""
+    return rel.endswith(".jsonl") or rel == "taf-neighbors.json"
+
+
 def rebuild_manifest_incremental() -> None:
     global _manifest_initialized, _last_fingerprint, _manifest_cache
 
@@ -256,9 +262,10 @@ def rebuild_manifest_incremental() -> None:
         "generated_at": generated_at,
         "files": files,
     }
+    dispatch_files = [item for item in files if _dispatch_relevant(item["path"])]
     fingerprint = hashlib.sha256(
         json.dumps(
-            [(item["path"], item["size"], item["sha256"]) for item in files],
+            [(item["path"], item["size"], item["sha256"]) for item in dispatch_files],
             separators=(",", ":"),
         ).encode("utf-8")
     ).hexdigest()
