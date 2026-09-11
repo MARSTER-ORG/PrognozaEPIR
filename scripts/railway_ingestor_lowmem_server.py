@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import mimetypes
 import os
 import re
 import subprocess
@@ -27,9 +26,23 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
 
-import opera_proxy_only as opera
-
 ROOT = Path(__file__).resolve().parents[1]
+
+OPERA_S3_BASE = "https://s3.waw3-1.cloudferro.com/openradar-24h"
+OPERA_FRAME_RE = re.compile(r"^/opera/dbzh/(20\d{10})\.tiff$")
+OPERA_MAX_AGE_SECONDS = 26 * 3600
+OPERA_MAX_FUTURE_SECONDS = 15 * 60
+HTTP_MAX_THREADS = max(2, int(os.environ.get("HTTP_MAX_THREADS", "8")))
+HTTP_THREAD_STACK_BYTES = max(262144, int(os.environ.get("HTTP_THREAD_STACK_BYTES", str(512 * 1024))))
+
+def opera_frame_time(token: str) -> datetime:
+    return datetime.strptime(token, "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
+
+def opera_upstream_url(token: str) -> str:
+    dt = opera_frame_time(token)
+    stamp = dt.strftime("%Y%m%dT%H%M")
+    return f"{OPERA_S3_BASE}/{dt:%Y/%m/%d}/OPERA/COMP/OPERA@{stamp}@0@DBZH.tiff"
+
 SCRIPTS = ROOT / "scripts"
 ARCHIVE = (ROOT / "data" / "messages").resolve()
 LIGHTNING = (ROOT / "data" / "lightning").resolve()
@@ -65,7 +78,7 @@ def read_json(path: Path, default=None):
 
 def runtime_snapshot() -> dict:
     with _runtime_lock:
-        return json.loads(json.dumps(_runtime))
+        return dict(_runtime)
 
 
 def latest_summary() -> dict:
@@ -122,7 +135,7 @@ def rebuild_manifest() -> None:
             digest = hashlib.sha256()
             try:
                 with path.open("rb") as handle:
-                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    for chunk in iter(lambda: handle.read(128 * 1024), b""):
                         digest.update(chunk)
                 files.append({
                     "path": path.relative_to(ARCHIVE).as_posix(),
@@ -223,6 +236,30 @@ def run_worker() -> None:
         time.sleep(sleep_for)
 
 
+class LowMemThreadingHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+    block_on_close = False
+    request_queue_size = 16
+
+    def __init__(self, server_address, handler_class):
+        self._thread_slots = threading.BoundedSemaphore(HTTP_MAX_THREADS)
+        super().__init__(server_address, handler_class)
+
+    def process_request(self, request, client_address):
+        self._thread_slots.acquire()
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._thread_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._thread_slots.release()
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "PrognozaEPIR-Ingestor/1.3-lowmem-opera"
 
@@ -301,18 +338,18 @@ class Handler(BaseHTTPRequestHandler):
         }, head_only)
 
     def _proxy_opera_frame(self, path: str, head_only: bool = False) -> None:
-        match = opera.FRAME_RE.fullmatch(path)
+        match = OPERA_FRAME_RE.fullmatch(path)
         if not match:
             self._opera_json(400, {"error": "invalid OPERA path"}, head_only)
             return
         token = match.group(1)
         try:
-            dt = opera.frame_time(token)
+            dt = opera_frame_time(token)
         except ValueError:
             self._opera_json(400, {"error": "invalid timestamp"}, head_only)
             return
         delta = (datetime.now(timezone.utc) - dt).total_seconds()
-        if dt.minute % 5 or delta > opera.MAX_AGE_SECONDS or delta < -opera.MAX_FUTURE_SECONDS:
+        if dt.minute % 5 or delta > OPERA_MAX_AGE_SECONDS or delta < -OPERA_MAX_FUTURE_SECONDS:
             self._opera_json(400, {"error": "timestamp outside recent OPERA window"}, head_only)
             return
 
@@ -328,7 +365,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             headers["Range"] = requested_range
 
-        req = Request(opera.upstream_url(token), headers=headers, method="HEAD" if head_only else "GET")
+        req = Request(opera_upstream_url(token), headers=headers, method="HEAD" if head_only else "GET")
         try:
             with urlopen(req, timeout=20) as upstream:
                 self._opera_headers(getattr(upstream, "status", 200), upstream.headers.get("Content-Type") or "image/tiff")
@@ -378,18 +415,25 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "not found"}, 404, head_only)
             return
         try:
-            body = candidate.read_bytes()
+            handle = candidate.open("rb")
+            size = os.fstat(handle.fileno()).st_size
         except OSError as exc:
             self._json({"error": f"read failed: {exc}"}, 500, head_only)
             return
-        content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
-        if candidate.suffix.lower() == ".json":
-            content_type = "application/json; charset=utf-8"
-        elif candidate.suffix.lower() == ".jsonl":
-            content_type = "application/x-ndjson; charset=utf-8"
-        self._headers(200, content_type, len(body))
-        if not head_only:
-            self.wfile.write(body)
+        content_type = "application/json; charset=utf-8" if candidate.suffix.lower() == ".json" else "application/x-ndjson; charset=utf-8"
+        self._headers(200, content_type, size)
+        if head_only:
+            handle.close()
+            return
+        try:
+            with handle:
+                while True:
+                    chunk = handle.read(64 * 1024)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
     def _dispatch(self, head_only: bool = False) -> None:
         path = urlparse(self.path).path
@@ -423,8 +467,12 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> int:
     worker = threading.Thread(target=run_worker, name="central-ingestor-lowmem", daemon=True)
     worker.start()
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"[{utc_iso()}] http server listening on 0.0.0.0:{PORT}; OPERA CMAX proxy merged", flush=True)
+    try:
+        threading.stack_size(HTTP_THREAD_STACK_BYTES)
+    except (ValueError, RuntimeError):
+        pass
+    server = LowMemThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    print(f"[{utc_iso()}] http server listening on 0.0.0.0:{PORT}; OPERA CMAX proxy merged; max_http_threads={HTTP_MAX_THREADS}; thread_stack={HTTP_THREAD_STACK_BYTES}", flush=True)
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
