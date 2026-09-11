@@ -187,7 +187,7 @@
 
   // Canvas clocks (meteogram/chart axes and labels) are not DOM text.
   try {
-    const CanvasProto = window.CanvasRenderingContext2D && CanvasRenderingContext2D.prototype;
+    const CanvasProto = window.CanvasRenderingContext2D && window.CanvasRenderingContext2D.prototype;
     if (CanvasProto && !CanvasProto.__prognozaUtcUiPatched) {
       Object.defineProperty(CanvasProto,'__prognozaUtcUiPatched',{value:true});
       for (const method of ['fillText','strokeText']) {
@@ -199,6 +199,25 @@
       }
     }
   } catch (_) { }
+
+  // taf.html is intentionally small at the top of <head>. Load the generator
+  // policy from here so the final TAF is guarded even when the inline generator
+  // changes. The policy itself is idempotent and only runs on /taf.html.
+  function loadTafGeneratorPolicy() {
+    if (!/\/taf\.html$/i.test(location.pathname) || window.__PROGNOZA_EPIR_TAF_POLICY_LOADER__) return;
+    window.__PROGNOZA_EPIR_TAF_POLICY_LOADER__ = true;
+    const load = () => {
+      if (document.querySelector('script[data-taf-generator-policy]')) return;
+      const s = document.createElement('script');
+      s.src = 'taf-generator-policy.js?v=20260911-cloud-vrb';
+      s.async = false;
+      s.dataset.tafGeneratorPolicy = '1';
+      (document.head || document.documentElement).appendChild(s);
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', load, {once:true});
+    else load();
+  }
+  loadTafGeneratorPolicy();
 
   window.PrognozaUtcUI = Object.freeze({ markUtc, scan, scanAll });
 })();
