@@ -14,7 +14,7 @@ from pathlib import Path
 
 TARGET = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("taf.html")
 LIVE_BASE = "https://central-ingestor-production.up.railway.app/data/messages/"
-CLIENT_VERSION = "live-first-v4"
+CLIENT_VERSION = "live-first-v5"
 PAGES_COMPAT_MARKER = '<!-- Pages compatibility assertion: src="message-archive-client.js"; actual loader below is versioned. -->'
 
 
@@ -22,8 +22,6 @@ def main() -> int:
     s = TARGET.read_text(encoding="utf-8")
     original = s
 
-    # Version the shared client so GitHub Pages/browser cache cannot keep an old
-    # GitHub-first reader after the source priority has changed.
     s = re.sub(
         r'<script src="message-archive-client\.js(?:\?v=[^"]*)?"></script>',
         f'<script src="message-archive-client.js?v={CLIENT_VERSION}"></script>',
@@ -36,9 +34,6 @@ def main() -> int:
             raise SystemExit("versioned MessageArchive script tag missing")
         s = s.replace(versioned, PAGES_COMPAT_MARKER + versioned, 1)
 
-    # Helpers used to compare the actual bulletin observation times from
-    # latest.json and recent.json. They make the selection independent of array
-    # order and of which snapshot field happened to be populated first.
     helpers = r'''function tafMsgTime(x){if(!x)return NaN;for(const k of ['obs_time','message_time','time','issue_time','timestamp']){let t=Date.parse(x[k]||'');if(fin(t))return t}let r=String(x.raw||x.canonical_raw||''),m=r.match(/\b(\d{6})Z\b/);return m?monthTime(m[1],Date.now(),true):NaN}function tafRecentAviation(r){let o=[];for(const k of ['metar','speci','aviation'])if(Array.isArray(r?.[k]))o.push(...r[k]);return o.filter(x=>/\bEPIR\b/.test(String(x?.raw||x?.canonical_raw||'')))}function tafNewestAviation(a){return a.filter(Boolean).sort((x,y)=>(tafMsgTime(y)||0)-(tafMsgTime(x)||0))[0]||null}'''
     marker = "async function loadObs(){"
     if helpers not in s:
@@ -46,18 +41,14 @@ def main() -> int:
             raise SystemExit("TAF loadObs hook not found")
         s = s.replace(marker, helpers + marker, 1)
 
-    # TAF temporarily does not use SYNOP. For METAR/SPECI it compares latest,
-    # recent and the strict AVIATION lookup and chooses the newest real bulletin.
     load_obs = r'''async function loadObs(){let A=window.PrognozaEPIRMessageArchive;if(!A)throw Error('MessageArchive niedostępne');let a=await Promise.allSettled([A.latest(true),A.recent(true),A.getLatest('AVIATION','EPIR',true),Promise.resolve(null),A.getLatest('TAF','EPIR',true)]);obs=a[0].status==='fulfilled'?(a[0].value||{}):{};recent=a[1].status==='fulfilled'?a[1].value:null;neighbors=null;neighborParsed={};let ro=tafRecentAviation(recent),m=tafNewestAviation([a[2].status==='fulfilled'?a[2].value:null,obs?.aviation,obs?.metar,...ro]),s=null,t=a[4].status==='fulfilled'?a[4].value:null;m=m||obs?.aviation||obs?.metar;obs.synop=null;t=t||obs?.taf_by_station?.EPIR||obs?.taf;if(m){obs.aviation=m;obs.metar=m}if(t){obs.taf=t;obs.taf_by_station={...(obs.taf_by_station||{}),EPIR:t}}window.PrognozaEPIRTAFCurrent=t||null;$('metar').textContent=m?.raw||m?.canonical_raw||'Brak METAR/SPECI';$('synop').textContent='Wyłączony z analizy TAF';$('metarMeta').textContent=m?`${m.source||m.sources?.[0]?.name||'ARCHIWUM'} · ${fu(Date.parse(m.obs_time||m.message_time||m.time||obs?.updated_at||Date.now()))} · LIVE MessageArchive`:'';$('synopMeta').textContent='SYNOP tymczasowo nie jest używany w analizie.'}
 const EPIR='''
     pattern = re.compile(r"async function loadObs\(\)\{.*?\}\nconst EPIR=", re.S)
     if pattern.search(s):
-        s = pattern.sub(load_obs, s, count=1)
+        s = pattern.sub(lambda _: load_obs, s, count=1)
     else:
         raise SystemExit("TAF loadObs block not found")
 
-    # Show that the page explicitly resolved the current EPIR TAF, not only
-    # neighbour TAFs.
     metar_pill = '''<span class="pill ${obs?.metar?'ok':'bad'}">METAR ${obs?.metar?'✓':'×'}</span>'''
     taf_pill = '''<span class="pill ${obs?.taf?'ok':'bad'}">TAF EPIR ${obs?.taf?'✓':'×'}</span>'''
     if taf_pill not in s:
@@ -65,9 +56,6 @@ const EPIR='''
             raise SystemExit("TAF source-pill hook not found")
         s = s.replace(metar_pill, metar_pill + taf_pill, 1)
 
-    # Verification/history day files also use Railway live first, with the
-    # deployed Pages copy as fallback. The shared client handles GitHub/raw for
-    # latest/recent reads.
     s = re.sub(
         r"const CENTRAL_RAW_BASE='[^']*data/messages/';",
         f"const CENTRAL_RAW_BASE='{LIVE_BASE}';",
