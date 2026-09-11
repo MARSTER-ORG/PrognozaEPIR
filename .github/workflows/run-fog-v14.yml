@@ -1,0 +1,34 @@
+name: Run fog v1.4 patch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/run-fog-v14.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply patch
+        run: python3 .github/scripts/fog_v14_patch.py
+      - name: Validate JavaScript
+        run: |
+          node --check fog-engine.js
+          node --check mifg-engine.js
+          node --check fog-meteogram-overlay.js
+          node --check fog-summary-layout.js
+      - name: Commit production changes
+        run: |
+          git config user.name 'PrognozaEPIR bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add fog-engine.js mifg-engine.js fog-meteogram-overlay.js fog-summary-layout.js index.html
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Fog v1.4: fresh observations and reliability gates [skip ci]'
+          git push origin HEAD:main
