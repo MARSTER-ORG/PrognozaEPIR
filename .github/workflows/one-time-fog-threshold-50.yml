@@ -1,0 +1,86 @@
+name: One-time fog threshold 50
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/one-time-fog-threshold-50.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply operational threshold 50
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace(path, old, new, min_count=1):
+              p = Path(path)
+              s = p.read_text(encoding='utf-8')
+              count = s.count(old)
+              if count < min_count:
+                  raise SystemExit(f'{path}: expected {min_count}+ occurrences of {old!r}, found {count}')
+              p.write_text(s.replace(old, new), encoding='utf-8')
+
+          # FG engine: operational classification and episode timing start at 50/100.
+          replace('fog-engine.js', "if(s<40)return 'NIE';", "if(s<50)return 'NIE';")
+          replace('fog-engine.js', "if(!finite(s)||s<40)return '';", "if(!finite(s)||s<50)return '';")
+          replace('fog-engine.js', '&lt;40 = MGŁA: NIE (wynik pomijany) · 40–59 = MOŻLIWA', '&lt;50 = MGŁA: NIE (wynik pomijany) · 50–59 = MOŻLIWA')
+          replace('fog-engine.js', 'x.score>=40', 'x.score>=50')
+          replace('fog-engine.js', 'series[last+1].score>=40', 'series[last+1].score>=50')
+          replace('fog-engine.js', 'peak.score>=40', 'peak.score>=50')
+          replace('fog-engine.js', 'Math.max(40,.85*peak.score)', 'Math.max(50,.85*peak.score)')
+          replace('fog-engine.js', "current.score>=40?fmt0(current.score)+'/100':'wynik <40/100 pominięty'", "current.score>=50?fmt0(current.score)+'/100':'wynik <50/100 pominięty'")
+          replace('fog-engine.js', "'brak sygnału ≥40 w 48 h'", "'brak sygnału ≥50 w 48 h'")
+          replace('fog-engine.js', "'próg operacyjny 40/100'", "'próg operacyjny 50/100'")
+          replace('fog-engine.js', "peak.score>=40?scoreClass(peak.score):'PONIŻEJ PROGU'", "peak.score>=50?scoreClass(peak.score):'PONIŻEJ PROGU'")
+          replace('fog-engine.js', "peak.score>=40?fmt0(peak.score)+'/100", "peak.score>=50?fmt0(peak.score)+'/100")
+          replace('fog-engine.js', "x.score>=40?fmt0(x.score)+'/100':'&lt;40 · pominięte'", "x.score>=50?fmt0(x.score)+'/100':'&lt;50 · pominięte'")
+          replace('fog-engine.js', "x.score>=40?(x.type?.text||'—'):'bez sygnału operacyjnego'", "x.score>=50?(x.type?.text||'—'):'bez sygnału operacyjnego'")
+
+          # Meteogram hourly information: same operational threshold for FG, MIFG and BR.
+          replace('fog-meteogram-overlay.js', 'const FOG_INFO_THRESHOLD = 40;', 'const FOG_INFO_THRESHOLD = 50;')
+          replace('fog-meteogram-overlay.js', 'const MIFG_INFO_THRESHOLD = 40;', 'const MIFG_INFO_THRESHOLD = 50;')
+          replace('fog-meteogram-overlay.js', 'const BR_INFO_THRESHOLD = 40;', 'const BR_INFO_THRESHOLD = 50;')
+          replace('fog-meteogram-overlay.js', 'w informacji godziny FOG, MIFG i BR są pokazywane od 40/100.', 'w informacji godziny FOG, MIFG i BR są pokazywane od 50/100.')
+
+          # MIFG engine: enforce the same policy even if an older copy is restored later.
+          p = Path('mifg-engine.js')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace("if(score<40)return 'NIE';", "if(score<50)return 'NIE';")
+          s = s.replace("current.score>=40?'fog-risk-mid'", "current.score>=50?'fog-risk-mid'")
+          s = s.replace('current.score>=40', 'current.score>=50')
+          s = s.replace("'wynik <40/100 pominięty'", "'wynik <50/100 pominięty'")
+          s = s.replace('peak.score>=40', 'peak.score>=50')
+          s = s.replace("' · brak sygnału ≥40 w 12 h'", "' · brak sygnału ≥50 w 12 h'")
+          p.write_text(s, encoding='utf-8')
+
+          # Structured summary / BR: keep the shared operational policy explicit.
+          p = Path('fog-summary-layout.js')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace('const THRESHOLD = 40;', 'const THRESHOLD = 50;')
+          s = s.replace('score < 40', 'score < 50')
+          s = s.replace('wynik <40/100 pominięty', 'wynik <50/100 pominięty')
+          s = s.replace('≥40/100', '≥50/100').replace('≥40 w 48 h', '≥50 w 48 h')
+          s = s.replace('próg operacyjny 40/100', 'próg operacyjny 50/100')
+          s = s.replace('&lt;40 = NIE (wynik pomijany) · 40–59 = MOŻLIWE', '&lt;50 = NIE (wynik pomijany) · 50–59 = MOŻLIWE')
+          p.write_text(s, encoding='utf-8')
+
+      - name: Commit patch
+        run: |
+          git config user.name "PrognozaEPIR automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add fog-engine.js fog-meteogram-overlay.js mifg-engine.js fog-summary-layout.js
+          if git diff --cached --quiet; then
+            echo "No changes needed"
+          else
+            git commit -m "Use 50 as operational threshold for FG BR MIFG"
+            git push origin HEAD:main
+          fi
