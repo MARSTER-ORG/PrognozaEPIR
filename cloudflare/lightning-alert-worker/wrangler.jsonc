@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "epir-lightning-alerts",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-11",
+  "observability": { "enabled": true },
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+  "vars": {
+    "APP_ORIGIN": "https://marster-org.github.io",
+    "APP_URL": "https://marster-org.github.io/PrognozaEPIR/radar.html",
+    "LIGHTNING_FEED_URL": "https://central-ingestor-production.up.railway.app/data/lightning/latest.json"
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "ALERT_STORE", "class_name": "LightningAlertStore" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["LightningAlertStore"] }
+  ]
+}
