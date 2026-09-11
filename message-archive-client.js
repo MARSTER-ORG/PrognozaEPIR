@@ -4,7 +4,7 @@
   // Railway is ingestion-only and mirrors new records into this repository.
   const GITHUB_ROOT = 'https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/messages';
   const STATIC_ROOT = 'data/messages';
-  const PRIMARY_ROOT = STATIC_ROOT;
+  const PRIMARY_ROOT = GITHUB_ROOT;
   const TTL_MS = 30_000;
   const cache = new Map();
   const norm = value => String(value || '').toUpperCase();
@@ -26,7 +26,7 @@
   }
 
   function readRoots(){
-    return [STATIC_ROOT, GITHUB_ROOT];
+    return [GITHUB_ROOT, STATIC_ROOT];
   }
 
   async function fetchJson(name, force=false){
@@ -91,9 +91,9 @@
 
   const api = Object.freeze({
     root: PRIMARY_ROOT,
-    liveRoot: STATIC_ROOT,
+    liveRoot: GITHUB_ROOT,
     githubRoot: GITHUB_ROOT,
-    fallbackRoot: GITHUB_ROOT,
+    fallbackRoot: STATIC_ROOT,
     staticFallbackRoot: STATIC_ROOT,
     latest,
     recent,
