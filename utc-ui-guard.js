@@ -219,15 +219,15 @@
   }
   loadTafGeneratorPolicy();
 
-  // radar.html uses heuristic 0–99 risk scores. Keep the numeric score, but do
-  // not draw a colored probability-style bar for weak signals below 40/100.
+  // radar.html uses heuristic 0–99 risk scores. The hail policy requires a
+  // convective trigger, and weak scores below 40/100 do not draw a colored bar.
   function loadRadarRiskPolicy() {
     if (!/\/radar\.html$/i.test(location.pathname) || window.__PROGNOZA_EPIR_RADAR_RISK_POLICY_LOADER__) return;
     window.__PROGNOZA_EPIR_RADAR_RISK_POLICY_LOADER__ = true;
     const load = () => {
       if (document.querySelector('script[data-radar-risk-policy]')) return;
       const s = document.createElement('script');
-      s.src = 'radar-risk-policy.js?v=20260911-min40';
+      s.src = 'radar-risk-policy.js?v=20260911-hail-v2';
       s.async = false;
       s.dataset.radarRiskPolicy = '1';
       (document.head || document.documentElement).appendChild(s);
