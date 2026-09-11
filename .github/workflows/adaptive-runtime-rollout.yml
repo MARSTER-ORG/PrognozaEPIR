@@ -1,4 +1,4 @@
-name: Adaptive runtime rollout
+name: Adaptive learning rebuild
 
 on:
   push:
@@ -6,11 +6,6 @@ on:
       - main
       - fix/model-snapshot-adaptive
     paths:
-      - 'scripts/apply_adaptive_runtime_patch.py'
-      - 'scripts/apply_adaptive_runtime_patch_v2.py'
-      - 'scripts/apply_fog_learning_upgrade.py'
-      - 'scripts/apply_fog_event_skill_patch.py'
-      - 'scripts/apply_metar_wind_direction_patch.py'
       - 'scripts/build_fog_event_learning.py'
       - 'scripts/build_model_snapshot.py'
       - 'scripts/build_adaptive_weights.py'
@@ -19,7 +14,9 @@ on:
       - 'scripts/enrich_synoptic_context.py'
       - 'scripts/synoptic_regime.py'
       - 'scripts/cloud_learning_backfill.py'
+      - 'scripts/cloud_learning.py'
       - 'scripts/model_verification.py'
+      - 'scripts/embed_model_verification.py'
       - '.github/workflows/adaptive-runtime-rollout.yml'
   workflow_dispatch:
 
@@ -28,11 +25,11 @@ permissions:
   actions: write
 
 concurrency:
-  group: adaptive-runtime-${{ github.ref_name }}
+  group: adaptive-learning-${{ github.ref_name }}
   cancel-in-progress: true
 
 jobs:
-  rollout:
+  rebuild:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout current branch
@@ -41,19 +38,9 @@ jobs:
           ref: ${{ github.ref_name }}
           fetch-depth: 0
 
-      - name: Apply frontend/runtime, fog and wind patches
-        run: |
-          python3 scripts/apply_adaptive_runtime_patch_v2.py
-          python3 scripts/apply_metar_wind_direction_patch.py
-
       - name: Validate Python syntax
         run: |
           python3 -m py_compile \
-            scripts/apply_adaptive_runtime_patch.py \
-            scripts/apply_adaptive_runtime_patch_v2.py \
-            scripts/apply_fog_learning_upgrade.py \
-            scripts/apply_fog_event_skill_patch.py \
-            scripts/apply_metar_wind_direction_patch.py \
             scripts/build_fog_event_learning.py \
             scripts/build_model_snapshot.py \
             scripts/build_adaptive_weights.py \
@@ -63,12 +50,12 @@ jobs:
             scripts/synoptic_regime.py \
             scripts/cloud_learning_backfill.py \
             scripts/cloud_learning.py \
-            scripts/model_verification.py
+            scripts/model_verification.py \
+            scripts/embed_model_verification.py
 
       - name: Validate METAR wind-direction reference
         run: |
           python3 - <<'PY'
-          import math
           import sys
           sys.path.insert(0, 'scripts')
           import model_verification as mv
@@ -137,7 +124,7 @@ jobs:
           print('wind verification method:', verify.get('method'))
           PY
 
-      - name: Validate frontend JavaScript
+      - name: Validate canonical frontend runtime
         run: |
           node --check cloud-learning-client.js
           node --check rh-axis-fix.js
@@ -171,36 +158,30 @@ jobs:
           PY
           node --check /tmp/index-inline.js
 
-      - name: Commit validated runtime and learning data
+      - name: Commit validated learning data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           rm -rf scripts/__pycache__
-          git add \
-            index.html rh-axis-fix.js cloud-learning-client.js fog-engine.js \
-            scripts/cloud_learning.py \
-            scripts/model_verification.py \
-            data/runtime \
-            data/learning
+          git add data/runtime data/learning
           if git diff --cached --quiet; then
-            echo "No rollout changes"
+            echo "No learning changes"
           else
             git commit -m "weather: rebuild adaptive and historical model learning"
             git reset --hard HEAD
             git clean -fd
             for attempt in 1 2 3 4; do
               git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin HEAD:"${GITHUB_REF_NAME}" && exit 0
-              echo "rollout push retry $attempt"
+              echo "learning push retry $attempt"
               sleep $((attempt*3))
             done
             exit 1
           fi
 
-      - name: Redeploy main
+      - name: Refresh dependent workflows
         if: github.ref_name == 'main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh workflow run pages.yml --ref main
           gh workflow run model-snapshot.yml --ref main
           gh workflow run cloud-learning.yml --ref main
