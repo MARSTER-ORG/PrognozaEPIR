@@ -20,6 +20,10 @@
   const GRID_RADIUS_KM = 160;
   const GRID_N = Math.round(GRID_RADIUS_KM * 2 / GRID_STEP_KM) + 1;
   const CENTER = Math.floor(GRID_N / 2);
+  // Analysis stays at 4 km for mobile performance. Only the newest frame gets
+  // a separate 1 km display raster so the Leaflet CMAX layer is readable.
+  const MAP_STEP_KM = 1;
+  const MAP_N = Math.round(GRID_RADIUS_KM * 2 / MAP_STEP_KM) + 1;
   const DBZ_THRESHOLD = 27;
   const SEARCH_SHIFT = 6;
   const MAX_FRAME_AGE_MIN = 35;
@@ -194,6 +198,25 @@
     return{time:frame.time,url:frame.url,values,mask,active,mean:active?sum/active:NaN,max,area,qMean,qUsable,projection:pp.name,geoBounds};
   }
 
+  async function readDisplayRaster(frame,p){
+    const tiff=await openTiff(frame.url),image=await tiff.getImage(),w=image.getWidth(),h=image.getHeight(),bbox=image.getBoundingBox();
+    if(!Array.isArray(bbox)||bbox.length!==4||!bbox.every(finite))throw new Error('GeoTIFF bez georeferencji');
+    const[minX,minY,maxX,maxY]=bbox,pp=projectForBbox(p,bbox),px=(pp.x-minX)/(maxX-minX)*w,py=(maxY-pp.y)/(maxY-minY)*h;
+    const scaleX=w/(maxX-minX),scaleY=h/(maxY-minY),rx=GRID_RADIUS_KM*1000*scaleX,ry=GRID_RADIUS_KM*1000*scaleY;
+    const x0=clamp(Math.floor(px-rx),0,w-2),x1=clamp(Math.ceil(px+rx),x0+1,w),y0=clamp(Math.floor(py-ry),0,h-2),y1=clamp(Math.ceil(py+ry),y0+1,h);
+    const rasters=await image.readRasters({window:[x0,y0,x1,y1],samples:[0],width:MAP_N,height:MAP_N,resampleMethod:'nearest'}),raw=rasters[0];
+    if(!raw||raw.length!==MAP_N*MAP_N)throw new Error('niepoprawny raster mapowy DBZH');
+    let meta=null,datasetMeta=null;try{meta=await image.getGDALMetadata?.(0)}catch(_){}try{datasetMeta=await image.getGDALMetadata?.(null)}catch(_){}
+    const gain=metadataNumber(meta,['scale_factor','scale','gain'],metadataNumber(datasetMeta,['scale_factor','scale','gain'],1));
+    const offset=metadataNumber(meta,['add_offset','offset'],metadataNumber(datasetMeta,['add_offset','offset'],0));
+    const nodata=typeof image.getGDALNoData==='function'?image.getGDALNoData():null,values=new Float32Array(raw.length);
+    for(let i=0;i<raw.length;i++){const rv=Number(raw[i]);if(!finite(rv)||(nodata!=null&&rv===Number(nodata))){values[i]=NaN;continue}const v=rv*gain+offset;values[i]=finite(v)&&v>=-100&&v<=100?v:NaN}
+    const wx0=minX+(x0/w)*(maxX-minX),wx1=minX+(x1/w)*(maxX-minX),wyTop=maxY-(y0/h)*(maxY-minY),wyBottom=maxY-(y1/h)*(maxY-minY);
+    const corners=[inversePoint(pp.proj,wx0,wyTop),inversePoint(pp.proj,wx1,wyTop),inversePoint(pp.proj,wx0,wyBottom),inversePoint(pp.proj,wx1,wyBottom)].filter(x=>Array.isArray(x)&&x.every(finite));
+    const lons=corners.map(x=>x[0]),lats=corners.map(x=>x[1]),geoBounds=corners.length===4?[[Math.min(...lats),Math.min(...lons)],[Math.max(...lats),Math.max(...lons)]]:null;
+    return{time:frame.time,values,width:MAP_N,height:MAP_N,pixelKm:MAP_STEP_KM,projection:pp.name,proj:pp.proj,projectedBounds:{x0:wx0,x1:wx1,yTop:wyTop,yBottom:wyBottom},geoBounds};
+  }
+
   function scoreShift(a,b,sx,sy){
     let inter=0,union=0,weighted=0;
     for(let y=SEARCH_SHIFT;y<GRID_N-SEARCH_SHIFT;y++){const by=y+sy;if(by<0||by>=GRID_N)continue;for(let x=SEARCH_SHIFT;x<GRID_N-SEARCH_SHIFT;x++){const bx=x+sx;if(bx<0||bx>=GRID_N)continue;const ia=y*GRID_N+x,ib=by*GRID_N+bx,ma=a.mask[ia],mb=b.mask[ib];if(!ma&&!mb)continue;union++;if(ma&&mb){inter++;const va=a.values[ia],vb=b.values[ib];weighted+=Math.min(va,vb)/Math.max(va,vb,1)}}}
@@ -262,6 +285,8 @@
       }
       grids.sort((a,b)=>a.time-b.time);if(grids.length<3)throw new Error(lastErr||'nie znaleziono 3 dostępnych klatek DBZH.tiff');
       const latest=grids.at(-1),age=(Date.now()-latest.time)/60000;if(age>50)throw new Error(`ostatnia klatka ma ${Math.round(age)} min`);
+      setStatus(`OPERA: przygotowuję czytelną warstwę 1 km · ${fmtUtcMs(latest.time)}`);
+      try{latest.display=await readDisplayRaster(latest,p)}catch(e){console.warn('OPERA 1 km display raster unavailable; using 4 km fallback',e)}
       const vector=vectorStats(grids),trend=trendStats(grids),nearest=nearestEcho(latest),approach=vector?approachEcho(latest,vector):null,predictions=vector?advect(latest,vector,trend):Object.fromEntries(HORIZONS.map(h=>[h,NaN])),conf=confidence(grids,vector);
       const result={updatedAt:new Date().toISOString(),point:p,source:'opera_cirrus_dbzh_central',frames:grids.length,frameStart:grids[0].time,frameEnd:latest.time,latest,vector:vector?{eastKmh:vector.east,northKmh:vector.north,speedKmh:vector.speed,bearingDeg:vector.bearing,score:vector.score,consistency:vector.consistency}:null,confidence:conf,trend,nearest,approach,etaMin:approach?approach.tHours*60:null,predictions,quality:{qindAvailable:latest.qUsable,qindMean:latest.qMean,qindThreshold:QIND_MIN}};
       renderResult(result);publishOpera(result);

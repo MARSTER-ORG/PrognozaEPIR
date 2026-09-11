@@ -203,11 +203,14 @@
 
   const RADIUS_KM = 160;
   const PANE = 'operaCmaxPane';
+  const PROJ_WGS84 = '+proj=longlat +datum=WGS84 +no_defs';
   const $ = id => document.getElementById(id);
   const finite = Number.isFinite;
   let fixedLayer = null;
   let outlineLayer = null;
   let lastOpera = null;
+  let lastRaster = null;
+  let lastBounds = null;
   let boundButton = null;
   let autoEnabled = false;
 
@@ -241,17 +244,17 @@
   // used by this page: blue -> cyan -> green -> yellow -> orange -> red -> magenta.
   const POLRAD_CMAX_PALETTE = [
     [58,[255,0,255,255]],
-    [52,[255,0,0,255]],
-    [47,[255,128,0,255]],
-    [44,[255,220,0,255]],
-    [41,[160,255,0,255]],
-    [38,[0,200,0,255]],
-    [34,[0,255,255,255]],
-    [30,[0,170,255,255]],
-    [27,[0,80,255,255]],
-    [20,[0,0,210,255]],
-    [14,[0,0,145,255]],
-    [8,[0,0,85,255]]
+    [52,[255,0,0,248]],
+    [47,[255,128,0,242]],
+    [44,[255,220,0,236]],
+    [41,[160,255,0,230]],
+    [38,[0,200,0,220]],
+    [34,[0,255,255,210]],
+    [30,[0,170,255,195]],
+    [27,[0,80,255,180]],
+    [20,[0,0,210,145]],
+    [14,[0,0,145,105]],
+    [8,[0,0,85,65]]
   ];
 
   function colorForDbz(v) {
@@ -263,9 +266,10 @@
   }
 
   function rasterFor(latest) {
-    const values = latest?.values;
+    const display = latest?.display || null;
+    const values = display?.values || latest?.values;
     const len = Number(values?.length || 0);
-    const n = Math.round(Math.sqrt(len));
+    const n = Number(display?.width || Math.round(Math.sqrt(len)));
     if (!len || n*n !== len) return null;
     const canvas = document.createElement('canvas');
     canvas.width = n;
@@ -284,14 +288,14 @@
       image.data[j]=r; image.data[j+1]=g; image.data[j+2]=b; image.data[j+3]=a;
     }
     ctx.putImageData(image,0,0);
-    return {url:canvas.toDataURL('image/png'),visible,significant,max,n};
+    return {url:canvas.toDataURL('image/png'),visible,significant,max,n,values,pixelKm:Number(display?.pixelKm||4),geoBounds:display?.geoBounds||latest?.geoBounds||null,proj:display?.proj||null,projectedBounds:display?.projectedBounds||null};
   }
 
   function ensurePane(m) {
     let pane = m.getPane(PANE);
     if (!pane) pane = m.createPane(PANE);
     pane.style.zIndex = '480';
-    pane.style.pointerEvents = 'none';
+    pane.style.pointerEvents = 'auto';
     return pane;
   }
 
@@ -324,6 +328,56 @@
     button.dataset.operaSignificantPixels = String(state.significantPixels ?? 0);
     button.dataset.operaFrameUtc = state.frameUtc || '';
     button.dataset.operaPalette = state.palette || '';
+    button.dataset.operaInteractive = state.interactive ? '1' : '0';
+    button.dataset.operaResolutionKm = state.resolutionKm != null ? String(state.resolutionKm) : '';
+  }
+
+  function ensureMapStyle() {
+    if ($('operaCmaxMapStyle')) return;
+    const style=document.createElement('style');
+    style.id='operaCmaxMapStyle';
+    style.textContent=`.opera-cmax-fixed-overlay{image-rendering:pixelated!important;image-rendering:crisp-edges!important;cursor:crosshair!important}.opera-cmax-popup .leaflet-popup-content{margin:10px 12px;line-height:1.35}.opera-cmax-popup .op-value{font-size:18px;font-weight:800}.opera-cmax-popup .op-meta{font-size:11px;opacity:.78;margin-top:3px}`;
+    document.head.appendChild(style);
+  }
+
+  function sampleRaster(latlng,raster,bounds) {
+    if (!latlng || !raster?.values || !raster.n) return NaN;
+    let gx=NaN,gy=NaN;
+    const pb=raster.projectedBounds;
+    if (pb && raster.proj && typeof window.proj4==='function') {
+      try {
+        const xy=window.proj4(PROJ_WGS84,raster.proj,[Number(latlng.lng),Number(latlng.lat)]);
+        gx=(xy[0]-pb.x0)/(pb.x1-pb.x0)*(raster.n-1);
+        gy=(pb.yTop-xy[1])/(pb.yTop-pb.yBottom)*(raster.n-1);
+      } catch (_) {}
+    }
+    if (!finite(gx)||!finite(gy)) {
+      const south=Number(bounds?.[0]?.[0]),west=Number(bounds?.[0]?.[1]),north=Number(bounds?.[1]?.[0]),east=Number(bounds?.[1]?.[1]);
+      if (![south,west,north,east].every(finite)||east===west||north===south) return NaN;
+      gx=(Number(latlng.lng)-west)/(east-west)*(raster.n-1);
+      gy=(north-Number(latlng.lat))/(north-south)*(raster.n-1);
+    }
+    const x=Math.round(gx),y=Math.round(gy);
+    if(x<0||y<0||x>=raster.n||y>=raster.n)return NaN;
+    const v=Number(raster.values[y*raster.n+x]);
+    return finite(v)?v:NaN;
+  }
+
+  function echoLabel(v) {
+    if(!finite(v))return 'brak danych';
+    if(v<8)return 'brak istotnego echa';
+    if(v<20)return 'słabe echo';
+    if(v<30)return 'umiarkowane echo';
+    if(v<40)return 'silne echo';
+    if(v<50)return 'bardzo silne echo';
+    return 'ekstremalnie silne echo';
+  }
+
+  function showPointPopup(m,latlng,raster,bounds,opera) {
+    const v=sampleRaster(latlng,raster,bounds),frame=fmtUtc(opera?.frameEnd||opera?.latest?.time);
+    const value=finite(v)?`${Math.round(v)} dBZ`:'brak danych';
+    const html=`<div><b>OPERA CMAX</b><div class="op-value">${value}</div><div>${echoLabel(v)}</div><div class="op-meta">${Number(latlng.lat).toFixed(4)}°, ${Number(latlng.lng).toFixed(4)}° · ${frame}</div></div>`;
+    L.popup({className:'opera-cmax-popup',maxWidth:260,closeButton:true}).setLatLng(latlng).setContent(html).openOn(m);
   }
 
   function renderMap(opera = lastOpera) {
@@ -352,23 +406,27 @@
     }
 
     ensurePane(m);
+    ensureMapStyle();
     clearFixed(m);
     removeLegacyOpera(m);
-    const bounds = localBounds(p);
+    const bounds = raster.geoBounds || localBounds(p);
+    lastRaster=raster;lastBounds=bounds;
 
-    if (raster.visible > 0) {
-      fixedLayer = L.imageOverlay(raster.url,bounds,{
-        pane:PANE,
-        opacity:.68,
-        interactive:false,
-        className:'opera-cmax-fixed-overlay',
-        attribution:'EUMETNET OPERA CIRRUS'
-      }).addTo(m);
-    }
+    fixedLayer = L.imageOverlay(raster.url,bounds,{
+      pane:PANE,
+      opacity:.88,
+      interactive:true,
+      className:'opera-cmax-fixed-overlay',
+      attribution:'EUMETNET OPERA CIRRUS'
+    }).addTo(m);
+    fixedLayer.on('click',ev=>{
+      try{if(ev?.originalEvent&&L?.DomEvent)L.DomEvent.stopPropagation(ev.originalEvent)}catch(_){}
+      showPointPopup(m,ev.latlng,raster,bounds,opera);
+    });
     outlineLayer = L.rectangle(bounds,{
       pane:PANE,
       weight:1,
-      opacity:.35,
+      opacity:.16,
       fill:false,
       dashArray:'4 4',
       interactive:false
@@ -377,8 +435,8 @@
     const frameUtc = fmtUtc(opera.frameEnd || opera.latest.time);
     const rendered = !!fixedLayer || !!outlineLayer;
     button.title = raster.visible > 0
-      ? `OPERA CMAX · skala POLRAD · ${frameUtc} · widoczne piksele: ${raster.visible}`
-      : `OPERA CMAX · skala POLRAD · ${frameUtc} · brak echa ≥8 dBZ w promieniu 160 km`;
+      ? `OPERA CMAX · ${raster.pixelKm} km/piksel · ${frameUtc} · dotknij mapy, aby odczytać dBZ`
+      : `OPERA CMAX · ${raster.pixelKm} km/piksel · ${frameUtc} · dotknij mapy, aby sprawdzić punkt`;
     publishState(button,{
       enabled:true,
       rendered,
@@ -388,7 +446,9 @@
       maxDbz:finite(raster.max)?raster.max:null,
       bounds,
       pane:PANE,
-      palette:'POLRAD CMAX'
+      palette:'POLRAD CMAX',
+      interactive:true,
+      resolutionKm:raster.pixelKm
     });
   }
 
@@ -429,6 +489,7 @@
 
   window.PrognozaEPIROperaMapLayer = {
     refresh:() => renderMap(window.PrognozaEPIROperaNowcast || lastOpera),
-    get:() => window.PrognozaEPIROperaMapState || null
+    get:() => window.PrognozaEPIROperaMapState || null,
+    samplePoint:(lat,lon)=>lastRaster&&lastBounds?sampleRaster({lat:Number(lat),lng:Number(lon)},lastRaster,lastBounds):NaN
   };
 })();
