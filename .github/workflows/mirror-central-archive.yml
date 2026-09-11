@@ -3,6 +3,8 @@
 #
 # Normal path: Railway emits repository_dispatch only after the archive changes.
 # Safety path: one lightweight hourly reconciliation catches missed events.
+# Historical JSONL files are append-only: a Railway snapshot is never allowed
+# to remove records that are already durable in GitHub.
 name: Mirror central archive from Railway
 
 on:
@@ -55,7 +57,7 @@ jobs:
               last=None
               for i in range(attempts):
                   try:
-                      req=urllib.request.Request(url,headers={'Accept':'application/json','User-Agent':'PrognozaEPIR-GitHub-Mirror/2'})
+                      req=urllib.request.Request(url,headers={'Accept':'application/json','User-Agent':'PrognozaEPIR-GitHub-Mirror/3'})
                       with urllib.request.urlopen(req,timeout=20) as r:
                           return r.read()
                   except Exception as exc:
@@ -63,6 +65,20 @@ jobs:
                       if i+1<attempts:
                           time.sleep(2+i*2)
               raise RuntimeError(f'GET failed: {url}: {last}')
+
+          def jsonl_ids(data):
+              ids=set()
+              for raw in data.decode('utf-8').splitlines():
+                  if not raw.strip():
+                      continue
+                  row=json.loads(raw)
+                  ident=str(row.get('message_id') or '').strip()
+                  if not ident:
+                      ident=hashlib.sha256(
+                          (str(row.get('type') or '')+'|'+str(row.get('station') or '')+'|'+str(row.get('canonical_raw') or row.get('raw') or '')).encode('utf-8')
+                      ).hexdigest()
+                  ids.add(ident)
+              return ids
 
           manifest=json.loads(get(base+'/archive-manifest').decode('utf-8'))
           if manifest.get('schema')!='prognozaepir-message-archive-manifest-v1':
@@ -90,6 +106,16 @@ jobs:
               actual=hashlib.sha256(data).hexdigest()
               if actual!=expected:
                   raise SystemExit(f'snapshot changed during mirror: {rel}; expected {expected}, got {actual}; refusing partial commit')
+
+              if rel.endswith('.jsonl') and dest.is_file():
+                  durable=jsonl_ids(dest.read_bytes())
+                  incoming=jsonl_ids(data)
+                  missing=durable-incoming
+                  if missing:
+                      raise SystemExit(
+                          f'archive regression refused for {rel}: Railway snapshot is missing {len(missing)} records already durable in GitHub'
+                      )
+
               dest.parent.mkdir(parents=True,exist_ok=True)
               tmp=dest.with_name('.'+dest.name+'.mirror.tmp')
               tmp.write_bytes(data)
