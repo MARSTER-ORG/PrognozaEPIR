@@ -209,7 +209,7 @@
     const load = () => {
       if (document.querySelector('script[data-taf-generator-policy]')) return;
       const s = document.createElement('script');
-      s.src = 'taf-generator-policy.js?v=20260911-cloud-vrb';
+      s.src = 'taf-generator-policy.js?v=20260911-vrb02-speed-v3';
       s.async = false;
       s.dataset.tafGeneratorPolicy = '1';
       (document.head || document.documentElement).appendChild(s);
