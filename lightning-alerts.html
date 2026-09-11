@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>PrognozaEPIR — alarm wyładowań 50 km</title>
+<style>
+:root{--bg:#f4f4f2;--panel:#fff;--panel2:#f7f7f7;--ink:#232323;--muted:#6e6e6e;--line:#b5b5b5;--blue:#1f2a75;--green:#0a8d30;--red:#c83d31}
+@media(prefers-color-scheme:dark){:root{--bg:#111418;--panel:#181c21;--panel2:#20252b;--ink:#e7e9ed;--muted:#a6acb5;--line:#4e5660;--blue:#9aabff;--green:#62c980;--red:#ff8076}}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--ink);font-family:Arial,Helvetica,sans-serif}.app{max-width:700px;margin:auto;padding:12px}.top{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:10px}.brand{font-weight:700}.brand small{display:block;color:var(--muted);font-weight:400;font-size:11px;margin-top:3px}.back{color:var(--blue);text-decoration:none;font-size:12px}.card{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:12px;margin:8px 0}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.tile{background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:9px}.tile small{display:block;color:var(--muted);font-size:10px}.tile b{display:block;margin-top:4px;font-size:15px}.ok{color:var(--green)}.bad{color:var(--red)}.actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}button,input{border:1px solid var(--line);background:var(--panel2);color:var(--ink);border-radius:7px;padding:9px;font-size:12px}button.primary{background:var(--blue);border-color:var(--blue);color:white}button:disabled{opacity:.55}.advanced{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}.advanced label{display:block;font-size:10px;color:var(--muted);margin-bottom:4px}.advanced input{width:100%}.msg{font-size:11px;line-height:1.4;color:var(--muted);margin-top:8px}.status{font-size:12px;line-height:1.45}.status b{color:var(--blue)}code{font-size:10px;word-break:break-all}.note{font-size:10px;color:var(--muted);line-height:1.45}.badge{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:3px 7px;font-size:10px}
+@media(max-width:520px){.grid{grid-template-columns:1fr}.app{padding:7px}.actions button{flex:1 1 45%}}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="top"><div class="brand">PrognozaEPIR · alarm wyładowań<small>stały punkt EPIR · bez GPS</small></div><a class="back" href="radar.html">← RADAR</a></div>
+
+  <section class="card">
+    <div class="grid">
+      <div class="tile"><small>Punkt</small><b>EPIR</b><span class="note">52.8275, 18.3175</span></div>
+      <div class="tile"><small>Promień alarmu</small><b>50 km</b><span class="note">MTG LI LFL</span></div>
+      <div class="tile"><small>Lokalizacja telefonu</small><b class="ok">NIEUŻYWANA</b><span class="note">brak GPS / geolokalizacji</span></div>
+      <div class="tile"><small>Powiadomienia</small><b id="pushState">—</b><span id="pushSub" class="note">sprawdzanie…</span></div>
+    </div>
+    <div class="actions">
+      <button id="enable" class="primary" type="button">Włącz powiadomienia</button>
+      <button id="disable" type="button">Wyłącz</button>
+      <button id="testLocal" type="button">Test telefonu</button>
+      <button id="refresh" type="button">Odśwież status</button>
+    </div>
+    <div id="message" class="msg" aria-live="polite"></div>
+  </section>
+
+  <section class="card">
+    <div class="status"><b>Stan serwera</b><div id="serverStatus" class="msg">Backend Cloudflare nie został jeszcze wskazany.</div></div>
+    <div class="advanced">
+      <label for="apiUrl">Adres Cloudflare Workera (ustawiany tylko raz)</label>
+      <input id="apiUrl" type="url" inputmode="url" placeholder="https://epir-lightning-alerts.…workers.dev" autocomplete="off">
+      <div class="actions"><button id="saveApi" type="button">Zapisz adres</button></div>
+      <div class="note">Adres można także przekazać jako <code>?api=https://…workers.dev</code>. Zostanie zapisany tylko w tej przeglądarce.</div>
+    </div>
+  </section>
+
+  <section class="card note">
+    Alarm dotyczy nowych wyładowań wykrytych do 50 km od EPIR. System stosuje blokadę powtórzeń, aby jedna burza nie generowała serii powiadomień. Godziny w komunikatach są podawane w UTC. To narzędzie pomocnicze i nie zastępuje oficjalnych ostrzeżeń meteorologicznych.
+  </section>
+</div>
+<script>
+'use strict';
+(() => {
+  const API_KEY='epir-lightning-alert-api-v1';
+  const $=id=>document.getElementById(id);
+  const normalizeApi=(value)=>{try{const u=new URL(String(value||'').trim());return u.protocol==='https:'?u.origin:''}catch{return''}};
+  const qApi=normalizeApi(new URLSearchParams(location.search).get('api'));
+  if(qApi)localStorage.setItem(API_KEY,qApi);
+  $('apiUrl').value=qApi||localStorage.getItem(API_KEY)||'';
+
+  const api=()=>normalizeApi($('apiUrl').value)||normalizeApi(localStorage.getItem(API_KEY));
+  const msg=(text,bad=false)=>{const e=$('message');e.textContent=text;e.className='msg '+(bad?'bad':'')};
+  const base64ToBytes=(base64)=>{const pad='='.repeat((4-base64.length%4)%4),raw=atob((base64+pad).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from([...raw],c=>c.charCodeAt(0))};
+  async function reg(){return navigator.serviceWorker.register('lightning-alert-sw.js',{scope:'./'}).then(()=>navigator.serviceWorker.ready)}
+  async function config(){const root=api();if(!root)throw new Error('Najpierw wpisz adres Cloudflare Workera.');const r=await fetch(root+'/config',{cache:'no-store'});if(!r.ok)throw new Error('Backend /config: HTTP '+r.status);return r.json()}
+  async function subscription(){if(!('serviceWorker'in navigator))return null;const r=await navigator.serviceWorker.getRegistration('./')||await navigator.serviceWorker.getRegistration();return r?.pushManager?.getSubscription()||null}
+  async function render(){
+    const supported='serviceWorker'in navigator&&'PushManager'in window&&'Notification'in window;
+    if(!supported){$('pushState').textContent='NIEOBSŁUGIWANE';$('pushState').className='bad';$('pushSub').textContent='ta przeglądarka nie obsługuje Web Push';$('enable').disabled=true;return}
+    const sub=await subscription();const perm=Notification.permission;
+    $('pushState').textContent=sub&&perm==='granted'?'WŁĄCZONE':perm==='denied'?'ZABLOKOWANE':'WYŁĄCZONE';$('pushState').className=sub&&perm==='granted'?'ok':perm==='denied'?'bad':'';$('pushSub').textContent=sub?'subskrypcja aktywna':'brak aktywnej subskrypcji';
+  }
+  async function enable(){
+    try{
+      msg('Konfigurowanie powiadomień…');const cfg=await config();const permission=await Notification.requestPermission();if(permission!=='granted')throw new Error('Brak zgody systemu na powiadomienia.');const r=await reg();let sub=await r.pushManager.getSubscription();if(!sub)sub=await r.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:base64ToBytes(cfg.vapidPublicKey)});const root=api();const res=await fetch(root+'/subscribe',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(sub)});if(!res.ok)throw new Error('Zapis subskrypcji: HTTP '+res.status);msg('Alarm 50 km od EPIR jest aktywny. GPS telefonu nie jest używany.');await render();await refreshStatus();
+    }catch(e){msg(e?.message||String(e),true);await render()}
+  }
+  async function disable(){
+    try{const sub=await subscription();if(sub){const root=api();if(root)await fetch(root+'/unsubscribe',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({endpoint:sub.endpoint})}).catch(()=>{});await sub.unsubscribe()}msg('Powiadomienia wyłączone.');await render();await refreshStatus()}catch(e){msg(e?.message||String(e),true)}
+  }
+  async function testLocal(){
+    try{if(Notification.permission!=='granted')throw new Error('Najpierw zezwól na powiadomienia.');const r=await reg();await r.showNotification('⚡ PrognozaEPIR · test',{body:'Kanał powiadomień działa. Alarm właściwy będzie dotyczył wyładowań do 50 km od EPIR.',icon:'epir-icon-192.png',tag:'epir-lightning-test',data:{url:'radar.html'}});msg('Wysłano lokalne powiadomienie testowe.')}catch(e){msg(e?.message||String(e),true)}
+  }
+  async function refreshStatus(){
+    const root=api();if(!root){$('serverStatus').textContent='Backend Cloudflare nie został jeszcze wskazany.';return}
+    try{const [h,s]=await Promise.all([fetch(root+'/health',{cache:'no-store'}),fetch(root+'/status',{cache:'no-store'})]);if(!h.ok||!s.ok)throw new Error('HTTP '+(!h.ok?h.status:s.status));const status=await s.json();const last=status.lastResult;const parts=[`Cloudflare: OK · subskrypcje: ${status.subscriptions??0}`,`promień: ${status.radiusKm||50} km`];if(last?.at)parts.push(`ostatnie sprawdzenie: ${new Date(last.at).toISOString().slice(11,16)} UTC`);if(Number.isFinite(last?.nearestNewKm))parts.push(`najbliższe nowe: ${last.nearestNewKm} km`);$('serverStatus').textContent=parts.join(' · ')}catch(e){$('serverStatus').textContent='Backend niedostępny: '+(e?.message||e)}
+  }
+  $('saveApi').addEventListener('click',()=>{const root=normalizeApi($('apiUrl').value);if(!root){msg('Nieprawidłowy adres HTTPS Workera.',true);return}localStorage.setItem(API_KEY,root);$('apiUrl').value=root;msg('Adres Workera zapisany.');refreshStatus()});
+  $('enable').addEventListener('click',enable);$('disable').addEventListener('click',disable);$('testLocal').addEventListener('click',testLocal);$('refresh').addEventListener('click',refreshStatus);
+  render();refreshStatus();
+})();
+</script>
+</body>
+</html>
