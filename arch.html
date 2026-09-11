@@ -63,6 +63,7 @@ tr.synop-row:hover td,tr.synop-row:focus td{background:var(--hover)}
 'use strict';
 (() => {
   const LIVE_ROOT=String(window.PROGNOZAEPIR_ARCHIVE_ROOT||'https://central-ingestor-production.up.railway.app/data/messages').replace(/\/+$/,'');
+  const GITHUB_ROOT='https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/messages';
   const STATIC_ROOT='data/messages';
   const VALID_TYPES=new Set(['METAR','SPECI','SYNOP','TAF']);
   const $=id=>document.getElementById(id);
@@ -253,7 +254,7 @@ tr.synop-row:hover td,tr.synop-row:focus td{background:var(--hover)}
   function hideSynopTooltip(){activeSynopRow=null;const tip=$('synopTooltip');tip.hidden=true;tip.innerHTML=''}
   function setBusy(busy){document.querySelectorAll('[data-type]').forEach(b=>b.disabled=busy);$('dateFrom').disabled=busy;$('dateTo').disabled=busy;$('copyRaw').disabled=busy||!visibleRows.length;$('copyTable').disabled=busy||!visibleRows.length}
   async function fetchText(url){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),8000);try{const r=await fetch(url,{cache:'no-store',signal:controller.signal,headers:{Accept:'application/x-ndjson,text/plain,*/*'}});if(!r.ok){const e=new Error(`HTTP ${r.status}`);e.status=r.status;throw e}return await r.text()}finally{clearTimeout(timer)}}
-  async function fetchArchiveFile(path){const stamp=Date.now();let liveError=null;try{return await fetchText(`${LIVE_ROOT}/${path}?v=${stamp}`)}catch(e){liveError=e}try{return await fetchText(`${STATIC_ROOT}/${path}?v=${stamp}`)}catch(e){if(liveError?.status===404&&e?.status===404)return '';throw new Error(`Nie udało się odczytać ${path} z archiwum live ani kopii statycznej.`)}}
+  async function fetchArchiveFile(path){const stamp=Date.now();let liveError=null,githubError=null;try{return await fetchText(`${LIVE_ROOT}/${path}?v=${stamp}`)}catch(e){liveError=e}try{return await fetchText(`${GITHUB_ROOT}/${path}?v=${stamp}`)}catch(e){githubError=e}try{return await fetchText(`${STATIC_ROOT}/${path}?v=${stamp}`)}catch(e){if(liveError?.status===404&&githubError?.status===404&&e?.status===404)return '';throw new Error(`Nie udało się odczytać ${path} z archiwum live, GitHub ani kopii statycznej.`)}}
   function parseJsonl(text,type){const rows=[];for(const line of String(text||'').split(/\r?\n/)){if(!line.trim())continue;try{const row=JSON.parse(line),rowType=String(row?.type||row?.report_type||'').toUpperCase();if(rowType&&rowType!==type)continue;const raw=cleanTelegram(row,type);if(!raw){rejectedRows++;continue}rows.push({...row,_raw:raw,_time:messageTime(row)})}catch(e){rejectedRows++;console.warn('ARCH: pominięto uszkodzony wiersz JSONL',e)}}return rows}
   async function loadDay(type,day){const y=String(day.getUTCFullYear()).padStart(4,'0'),m=String(day.getUTCMonth()+1).padStart(2,'0'),d=String(day.getUTCDate()).padStart(2,'0');return parseJsonl(await fetchArchiveFile(`${type.toLowerCase()}/${y}/${m}/${d}.jsonl`),type)}
   function dedupeAndSort(rows){const seen=new Set(),out=[];for(const row of rows){const key=`${Number.isFinite(row._time)?row._time:''}|${row._raw}`;if(seen.has(key))continue;seen.add(key);out.push(row)}out.sort((a,b)=>(Number.isFinite(b._time)?b._time:-Infinity)-(Number.isFinite(a._time)?a._time:-Infinity)||a._raw.localeCompare(b._raw));return out}
