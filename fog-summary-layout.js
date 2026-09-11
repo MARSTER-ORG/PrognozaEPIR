@@ -1,7 +1,7 @@
 'use strict';
 (() => {
   const HOUR = 3600e3;
-  const THRESHOLD = 40;
+  const THRESHOLD = 50;
   const finite = Number.isFinite;
   const clip = (v,a,b) => Math.max(a,Math.min(b,v));
   const fmt0 = v => finite(Number(v)) ? String(Math.round(Number(v))) : '—';
@@ -17,11 +17,11 @@
   }
 
   function esc(v) {
-    return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]));
   }
 
   function riskCss(score) {
-    if (!finite(score) || score < 40) return '';
+    if (!finite(score) || score < 50) return '';
     if (score >= 80) return 'fog-risk-vhigh';
     if (score >= 60) return 'fog-risk-high';
     return 'fog-risk-mid';
@@ -29,7 +29,7 @@
 
   function classText(score, kind) {
     if (!finite(score)) return 'BRAK DANYCH';
-    if (score < 40) return 'NIE';
+    if (score < 50) return 'NIE';
     if (kind === 'FG') {
       if (score < 60) return 'MOŻLIWA';
       if (score < 80) return 'PRAWDOPODOBNA';
@@ -74,11 +74,11 @@
   }
 
   function currentDetail(score) {
-    return score >= THRESHOLD ? fmt0(score) + '/100' : 'wynik <40/100 pominięty';
+    return score >= THRESHOLD ? fmt0(score) + '/100' : 'wynik <50/100 pominięty';
   }
 
   function peakDetail(ev) {
-    if (!ev || ev.peak.score < THRESHOLD) return 'brak sygnału ≥40/100 w 48 h';
+    if (!ev || ev.peak.score < THRESHOLD) return 'brak sygnału ≥50/100 w 48 h';
     const range = ev.peakFrom === null
       ? localHour(ev.peak.t)
       : localHour(ev.peakFrom) + '–' + localHour(ev.peakTo);
@@ -86,7 +86,7 @@
   }
 
   function whenDetail(ev) {
-    if (!ev || ev.peak.score < THRESHOLD || ev.onset === null) return 'brak sygnału ≥40 w 48 h';
+    if (!ev || ev.peak.score < THRESHOLD || ev.onset === null) return 'brak sygnału ≥50 w 48 h';
     return localHour(ev.onset) + ' → ' + (ev.end === null ? 'dalej' : localHour(ev.end)) + ' UTC';
   }
 
@@ -225,7 +225,7 @@
     return '<section class="fog-phen-row"><div class="fog-phen-title">'+esc(title)+'</div><div class="fog-phen-grid">'+
       card((kind==='FG'?'MGŁA':kind)+' W CIĄGU NAJBLIŻSZEJ GODZINY',classText(ev.current.score,kind),currentDetail(ev.current.score),ev.current.score)+
       card('MAKSIMUM W 48 H',classText(ev.peak.score,kind),peakDetail(ev),ev.peak.score)+
-      card('KIEDY '+kind+'?',whenDetail(ev),'próg operacyjny 40/100',ev.peak.score)+
+      card('KIEDY '+kind+'?',whenDetail(ev),'próg operacyjny 50/100',ev.peak.score)+
       card(diag.label,diag.value,diag.detail,diag.score ?? null)+
     '</div></section>';
   }
@@ -272,7 +272,7 @@
     }
 
     const thresholds = document.querySelector('#fogEngine .fog-thresholds');
-    if (thresholds) thresholds.innerHTML = '<b>Interpretacja operacyjna FG / BR / MIFG:</b> &lt;40 = NIE (wynik pomijany) · 40–59 = MOŻLIWE · 60–79 = PRAWDOPODOBNE · 80–100 = BARDZO PRAWDOPODOBNE. <b>Wynik /100 jest score ryzyka, nie skalibrowanym procentem prawdopodobieństwa.</b>';
+    if (thresholds) thresholds.innerHTML = '<b>Interpretacja operacyjna FG / BR / MIFG:</b> &lt;50 = NIE (wynik pomijany) · 50–59 = MOŻLIWE · 60–79 = PRAWDOPODOBNE · 80–100 = BARDZO PRAWDOPODOBNE. <b>Wynik /100 jest score ryzyka, nie skalibrowanym procentem prawdopodobieństwa.</b>';
   }
 
   function scheduleRender() {
