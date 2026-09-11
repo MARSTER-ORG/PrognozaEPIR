@@ -8,10 +8,11 @@
   const sleep = ms => new Promise(r=>setTimeout(r,ms));
 
   const version=document.querySelector('.brand small');
-  if(version) version.textContent='RADAR / SAT / AI v0.11.7';
+  if(version) version.textContent='RADAR / SAT / AI v0.12.4';
 
   const PROFILE={
     cmax:{unit:'dBZ',name:'odbiciowość',def:40,min:5,max:55,step:1,note:'POLRAD CMAX'},
+    cappi:{unit:'dBZ',name:'odbiciowość CAPPI 1 km',def:40,min:5,max:55,step:1,note:'POLRAD CAPPI 1 km'},
     sri:{unit:'mm/h',name:'natężenie opadu',def:1,min:.1,max:30,step:.1,note:'POLRAD SRI'},
     pac:{unit:'mm',name:'suma opadu 1 h',def:1,min:.1,max:30,step:.1,note:'POLRAD PAC 1 h'}
   };
@@ -20,13 +21,13 @@
   let fixedLine=null,fixedMarker=null;
   let press=null,suppressClickUntil=0;
 
-  function activeProduct(){for(const p of ['cmax','sri','pac']) if($('polrad_'+p)?.classList.contains('active')) return p;return null;}
-  function fmt(v,p){if(!Number.isFinite(Number(v)))return'—';const n=Number(v);if(p==='cmax')return Math.round(n)+' dBZ';return (n<1?n.toFixed(1):Math.abs(n-Math.round(n))<.05?Math.round(n):n.toFixed(1)).toString().replace('.',',')+' '+PROFILE[p].unit;}
+  const isDbzProduct=p=>p==='cmax'||p==='cappi';
+  function activeProduct(){for(const p of ['cmax','cappi','sri','pac']) if($('polrad_'+p)?.classList.contains('active')) return p;return null;}
+  function fmt(v,p){if(!Number.isFinite(Number(v)))return'—';const n=Number(v);if(isDbzProduct(p))return Math.round(n)+' dBZ';return (n<1?n.toFixed(1):Math.abs(n-Math.round(n))<.05?Math.round(n):n.toFixed(1)).toString().replace('.',',')+' '+PROFILE[p].unit;}
   function hsv(r,g,b){r/=255;g/=255;b/=255;const mx=Math.max(r,g,b),mn=Math.min(r,g,b),d=mx-mn;let h=0;if(d){if(mx===r)h=60*(((g-b)/d)%6);else if(mx===g)h=60*((b-r)/d+2);else h=60*((r-g)/d+4);}if(h<0)h+=360;return{h,s:mx?d/mx:0,v:mx};}
 
-  // CMAX: 16 stopni stosowanych w legendzie POLRAD/Rainbow: 5,8,...47, >50 dBZ.
-  // Dekoder wykorzystuje barwę i jasność piksela, a wynik oznaczamy jako orientacyjny (~),
-  // ponieważ analizujemy render PNG, a nie surową siatkę HDF5.
+  // CMAX i CAPPI używają tej samej palety odbiciowości POLRAD.
+  // Wynik jest orientacyjny (~), bo odczytujemy render PNG, a nie surową siatkę HDF5.
   function cmaxValue(r,g,b,a){
     if(a<80)return null;
     const {h,s,v}=hsv(r,g,b);
@@ -60,15 +61,15 @@
     if(h>=285&&h<350)return 30;
     return null;
   }
-  function pixelValue(p,r,g,b,a){return p==='cmax'?cmaxValue(r,g,b,a):hydroValue(r,g,b,a);}
+  function pixelValue(p,r,g,b,a){return isDbzProduct(p)?cmaxValue(r,g,b,a):hydroValue(r,g,b,a);}
 
   function visibleImage(p){
     const imgs=[...map.getContainer().querySelectorAll('.leaflet-overlay-pane img.leaflet-image-layer')];
-    return imgs.find(img=>{if(!img.complete||img.naturalWidth<2||getComputedStyle(img).display==='none')return false;const src=(img.currentSrc||img.src||'').toLowerCase();return src.includes('/'+p+'/')||src.includes('_'+p+'.')||src.includes('/'+p+'.');})||null;
+    return imgs.find(img=>{if(!img.complete||img.naturalWidth<2||getComputedStyle(img).display==='none')return false;const src=(img.currentSrc||img.src||'').toLowerCase();return src.includes('/'+p+'/')||src.includes('_'+p+'.')||src.includes('/'+p+'.')||src.includes(p);})||null;
   }
   function geometry(img){const ir=img.getBoundingClientRect(),mr=map.getContainer().getBoundingClientRect();if(ir.width<2||ir.height<2)throw new Error('brak geometrii aktywnej warstwy');return{ir,mr};}
   async function getRaster(){
-    const p=activeProduct();if(!p)throw new Error('Włącz CMAX, SRI albo PAC 1 h.');
+    const p=activeProduct();if(!p)throw new Error('Włącz CMAX, CAPPI 1 km, SRI albo PAC 1 h.');
     let img=null;for(let i=0;i<20;i++){img=visibleImage(p);if(img)break;await sleep(80);}if(!img)throw new Error('Nie znaleziono obrazu '+p.toUpperCase()+'.');
     const key=p+'|'+(img.currentSrc||img.src)+'|'+img.naturalWidth+'x'+img.naturalHeight;
     if(rasterCache?.key===key){rasterCache.geo=geometry(img);return rasterCache;}
@@ -93,12 +94,12 @@
 
   async function updatePoint(){
     const p=activeProduct();if(!p||typeof point==='undefined')return;
-    try{const r=await getRaster(),v=localValue(r,{lat:Number(point.lat),lon:Number(point.lon)});const el=$('dbz'),note=$('dbzNote');if(el)el.textContent=v==null?'brak sygnału':(p==='cmax'?'~'+fmt(v,p):fmt(v,p));if(note)note.textContent=PROFILE[p].note+' · '+r.label;}catch(_){ }
+    try{const r=await getRaster(),v=localValue(r,{lat:Number(point.lat),lon:Number(point.lon)});const el=$('dbz'),note=$('dbzNote');if(el)el.textContent=v==null?'brak sygnału':(isDbzProduct(p)?'~'+fmt(v,p):fmt(v,p));if(note)note.textContent=PROFILE[p].note+' · '+r.label;}catch(_){ }
   }
 
   async function showValue(ll){
-    const p=activeProduct();if(!p){L.popup().setLatLng(ll).setContent('Włącz CMAX, SRI albo PAC 1 h.').openOn(map);return;}
-    try{const r=await getRaster(),v=localValue(r,{lat:ll.lat,lon:ll.lng});const text=v==null?'brak sygnału':(p==='cmax'?'~'+fmt(v,p):fmt(v,p));L.popup({closeButton:true,autoPan:true}).setLatLng(ll).setContent('<div class="radar-click-popup"><b>'+text+'</b><br>'+PROFILE[p].note+' · '+r.label+'<br><small>'+ll.lat.toFixed(4)+', '+ll.lng.toFixed(4)+'</small></div>').openOn(map);}catch(e){L.popup().setLatLng(ll).setContent('Nie udało się odczytać warstwy.<br><small>'+(e?.message||e)+'</small>').openOn(map);}
+    const p=activeProduct();if(!p){L.popup().setLatLng(ll).setContent('Włącz CMAX, CAPPI 1 km, SRI albo PAC 1 h.').openOn(map);return;}
+    try{const r=await getRaster(),v=localValue(r,{lat:ll.lat,lon:ll.lng});const text=v==null?'brak sygnału':(isDbzProduct(p)?'~'+fmt(v,p):fmt(v,p));L.popup({closeButton:true,autoPan:true}).setLatLng(ll).setContent('<div class="radar-click-popup"><b>'+text+'</b><br>'+PROFILE[p].note+' · '+r.label+'<br><small>'+ll.lat.toFixed(4)+', '+ll.lng.toFixed(4)+'</small></div>').openOn(map);}catch(e){L.popup().setLatLng(ll).setContent('Nie udało się odczytać warstwy.<br><small>'+(e?.message||e)+'</small>').openOn(map);}
   }
 
   async function analyzeFixed(){
@@ -120,11 +121,11 @@
       for(let y=y0;y<=y1;y+=stride){const ny=(y-pc.y)/ry;for(let x=x0;x<=x1;x+=stride){const nx=(x-pc.x)/rx;if(nx*nx+ny*ny>1)continue;const v=atPixel(r,x,y);if(!Number.isFinite(v))continue;const ll=llFor(r,x,y),dist=hav(center,ll);if(dist>radius*1.02)continue;const item={x,y,gx:Math.round((x-x0)/stride),gy:Math.round((y-y0)/stride),v,ll,dist};if(!maximum||v>maximum.v)maximum=item;if(v>=threshold){qualified.push(item);qset.add(item.gx+','+item.gy);}}if((++row%16)===0)await sleep(0);}
       let nearest=null;for(const it of qualified){let n=0;for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){if(!dx&&!dy)continue;if(qset.has((it.gx+dx)+','+(it.gy+dy)))n++;}if(n<2)continue;if(!nearest||it.dist<nearest.dist)nearest=it;}
       if($('echoFrameTime'))$('echoFrameTime').textContent=r.label;
-      if(maximum){if($('echoMaxValue'))$('echoMaxValue').textContent=(p==='cmax'?'~':'')+fmt(maximum.v,p);if($('echoMaxCoords'))$('echoMaxCoords').textContent=maximum.ll.lat.toFixed(4)+', '+maximum.ll.lon.toFixed(4);}
+      if(maximum){if($('echoMaxValue'))$('echoMaxValue').textContent=(isDbzProduct(p)?'~':'')+fmt(maximum.v,p);if($('echoMaxCoords'))$('echoMaxCoords').textContent=maximum.ll.lat.toFixed(4)+', '+maximum.ll.lon.toFixed(4);}
       clearFixed();
       if(!nearest){if($('echoDistance'))$('echoDistance').textContent='brak';if(info)info.textContent='Brak spójnego obszaru ≥ '+fmt(threshold,p)+' w promieniu '+radius+' km.';return;}
-      const b=bearing(center,nearest.ll);if($('echoDistance'))$('echoDistance').textContent=(nearest.dist<10?nearest.dist.toFixed(1):nearest.dist.toFixed(0))+' km';if($('echoBearing'))$('echoBearing').textContent=Math.round(b)+'°';if($('echoCompass'))$('echoCompass').textContent=compass(b)+' · azymut od punktu';if($('echoFoundValue'))$('echoFoundValue').textContent=(p==='cmax'?'~':'')+fmt(nearest.v,p);if($('echoCoords'))$('echoCoords').textContent=nearest.ll.lat.toFixed(4)+', '+nearest.ll.lon.toFixed(4);
-      fixedLine=L.polyline([[center.lat,center.lon],[nearest.ll.lat,nearest.ll.lon]],{pane:'analysisResultPane',color:'#ff5b52',weight:2,dashArray:'7 5',interactive:false}).addTo(map);fixedMarker=L.circleMarker([nearest.ll.lat,nearest.ll.lon],{pane:'analysisResultPane',radius:6,color:'#ff5b52',weight:2,fillColor:'#fff',fillOpacity:1,interactive:false}).addTo(map);if(info)info.textContent='Najbliższy spójny obszar ≥ '+fmt(threshold,p)+'. CMAX jest odczytem orientacyjnym z palety obrazu.';
+      const b=bearing(center,nearest.ll);if($('echoDistance'))$('echoDistance').textContent=(nearest.dist<10?nearest.dist.toFixed(1):nearest.dist.toFixed(0))+' km';if($('echoBearing'))$('echoBearing').textContent=Math.round(b)+'°';if($('echoCompass'))$('echoCompass').textContent=compass(b)+' · azymut od punktu';if($('echoFoundValue'))$('echoFoundValue').textContent=(isDbzProduct(p)?'~':'')+fmt(nearest.v,p);if($('echoCoords'))$('echoCoords').textContent=nearest.ll.lat.toFixed(4)+', '+nearest.ll.lon.toFixed(4);
+      fixedLine=L.polyline([[center.lat,center.lon],[nearest.ll.lat,nearest.ll.lon]],{pane:'analysisResultPane',color:'#ff5b52',weight:2,dashArray:'7 5',interactive:false}).addTo(map);fixedMarker=L.circleMarker([nearest.ll.lat,nearest.ll.lon],{pane:'analysisResultPane',radius:6,color:'#ff5b52',weight:2,fillColor:'#fff',fillOpacity:1,interactive:false}).addTo(map);if(info)info.textContent='Najbliższy spójny obszar ≥ '+fmt(threshold,p)+'. '+(isDbzProduct(p)?'Odbiciowość jest odczytem orientacyjnym z palety obrazu.':'');
     }catch(e){info?.classList.add('error');if(info)info.textContent='Analiza nie powiodła się: '+(e?.message||e);}
   }
 
@@ -143,7 +144,18 @@
   }
 
   const contextChanged=()=>{rasterCache=null;clearFixed();setTimeout(()=>{takeoverControls();updatePoint();},500);};
-  for(const p of['cmax','sri','pac'])$('polrad_'+p)?.addEventListener('click',contextChanged);
+  function bindProductButtons(){
+    for(const p of['cmax','cappi','sri','pac']){
+      const b=$('polrad_'+p);
+      if(!b||b.dataset.echoFix117==='1')continue;
+      b.dataset.echoFix117='1';
+      b.addEventListener('click',contextChanged);
+    }
+  }
+  bindProductButtons();
+  setTimeout(bindProductButtons,500);
+  setTimeout(bindProductButtons,1400);
+  setInterval(bindProductButtons,2500);
   $('radarFrame')?.addEventListener('input',contextChanged);
   $('apply')?.addEventListener('click',contextChanged);
   $('resetPoint')?.addEventListener('click',contextChanged);
