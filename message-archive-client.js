@@ -7,13 +7,14 @@
   const PRIMARY_ROOT = GITHUB_ROOT;
   const TTL_MS = 30_000;
   const cache = new Map();
+  const nativeFetch = window.fetch.bind(window);
   const norm = value => String(value || '').toUpperCase();
 
   async function fetchFrom(root, name, now){
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5_000);
     try {
-      const response = await fetch(`${root}/${name}?v=${now}`, {
+      const response = await nativeFetch(`${root}/${name}?v=${now}`, {
         cache: 'no-store',
         signal: controller.signal,
         headers: {'Accept':'application/json'}
@@ -109,6 +110,41 @@
   });
 
   window.PrognozaEPIRMessageArchive = api;
+
+  // Compatibility bridge for older modules that still fetch the deployed
+  // Pages snapshot directly. Keep these callers on the same GitHub-first
+  // archive without coupling bulletin freshness to a Pages redeployment.
+  const legacyArchiveName = input => {
+    try {
+      const raw = typeof input === 'string' ? input : input?.url;
+      const u = new URL(raw, location.href);
+      if(u.origin !== location.origin) return null;
+      const m = u.pathname.match(/\/data\/messages\/(latest|recent|status)\.json$/i);
+      return m ? `${m[1].toLowerCase()}.json` : null;
+    } catch(_){
+      return null;
+    }
+  };
+
+  window.fetch = async function(input, init){
+    const name = legacyArchiveName(input);
+    if(!name) return nativeFetch(input, init);
+    try {
+      const body = await fetchJson(name, true);
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Cache-Control': 'no-store, max-age=0',
+          'X-PrognozaEPIR-Source': cache.get(name)?.source || GITHUB_ROOT
+        }
+      });
+    } catch(error){
+      console.warn(`MessageArchive legacy bridge ${name}:`, error);
+      return nativeFetch(input, init);
+    }
+  };
+
   window.dispatchEvent(new CustomEvent('prognozaepir:message-archive-ready'));
 
   // Generator TAF ma jednego właściciela końcowego tekstu depeszy.
