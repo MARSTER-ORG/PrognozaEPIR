@@ -32,21 +32,25 @@ jobs:
         run: |
           python3 scripts/apply_taf_live_archive.py taf.html
           python3 scripts/check_archive_boundaries.py
-          grep -F 'message-archive-client.js?v=railway-live-archive-v2' taf.html
+          grep -F 'message-archive-client.js?v=live-first-v4' taf.html
           grep -F 'Pages compatibility assertion: src="message-archive-client.js"' taf.html
           grep -F "A.getLatest('AVIATION','EPIR',true)" taf.html
           grep -F "A.getLatest('TAF','EPIR',true)" taf.html
+          if grep -F "A.getLatest('SYNOP','12342',true)" taf.html; then
+            echo 'SYNOP unexpectedly enabled in TAF analysis' >&2
+            exit 1
+          fi
           grep -F 'central-ingestor-production.up.railway.app/data/messages/' taf.html
 
       - name: Commit enforced TAF consumer
         run: |
           if git diff --quiet -- taf.html; then
-            echo 'taf.html already uses the live central archive'
+            echo 'taf.html already uses the current live central archive policy'
           else
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             git add taf.html
-            git commit -m 'taf: enforce live central archive reads'
+            git commit -m 'taf: enforce current live central archive reads'
             git pull --rebase origin main
             git push origin HEAD:main
           fi
