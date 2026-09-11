@@ -2,7 +2,7 @@
 # a validated completed snapshot into the GitHub archive.
 #
 # Normal path: Railway emits repository_dispatch only after the archive changes.
-# Safety path: one lightweight hourly reconciliation catches missed events.
+# Safety path: one lightweight reconciliation every 6 hours catches missed events.
 # Historical JSONL files are append-only: a Railway snapshot is never allowed
 # to remove records that are already durable in GitHub.
 name: Mirror central archive from Railway
@@ -11,7 +11,7 @@ on:
   repository_dispatch:
     types: [archive-updated]
   schedule:
-    - cron: '7 * * * *'
+    - cron: '7 */6 * * *'
   workflow_dispatch:
   push:
     branches: [main]
