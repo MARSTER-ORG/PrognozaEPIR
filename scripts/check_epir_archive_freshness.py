@@ -3,7 +3,9 @@
 
 Rules:
 - routine EPIR METAR is expected every :00/:30;
-- a fresh newest METAR is not sufficient: the recent routine sequence must be continuous;
+- the default full gate also verifies recent routine continuity;
+- operational heartbeat checks may explicitly skip historical continuity and
+  judge only whether the newest METAR reached the currently expected slot;
 - TAF stations are checked against their own issue schedules;
 - SPECI is event-driven and is never treated as a scheduled bulletin.
 """
@@ -137,11 +139,18 @@ def main() -> int:
     ap.add_argument("--all-tafs", action="store_true", help="with TAF check, require EPIR+EPBY+EPPW+EPKS")
     ap.add_argument("--metar-grace-min", type=int, default=METAR_GRACE_MIN)
     ap.add_argument("--metar-continuity-hours", type=int, default=METAR_CONTINUITY_HOURS)
+    ap.add_argument(
+        "--skip-metar-continuity",
+        action="store_true",
+        help="check current METAR freshness only; report continuity separately elsewhere",
+    )
     ap.add_argument("--taf-grace-min", type=int, default=TAF_GRACE_MIN)
     args = ap.parse_args()
 
     if args.metar_only and args.all_tafs:
         ap.error("--all-tafs cannot be used with --metar-only")
+    if args.taf_only and args.skip_metar_continuity:
+        ap.error("--skip-metar-continuity cannot be used with --taf-only")
     if not LATEST.exists():
         raise SystemExit(f"missing {LATEST}")
 
@@ -155,16 +164,19 @@ def main() -> int:
         latest = record_time(metar, "obs_time", "message_time")
         grace = max(0, args.metar_grace_min)
         expected = expected_metar_slot(now, grace)
-        missing = missing_metar_slots(now, grace, max(1, args.metar_continuity_hours))
+        continuity_hours = max(1, args.metar_continuity_hours)
+        missing = [] if args.skip_metar_continuity else missing_metar_slots(now, grace, continuity_hours)
         fresh = bool(latest and latest >= expected)
         continuous = not missing
-        ok = fresh and continuous
+        ok = fresh if args.skip_metar_continuity else fresh and continuous
         result["metar"] = {
             "latest": iso(latest),
             "expected_at_least": iso(expected),
             "grace_min": args.metar_grace_min,
-            "continuity_hours": max(1, args.metar_continuity_hours),
-            "continuous": continuous,
+            "fresh": fresh,
+            "continuity_checked": not args.skip_metar_continuity,
+            "continuity_hours": continuity_hours,
+            "continuous": continuous if not args.skip_metar_continuity else None,
             "missing_routine_slots": [iso(slot) for slot in missing],
             "ok": ok,
             "raw": (metar or {}).get("raw"),
