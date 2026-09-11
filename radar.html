@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <title>PrognozaEPIR — RADAR / SAT / AI</title>
-<script src="utc-ui-guard.js"></script>
+<script src="utc-ui-guard.js?v=20260911-radar-inline-v3"></script>
 <link rel="preconnect" href="https://unpkg.com">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
@@ -21,7 +21,7 @@
 <div class="app">
   <div class="top">
     <div>
-      <div class="brand">PrognozaEPIR <small>RADAR / SAT / AI v0.10.0</small></div>
+      <div class="brand">PrognozaEPIR <small>RADAR / SAT / AI v0.10.1</small></div>
       <div id="placeLabel" class="place">EPIR · 52.8275, 18.3175</div>
     </div>
     <div class="status"><span id="liveBadge" class="badge">ŁADOWANIE</span><div id="updated">—</div></div>
@@ -166,7 +166,7 @@ function satelliteDate(){const d=new Date(Date.now()-24*3600e3);return d.toISOSt
 function buildSat(){if(satLayer)map.removeLayer(satLayer);const date=satelliteDate(),u='https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/'+date+'/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg';satLayer=L.tileLayer(u,{maxNativeZoom:9,maxZoom:12,opacity:.78,attribution:'NASA GIBS / MODIS Terra'});setDot('srcSat',true)}
 function toggleSat(){const b=$('satToggle');b.classList.toggle('active');if(b.classList.contains('active')){if(!satLayer)buildSat();satLayer.addTo(map)}else if(satLayer)map.removeLayer(satLayer)}
 function toggleRadar(){const b=$('radarToggle');b.classList.toggle('active');if(!radarLayer)return;if(b.classList.contains('active'))radarLayer.addTo(map);else map.removeLayer(radarLayer)}
-function riskSet(id,v){v=clamp(Math.round(v||0),0,99);$(id+'Risk').textContent=v+'%';$(id+'Bar').style.width=v+'%'}
+function riskSet(id,v){v=clamp(Math.round(v||0),0,99);$(id+'Risk').textContent=v+'%';$(id+'Bar').style.width=(v>=40?v:0)+'%';$(id+'Bar').dataset.drawn=v>=40?'1':'0';$(id+'Bar').dataset.minScore='40'}
 function nearestHourly(j){if(!j?.hourly?.time?.length)return null;const now=Date.now();let bi=0,bd=1e30;j.hourly.time.forEach((s,i)=>{const d=Math.abs(Date.parse(s+(s.endsWith('Z')?'':'Z'))-now);if(d<bd){bd=d;bi=i}});const o={time:j.hourly.time[bi]};for(const [k,a] of Object.entries(j.hourly))if(k!=='time'&&Array.isArray(a))o[k]=a[bi];return o}
 async function loadModels(){
   const gvars=['temperature_2m','precipitation','weather_code','wind_gusts_10m','cape','lifted_index','convective_inhibition','freezing_level_height','thunderstorm_probability'];
@@ -179,7 +179,15 @@ async function loadModels(){
   const radarStorm=latestDbz>=50?45:latestDbz>=45?30:latestDbz>=35?14:latestDbz>=27?6:0;
   const capeStorm=clamp(cape/40,0,35),liStorm=li<=-5?18:li<=-3?12:li<=-1?6:0;
   const storm=clamp(tp*.62+radarStorm+capeStorm+liStorm,0,99);
-  const hailRadar=latestDbz>=55?42:latestDbz>=50?30:latestDbz>=45?16:0,hailCape=clamp((cape-600)/45,0,28),hailFz=fz>=1800&&fz<=3600?12:(fz>0?5:0),hail=clamp(storm*.28+hailRadar+hailCape+hailFz,0,95);
+  const hailTrigger=latestDbz>=40||(tp>=15&&cape>=250)||(cape>=700&&li<=-1)||(rr>=0.5&&cape>=400);
+  let hail=0;
+  if(hailTrigger){
+    const hailRadar=latestDbz>=55?45:latestDbz>=50?32:latestDbz>=45?18:latestDbz>=40?7:0;
+    const hailCape=clamp((cape-400)/40,0,25),hailLi=li<=-5?12:li<=-3?8:li<=-1?4:0,hailTp=clamp((tp-15)*.25,0,15),hailRain=rr>=2?8:rr>=.5?4:0;
+    hail=hailRadar+hailCape+hailLi+hailTp+hailRain;
+    if(fz>0){if(fz>=1800&&fz<=3600)hail*=1.15;else if(fz>=1200&&fz<=4500)hail*=1.05;else hail*=.90;}
+    hail=clamp(hail,0,95);
+  }
   const rainRisk=clamp(rr*12+(latestDbz>=50?45:latestDbz>=40?30:latestDbz>=30?15:0)+storm*.18,0,99);
   const windRisk=clamp((gust-10)*5+storm*.22,0,99);riskSet('storm',storm);riskSet('hail',hail);riskSet('rain',rainRisk);riskSet('wind',windRisk);
   renderForecast(g,a);renderAI(n,an,{storm,hail,rain:rainRisk,wind:windRisk,dbz:latestDbz});
