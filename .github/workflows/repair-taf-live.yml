@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   repair:
-    if: github.event.head_commit.message == 'chore: install one-shot TAF live repair'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,20 +27,23 @@ jobs:
           s = p.read_text(encoding='utf-8')
           old = """  const GITHUB_ROOT = 'https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/messages';\n  const STATIC_ROOT = 'data/messages';\n  const PRIMARY_ROOT = GITHUB_ROOT;\n"""
           new = """  const GITHUB_ROOT = 'https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/messages';\n  const STATIC_ROOT = 'data/messages';\n  const RAILWAY_ROOT = 'https://central-ingestor-production.up.railway.app/data/messages';\n  const CUSTOM_ROOT = window.PROGNOZAEPIR_ARCHIVE_ROOT ? String(window.PROGNOZAEPIR_ARCHIVE_ROOT).replace(/\\/+$/,'') : '';\n  const PRIMARY_ROOT = CUSTOM_ROOT || RAILWAY_ROOT;\n"""
-          if old not in s:
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif "const RAILWAY_ROOT = 'https://central-ingestor-production.up.railway.app/data/messages';" not in s:
               raise SystemExit('message-archive-client constants signature not found')
-          s = s.replace(old, new, 1)
+
           old_roots = "  function readRoots(){ return [GITHUB_ROOT, STATIC_ROOT]; }"
           new_roots = "  function readRoots(){ return [...new Set([CUSTOM_ROOT, RAILWAY_ROOT, GITHUB_ROOT, STATIC_ROOT].filter(Boolean))]; }"
-          if old_roots not in s:
+          if old_roots in s:
+              s = s.replace(old_roots, new_roots, 1)
+          elif new_roots not in s:
               raise SystemExit('readRoots signature not found')
-          s = s.replace(old_roots, new_roots, 1)
+
           s = s.replace('root:PRIMARY_ROOT, liveRoot:GITHUB_ROOT, githubRoot:GITHUB_ROOT,', 'root:PRIMARY_ROOT, liveRoot:PRIMARY_ROOT, railwayRoot:RAILWAY_ROOT, githubRoot:GITHUB_ROOT,', 1)
           s = s.replace('MessageArchive ${clean}: GitHub archive unavailable', 'MessageArchive ${clean}: live/GitHub/static archive unavailable')
           s = s.replace('MessageArchive ${name}: GitHub archive unavailable', 'MessageArchive ${name}: live/GitHub/static archive unavailable')
           p.write_text(s, encoding='utf-8')
 
-          # Every main UI consumer gets a new cache key for the shared archive client.
           for fp in list(Path('.').glob('*.html')) + list(Path('.').glob('*.js')):
               text = fp.read_text(encoding='utf-8')
               before = text
@@ -51,13 +53,10 @@ jobs:
               if text != before:
                   fp.write_text(text, encoding='utf-8')
 
-          # TAF needs fresh loader code and the new full-12h FEW/SCT policy, not cached v7.
           p = Path('utc-ui-guard.js')
           s = p.read_text(encoding='utf-8')
-          s2 = s.replace('taf-generator-policy.js?v=20260912-neighbor-night-few4000-v7', 'taf-generator-policy.js?v=20260912-fewsct12h-live-v10')
-          if s2 == s:
-              raise SystemExit('TAF policy loader signature not found')
-          p.write_text(s2, encoding='utf-8')
+          s = s.replace('taf-generator-policy.js?v=20260912-neighbor-night-few4000-v7', 'taf-generator-policy.js?v=20260912-fewsct12h-live-v10')
+          p.write_text(s, encoding='utf-8')
 
           p = Path('taf.html')
           s = p.read_text(encoding='utf-8')
