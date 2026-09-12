@@ -1,0 +1,66 @@
+name: Publish TAF hybrid runtime assets
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/taf-hybrid-pages-fix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Add hybrid runtime files to Pages artifact
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('.github/workflows/pages.yml')
+          s=p.read_text(encoding='utf-8')
+          old="             cloud-learning-client.js message-archive-client.js taf-instruction-guard.js \\\n             radar-enhance.js"
+          new="             cloud-learning-client.js message-archive-client.js taf-instruction-guard.js taf-generator-policy.js taf-hybrid-engine.js taf-hybrid-adapter.js \\\n             radar-enhance.js"
+          if old not in s:
+              if 'taf-hybrid-engine.js' not in s:
+                  raise SystemExit('Pages copy-list marker not found')
+          else:
+              s=s.replace(old,new,1)
+          old="shortcut-mode.js utc-ui-guard.js cloud-learning-client.js message-archive-client.js taf-instruction-guard.js radar-enhance.js"
+          new="shortcut-mode.js utc-ui-guard.js cloud-learning-client.js message-archive-client.js taf-instruction-guard.js taf-generator-policy.js taf-hybrid-engine.js taf-hybrid-adapter.js radar-enhance.js"
+          if old in s:
+              s=s.replace(old,new,1)
+          marker="          node --check _site/taf-instruction-guard.js\n"
+          extra="          node --check _site/taf-generator-policy.js\n          node --check _site/taf-hybrid-engine.js\n          node --check _site/taf-hybrid-adapter.js\n"
+          if extra not in s:
+              if marker not in s: raise SystemExit('Pages syntax marker not found')
+              s=s.replace(marker,marker+extra,1)
+          marker="          test -s _site/taf-instruction-guard.js\n"
+          extra="          test -s _site/taf-generator-policy.js\n          test -s _site/taf-hybrid-engine.js\n          test -s _site/taf-hybrid-adapter.js\n"
+          if extra not in s:
+              if marker not in s: raise SystemExit('Pages feature marker not found')
+              s=s.replace(marker,marker+extra,1)
+          p.write_text(s,encoding='utf-8')
+          PY
+      - name: Verify hybrid runtime before commit
+        run: |
+          node --check taf-hybrid-engine.js
+          node --check taf-hybrid-adapter.js
+          node --check taf-generator-policy.js
+          node tests/taf-hybrid-engine.test.js
+          grep -F 'taf-hybrid-engine.js' .github/workflows/pages.yml
+          grep -F 'taf-hybrid-adapter.js' .github/workflows/pages.yml
+          grep -F 'taf-generator-policy.js' .github/workflows/pages.yml
+      - name: Commit Pages integration and remove one-time workflow
+        run: |
+          git rm .github/workflows/taf-hybrid-pages-fix.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/pages.yml
+          git commit -m 'Pages: publish TAF hybrid engine runtime assets'
+          git push
