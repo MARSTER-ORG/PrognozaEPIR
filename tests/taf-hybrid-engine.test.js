@@ -25,7 +25,7 @@ function gen(rows,opts={}){return engine().generate({station:'EPIR',issue,start,
 function genTuned(rows,opts={}){return P.wrapApi(H).createEngine({storage:{get(){return null},set(){}}}).generate({station:'EPIR',issue,start,end,rows,record:false,...opts});}
 
 assert.equal(H.ENGINE_VERSION,'1.0.0');
-assert.equal(P.VERSION,'3.0.0');
+assert.equal(P.VERSION,'3.1.0');
 
 // Basic syntax/instruction invariants.
 let r=genTuned(Array.from({length:12},(_,i)=>row(i)));
@@ -54,12 +54,28 @@ rows=Array.from({length:12},(_,i)=>row(i,{vis:i<5?12000:4900,RH:70}));
 r=genTuned(rows);
 assert.ok(r.groups.some(g=>(g.fields||[]).includes('visibility')));
 
-// 3.8.10: FEW040 is below 1500 m, therefore cannot be erased by the old 75% clear heuristic.
+// 3.8.10: persistent FEW040 cannot be erased only because a heuristic likes clear weather.
 rows=Array.from({length:12},(_,i)=>row(i,{lowFt:4000,oktaL:2}));
 r=genTuned(rows);
 assert.ok(!r.base.text.includes('CAVOK'));
 assert.match(r.base.text,/FEW040/);
 assert.ok(r.diagnostics.dominantClear==null||r.diagnostics.dominantClear.advisoryOnly===true);
+assert.equal(r.diagnostics.shortHorizonBase.active,false);
+
+// Short-horizon reconciliation: a one-hour/weak 4-5 kft cloud signal must not dominate
+// the base when the first 4 h are otherwise CAVOK-compatible and recent METARs confirm clear conditions.
+rows=Array.from({length:12},(_,i)=>i===0?row(i,{lowFt:4800,oktaL:4}):i===1?row(i,{lowFt:4100,oktaL:2}):i===2?row(i,{lowFt:4600,oktaL:2}):i===3?row(i,{lowFt:4100,oktaL:2}):row(i,{lowFt:5900,oktaL:2}));
+const clearObs=[2,3,4,5].map(h=>({obs_time:new Date(start-(6-h)*HOUR).toISOString(),visibility_m:10000,raw:`METAR EPIR 12${String(h).padStart(2,'0')}00Z 20005KT CAVOK=`}));
+r=genTuned(rows,{observations:clearObs,observation:clearObs[clearObs.length-1]});
+assert.equal(r.diagnostics.shortHorizonBase.active,true);
+assert.match(r.base.text,/\bCAVOK\b/);
+assert.ok(r.base.state.windKt>5&&r.base.state.windKt<7,'base wind is blended over short horizon, not copied from one hour');
+
+// Clear observations may not erase a genuinely significant low BKN layer.
+rows=Array.from({length:12},(_,i)=>i<4?row(i,{lowFt:4500,oktaL:6,ceilFt:4500}):row(i,{lowFt:5900,oktaL:2}));
+r=genTuned(rows,{observations:clearObs,observation:clearObs[clearObs.length-1]});
+assert.equal(r.diagnostics.shortHorizonBase.active,false);
+assert.ok(!r.base.text.includes('CAVOK'));
 
 // Cloud at/above the 1500 m fallback does not block CAVOK when all other criteria are met.
 const cleanHigh={windKt:6,windDir:220,gustKt:6,dirSpreadDeg:10,visM:12000,prob:{},RH:60,RR:0,clouds:[{cover:'FEW',okta:2,ft:5000,type:''}],sourceRow:{}};
