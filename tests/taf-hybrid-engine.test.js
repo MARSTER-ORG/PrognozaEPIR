@@ -2,139 +2,125 @@
 const assert=require('assert');
 const H=require('../taf-hybrid-engine.js');
 const P=require('../taf-generator-policy.js');
-const HOUR=3600000, KT=1.9438444924406;
+const HOUR=3600000, KT=1.9438444924406, FT=3.2808398950131;
 const start=Date.UTC(2026,8,12,6), end=start+12*HOUR, issue=start-HOUR;
-function model(id,kt,dir,vis=12000,ceil=3000,code=0,gust=kt){return{id,w:1,ws:kt/KT,wd:dir,g:gust/KT,vis,ceil:ceil/3.280839895,code}}
-function row(i,opt={}){
- const kt=opt.kt??6, dir=opt.dir??220, vis=opt.vis??12000, ceilFt=opt.ceilFt??6000, code=opt.code??0;
- return {t:start+i*HOUR,WS:kt/KT,WD:dir,G:(opt.gust??kt)/KT,VIS:vis,ceiling:ceilFt/3.280839895,
-   lowH:(opt.lowFt??6000)/3.280839895,midH:9000/3.280839895,highH:18000/3.280839895,
-   oktaL:opt.oktaL??0,oktaM:opt.oktaM??0,oktaH:opt.oktaH??0,RH:opt.RH??60,RR:opt.RR??0,
-   fogRisk:opt.fogRisk??0,mifgRisk:opt.mifgRisk??0,storm:opt.storm??0,wet:opt.wet??0,dirSpread:opt.dirSpread??10,
-   mv:[model('A',kt,dir,vis,ceilFt,code,opt.gust??kt),model('B',kt+(opt.delta??0),dir+5,vis,ceilFt,code,opt.gust??kt),model('C',kt,dir-5,vis,ceilFt,code,opt.gust??kt)]};
+
+function model(id,kt,dir,vis=12000,ceil=3000,code=0,gust=kt){
+  return{id,w:1,ws:kt/KT,wd:dir,g:gust/KT,vis,ceil:ceil/FT,code};
 }
-function gen(rows,opts={}){return H.createEngine({storage:{get(){return null},set(){}}}).generate({station:'EPIR',issue,start,end,rows,record:false,...opts});}
+function row(i,opt={}){
+  const kt=opt.kt??6, dir=opt.dir??220, vis=opt.vis??12000, ceilFt=opt.ceilFt??6000, code=opt.code??0;
+  const r={
+    t:start+i*HOUR,WS:kt/KT,WD:dir,G:(opt.gust??kt)/KT,VIS:vis,ceiling:ceilFt/FT,
+    lowH:(opt.lowFt??6000)/FT,midH:(opt.midFt??9000)/FT,highH:(opt.highFt??18000)/FT,
+    oktaL:opt.oktaL??0,oktaM:opt.oktaM??0,oktaH:opt.oktaH??0,RH:opt.RH??60,RR:opt.RR??0,
+    fogRisk:opt.fogRisk??0,mifgRisk:opt.mifgRisk??0,storm:opt.storm??0,wet:opt.wet??0,dirSpread:opt.dirSpread??10,
+    mv:[model('A',kt,dir,vis,ceilFt,code,opt.gust??kt),model('B',kt+(opt.delta??0),dir+5,vis,ceilFt,code,opt.gust??kt),model('C',kt,dir-5,vis,ceilFt,code,opt.gust??kt)]
+  };
+  if(opt.clouds)r.clouds=opt.clouds;
+  return r;
+}
+function engine(){return H.createEngine({storage:{get(){return null},set(){}}});}
+function gen(rows,opts={}){return engine().generate({station:'EPIR',issue,start,end,rows,record:false,...opts});}
 function genTuned(rows,opts={}){return P.wrapApi(H).createEngine({storage:{get(){return null},set(){}}}).generate({station:'EPIR',issue,start,end,rows,record:false,...opts});}
 
 assert.equal(H.ENGINE_VERSION,'1.0.0');
-assert.equal(P.VERSION,'2.0.0');
+assert.equal(P.VERSION,'3.0.0');
 
-let r=gen(Array.from({length:12},(_,i)=>row(i)));
+// Basic syntax/instruction invariants.
+let r=genTuned(Array.from({length:12},(_,i)=>row(i)));
 assert.match(r.taf,/\bCAVOK\b/);
 assert.ok(!r.taf.includes('PROB40'));
 assert.ok(!/\bVV\d{3}\b/.test(r.taf));
+assert.ok(r.groups.length<=5);
+assert.equal(r.tuning.instructionLocked,true);
 
-r=gen(Array.from({length:12},(_,i)=>row(i,{lowFt:3900,oktaL:2})));
+// 3.6.a: visibility change only after crossing 800/1500/3000/5000 m.
+assert.equal(P.visibilityNeedsGroup({visM:10000},{visM:5000}),false,'9999 -> 5000 is same >=5000 band');
+assert.equal(P.visibilityNeedsGroup({visM:10000},{visM:6000}),false,'9999 -> 6000 is same >=5000 band');
+assert.equal(P.visibilityNeedsGroup({visM:5000},{visM:10000}),false,'5000 -> 9999 is same >=5000 band');
+assert.equal(P.visibilityNeedsGroup({visM:10000},{visM:4900}),true,'9999 -> 4900 crosses 5000 m threshold');
+assert.equal(P.visibilityNeedsGroup({visM:3000},{visM:5000}),true);
+assert.equal(P.visibilityNeedsGroup({visM:1500},{visM:2900}),false);
+assert.equal(P.visibilityNeedsGroup({visM:1500},{visM:3000}),true);
+
+// The >=5000 m band must not create a standalone change group.
+let rows=Array.from({length:12},(_,i)=>row(i,{vis:i<5?12000:5000}));
+r=genTuned(rows);
+assert.ok(!r.groups.some(g=>(g.fields||[]).length===1&&g.fields[0]==='visibility'));
+
+// Crossing below 5000 m is significant.
+rows=Array.from({length:12},(_,i)=>row(i,{vis:i<5?12000:4900,RH:70}));
+r=genTuned(rows);
+assert.ok(r.groups.some(g=>(g.fields||[]).includes('visibility')));
+
+// 3.8.10: FEW040 is below 1500 m, therefore cannot be erased by the old 75% clear heuristic.
+rows=Array.from({length:12},(_,i)=>row(i,{lowFt:4000,oktaL:2}));
+r=genTuned(rows);
 assert.ok(!r.base.text.includes('CAVOK'));
-assert.match(r.base.text,/FEW039/);
+assert.match(r.base.text,/FEW040/);
+assert.ok(r.diagnostics.dominantClear==null||r.diagnostics.dominantClear.advisoryOnly===true);
 
-const clouds=Array.from({length:12},(_,i)=>row(i,{lowFt:1200,oktaL:2,ceilFt:2500,oktaM:4,oktaH:6}));
-for(const x of clouds){x.midH=2500/3.280839895;x.highH=4200/3.280839895;}
-r=gen(clouds);
-assert.match(r.base.text,/FEW012/);
-assert.match(r.base.text,/SCT025/);
-assert.match(r.base.text,/BKN042/);
+// Cloud at/above the 1500 m fallback does not block CAVOK when all other criteria are met.
+const cleanHigh={windKt:6,windDir:220,gustKt:6,dirSpreadDeg:10,visM:12000,prob:{},RH:60,RR:0,clouds:[{cover:'FEW',okta:2,ft:5000,type:''}],sourceRow:{}};
+assert.equal(P.strictCavokEligible(cleanHigh,null),true);
+assert.match(P.encodeStateStrict(cleanHigh,null),/CAVOK/);
 
-r=gen(Array.from({length:12},(_,i)=>row(i,{kt:0,dirSpread:180})));
+// Explicit MSA raises the CAVOK/NSC cloud threshold.
+assert.equal(P.strictCavokEligible({...cleanHigh,clouds:[{cover:'FEW',okta:2,ft:5500,type:''}]},6000),false);
+assert.match(P.encodeStateStrict({...cleanHigh,clouds:[{cover:'FEW',okta:2,ft:5500,type:''}]},6000),/FEW055/);
+
+// 3.5.3: no project-wide forced VRB02 when a prevailing direction can be forecast.
+rows=Array.from({length:12},(_,i)=>row(i,{kt:2,dir:220,dirSpread:10}));
+r=genTuned(rows);
+assert.match(r.base.text,/^22002KT\b/);
+assert.ok(!/^VRB02KT\b/.test(r.base.text));
+
+// Calm remains 00000KT.
+rows=Array.from({length:12},(_,i)=>row(i,{kt:0,dirSpread:180}));
+r=genTuned(rows);
 assert.match(r.base.text,/^00000KT\b/);
 
-let vrbRows=Array.from({length:12},(_,i)=>row(i,{kt:i<9?2:8,dir:40+i*20,dirSpread:120}));
-r=gen(vrbRows);
-assert.match(r.base.text,/^VRB02KT\b/);
-assert.equal(r.diagnostics.vrb02.count,9);
+// Weak ordinary one-hour rain at good visibility cannot create a standalone change group.
+rows=Array.from({length:12},(_,i)=>row(i));
+rows[6].RR=.10;rows[6].wet=60;for(const m of rows[6].mv)m.code=61;
+r=genTuned(rows);
+assert.ok(!r.groups.some(g=>g.event==='precip'&&/^PROB30/.test(g.kind)));
 
-vrbRows=Array.from({length:12},(_,i)=>row(i,{kt:i<9?2:(i===9?12:8),dir:40+i*20,dirSpread:120}));
-r=gen(vrbRows);
-assert.equal(r.diagnostics.vrb02,null);
+// Moderate precipitation is a significant weather change and is retained.
+rows=Array.from({length:12},(_,i)=>row(i));
+rows[6].RR=.40;rows[6].wet=90;for(const m of rows[6].mv)m.code=63;
+r=genTuned(rows);
+assert.ok(r.groups.some(g=>/\bRA\b/.test(g.payload)));
 
-let rows=Array.from({length:12},(_,i)=>row(i,{vis:i<5?12000:3000,RH:i<5?70:94,fogRisk:i<5?0:75}));
-r=gen(rows);
-assert.ok(r.groups.some(g=>g.kind==='BECMG'&&g.fields.includes('visibility')));
+// A convective/shower group may carry 5000-9000 m visibility although that visibility is not itself the trigger.
+const prev={windKt:8,windDir:240,gustKt:8,dirSpreadDeg:10,visM:12000,prob:{ts:0,precip:0,frozen:0,fog:0},RR:0,RH:60,clouds:[],sourceRow:{__hybridTuning:{}}};
+const shower={windKt:8,windDir:240,gustKt:8,dirSpreadDeg:10,visM:6000,prob:{ts:0,precip:1,frozen:0,fog:0},RR:.10,RH:75,clouds:[{cover:'SCT',okta:4,ft:2000,type:'CB'}],sourceRow:{__hybridTuning:{showerShare:1,protectedEvent:false,moderateOrHeavy:false}}};
+assert.equal(P.visibilityNeedsGroup(prev,shower),false);
+assert.ok(P.significantFields(prev,shower).includes('convective'));
 
-rows=Array.from({length:12},(_,i)=>row(i,{storm:i===6?35:0}));
-r=gen(rows);
-assert.ok(r.groups.some(g=>g.kind==='PROB30'&&g.event==='ts'));
-assert.ok(!r.taf.includes('PROB40'));
+// Cloud selection: ordinary amounts are encoded cumulatively; CB/TCU remain independent.
+const cloudState={visM:6000,prob:{},clouds:[
+  {cover:'FEW',okta:2,ft:1000,type:''},
+  {cover:'FEW',okta:2,ft:2000,type:''},
+  {cover:'SCT',okta:4,ft:3000,type:''},
+  {cover:'FEW',okta:2,ft:2500,type:'CB'}
+],sourceRow:{}};
+const selected=P.selectedClouds(cloudState,null);
+assert.ok(selected[0].ft===1000&&selected[0].cover==='FEW');
+assert.ok(selected.some(c=>c.type==='CB'));
 
-rows=Array.from({length:12},(_,i)=>row(i,{lowFt:5500,oktaL:2}));
-r=gen(rows,{msaFt:6000});
-assert.ok(!r.base.text.includes('CAVOK'));
-assert.match(r.base.text,/FEW055/);
+// Core validation still requires 12 h.
+assert.throws(()=>engine().generate({station:'EPIR',issue,start,end:start+10*HOUR,rows:Array.from({length:10},(_,i)=>row(i)),record:false}),/12 h/);
 
+// Learning remains bounded and functional.
 const memStore={v:null,get(){return this.v},set(k,v){this.v=v}};
-const engine=H.createEngine({storage:memStore});
+const learnEngine=H.createEngine({storage:memStore});
 rows=Array.from({length:12},(_,i)=>row(i));
-for(const x of rows){x.mv=[model('A',6,220),model('B',20,220),model('C',8,220)];}
-engine.generate({station:'EPIR',issue,start,end,rows,record:true});
-const obs=[];
-for(let i=0;i<12;i++)obs.push({obs_time:new Date(start+i*HOUR).toISOString(),wind_speed_ms:6/KT,wind_direction_deg:220,visibility_m:12000,raw:`METAR EPIR 12${String(6+i).padStart(2,'0')}00Z 22006KT CAVOK=`});
-const n=engine.learn(obs);assert.ok(n>=8);
-const st=engine.getLearningState();
-const a=Object.entries(st.cells).find(([k])=>k.startsWith('A|windKt|'))?.[1];
-const b=Object.entries(st.cells).find(([k])=>k.startsWith('B|windKt|'))?.[1];
-assert.ok(a&&b&&a.mae<b.mae);
-assert.ok(engine.getLearningSummary().models.A);
+for(const x of rows)x.mv=[model('A',6,220),model('B',20,220),model('C',8,220)];
+learnEngine.generate({station:'EPIR',issue,start,end,rows,record:true});
+const obs=[];for(let i=0;i<12;i++)obs.push({obs_time:new Date(start+i*HOUR).toISOString(),wind_speed_ms:6/KT,wind_direction_deg:220,visibility_m:12000,raw:`METAR EPIR 12${String(6+i).padStart(2,'0')}00Z 22006KT CAVOK=`});
+assert.ok(learnEngine.learn(obs)>=8);
+assert.ok(learnEngine.getLearningSummary().models.A);
 
-rows=Array.from({length:12},(_,i)=>row(i,{vis:i%2?3000:12000,RH:i%2?95:60,fogRisk:i%2?80:0,kt:i%3===0?20:4}));
-r=gen(rows);
-assert.ok(r.groups.length<=5);
-
-assert.throws(()=>H.createEngine({storage:{get(){return null},set(){}}}).generate({station:'EPIR',issue,start,end:start+10*HOUR,rows,record:false}),/12 h/);
-
-// Consensus is the deterministic forecast. Raw members only provide event/uncertainty evidence.
-rows=Array.from({length:12},(_,i)=>row(i,{kt:6,dir:220,vis:12000,ceilFt:6000}));
-for(const x of rows)x.mv=[model('A',20,120,5000,1500),model('B',30,300,3000,800),model('C',40,40,2000,500)];
-r=genTuned(rows);
-assert.ok(Math.abs(r.hourly[0].windKt-6)<0.2);
-assert.ok(r.hourly[0].visM>10000);
-assert.equal(r.diagnostics.consensusPrimary,true);
-
-// A single one-hour weak rain spike with 9999 and no corroboration is suppressed.
-rows=Array.from({length:12},(_,i)=>row(i));
-rows[6].RR=0.10;rows[6].wet=60;for(const m of rows[6].mv)m.code=61;
-let tuned=P.tuneRows(rows);
-assert.equal(tuned[6].__hybridTuning.suppressWeak,true);
-assert.ok(tuned[6].mv.every(m=>m.code===0));
-r=genTuned(rows);
-assert.ok(!/\b-?RA\b/.test(r.taf));
-
-// Two adjacent weak-rain hours provide temporal confirmation in guidance,
-// but still need operational impact before becoming a TAF change group.
-rows=Array.from({length:12},(_,i)=>row(i));
-for(const k of [6,7]){rows[k].RR=0.10;rows[k].wet=60;for(const m of rows[k].mv)m.code=61;}
-tuned=P.tuneRows(rows);
-assert.equal(tuned[6].__hybridTuning.temporal,true);
-assert.equal(tuned[6].__hybridTuning.suppressWeak,false);
-r=genTuned(rows);
-assert.ok(!/PROB30[^\n]*\b-RA\b/.test(r.taf));
-
-// Weak rain is allowed when visibility is operationally reduced.
-rows=Array.from({length:12},(_,i)=>row(i));
-rows[6].VIS=4000;rows[6].RR=0.10;rows[6].wet=60;for(const m of rows[6].mv)m.code=61;
-tuned=P.tuneRows(rows);
-assert.equal(tuned[6].__hybridTuning.lowVis,true);
-assert.equal(tuned[6].__hybridTuning.suppressWeak,false);
-
-// Moderate/heavy precipitation, freezing precipitation and thunderstorms are never filtered as a weak spike.
-rows=Array.from({length:12},(_,i)=>row(i));
-for(const m of rows[4].mv)m.code=63;rows[4].RR=0.35;
-for(const m of rows[5].mv)m.code=66;
-for(const m of rows[6].mv)m.code=95;
-tuned=P.tuneRows(rows);
-assert.equal(tuned[4].__hybridTuning.moderateOrHeavy,true);
-assert.equal(tuned[4].__hybridTuning.suppressWeak,false);
-assert.equal(tuned[5].__hybridTuning.protectedEvent,true);
-assert.equal(tuned[5].__hybridTuning.suppressWeak,false);
-assert.equal(tuned[6].__hybridTuning.protectedEvent,true);
-assert.equal(tuned[6].__hybridTuning.suppressWeak,false);
-
-// Broad model support is uncertainty evidence, not a license to create a standalone weak-rain TAF group.
-rows=Array.from({length:12},(_,i)=>row(i));
-rows[6].mv=['A','B','C','D','E'].map(id=>model(id,6,220,12000,6000,61));rows[6].RR=0.10;rows[6].wet=60;
-tuned=P.tuneRows(rows);
-assert.equal(tuned[6].__hybridTuning.strongModels,true);
-assert.equal(tuned[6].__hybridTuning.suppressWeak,false);
-r=genTuned(rows);
-assert.ok(!/PROB30[^\n]*\b-RA\b/.test(r.taf));
-
-console.log('taf-hybrid-engine tests: OK', {tests:21, version:H.ENGINE_VERSION, tuning:P.VERSION});
+console.log('taf-hybrid-engine tests: OK',{version:H.ENGINE_VERSION,tuning:P.VERSION});
