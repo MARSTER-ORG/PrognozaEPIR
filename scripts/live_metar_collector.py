@@ -14,14 +14,22 @@ from __future__ import annotations
 
 import json
 import re
-import time
 from pathlib import Path
 
 import refresh_epir_metar as refresh
 import supplement_metar_pilothub as pilothub
 
-IMGW_API_BASE = 'https://aviation-api.imgw.pl/data/last?params=metar,taf&format=json'
-IMGW_API_COUNTS = (12, 4)
+# IMGW changed the behaviour of aviation-api.imgw.pl and the formerly used
+# cache-buster query parameter ("_=") now causes HTTP 400. Keep the last known
+# supported request first, then progressively simpler METAR-only forms. A
+# successful form is remembered for the life of the Railway process, so after
+# recovery subsequent 5-minute cycles make only one IMGW request.
+IMGW_API_CANDIDATES = (
+    ('metar-taf-count4', 'https://aviation-api.imgw.pl/data/last?params=metar,taf&format=json&count=4'),
+    ('metar-count4', 'https://aviation-api.imgw.pl/data/last?params=metar&format=json&count=4'),
+    ('metar', 'https://aviation-api.imgw.pl/data/last?params=metar&format=json'),
+)
+_working_imgw_api: tuple[str, str] | None = None
 ROOT = Path(__file__).resolve().parents[1]
 
 # A valid EPIR METAR/SPECI after DDHHMMZ proceeds to wind (optionally AUTO).
@@ -158,15 +166,11 @@ def _walk_message_records(value):
             yield from _walk_message_records(child)
 
 
-def _fresh_imgw_api_url(count: int) -> str:
-    return f'{IMGW_API_BASE}&count={count}&_={int(time.time() * 1000)}'
-
-
-def _decode_imgw_payload(payload, count: int):
+def _decode_imgw_payload(payload, query_name: str):
     epir = payload.get('EPIR') if isinstance(payload, dict) else None
     metars = (epir or {}).get('metars') if isinstance(epir, dict) else None
     if not metars:
-        print(f'IMGW Aviation API count={count}: EPIR.metars unavailable')
+        print(f'IMGW Aviation API {query_name}: EPIR.metars unavailable')
         return []
 
     rows = []
@@ -186,7 +190,7 @@ def _decode_imgw_payload(payload, count: int):
             if not refresh.backfill_valid(row):
                 continue
             row['imgw_api'] = 'aviation-api.imgw.pl'
-            row['imgw_api_count'] = count
+            row['imgw_api_query'] = query_name
             row['imgw_api_date'] = record.get('date')
             row['imgw_api_file'] = record.get('file')
             row['imgw_api_message_type'] = record.get('messageType')
@@ -197,7 +201,7 @@ def _decode_imgw_payload(payload, count: int):
 
     rows.sort(key=refresh.rank)
     print(
-        f'IMGW Aviation API count={count}: raw_records=', raw_records,
+        f'IMGW Aviation API {query_name}: raw_records=', raw_records,
         ' decoded/backfill=', len(rows),
         ' rejected_shape=', rejected,
         ' newest=', (rows[-1].get('obs_time') if rows else None),
@@ -207,20 +211,33 @@ def _decode_imgw_payload(payload, count: int):
     return rows
 
 
+def _imgw_candidates():
+    if _working_imgw_api is not None:
+        yield _working_imgw_api
+    for item in IMGW_API_CANDIDATES:
+        if item != _working_imgw_api:
+            yield item
+
+
 def fetch_imgw_api_reports():
-    """Fetch a wider IMGW repair window, falling back to the known-good query."""
+    """Fetch IMGW METARs without undocumented cache-buster parameters."""
+    global _working_imgw_api
     last_error = None
-    for count in IMGW_API_COUNTS:
+    for query_name, url in _imgw_candidates():
         try:
-            payload = json.loads(refresh.c.get_text(_fresh_imgw_api_url(count), timeout=20))
-            rows = _decode_imgw_payload(payload, count)
+            payload = json.loads(refresh.c.get_text(url, timeout=20))
+            rows = _decode_imgw_payload(payload, query_name)
             if rows:
+                _working_imgw_api = (query_name, url)
+                print(f'IMGW Aviation API selected query={query_name}')
                 return rows
         except Exception as exc:
             last_error = exc
-            print(f'IMGW Aviation API count={count} warning:', exc)
+            print(f'IMGW Aviation API {query_name} warning:', exc)
+            if _working_imgw_api == (query_name, url):
+                _working_imgw_api = None
     if last_error:
-        print('IMGW Aviation API exhausted all count windows:', last_error)
+        print('IMGW Aviation API exhausted all query forms:', last_error)
     return []
 
 
