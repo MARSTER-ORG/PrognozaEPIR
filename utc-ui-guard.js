@@ -191,6 +191,52 @@
     }
   } catch (_) { }
 
+  function installGlobalNavigation() {
+    try {
+      if (window.top !== window.self) return;
+    } catch (_) { return; }
+
+    const install = () => {
+      if (!document.body || document.getElementById('epirGlobalNav')) return;
+      const path = location.pathname.toLowerCase();
+      const pages = [
+        {label:'METEOGRAM', href:'index.html', active: /\/(?:index\.html)?$/.test(path)},
+        {label:'RADAR', href:'radar.html', active: /\/radar\.html$/.test(path)},
+        {label:'MGŁA SAT', href:'sat-fog.html', active: /\/sat-fog\.html$/.test(path)},
+        {label:'TAF GENERATOR', href:'taf.html', active: /\/taf\.html$/.test(path)},
+        {label:'ARCHIWUM', href:'arch.html', active: /\/arch\.html$/.test(path)}
+      ];
+      const allowed = pages.some(x => x.active);
+      if (!allowed) return;
+
+      if (!document.getElementById('epirGlobalNavStyle')) {
+        const style = document.createElement('style');
+        style.id = 'epirGlobalNavStyle';
+        style.textContent = `
+          #epirGlobalNav{width:100%;border-bottom:1px solid var(--border,var(--line,var(--b,#777)));background:var(--surface,var(--panel,var(--s,var(--bg,#fff))));box-shadow:0 1px 5px rgba(0,0,0,.08)}
+          #epirGlobalNav .epir-global-nav-inner{max-width:1450px;margin:0 auto;padding:7px 8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+          #epirGlobalNav a{display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:7px 11px;border:1px solid var(--border,var(--line,var(--b,#888)));border-radius:7px;background:var(--surface2,var(--panel2,var(--s2,var(--surface,#f7f7f7))));color:var(--ink,var(--text,var(--fg,#222)));font:700 11px/1 Arial,Helvetica,sans-serif;text-decoration:none;white-space:nowrap}
+          #epirGlobalNav a:hover{filter:brightness(.97)}
+          #epirGlobalNav a.active{background:var(--blueText,var(--blue2,var(--blue,var(--accent,#1f2a75))));border-color:var(--blueText,var(--blue2,var(--blue,var(--accent,#1f2a75))));color:#fff}
+          @media(max-width:620px){#epirGlobalNav .epir-global-nav-inner{padding:5px 4px;gap:4px}#epirGlobalNav a{flex:1 1 calc(33.333% - 4px);min-width:96px;min-height:30px;padding:6px 7px;font-size:9.5px}}
+        `;
+        document.head.appendChild(style);
+      }
+
+      const nav = document.createElement('nav');
+      nav.id = 'epirGlobalNav';
+      nav.setAttribute('aria-label','Główna nawigacja PrognozaEPIR');
+      nav.innerHTML = '<div class="epir-global-nav-inner">' + pages.map(p =>
+        `<a href="${p.href}"${p.active?' class="active" aria-current="page"':''}>${p.label}</a>`
+      ).join('') + '</div>';
+      document.body.insertBefore(nav, document.body.firstChild);
+    };
+
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install, {once:true});
+    else install();
+  }
+  installGlobalNavigation();
+
   function loadTafGeneratorPolicy() {
     if (!/\/taf\.html$/i.test(location.pathname) || window.__PROGNOZA_EPIR_TAF_POLICY_LOADER__) return;
     window.__PROGNOZA_EPIR_TAF_POLICY_LOADER__ = true;
