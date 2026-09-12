@@ -5,7 +5,7 @@
   if(typeof module==='object'&&module.exports)module.exports=api;
   if(root)root.PrognozaEPIRTAFHybridTuning=api;
 })(typeof globalThis!=='undefined'?globalThis:this,function(){
-  const VERSION='3.0.0';
+  const VERSION='3.1.0';
   const KT=1.9438444924406,FT=3.2808398950131,HOUR=3600000;
   const CAVOK_BASE_FT=1500*FT,NSC_BASE_FT=5000;
   const VIS_THRESHOLDS=[800,1500,3000,5000],CEIL_THRESHOLDS=[200,300,500,1000,1500];
@@ -21,9 +21,10 @@
     wetSignalPct:40,
     visibilityThresholds:VIS_THRESHOLDS,
     strictInstruction:true,
-    dominantClear:Object.freeze({enabled:true,startHourFrom:18,startHourTo:5,minShare:.75,fewSctMinFt:4000,ordinaryCloudLimitFt:5000,advisoryOnly:true})
+    dominantClear:Object.freeze({enabled:true,startHourFrom:18,startHourTo:5,minShare:.75,fewSctMinFt:4000,ordinaryCloudLimitFt:5000,advisoryOnly:true}),
+    shortHorizon:Object.freeze({enabled:true,hours:4,minForecastShare:.75,weakCloudMinFt:4000,recentObsHours:6,minObs:3,minObsShare:.67,minStrictWholePeriodShare:.50,blendWind:true})
   });
-  const cfgOf=x=>({...DEFAULTS,...(x||{}),dominantClear:{...DEFAULTS.dominantClear,...(x?.dominantClear||{})}});
+  const cfgOf=x=>({...DEFAULTS,...(x||{}),dominantClear:{...DEFAULTS.dominantClear,...(x?.dominantClear||{})},shortHorizon:{...DEFAULTS.shortHorizon,...(x?.shortHorizon||{})}});
   const p2=n=>String(Math.max(0,Math.round(n))).padStart(2,'0');
   const p3=n=>String(Math.max(0,Math.round(n))).padStart(3,'0');
   const p4=n=>String(Math.max(0,Math.round(n))).padStart(4,'0');
@@ -91,7 +92,7 @@
     const hour=new Date(+start).getUTCHours(),windowOk=hour>=dc.startHourFrom||hour<=dc.startHourTo;if(!windowOk)return null;
     const a=(rows||[]).filter(r=>finite(+r?.t));if(a.length<8)return null;
     const count=a.filter(r=>clearCloudCandidate(r,cfg)).length,ratio=count/a.length;
-    return ratio>dc.minShare?{count,total:a.length,share:ratio,startHour:hour,advisoryOnly:true}:null;
+    return ratio>=dc.minShare?{count,total:a.length,share:ratio,startHour:hour,advisoryOnly:true}:null;
   }
 
   function significantConsensusChange(a,b){
@@ -131,8 +132,10 @@
   }
 
   function cloudThresholds(msaFt){return{cavok:Math.max(CAVOK_BASE_FT,finite(+msaFt)?+msaFt:0),nsc:Math.max(NSC_BASE_FT,finite(+msaFt)?+msaFt:0)};}
+  function normalizedClouds(a){return(a||[]).map(c=>({cover:String(c.cover||cover(c.okta)||'').toUpperCase(),okta:amountMin(String(c.cover||'').toUpperCase())||+c.okta||0,ft:+c.ft,type:String(c.type||'').toUpperCase()})).filter(c=>finite(c.ft)&&c.okta>0);}
   function hourClouds(h){
-    if(Array.isArray(h?.clouds)&&h.clouds.length)return h.clouds.map(c=>({cover:String(c.cover||cover(c.okta)||'').toUpperCase(),okta:amountMin(String(c.cover||'').toUpperCase())||+c.okta||0,ft:+c.ft,type:String(c.type||'').toUpperCase()})).filter(c=>finite(c.ft)&&c.okta>0);
+    if(h?.__tafCloudsAuthoritative&&Array.isArray(h.clouds))return normalizedClouds(h.clouds);
+    if(Array.isArray(h?.clouds)&&h.clouds.length)return normalizedClouds(h.clouds);
     return cloudLayersFromRow(h?.sourceRow||{});
   }
   function hasConvectiveCloud(h){return hourClouds(h).some(c=>c.type==='CB'||c.type==='TCU');}
@@ -194,12 +197,56 @@
   }
   function weatherNeedsGroup(a,b){const aw=significantWeatherToken(a),bw=significantWeatherToken(b);return aw!==bw&&(!!aw||!!bw);}
   function significantFields(a,b,cfg=DEFAULTS){const f=[];if(windNeedsGroup(a,b))f.push('wind');if(visibilityNeedsGroup(a,b,cfg))f.push('visibility');if(weatherNeedsGroup(a,b))f.push('weather');if(ceilingNeedsGroup(a,b))f.push('ceiling');if(convectiveNeedsGroup(a,b))f.push('convective');return[...new Set(f)];}
+
+  function observationTime(o){for(const k of ['obs_time','message_time','time','timestamp']){const t=Date.parse(o?.[k]||'');if(finite(t))return t;}return NaN;}
+  function observationRaw(o){return String(o?.raw||o?.canonical_raw||'').toUpperCase();}
+  function observationClearCompatible(o,msaFt){
+    const r=observationRaw(o);if(!r)return false;if(/\bCAVOK\b/.test(r))return true;
+    const vis=finite(+o?.visibility_m)?+o.visibility_m:/\b9999\b/.test(r)?10000:null;if(!finite(vis)||vis<10000)return false;
+    if(/\b(?:MIFG|BCFG|PRFG|FZFG|FG|BR|HZ|TS|TSRA|TSGR|TSGS|SHRA|SHSN|RASN|SNRA|FZRA|FZDZ|RA|DZ|SN|GR|GS|SQ)\b/.test(r))return false;
+    if(/\b(?:FEW|SCT|BKN|OVC)\d{3}(?:CB|TCU)\b/.test(r))return false;
+    const lim=cloudThresholds(msaFt).cavok;for(const m of r.matchAll(/\b(?:FEW|SCT|BKN|OVC)(\d{3})\b/g))if(+m[1]*100<lim)return false;
+    return true;
+  }
+  function recentObservationEvidence(ctx,start,msaFt,cfg){
+    const sh=cfg.shortHorizon||DEFAULTS.shortHorizon,all=[...(Array.isArray(ctx?.observations)?ctx.observations:[]),ctx?.observation].filter(Boolean),byTime=new Map(),undated=[];
+    for(const o of all){const t=observationTime(o),raw=observationRaw(o);if(finite(t)){const old=byTime.get(t);if(!old||(/\bCOR\b/.test(raw)&&!/\bCOR\b/.test(observationRaw(old))))byTime.set(t,o);}else undated.push(o);}
+    const cutoff=Math.min(finite(+start)?+start:Date.now(),Date.now()),from=cutoff-sh.recentObsHours*HOUR;
+    let a=[...byTime.entries()].filter(([t])=>t<=cutoff&&t>=from).sort((x,y)=>y[0]-x[0]).map(x=>x[1]).slice(0,8);if(!a.length&&undated.length)a=undated.slice(-1);
+    const clear=a.filter(o=>observationClearCompatible(o,msaFt)).length,share=a.length?clear/a.length:0,latestClear=!!(a[0]&&observationClearCompatible(a[0],msaFt));
+    return{count:clear,total:a.length,share,latestClear};
+  }
+  function weakClearCompatibleHour(h,msaFt,cfg){
+    if(!h||!finite(+h.visM)||+h.visM<10000||encodedWxForHour(h)||hasConvectiveCloud(h))return false;
+    const lim=cloudThresholds(msaFt).cavok,minFt=(cfg.shortHorizon||DEFAULTS.shortHorizon).weakCloudMinFt,low=hourClouds(h).filter(c=>!c.type&&c.ft<lim);
+    return low.every(c=>c.ft>=minFt&&(c.okta||amountMin(c.cover))<=4);
+  }
+  function shortHorizonBasePlan(result,ctx,cfg,msaFt){
+    const sh=cfg.shortHorizon||DEFAULTS.shortHorizon;if(!sh.enabled)return null;const hours=(result.hourly||[]).slice(0,sh.hours);if(hours.length<3)return null;
+    const weights=hours.map((_,i)=>Math.max(1,sh.hours-i)),sw=weights.reduce((a,b)=>a+b,0),support=hours.reduce((s,h,i)=>s+(weakClearCompatibleHour(h,msaFt,cfg)?weights[i]:0),0)/sw;
+    const lim=cloudThresholds(msaFt).cavok,strongBlock=hours.some(h=>!finite(+h.visM)||+h.visM<5000||encodedWxForHour(h)||hasConvectiveCloud(h)||hourClouds(h).some(c=>!c.type&&c.ft<lim&&(c.ft<sh.weakCloudMinFt||(c.okta||amountMin(c.cover))>=5)));
+    const strictWhole=(result.hourly||[]).filter(h=>strictCavokEligible(h,msaFt)).length/Math.max(1,(result.hourly||[]).length),obs=recentObservationEvidence(ctx,result.start,msaFt,cfg);
+    const obsSupport=obs.total>=sh.minObs?obs.share>=sh.minObsShare:(obs.total>0&&obs.latestClear),corroborated=obsSupport||strictWhole>=sh.minStrictWholePeriodShare,active=!strongBlock&&support>=sh.minForecastShare&&corroborated;
+    return{active,hours:hours.length,forecastShare:support,strictWholeShare:strictWhole,obs,strongBlock,corroborated,weakCloudMinFt:sh.weakCloudMinFt};
+  }
+  function blendedShortWind(hours){
+    if(!hours.length)return null;const w=hours.map((_,i)=>Math.max(1,hours.length-i)),sw=w.reduce((a,b)=>a+b,0);let speed=0,gust=0,gw=0,u=0,v=0,dw=0;
+    for(let i=0;i<hours.length;i++){const h=hours[i],q=w[i];if(finite(+h.windKt))speed+=+h.windKt*q;if(finite(+h.gustKt)){gust+=+h.gustKt*q;gw+=q;}if(finite(+h.windDir)){const r=+h.windDir*Math.PI/180,s=Math.max(1,+h.windKt||1)*q;u+=Math.sin(r)*s;v+=Math.cos(r)*s;dw+=s;}}
+    const dir=dw?(Math.atan2(u,v)*180/Math.PI+360)%360:null;return{windKt:speed/sw,windDir:dir,gustKt:gw?gust/gw:null};
+  }
+  function reconcileBase(result,plan,cfg,msaFt){
+    const original=result.base?.state||result.hourly?.[0];if(!original)return null;const base={...original,clouds:hourClouds(original).map(c=>({...c}))};
+    const hs=(result.hourly||[]).slice(0,(cfg.shortHorizon||DEFAULTS.shortHorizon).hours),windStable=hs.length>1&&!hs.slice(1).some(h=>windNeedsGroup(hs[0],h));
+    if(windStable&&(cfg.shortHorizon||DEFAULTS.shortHorizon).blendWind){const w=blendedShortWind(hs);if(w){base.windKt=w.windKt;if(finite(w.windDir))base.windDir=w.windDir;if(finite(w.gustKt))base.gustKt=w.gustKt;}}
+    if(plan?.active){const lim=cloudThresholds(msaFt).cavok,minFt=(cfg.shortHorizon||DEFAULTS.shortHorizon).weakCloudMinFt;base.clouds=base.clouds.filter(c=>c.type||c.ft>=lim||c.ft<minFt||(c.okta||amountMin(c.cover))>=5);base.__tafCloudsAuthoritative=true;}
+    return base;
+  }
+
   const groupHours=(r,g)=>(r.hourly||[]).filter(h=>h.t>=g.start&&h.t<g.end);
   const previousHour=(r,g)=>{const a=(r.hourly||[]).filter(h=>h.t<g.start);return a[a.length-1]||r.base?.state||r.hourly?.[0]||null;};
   const targetHour=(r,g)=>{const a=groupHours(r,g);return a[a.length-1]||(r.hourly||[]).find(h=>h.t>=g.end)||null;};
   function weakPrecipAllowedInChange(h,fields=[]){const e=h?.sourceRow?.__hybridTuning||{};if(e.protectedEvent||e.moderateOrHeavy)return true;if(finite(+h?.visM)&&+h.visM<5000)return true;return fields.some(x=>!['weather','visibility'].includes(x));}
   function strictPrecipImpact(result,g){const hs=groupHours(result,g);if(!hs.length)return false;const fields=Array.isArray(g.fields)?g.fields:[];return hs.some(h=>weakPrecipAllowedInChange(h,fields));}
-
   function payloadForChange(prev,target,fields,msaFt,{temporary=false}={}){
     const out=[],set=new Set(fields||[]),wx=encodedWxForHour(target),prevWx=encodedWxForHour(prev);
     if(set.has('wind'))out.push(windFromHour(target));
@@ -236,90 +283,44 @@
     }
     return out;
   }
-
   function visibilityThresholdGroups(result,cfg,msaFt,existing,suppressed){
-    const hours=result.hourly||[],out=[],cuts=cfg.visibilityThresholds||VIS_THRESHOLDS;
-    let i=1;
+    const hours=result.hourly||[],out=[],cuts=cfg.visibilityThresholds||VIS_THRESHOLDS;let i=1;
     while(i<hours.length){
-      const prevBand=visBand(+hours[i-1]?.visM,cuts),curBand=visBand(+hours[i]?.visM,cuts);
-      if(prevBand===curBand){i++;continue;}
-      let j=i+1;while(j<hours.length&&visBand(+hours[j]?.visM,cuts)===curBand)j++;
-      const transitionT=hours[i].t,already=existing.concat(out).some(g=>(g.fields||[]).includes('visibility')&&g.start<=transitionT+HOUR&&g.end>=transitionT-HOUR);
-      if(already){i=j;continue;}
-      const fields=significantFields(hours[i-1],hours[i],cfg);
-      if(!fields.includes('visibility')){i=j;continue;}
-      const returnsImmediately=j===i+1&&j<hours.length&&visBand(+hours[j]?.visM,cuts)===prevBand;
-      if(returnsImmediately){
-        const payload=payloadForChange(hours[i-1],hours[i],fields,msaFt,{temporary:true});
-        if(payload)out.push({kind:'TEMPO',start:transitionT,end:Math.min(result.end,transitionT+HOUR),payload,fields,event:'visibility'});
-        else suppressed.push({kind:'TEMPO',reason:'visibility-threshold-empty',start:transitionT,end:Math.min(result.end,transitionT+HOUR)});
-        i=j+1;continue;
-      }
-      const abrupt=fields.length>=3;
-      if(abrupt){
-        const fmTime=Math.max(result.start,transitionT-HOUR/2),payload=encodeStateStrict(hours[i],msaFt);
-        out.push({kind:'FM',start:fmTime,end:result.end,payload,fields});
-      }else{
-        const start=Math.max(result.start,transitionT-HOUR),end=Math.min(result.end,transitionT+HOUR),payload=payloadForChange(hours[i-1],hours[i],fields,msaFt);
-        if(payload)out.push({kind:'BECMG',start,end,payload,fields});
-      }
-      i=j;
+      const prevBand=visBand(+hours[i-1]?.visM,cuts),curBand=visBand(+hours[i]?.visM,cuts);if(prevBand===curBand){i++;continue;}let j=i+1;while(j<hours.length&&visBand(+hours[j]?.visM,cuts)===curBand)j++;
+      const transitionT=hours[i].t,already=existing.concat(out).some(g=>(g.fields||[]).includes('visibility')&&g.start<=transitionT+HOUR&&g.end>=transitionT-HOUR);if(already){i=j;continue;}
+      const fields=significantFields(hours[i-1],hours[i],cfg);if(!fields.includes('visibility')){i=j;continue;}const returnsImmediately=j===i+1&&j<hours.length&&visBand(+hours[j]?.visM,cuts)===prevBand;
+      if(returnsImmediately){const payload=payloadForChange(hours[i-1],hours[i],fields,msaFt,{temporary:true});if(payload)out.push({kind:'TEMPO',start:transitionT,end:Math.min(result.end,transitionT+HOUR),payload,fields,event:'visibility'});else suppressed.push({kind:'TEMPO',reason:'visibility-threshold-empty',start:transitionT,end:Math.min(result.end,transitionT+HOUR)});i=j+1;continue;}
+      const abrupt=fields.length>=3;if(abrupt){const fmTime=Math.max(result.start,transitionT-HOUR/2),payload=encodeStateStrict(hours[i],msaFt);out.push({kind:'FM',start:fmTime,end:result.end,payload,fields});}else{const start=Math.max(result.start,transitionT-HOUR),end=Math.min(result.end,transitionT+HOUR),payload=payloadForChange(hours[i-1],hours[i],fields,msaFt);if(payload)out.push({kind:'BECMG',start,end,payload,fields});}i=j;
     }
     return out;
   }
-
   function temporaryGroups(result,cfg,msaFt,existing,suppressed){
-    const hours=result.hourly||[],out=[];
-    const eventKey=h=>{const p=h?.prob||{},e=h?.sourceRow?.__hybridTuning||{};if((p.ts||0)>=.5)return'ts';if((p.frozen||0)>=.5)return'frozen';if((e.showerShare||0)>=.5&&(p.precip||0)>=.5)return'shower';if((e.moderateOrHeavy||(+h?.RR||0)>=.3)&&(p.precip||0)>=.5)return'precip';return'';};
-    let i=0;while(i<hours.length){
-      const key=eventKey(hours[i]);if(!key){i++;continue;}let j=i+1;while(j<hours.length&&eventKey(hours[j])===key)j++;
-      const start=hours[i].t,end=Math.min(result.end,hours[j-1].t+HOUR),covered=existing.some(g=>overlap(g,{start,end})&&(g.fields||[]).some(f=>f==='weather'||f==='convective'));
-      if(!covered){
-        const h=hours.slice(i,j).sort((a,b)=>Math.max(b.prob?.ts||0,b.prob?.frozen||0,b.prob?.precip||0)-Math.max(a.prob?.ts||0,a.prob?.frozen||0,a.prob?.precip||0))[0],prev=hours[Math.max(0,i-1)],fields=key==='ts'||key==='shower'?['weather','convective']:['weather'];
-        if(key==='precip'&&/^-(?:RA|SN|SHRA|SHSN)$/.test(encodedWxForHour(h))&&!weakPrecipAllowedInChange(h,fields))suppressed.push({kind:'TEMPO',reason:'weak-precip-no-trigger',start,end});
-        else{const payload=payloadForChange(prev,h,fields,msaFt,{temporary:true});if(payload)out.push({kind:'TEMPO',start,end,payload,fields,event:key});}
-      }
-      i=j;
-    }
+    const hours=result.hourly||[],out=[],eventKey=h=>{const p=h?.prob||{},e=h?.sourceRow?.__hybridTuning||{};if((p.ts||0)>=.5)return'ts';if((p.frozen||0)>=.5)return'frozen';if((e.showerShare||0)>=.5&&(p.precip||0)>=.5)return'shower';if((e.moderateOrHeavy||(+h?.RR||0)>=.3)&&(p.precip||0)>=.5)return'precip';return'';};
+    let i=0;while(i<hours.length){const key=eventKey(hours[i]);if(!key){i++;continue;}let j=i+1;while(j<hours.length&&eventKey(hours[j])===key)j++;const start=hours[i].t,end=Math.min(result.end,hours[j-1].t+HOUR),covered=existing.some(g=>overlap(g,{start,end})&&(g.fields||[]).some(f=>f==='weather'||f==='convective'));if(!covered){const h=hours.slice(i,j).sort((a,b)=>Math.max(b.prob?.ts||0,b.prob?.frozen||0,b.prob?.precip||0)-Math.max(a.prob?.ts||0,a.prob?.frozen||0,a.prob?.precip||0))[0],prev=hours[Math.max(0,i-1)],fields=key==='ts'||key==='shower'?['weather','convective']:['weather'];if(key==='precip'&&/^-(?:RA|SN|SHRA|SHSN)$/.test(encodedWxForHour(h))&&!weakPrecipAllowedInChange(h,fields))suppressed.push({kind:'TEMPO',reason:'weak-precip-no-trigger',start,end});else{const payload=payloadForChange(prev,h,fields,msaFt,{temporary:true});if(payload)out.push({kind:'TEMPO',start,end,payload,fields,event:key});}}i=j;}
     return out;
   }
-
   function probabilisticGroups(result,cfg,msaFt,existing,suppressed){
-    const out=[];
-    for(const original of result.groups||[]){
-      if(original.kind!=='PROB30'&&original.kind!=='PROB30 TEMPO')continue;const hs=groupHours(result,original);if(!hs.length)continue;
-      const score=h=>Math.max(h.prob?.ts||0,h.prob?.frozen||0,h.prob?.precip||0,h.prob?.fog||0,h.prob?.lowCeiling||0),h=hs.reduce((best,x)=>!best||score(x)>score(best)?x:best,null),prev=previousHour(result,original);
-      let fields=[],event=original.event||'';if(event==='ts')fields=['weather','convective'];else if(event==='fog')fields=['visibility','weather'];else if(event==='lowCeiling')fields=['ceiling'];else if(event==='precip')fields=['weather'];
-      if(fields.includes('visibility')&&!visibilityNeedsGroup(prev,h,cfg))fields=fields.filter(x=>x!=='visibility');
-      if(event==='precip'){
-        const wx=encodedWxForHour(h),weak=/^-(?:RA|SN|SHRA|SHSN|DZ)$/.test(wx);
-        if(weak&&!weakPrecipAllowedInChange(h,fields)){suppressed.push({...original,reason:'prob30-weak-precip-no-significant-impact'});continue;}
-        if(!significantWeatherToken(h)&&!fields.some(x=>x!=='weather')){suppressed.push({...original,reason:'prob30-non-significant-weather'});continue;}
-      }
-      if(!fields.length){suppressed.push({...original,reason:'prob30-no-instruction-threshold'});continue;}
-      const kind=(event==='ts'||event==='precip')?'PROB30 TEMPO':'PROB30',payload=payloadForChange(prev,h,fields,msaFt,{temporary:true});if(!payload){suppressed.push({...original,reason:'prob30-empty-after-filter'});continue;}
-      const g={...original,kind,payload,fields};if(!existing.some(x=>groupDuplicate(x,g)))out.push(g);
-    }
-    return out;
+    const out=[];for(const original of result.groups||[]){if(original.kind!=='PROB30'&&original.kind!=='PROB30 TEMPO')continue;const hs=groupHours(result,original);if(!hs.length)continue;const score=h=>Math.max(h.prob?.ts||0,h.prob?.frozen||0,h.prob?.precip||0,h.prob?.fog||0,h.prob?.lowCeiling||0),h=hs.reduce((best,x)=>!best||score(x)>score(best)?x:best,null),prev=previousHour(result,original);let fields=[],event=original.event||'';if(event==='ts')fields=['weather','convective'];else if(event==='fog')fields=['visibility','weather'];else if(event==='lowCeiling')fields=['ceiling'];else if(event==='precip')fields=['weather'];if(fields.includes('visibility')&&!visibilityNeedsGroup(prev,h,cfg))fields=fields.filter(x=>x!=='visibility');if(event==='precip'){const wx=encodedWxForHour(h),weak=/^-(?:RA|SN|SHRA|SHSN|DZ)$/.test(wx);if(weak&&!weakPrecipAllowedInChange(h,fields)){suppressed.push({...original,reason:'prob30-weak-precip-no-significant-impact'});continue;}if(!significantWeatherToken(h)&&!fields.some(x=>x!=='weather')){suppressed.push({...original,reason:'prob30-non-significant-weather'});continue;}}if(!fields.length){suppressed.push({...original,reason:'prob30-no-instruction-threshold'});continue;}const kind=(event==='ts'||event==='precip')?'PROB30 TEMPO':'PROB30',payload=payloadForChange(prev,h,fields,msaFt,{temporary:true});if(!payload){suppressed.push({...original,reason:'prob30-empty-after-filter'});continue;}const g={...original,kind,payload,fields};if(!existing.some(x=>groupDuplicate(x,g)))out.push(g);}return out;
   }
 
   function postprocessResult(result,ctx={}){
     if(!result||!Array.isArray(result.hourly))return result;
     const cfg=cfgOf(ctx.config),rows=ctx.rows||result.hourly.map(h=>h.sourceRow).filter(Boolean),msaFt=finite(+ctx.msaFt)?+ctx.msaFt:finite(+result?.diagnostics?.msaFt)?+result.diagnostics.msaFt:null;
-    const advisoryPlan=dominantClearPlan(rows,result.start,cfg),suppressed=[],base=result.base?.state||result.hourly[0];if(base){result.base=result.base||{};result.base.state=base;result.base.text=encodeStateStrict(base,msaFt);}
+    const advisoryPlan=dominantClearPlan(rows,result.start,cfg),shortPlan=shortHorizonBasePlan(result,ctx,cfg,msaFt),suppressed=[],base=reconcileBase(result,shortPlan,cfg,msaFt);if(base){result.base=result.base||{};result.base.state=base;result.base.text=encodeStateStrict(base,msaFt);}
     let groups=persistentGroups(result,cfg,msaFt,suppressed);groups.push(...visibilityThresholdGroups(result,cfg,msaFt,groups,suppressed));groups.push(...temporaryGroups(result,cfg,msaFt,groups,suppressed));groups.push(...probabilisticGroups(result,cfg,msaFt,groups,suppressed));
     groups=groups.filter((g,i,a)=>g.payload&&!a.slice(0,i).some(x=>groupDuplicate(x,g))).sort((a,b)=>a.start-b.start||(a.kind==='FM'?-2:a.kind==='BECMG'?-1:1));
     if(groups.length>5){const priority=g=>g.kind==='FM'?100:g.kind==='BECMG'?90:/TS|FZ/.test(g.payload)?85:g.kind==='TEMPO'?70:g.kind==='PROB30 TEMPO'?60:50;groups=groups.map((g,i)=>({g,i,p:priority(g)})).sort((a,b)=>b.p-a.p||a.i-b.i).slice(0,5).map(x=>x.g).sort((a,b)=>a.start-b.start);}
     result.groups=groups;result.taf=rebuildTaf(result);result.checks={...(result.checks||{}),noProb40:!/\bPROB40\b/.test(result.taf),noVV:!/\bVV\d{3}\b/.test(result.taf),max5:groups.length<=5};
-    const baseVersion=result.version;result.baseEngineVersion=baseVersion;result.version=`${baseVersion}+H${VERSION}`;result.diagnostics=result.diagnostics||{};result.diagnostics.consensusPrimary=true;result.diagnostics.dominantClear=advisoryPlan;
+    const baseVersion=result.version;result.baseEngineVersion=baseVersion;result.version=`${baseVersion}+H${VERSION}`;result.diagnostics=result.diagnostics||{};result.diagnostics.consensusPrimary=true;result.diagnostics.dominantClear=advisoryPlan;result.diagnostics.shortHorizonBase=shortPlan;
     result.diagnostics.instructionLock={version:VERSION,visibilityBands:VIS_THRESHOLDS,cavokBaseFt:CAVOK_BASE_FT,nscBaseFt:NSC_BASE_FT,msaFt,suppressedGroups:suppressed.length,suppressed:suppressed.map(x=>({kind:x.kind,reason:x.reason,start:x.start,end:x.end}))};
-    if(Array.isArray(result.diagnostics.layers))result.diagnostics.layers.push({id:'S',name:'TAF-11.2023-instruction-lock',status:'ok',suppressedGroups:suppressed.length});
+    if(Array.isArray(result.diagnostics.layers)){result.diagnostics.layers.push({id:'B',name:'short-horizon-base',status:shortPlan?.active?'active':'no-adjustment',forecastShare:shortPlan?Math.round(shortPlan.forecastShare*100):0});result.diagnostics.layers.push({id:'S',name:'TAF-11.2023-instruction-lock',status:'ok',suppressedGroups:suppressed.length});}
     if(Array.isArray(result.diagnostics.reasons)){
       result.diagnostics.reasons.push('Instrukcja TAF 11.2023: widzialność tworzy grupę zmian tylko po przejściu progu 800/1500/3000/5000 m; 9999↔5000–9000 nie jest samodzielnym kryterium.');
-      if(advisoryPlan)result.diagnostics.reasons.push(`Reguła 18–05 UTC ${advisoryPlan.count}/${advisoryPlan.total} h pozostaje wyłącznie wskazówką analityczną; nie może wymusić CAVOK wbrew 3.8.10.`);
+      if(shortPlan?.active)result.diagnostics.reasons.push(`Baza krótkiego horyzontu: ${Math.round(shortPlan.forecastShare*100)}% ważonego okna ${shortPlan.hours} h wspiera warunki bez istotnej niskiej warstwy; słaby FEW/SCT ≥${shortPlan.weakCloudMinFt} ft uznano za niestabilny sygnał modelowy po potwierdzeniu przez dalszy okres/METAR. Kodowanie CAVOK nadal przechodzi formalny test 3.8.10.`);
+      if(advisoryPlan)result.diagnostics.reasons.push(`Reguła 18–05 UTC ${advisoryPlan.count}/${advisoryPlan.total} h jest sygnałem pomocniczym dla estymacji stanu, nie zastępuje kryteriów CAVOK.`);
       if(!finite(+msaFt))result.diagnostics.reasons.push('MSA nie jest skonfigurowana: CAVOK/NSC sprawdzane względem 1500 m / 5000 ft; pełna kontrola wymaga najwyższej MSA EPIR.');
     }
-    result.tuning={version:VERSION,consensusPrimary:true,instructionLocked:true,dominantClearAdvisory:advisoryPlan,suppressedGroups:suppressed.length,groupsAfter:groups.length};return result;
+    result.tuning={version:VERSION,consensusPrimary:true,instructionLocked:true,shortHorizonBase:shortPlan,dominantClearAdvisory:advisoryPlan,suppressedGroups:suppressed.length,groupsAfter:groups.length};return result;
   }
 
   function wrapApi(core,options={}){
@@ -327,12 +328,12 @@
     return Object.freeze({...core,ENGINE_VERSION:`${core.ENGINE_VERSION}+H${VERSION}`,BASE_ENGINE_VERSION:core.ENGINE_VERSION,TUNING_VERSION:VERSION,
       createEngine(engineOptions={}){
         const ec={...(engineOptions.config||{}),dominantVrb02:{...((engineOptions.config||{}).dominantVrb02||{}),enabled:false}},inner=core.createEngine({...engineOptions,config:ec});
-        return{generate(input){const tuned=tuneRows(input?.rows||[],cfg),r=inner.generate({...input,rows:tuned});return postprocessResult(r,{rows:tuned,config:cfg,msaFt:input?.msaFt});},learn:o=>inner.learn(o),getLearningState:()=>inner.getLearningState(),getLearningSummary:()=>inner.getLearningSummary(),importLearningState:s=>inner.importLearningState(s),resetLearning:()=>inner.resetLearning()};
+        return{generate(input){const tuned=tuneRows(input?.rows||[],cfg),r=inner.generate({...input,rows:tuned});return postprocessResult(r,{rows:tuned,config:cfg,msaFt:input?.msaFt,observation:input?.observation,observations:input?.observations});},learn:o=>inner.learn(o),getLearningState:()=>inner.getLearningState(),getLearningSummary:()=>inner.getLearningSummary(),importLearningState:s=>inner.importLearningState(s),resetLearning:()=>inner.resetLearning()};
       }
     });
   }
 
-  return Object.freeze({VERSION,DEFAULTS,wmoPrecipInfo,rowEvidence,significantConsensusChange,clearCloudCandidate,dominantClearPlan,tuneRows,visibilityNeedsGroup,strictPrecipImpact,strictCavokEligible,strictNscEligible,selectedClouds,encodeStateStrict,significantFields,visibilityThresholdGroups,selectiveBecmgPayload,postprocessResult,wrapApi});
+  return Object.freeze({VERSION,DEFAULTS,wmoPrecipInfo,rowEvidence,significantConsensusChange,clearCloudCandidate,dominantClearPlan,tuneRows,visibilityNeedsGroup,strictPrecipImpact,strictCavokEligible,strictNscEligible,selectedClouds,encodeStateStrict,significantFields,visibilityThresholdGroups,selectiveBecmgPayload,observationClearCompatible,shortHorizonBasePlan,reconcileBase,postprocessResult,wrapApi});
 });
 
 (()=>{
@@ -340,9 +341,9 @@
   if(!/\/taf\.html$/i.test(location.pathname)||window.__PROGNOZA_EPIR_TAF_HYBRID_BOOT__)return;window.__PROGNOZA_EPIR_TAF_HYBRID_BOOT__=true;
   const loadScript=src=>new Promise((resolve,reject)=>{const key=src.split('?')[0],e=[...document.scripts].find(s=>s.src&&s.src.includes(key));if(e){if(e.dataset.loaded==='1'||(key.includes('taf-hybrid-engine')&&window.PrognozaEPIRTAFHybridEngine))return resolve();e.addEventListener('load',resolve,{once:true});e.addEventListener('error',()=>reject(Error('Nie udało się załadować '+src)),{once:true});return;}const s=document.createElement('script');s.src=src;s.async=false;s.dataset.tafHybrid='1';s.onload=()=>{s.dataset.loaded='1';resolve();};s.onerror=()=>reject(Error('Nie udało się załadować '+src));(document.head||document.documentElement).appendChild(s);});
   (async()=>{try{
-    if(!window.PrognozaEPIRTAFHybridEngine)await loadScript('taf-hybrid-engine.js?v=20260913-instruction-v4');
+    if(!window.PrognozaEPIRTAFHybridEngine)await loadScript('taf-hybrid-engine.js?v=20260913-short-horizon-v5');
     window.PrognozaEPIRTAFHybridEngine=window.PrognozaEPIRTAFHybridTuning.wrapApi(window.PrognozaEPIRTAFHybridEngine);
-    await loadScript('taf-hybrid-adapter.js?v=20260913-instruction-v4');
-    window.PrognozaEPIRTAFGeneratorPolicy=Object.freeze({mode:'hybrid-instruction-locked',version:window.PrognozaEPIRTAFHybridEngine?.ENGINE_VERSION||null,tuning:window.PrognozaEPIRTAFHybridTuning.VERSION});
+    await loadScript('taf-hybrid-adapter.js?v=20260913-short-horizon-v5');
+    window.PrognozaEPIRTAFGeneratorPolicy=Object.freeze({mode:'hybrid-instruction-short-horizon',version:window.PrognozaEPIRTAFHybridEngine?.ENGINE_VERSION||null,tuning:window.PrognozaEPIRTAFHybridTuning.VERSION});
   }catch(e){console.error('[TAF Hybrid bootstrap]',e);const b=document.getElementById('badge'),st=document.getElementById('st');if(b){b.textContent='BŁĄD HYBRID';b.className='badge bad';}if(st)st.textContent=e.message;}})();
 })();
