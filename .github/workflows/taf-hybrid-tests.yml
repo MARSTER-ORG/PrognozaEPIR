@@ -5,11 +5,19 @@ on:
     branches: [main]
     paths:
       - 'taf-hybrid-engine.js'
+      - 'taf-hybrid-adapter.js'
+      - 'taf-generator-policy.js'
+      - 'taf.html'
+      - 'utc-ui-guard.js'
       - 'tests/taf-hybrid-engine.test.js'
       - '.github/workflows/taf-hybrid-tests.yml'
   pull_request:
     paths:
       - 'taf-hybrid-engine.js'
+      - 'taf-hybrid-adapter.js'
+      - 'taf-generator-policy.js'
+      - 'taf.html'
+      - 'utc-ui-guard.js'
       - 'tests/taf-hybrid-engine.test.js'
       - '.github/workflows/taf-hybrid-tests.yml'
   workflow_dispatch:
@@ -27,6 +35,9 @@ jobs:
         with:
           node-version: '22'
       - name: Syntax check
-        run: node --check taf-hybrid-engine.js
+        run: |
+          node --check taf-hybrid-engine.js
+          node --check taf-hybrid-adapter.js
+          node --check taf-generator-policy.js
       - name: Regression tests
         run: node tests/taf-hybrid-engine.test.js
