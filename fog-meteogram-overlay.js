@@ -306,37 +306,46 @@
       ctx.fillText(String(Math.round(row.score)),xx,yy-5);
     }
 
-    // Zamglenie BR: osobny score; rysujemy tylko fragmenty >= 60/100.
+    // Zamglenie BR: zawsze przerywana linia, nigdy punkt/marker.
+    // Ciagle okresy >= 60/100 laczymy, a pojedyncza godzine pokazujemy
+    // jako krotki przerywany odcinek, zeby symbol pozostawal zgodny z legenda.
     const br = brSeries().filter(row => row.t >= m.t0 && row.t <= m.t1);
+    const brOperational = br.filter(row => finite(row.t) && finite(row.score) && row.score >= BR_DRAW_THRESHOLD);
     ctx.strokeStyle = BR_COLOR;
     ctx.lineWidth = 2.1;
     ctx.setLineDash([6,3]);
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
-    ctx.beginPath();
-    let brStarted = false;
-    for (const row of br) {
-      if (!finite(row.t) || !finite(row.score) || row.score < BR_DRAW_THRESHOLD) {
-        brStarted = false;
-        continue;
-      }
-      const xx = x(row.t);
-      const yy = yOnRiskScale(row.score,p);
-      if (!brStarted) { ctx.moveTo(xx,yy); brStarted = true; }
-      else ctx.lineTo(xx,yy);
+
+    const brGroups = [];
+    let brGroup = [];
+    for (const row of brOperational) {
+      const prev = brGroup.length ? brGroup[brGroup.length - 1] : null;
+      if (!prev || row.t - prev.t <= 1.6 * HOUR) brGroup.push(row);
+      else { brGroups.push(brGroup); brGroup = [row]; }
     }
-    ctx.stroke();
-    ctx.setLineDash([]);
-    // Mark every operational BR point, including isolated single-hour signals.
-    for (const row of br) {
-      if (!finite(row.t) || !finite(row.score) || row.score < BR_DRAW_THRESHOLD) continue;
-      const xx = x(row.t);
-      const yy = yOnRiskScale(row.score,p);
+    if (brGroup.length) brGroups.push(brGroup);
+
+    for (const group of brGroups) {
       ctx.beginPath();
-      ctx.arc(xx,yy,3.0,0,Math.PI*2);
-      ctx.fillStyle = BR_COLOR;
-      ctx.fill();
+      if (group.length === 1) {
+        const row = group[0];
+        const xx = x(row.t);
+        const yy = yOnRiskScale(row.score,p);
+        const half = Math.max(5, Math.min(step * .45, 14));
+        ctx.moveTo(xx - half, yy);
+        ctx.lineTo(xx + half, yy);
+      } else {
+        group.forEach((row, i) => {
+          const xx = x(row.t);
+          const yy = yOnRiskScale(row.score,p);
+          if (i === 0) ctx.moveTo(xx,yy);
+          else ctx.lineTo(xx,yy);
+        });
+      }
+      ctx.stroke();
     }
+    ctx.setLineDash([]);
 
     const cp = typeof canvasPalette === 'function' ? canvasPalette() : {muted:'#666',grid2:'#999'};
     ctx.strokeStyle = cp.grid2 || '#999';
@@ -355,7 +364,7 @@
     ctx.font = 'bold 8px Arial';
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'right';
-    ctx.fillText('FOG 40',x0-24,baseY);
+    ctx.fillText('FOG 60',x0-24,baseY);
     ctx.fillText('FOG 100',x0-24,fog100LabelY);
     ctx.restore();
   }
