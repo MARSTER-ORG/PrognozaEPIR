@@ -26,6 +26,55 @@
     }
   }
 
+
+  async function fetchTextFrom(root, name, now){
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8_000);
+    try {
+      const response = await nativeFetch(`${root}/${name}?v=${now}`, {
+        cache: 'no-store',
+        signal: controller.signal,
+        headers: {'Accept':'application/x-ndjson,text/plain,*/*'}
+      });
+      if(!response.ok){
+        const error = new Error(`MessageArchive ${name}: HTTP ${response.status}`);
+        error.status = response.status;
+        throw error;
+      }
+      return await response.text();
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function fetchArchiveText(name, force=false){
+    const clean = String(name || '').replace(/^\/+/, '');
+    if(!clean || clean.includes('..') || !/^[A-Za-z0-9._/-]+$/.test(clean)){
+      throw new Error('MessageArchive: invalid archive path');
+    }
+    const key = `text:${clean}`;
+    const now = Date.now();
+    const hit = cache.get(key);
+    if(!force && hit && now - hit.at < TTL_MS) return hit.value;
+
+    const errors = [];
+    let allNotFound = true;
+    for(const root of readRoots()){
+      try {
+        const value = await fetchTextFrom(root, clean, now);
+        cache.set(key, {at: now, value, source: root});
+        return value;
+      } catch(error){
+        if(error?.status !== 404) allNotFound = false;
+        errors.push({root, error});
+      }
+    }
+    const error = new Error(`MessageArchive ${clean}: GitHub archive unavailable`);
+    error.status = allNotFound ? 404 : 0;
+    error.cause = errors;
+    throw error;
+  }
+
   function readRoots(){
     return [GITHUB_ROOT, STATIC_ROOT];
   }
@@ -99,7 +148,8 @@
     latest,
     recent,
     status,
-    sourceFor(name){ return cache.get(name)?.source || null; },
+    fetchText: fetchArchiveText,
+    sourceFor(name){ return cache.get(name)?.source || cache.get(`text:${name}`)?.source || null; },
     async getLatest(type, station='', force=false){
       return strictLatest(await latest(force), type, station);
     },

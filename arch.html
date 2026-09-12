@@ -6,6 +6,7 @@
 <meta name="color-scheme" content="light dark">
 <title>ARCH — archiwum depesz PrognozaEPIR</title>
 <script src="utc-ui-guard.js"></script>
+<script src="message-archive-client.js"></script>
 <style>
 :root{--bg:#f4f4f2;--ink:#232323;--muted:#6e6e6e;--surface:#fff;--surface2:#f7f7f7;--border:#9a9a9a;--blue:#1f2a75;--ok:#2c7a3f;--error:#8a2d2d;--errorBg:#fff4f4;--hover:#edf1ff}
 :root[data-theme="dark"]{--bg:#111418;--ink:#e7e9ed;--muted:#a6acb5;--surface:#181c21;--surface2:#20252b;--border:#59616b;--blue:#8fa2ff;--ok:#76c58b;--error:#ffb8c0;--errorBg:#2a1719;--hover:#222a42}
@@ -62,8 +63,6 @@ tr.synop-row:hover td,tr.synop-row:focus td{background:var(--hover)}
 <script>
 'use strict';
 (() => {
-  const GITHUB_ROOT='https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/messages';
-  const STATIC_ROOT='data/messages';
   const VALID_TYPES=new Set(['METAR','SPECI','SYNOP','TAF']);
   const $=id=>document.getElementById(id);
   const METAR_START=/^(?:METAR|SPECI)\s+(?:COR\s+)?EPIR\s+\d{6}Z\s+(?:AUTO\s+)?(?:VRB|\d{3})\d{2,3}(?:G\d{2,3})?KT\b/i;
@@ -252,8 +251,14 @@ tr.synop-row:hover td,tr.synop-row:focus td{background:var(--hover)}
   function showSynopTooltip(tr,x,y){const index=Number(tr?.dataset?.synopIndex);if(!Number.isInteger(index)||!visibleRows[index])return;activeSynopRow=tr;const tip=$('synopTooltip');tip.innerHTML=synopDecodedHtml(visibleRows[index]);tip.hidden=false;if(Number.isFinite(x)&&Number.isFinite(y))positionSynopTooltip(x,y);else{const r=tr.getBoundingClientRect();positionSynopTooltip(Math.min(r.right,window.innerWidth-20),Math.min(r.top+18,window.innerHeight-20))}}
   function hideSynopTooltip(){activeSynopRow=null;const tip=$('synopTooltip');tip.hidden=true;tip.innerHTML=''}
   function setBusy(busy){document.querySelectorAll('[data-type]').forEach(b=>b.disabled=busy);$('dateFrom').disabled=busy;$('dateTo').disabled=busy;$('copyRaw').disabled=busy||!visibleRows.length;$('copyTable').disabled=busy||!visibleRows.length}
-  async function fetchText(url){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),8000);try{const r=await fetch(url,{cache:'no-store',signal:controller.signal,headers:{Accept:'application/x-ndjson,text/plain,*/*'}});if(!r.ok){const e=new Error(`HTTP ${r.status}`);e.status=r.status;throw e}return await r.text()}finally{clearTimeout(timer)}}
-  async function fetchArchiveFile(path){const stamp=Date.now();let pagesError=null;try{return await fetchText(`${STATIC_ROOT}/${path}?v=${stamp}`)}catch(e){pagesError=e}try{return await fetchText(`${GITHUB_ROOT}/${path}?v=${stamp}`)}catch(e){if(pagesError?.status===404&&e?.status===404)return '';throw new Error(`Nie udało się odczytać ${path} z archiwum GitHub.`)}}
+  async function fetchArchiveFile(path){
+    const archive=window.PrognozaEPIRMessageArchive;
+    if(!archive?.fetchText)throw new Error('Wspólny klient archiwum GitHub nie jest dostępny.');
+    try{return await archive.fetchText(path,true)}catch(e){
+      if(e?.status===404)return '';
+      throw new Error(`Nie udało się odczytać ${path} z archiwum GitHub.`)
+    }
+  }
   function parseJsonl(text,type){const rows=[];for(const line of String(text||'').split(/\r?\n/)){if(!line.trim())continue;try{const row=JSON.parse(line),rowType=String(row?.type||row?.report_type||'').toUpperCase();if(rowType&&rowType!==type)continue;const raw=cleanTelegram(row,type);if(!raw){rejectedRows++;continue}rows.push({...row,_raw:raw,_time:messageTime(row)})}catch(e){rejectedRows++;console.warn('ARCH: pominięto uszkodzony wiersz JSONL',e)}}return rows}
   async function loadDay(type,day){const y=String(day.getUTCFullYear()).padStart(4,'0'),m=String(day.getUTCMonth()+1).padStart(2,'0'),d=String(day.getUTCDate()).padStart(2,'0');return parseJsonl(await fetchArchiveFile(`${type.toLowerCase()}/${y}/${m}/${d}.jsonl`),type)}
   function dedupeAndSort(rows){const seen=new Set(),out=[];for(const row of rows){const key=`${Number.isFinite(row._time)?row._time:''}|${row._raw}`;if(seen.has(key))continue;seen.add(key);out.push(row)}out.sort((a,b)=>(Number.isFinite(b._time)?b._time:-Infinity)-(Number.isFinite(a._time)?a._time:-Infinity)||a._raw.localeCompare(b._raw));return out}
