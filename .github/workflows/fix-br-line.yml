@@ -1,0 +1,119 @@
+name: Fix BR dashed line
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-br-line.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch BR renderer
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('fog-meteogram-overlay.js')
+          s = p.read_text(encoding='utf-8')
+          old = """    // Zamglenie BR: osobny score; rysujemy tylko fragmenty >= 60/100.
+              const br = brSeries().filter(row => row.t >= m.t0 && row.t <= m.t1);
+              ctx.strokeStyle = BR_COLOR;
+              ctx.lineWidth = 2.1;
+              ctx.setLineDash([6,3]);
+              ctx.lineJoin = 'round';
+              ctx.lineCap = 'round';
+              ctx.beginPath();
+              let brStarted = false;
+              for (const row of br) {
+                if (!finite(row.t) || !finite(row.score) || row.score < BR_DRAW_THRESHOLD) {
+                  brStarted = false;
+                  continue;
+                }
+                const xx = x(row.t);
+                const yy = yOnRiskScale(row.score,p);
+                if (!brStarted) { ctx.moveTo(xx,yy); brStarted = true; }
+                else ctx.lineTo(xx,yy);
+              }
+              ctx.stroke();
+              ctx.setLineDash([]);
+              // Mark every operational BR point, including isolated single-hour signals.
+              for (const row of br) {
+                if (!finite(row.t) || !finite(row.score) || row.score < BR_DRAW_THRESHOLD) continue;
+                const xx = x(row.t);
+                const yy = yOnRiskScale(row.score,p);
+                ctx.beginPath();
+                ctx.arc(xx,yy,3.0,0,Math.PI*2);
+                ctx.fillStyle = BR_COLOR;
+                ctx.fill();
+              }
+          """
+          new = """    // Zamglenie BR: zawsze przerywana linia, nigdy punkt/marker.
+              // Ciagle okresy >= 60/100 laczymy, a pojedyncza godzine pokazujemy
+              // jako krotki przerywany odcinek, zeby symbol pozostawal zgodny z legenda.
+              const br = brSeries().filter(row => row.t >= m.t0 && row.t <= m.t1);
+              const brOperational = br.filter(row => finite(row.t) && finite(row.score) && row.score >= BR_DRAW_THRESHOLD);
+              ctx.strokeStyle = BR_COLOR;
+              ctx.lineWidth = 2.1;
+              ctx.setLineDash([6,3]);
+              ctx.lineJoin = 'round';
+              ctx.lineCap = 'round';
+
+              const brGroups = [];
+              let brGroup = [];
+              for (const row of brOperational) {
+                const prev = brGroup.length ? brGroup[brGroup.length - 1] : null;
+                if (!prev || row.t - prev.t <= 1.6 * HOUR) brGroup.push(row);
+                else { brGroups.push(brGroup); brGroup = [row]; }
+              }
+              if (brGroup.length) brGroups.push(brGroup);
+
+              for (const group of brGroups) {
+                ctx.beginPath();
+                if (group.length === 1) {
+                  const row = group[0];
+                  const xx = x(row.t);
+                  const yy = yOnRiskScale(row.score,p);
+                  const half = Math.max(5, Math.min(step * .45, 14));
+                  ctx.moveTo(xx - half, yy);
+                  ctx.lineTo(xx + half, yy);
+                } else {
+                  group.forEach((row, i) => {
+                    const xx = x(row.t);
+                    const yy = yOnRiskScale(row.score,p);
+                    if (i === 0) ctx.moveTo(xx,yy);
+                    else ctx.lineTo(xx,yy);
+                  });
+                }
+                ctx.stroke();
+              }
+              ctx.setLineDash([]);
+          """
+          if old not in s:
+              raise SystemExit('Expected BR renderer block not found')
+          s = s.replace(old, new, 1)
+          s = s.replace("ctx.fillText('FOG 40',x0-24,baseY);", "ctx.fillText('FOG 60',x0-24,baseY);", 1)
+          p.write_text(s, encoding='utf-8')
+
+          idx = Path('index.html')
+          html = idx.read_text(encoding='utf-8')
+          old_src = 'fog-meteogram-overlay.js?v=20260911-7'
+          new_src = 'fog-meteogram-overlay.js?v=20260912-1'
+          if old_src not in html:
+              raise SystemExit('Expected overlay cache-buster not found')
+          idx.write_text(html.replace(old_src, new_src, 1), encoding='utf-8')
+          PY
+          node --check fog-meteogram-overlay.js
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add fog-meteogram-overlay.js index.html
+          git commit -m "Render BR as dashed line only"
+          git push
