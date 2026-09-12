@@ -19,7 +19,7 @@
         return;
       }
       const script=document.createElement('script');
-      script.src='message-archive-client.js';
+      script.src='message-archive-client.js?v=live-jsonl-v7';
       script.dataset.prognozaepirMessageArchive='1';
       script.onload=ready;
       script.onerror=()=>reject(new Error('Nie można załadować message-archive-client.js'));

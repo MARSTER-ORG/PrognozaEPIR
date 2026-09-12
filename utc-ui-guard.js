@@ -367,7 +367,7 @@
     const load = () => {
       if (document.querySelector('script[data-taf-generator-policy]')) return;
       const s = document.createElement('script');
-      s.src = 'taf-generator-policy.js?v=20260912-neighbor-night-few4000-v7';
+      s.src = 'taf-generator-policy.js?v=20260912-fewsct12h-live-v10';
       s.async = false;
       s.dataset.tafGeneratorPolicy = '1';
       (document.head || document.documentElement).appendChild(s);
