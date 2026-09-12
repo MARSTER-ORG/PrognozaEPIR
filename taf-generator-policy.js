@@ -237,6 +237,37 @@
     return out;
   }
 
+  function visibilityThresholdGroups(result,cfg,msaFt,existing,suppressed){
+    const hours=result.hourly||[],out=[],cuts=cfg.visibilityThresholds||VIS_THRESHOLDS;
+    let i=1;
+    while(i<hours.length){
+      const prevBand=visBand(+hours[i-1]?.visM,cuts),curBand=visBand(+hours[i]?.visM,cuts);
+      if(prevBand===curBand){i++;continue;}
+      let j=i+1;while(j<hours.length&&visBand(+hours[j]?.visM,cuts)===curBand)j++;
+      const transitionT=hours[i].t,already=existing.concat(out).some(g=>(g.fields||[]).includes('visibility')&&g.start<=transitionT+HOUR&&g.end>=transitionT-HOUR);
+      if(already){i=j;continue;}
+      const fields=significantFields(hours[i-1],hours[i],cfg);
+      if(!fields.includes('visibility')){i=j;continue;}
+      const returnsImmediately=j===i+1&&j<hours.length&&visBand(+hours[j]?.visM,cuts)===prevBand;
+      if(returnsImmediately){
+        const payload=payloadForChange(hours[i-1],hours[i],fields,msaFt,{temporary:true});
+        if(payload)out.push({kind:'TEMPO',start:transitionT,end:Math.min(result.end,transitionT+HOUR),payload,fields,event:'visibility'});
+        else suppressed.push({kind:'TEMPO',reason:'visibility-threshold-empty',start:transitionT,end:Math.min(result.end,transitionT+HOUR)});
+        i=j+1;continue;
+      }
+      const abrupt=fields.length>=3;
+      if(abrupt){
+        const fmTime=Math.max(result.start,transitionT-HOUR/2),payload=encodeStateStrict(hours[i],msaFt);
+        out.push({kind:'FM',start:fmTime,end:result.end,payload,fields});
+      }else{
+        const start=Math.max(result.start,transitionT-HOUR),end=Math.min(result.end,transitionT+HOUR),payload=payloadForChange(hours[i-1],hours[i],fields,msaFt);
+        if(payload)out.push({kind:'BECMG',start,end,payload,fields});
+      }
+      i=j;
+    }
+    return out;
+  }
+
   function temporaryGroups(result,cfg,msaFt,existing,suppressed){
     const hours=result.hourly||[],out=[];
     const eventKey=h=>{const p=h?.prob||{},e=h?.sourceRow?.__hybridTuning||{};if((p.ts||0)>=.5)return'ts';if((p.frozen||0)>=.5)return'frozen';if((e.showerShare||0)>=.5&&(p.precip||0)>=.5)return'shower';if((e.moderateOrHeavy||(+h?.RR||0)>=.3)&&(p.precip||0)>=.5)return'precip';return'';};
@@ -276,7 +307,7 @@
     if(!result||!Array.isArray(result.hourly))return result;
     const cfg=cfgOf(ctx.config),rows=ctx.rows||result.hourly.map(h=>h.sourceRow).filter(Boolean),msaFt=finite(+ctx.msaFt)?+ctx.msaFt:finite(+result?.diagnostics?.msaFt)?+result.diagnostics.msaFt:null;
     const advisoryPlan=dominantClearPlan(rows,result.start,cfg),suppressed=[],base=result.base?.state||result.hourly[0];if(base){result.base=result.base||{};result.base.state=base;result.base.text=encodeStateStrict(base,msaFt);}
-    let groups=persistentGroups(result,cfg,msaFt,suppressed);groups.push(...temporaryGroups(result,cfg,msaFt,groups,suppressed));groups.push(...probabilisticGroups(result,cfg,msaFt,groups,suppressed));
+    let groups=persistentGroups(result,cfg,msaFt,suppressed);groups.push(...visibilityThresholdGroups(result,cfg,msaFt,groups,suppressed));groups.push(...temporaryGroups(result,cfg,msaFt,groups,suppressed));groups.push(...probabilisticGroups(result,cfg,msaFt,groups,suppressed));
     groups=groups.filter((g,i,a)=>g.payload&&!a.slice(0,i).some(x=>groupDuplicate(x,g))).sort((a,b)=>a.start-b.start||(a.kind==='FM'?-2:a.kind==='BECMG'?-1:1));
     if(groups.length>5){const priority=g=>g.kind==='FM'?100:g.kind==='BECMG'?90:/TS|FZ/.test(g.payload)?85:g.kind==='TEMPO'?70:g.kind==='PROB30 TEMPO'?60:50;groups=groups.map((g,i)=>({g,i,p:priority(g)})).sort((a,b)=>b.p-a.p||a.i-b.i).slice(0,5).map(x=>x.g).sort((a,b)=>a.start-b.start);}
     result.groups=groups;result.taf=rebuildTaf(result);result.checks={...(result.checks||{}),noProb40:!/\bPROB40\b/.test(result.taf),noVV:!/\bVV\d{3}\b/.test(result.taf),max5:groups.length<=5};
@@ -301,7 +332,7 @@
     });
   }
 
-  return Object.freeze({VERSION,DEFAULTS,wmoPrecipInfo,rowEvidence,significantConsensusChange,clearCloudCandidate,dominantClearPlan,tuneRows,visibilityNeedsGroup,strictPrecipImpact,strictCavokEligible,strictNscEligible,selectedClouds,encodeStateStrict,significantFields,selectiveBecmgPayload,postprocessResult,wrapApi});
+  return Object.freeze({VERSION,DEFAULTS,wmoPrecipInfo,rowEvidence,significantConsensusChange,clearCloudCandidate,dominantClearPlan,tuneRows,visibilityNeedsGroup,strictPrecipImpact,strictCavokEligible,strictNscEligible,selectedClouds,encodeStateStrict,significantFields,visibilityThresholdGroups,selectiveBecmgPayload,postprocessResult,wrapApi});
 });
 
 (()=>{
