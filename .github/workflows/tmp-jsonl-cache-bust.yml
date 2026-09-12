@@ -1,0 +1,43 @@
+name: Temporary JSONL cache bust
+on:
+  push:
+    branches: [tmp-jsonl-cache-bust-2]
+    paths:
+      - '.github/workflows/tmp-jsonl-cache-bust.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp-jsonl-cache-bust-2
+      - name: Version shared archive client references
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          replacements = {
+              'index.html': [('message-archive-client.js?v=github-only-v1', 'message-archive-client.js?v=daily-jsonl-first-v2')],
+              'taf.html': [('message-archive-client.js?v=github-only-v1', 'message-archive-client.js?v=daily-jsonl-first-v2')],
+              'arch.html': [('<script src="message-archive-client.js"></script>', '<script src="message-archive-client.js?v=daily-jsonl-first-v2"></script>')],
+          }
+          for name, pairs in replacements.items():
+              p = Path(name)
+              text = p.read_text(encoding='utf-8')
+              old_text = text
+              for old, new in pairs:
+                  if old not in text:
+                      raise SystemExit(f'missing expected token in {name}: {old}')
+                  text = text.replace(old, new)
+              if text == old_text:
+                  raise SystemExit(f'no change in {name}')
+              p.write_text(text, encoding='utf-8')
+          PY
+      - name: Commit branch-only patch
+        run: |
+          git config user.name 'prognozaepir-maintenance'
+          git config user.email 'maintenance@prognozaepir.invalid'
+          git add index.html taf.html arch.html
+          git commit -m 'ui: load JSONL-first archive client immediately'
+          git push origin HEAD:tmp-jsonl-cache-bust-2
