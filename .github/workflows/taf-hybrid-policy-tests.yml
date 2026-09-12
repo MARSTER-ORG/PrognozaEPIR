@@ -1,0 +1,28 @@
+name: TAF Hybrid Significance Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'taf-generator-policy.js'
+      - 'taf-hybrid-engine.js'
+      - 'tests/taf-hybrid-policy.test.js'
+      - '.github/workflows/taf-hybrid-policy-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Validate JavaScript
+        run: |
+          node --check taf-hybrid-engine.js
+          node --check taf-generator-policy.js
+          node --check tests/taf-hybrid-policy.test.js
+      - name: Run Hybrid 2.0 policy tests
+        run: node tests/taf-hybrid-policy.test.js
