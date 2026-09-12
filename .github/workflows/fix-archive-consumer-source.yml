@@ -60,18 +60,7 @@ jobs:
           elif 'archive.fetchText(path,true)' not in s:
               raise SystemExit('arch.html: fetch helper marker not found')
           p.write_text(s, encoding='utf-8')
-
           Path('scripts/check_message_archive_consumers.py').write_text(validator, encoding='utf-8')
-
-          p = Path('.github/workflows/enforce-global-utc.yml')
-          s = p.read_text(encoding='utf-8')
-          if 'Validate message archive consumer architecture' not in s:
-              marker = '      - name: Validate inline JavaScript on user-facing pages\n'
-              if marker not in s:
-                  raise SystemExit('enforce-global-utc.yml: marker not found')
-              step = "      - name: Validate message archive consumer architecture\n        run: python3 scripts/check_message_archive_consumers.py\n\n"
-              s = s.replace(marker, step + marker, 1)
-          p.write_text(s, encoding='utf-8')
           PY
 
       - name: Validate fix
@@ -92,10 +81,9 @@ jobs:
 
       - name: Commit fix
         run: |
-          git rm .github/workflows/fix-archive-consumer-source.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add arch.html message-archive-client.js scripts/check_message_archive_consumers.py .github/workflows/enforce-global-utc.yml
+          git add arch.html message-archive-client.js scripts/check_message_archive_consumers.py
           git commit -m 'fix: use one authoritative archive client in ARCH'
           for attempt in 1 2 3 4; do
             git fetch origin main
