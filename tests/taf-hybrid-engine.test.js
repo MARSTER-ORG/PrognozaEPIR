@@ -1,6 +1,7 @@
 'use strict';
 const assert=require('assert');
 const H=require('../taf-hybrid-engine.js');
+const P=require('../taf-generator-policy.js');
 const HOUR=3600000, KT=1.9438444924406;
 const start=Date.UTC(2026,8,12,6), end=start+12*HOUR, issue=start-HOUR;
 function model(id,kt,dir,vis=12000,ceil=3000,code=0,gust=kt){return{id,w:1,ws:kt/KT,wd:dir,g:gust/KT,vis,ceil:ceil/3.280839895,code}}
@@ -13,8 +14,10 @@ function row(i,opt={}){
    mv:[model('A',kt,dir,vis,ceilFt,code,opt.gust??kt),model('B',kt+(opt.delta??0),dir+5,vis,ceilFt,code,opt.gust??kt),model('C',kt,dir-5,vis,ceilFt,code,opt.gust??kt)]};
 }
 function gen(rows,opts={}){return H.createEngine({storage:{get(){return null},set(){}}}).generate({station:'EPIR',issue,start,end,rows,record:false,...opts});}
+function genTuned(rows,opts={}){return P.wrapApi(H).createEngine({storage:{get(){return null},set(){}}}).generate({station:'EPIR',issue,start,end,rows,record:false,...opts});}
 
 assert.equal(H.ENGINE_VERSION,'1.0.0');
+assert.equal(P.VERSION,'1.1.0');
 
 let r=gen(Array.from({length:12},(_,i)=>row(i)));
 assert.match(r.taf,/\bCAVOK\b/);
@@ -78,4 +81,55 @@ assert.ok(r.groups.length<=5);
 
 assert.throws(()=>H.createEngine({storage:{get(){return null},set(){}}}).generate({station:'EPIR',issue,start,end:start+10*HOUR,rows,record:false}),/12 h/);
 
-console.log('taf-hybrid-engine tests: OK', {tests:12, version:H.ENGINE_VERSION});
+// Consensus is the deterministic forecast. Raw members only provide event/uncertainty evidence.
+rows=Array.from({length:12},(_,i)=>row(i,{kt:6,dir:220,vis:12000,ceilFt:6000}));
+for(const x of rows)x.mv=[model('A',20,120,5000,1500),model('B',30,300,3000,800),model('C',40,40,2000,500)];
+r=genTuned(rows);
+assert.ok(Math.abs(r.hourly[0].windKt-6)<0.2);
+assert.ok(r.hourly[0].visM>10000);
+assert.equal(r.diagnostics.consensusPrimary,true);
+
+// A single one-hour weak rain spike with 9999 and no corroboration is suppressed.
+rows=Array.from({length:12},(_,i)=>row(i));
+rows[6].RR=0.10;rows[6].wet=60;for(const m of rows[6].mv)m.code=61;
+let tuned=P.tuneRows(rows);
+assert.equal(tuned[6].__hybridTuning.suppressWeak,true);
+assert.ok(tuned[6].mv.every(m=>m.code===0));
+r=genTuned(rows);
+assert.ok(!/\b-?RA\b/.test(r.taf));
+
+// Two adjacent weak-rain hours provide temporal confirmation.
+rows=Array.from({length:12},(_,i)=>row(i));
+for(const k of [6,7]){rows[k].RR=0.10;rows[k].wet=60;for(const m of rows[k].mv)m.code=61;}
+tuned=P.tuneRows(rows);
+assert.equal(tuned[6].__hybridTuning.temporal,true);
+assert.equal(tuned[6].__hybridTuning.suppressWeak,false);
+
+// Weak rain is allowed when visibility is operationally reduced.
+rows=Array.from({length:12},(_,i)=>row(i));
+rows[6].VIS=4000;rows[6].RR=0.10;rows[6].wet=60;for(const m of rows[6].mv)m.code=61;
+tuned=P.tuneRows(rows);
+assert.equal(tuned[6].__hybridTuning.lowVis,true);
+assert.equal(tuned[6].__hybridTuning.suppressWeak,false);
+
+// Moderate/heavy precipitation, freezing precipitation and thunderstorms are never filtered as a weak spike.
+rows=Array.from({length:12},(_,i)=>row(i));
+for(const m of rows[4].mv)m.code=63;rows[4].RR=0.35;
+for(const m of rows[5].mv)m.code=66;
+for(const m of rows[6].mv)m.code=95;
+tuned=P.tuneRows(rows);
+assert.equal(tuned[4].__hybridTuning.moderateOrHeavy,true);
+assert.equal(tuned[4].__hybridTuning.suppressWeak,false);
+assert.equal(tuned[5].__hybridTuning.protectedEvent,true);
+assert.equal(tuned[5].__hybridTuning.suppressWeak,false);
+assert.equal(tuned[6].__hybridTuning.protectedEvent,true);
+assert.equal(tuned[6].__hybridTuning.suppressWeak,false);
+
+// A one-hour weak event can survive when a sufficiently broad model consensus confirms it.
+rows=Array.from({length:12},(_,i)=>row(i));
+rows[6].mv=['A','B','C','D','E'].map(id=>model(id,6,220,12000,6000,61));rows[6].RR=0.10;rows[6].wet=60;
+tuned=P.tuneRows(rows);
+assert.equal(tuned[6].__hybridTuning.strongModels,true);
+assert.equal(tuned[6].__hybridTuning.suppressWeak,false);
+
+console.log('taf-hybrid-engine tests: OK', {tests:19, version:H.ENGINE_VERSION, tuning:P.VERSION});
