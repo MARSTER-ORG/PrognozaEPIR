@@ -5,7 +5,7 @@
   if(typeof module==='object'&&module.exports)module.exports=api;
   if(root)root.PrognozaEPIRTAFHybridTuning=api;
 })(typeof globalThis!=='undefined'?globalThis:this,function(){
-  const VERSION='3.1.0';
+  const VERSION='3.1.1';
   const KT=1.9438444924406,FT=3.2808398950131,HOUR=3600000;
   const CAVOK_BASE_FT=1500*FT,NSC_BASE_FT=5000;
   const VIS_THRESHOLDS=[800,1500,3000,5000],CEIL_THRESHOLDS=[200,300,500,1000,1500];
@@ -235,7 +235,7 @@
     const dir=dw?(Math.atan2(u,v)*180/Math.PI+360)%360:null;return{windKt:speed/sw,windDir:dir,gustKt:gw?gust/gw:null};
   }
   function reconcileBase(result,plan,cfg,msaFt){
-    const original=result.base?.state||result.hourly?.[0];if(!original)return null;const base={...original,clouds:hourClouds(original).map(c=>({...c}))};
+    const original=result.hourly?.[0]||result.base?.state;if(!original)return null;const base={...original,clouds:hourClouds(original).map(c=>({...c}))};
     const hs=(result.hourly||[]).slice(0,(cfg.shortHorizon||DEFAULTS.shortHorizon).hours),windStable=hs.length>1&&!hs.slice(1).some(h=>windNeedsGroup(hs[0],h));
     if(windStable&&(cfg.shortHorizon||DEFAULTS.shortHorizon).blendWind){const w=blendedShortWind(hs);if(w){base.windKt=w.windKt;if(finite(w.windDir))base.windDir=w.windDir;if(finite(w.gustKt))base.gustKt=w.gustKt;}}
     if(plan?.active){const lim=cloudThresholds(msaFt).cavok,minFt=(cfg.shortHorizon||DEFAULTS.shortHorizon).weakCloudMinFt;base.clouds=base.clouds.filter(c=>c.type||c.ft>=lim||c.ft<minFt||(c.okta||amountMin(c.cover))>=5);base.__tafCloudsAuthoritative=true;}
@@ -341,9 +341,9 @@
   if(!/\/taf\.html$/i.test(location.pathname)||window.__PROGNOZA_EPIR_TAF_HYBRID_BOOT__)return;window.__PROGNOZA_EPIR_TAF_HYBRID_BOOT__=true;
   const loadScript=src=>new Promise((resolve,reject)=>{const key=src.split('?')[0],e=[...document.scripts].find(s=>s.src&&s.src.includes(key));if(e){if(e.dataset.loaded==='1'||(key.includes('taf-hybrid-engine')&&window.PrognozaEPIRTAFHybridEngine))return resolve();e.addEventListener('load',resolve,{once:true});e.addEventListener('error',()=>reject(Error('Nie udało się załadować '+src)),{once:true});return;}const s=document.createElement('script');s.src=src;s.async=false;s.dataset.tafHybrid='1';s.onload=()=>{s.dataset.loaded='1';resolve();};s.onerror=()=>reject(Error('Nie udało się załadować '+src));(document.head||document.documentElement).appendChild(s);});
   (async()=>{try{
-    if(!window.PrognozaEPIRTAFHybridEngine)await loadScript('taf-hybrid-engine.js?v=20260913-short-horizon-v5');
+    if(!window.PrognozaEPIRTAFHybridEngine)await loadScript('taf-hybrid-engine.js?v=20260913-short-horizon-v6');
     window.PrognozaEPIRTAFHybridEngine=window.PrognozaEPIRTAFHybridTuning.wrapApi(window.PrognozaEPIRTAFHybridEngine);
-    await loadScript('taf-hybrid-adapter.js?v=20260913-short-horizon-v5');
+    await loadScript('taf-hybrid-adapter.js?v=20260913-short-horizon-v6');
     window.PrognozaEPIRTAFGeneratorPolicy=Object.freeze({mode:'hybrid-instruction-short-horizon',version:window.PrognozaEPIRTAFHybridEngine?.ENGINE_VERSION||null,tuning:window.PrognozaEPIRTAFHybridTuning.VERSION});
   }catch(e){console.error('[TAF Hybrid bootstrap]',e);const b=document.getElementById('badge'),st=document.getElementById('st');if(b){b.textContent='BŁĄD HYBRID';b.className='badge bad';}if(st)st.textContent=e.message;}})();
 })();
