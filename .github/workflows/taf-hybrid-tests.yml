@@ -1,0 +1,32 @@
+name: TAF hybrid engine tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'taf-hybrid-engine.js'
+      - 'tests/taf-hybrid-engine.test.js'
+      - '.github/workflows/taf-hybrid-tests.yml'
+  pull_request:
+    paths:
+      - 'taf-hybrid-engine.js'
+      - 'tests/taf-hybrid-engine.test.js'
+      - '.github/workflows/taf-hybrid-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  node-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax check
+        run: node --check taf-hybrid-engine.js
+      - name: Regression tests
+        run: node tests/taf-hybrid-engine.test.js
