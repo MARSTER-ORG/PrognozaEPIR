@@ -26,7 +26,6 @@
     }
   }
 
-
   async function fetchTextFrom(root, name, now){
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8_000);
@@ -253,5 +252,56 @@
         console.warn('TAF policy loader:', error);
       }
     })();
+
+    // Keep the generator synchronized with the same durable MessageArchive
+    // that ARCH reads. This is browser-side only; it adds no Railway work.
+    const tafArchiveSignature = payload => [
+      payload?.aviation?.message_id || payload?.metar?.message_id || '',
+      payload?.speci?.message_id || '',
+      payload?.taf_by_station?.EPIR?.message_id || payload?.taf?.message_id || '',
+      payload?.taf_by_station?.EPBY?.message_id || '',
+      payload?.taf_by_station?.EPPW?.message_id || '',
+      payload?.taf_by_station?.EPKS?.message_id || ''
+    ].join('|');
+
+    let lastTafArchiveSignature = null;
+
+    const triggerTafGenerator = () => {
+      if (document.visibilityState === 'hidden') return false;
+      const button = document.getElementById('gen');
+      const badge = document.getElementById('badge');
+      if (!button || typeof button.click !== 'function') return false;
+      if (String(badge?.textContent || '').toUpperCase().includes('ŁADOWANIE')) return false;
+      button.click();
+      return true;
+    };
+
+    const checkTafArchiveFreshness = async (initial=false) => {
+      try {
+        const payload = await latest(true);
+        const signature = tafArchiveSignature(payload);
+        if (lastTafArchiveSignature === null) {
+          lastTafArchiveSignature = signature;
+          if (initial) triggerTafGenerator();
+          return;
+        }
+        if (signature !== lastTafArchiveSignature) {
+          if (triggerTafGenerator()) lastTafArchiveSignature = signature;
+        }
+      } catch (error) {
+        console.warn('TAF archive freshness watcher:', error);
+      }
+    };
+
+    window.addEventListener('load', () => {
+      setTimeout(() => checkTafArchiveFreshness(true), 250);
+      setInterval(() => {
+        if (document.visibilityState !== 'hidden') checkTafArchiveFreshness(false);
+      }, 60_000);
+    }, {once:true});
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'hidden') checkTafArchiveFreshness(false);
+    });
   }
 })();
