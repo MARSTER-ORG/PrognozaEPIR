@@ -4,7 +4,7 @@
 
   const KT=1.94384,FT=3.28084,NSC_FT=5000;
   const VRB_SHARE=.75,VRB_LOW=2,VRB_OTHER_MAX=10;
-  const CLOUD_SHARE=.75,FEW_NIGHT_MIN_FT=4000;
+  const CLOUD_SHARE=.75,FEW_SCT_NIGHT_MIN_FT=4000;
   const NEIGHBORS=['EPBY','EPPW','EPKS'];
   const $=id=>document.getElementById(id),fin=Number.isFinite;
   let applying=false,recentCache=null,archivePatched=false;
@@ -124,15 +124,16 @@
   }
 
   function isNightUtc(t){const h=new Date(t).getUTCHours();return h>=18||h<=5}
+  function isFewSctNightCompatible(c,night){return night&&(c.amount==='FEW'||c.amount==='SCT')&&c.ft>=FEW_SCT_NIGHT_MIN_FT}
   function forecastHourState(tr,t){
     const c=tr?.children;if(!c||c.length<5)return null;
     const vis=String(c[2]?.textContent||'').trim(),wx=String(c[3]?.textContent||'').trim(),cloudText=String(c[4]?.textContent||'').trim(),clouds=cloudText.split(/\s+/).map(parseCloud).filter(Boolean),sig=clouds.filter(x=>x.type||x.ft<NSC_FT),night=isNightUtc(t);
-    const conv=sig.some(x=>x.type),blocking=sig.filter(x=>!x.type&&!(night&&x.amount==='FEW'&&x.ft>=FEW_NIGHT_MIN_FT));
+    const conv=sig.some(x=>x.type),blocking=sig.filter(x=>!x.type&&!isFewSctNightCompatible(x,night));
     const cloudOk=!conv&&blocking.length===0,vis9999=/\b9999\b/.test(vis),clearWx=noWxText(wx);
     return{t,night,vis,wx,cloudText,clouds,sig,cloudOk,vis9999,clearWx,cavokLike:cloudOk&&vis9999&&clearWx};
   }
   function forecastCloudEvidence(times){
-    const trs=[...document.querySelectorAll('#hours tr')].slice(0,12),states=trs.map((tr,i)=>forecastHourState(tr,times.start+i*3600e3)).filter(Boolean);if(states.length<8)return null;
+    const trs=[...document.querySelectorAll('#hours tr')].slice(0,12);if(trs.length<12)return null;const states=trs.map((tr,i)=>forecastHourState(tr,times.start+i*3600e3)).filter(Boolean);if(states.length!==12)return null;
     const compatible=states.filter(x=>x.cloudOk).length,share=compatible/states.length,cavokLike=states.filter(x=>x.cavokLike).length,night=states.filter(x=>x.night).length;
     return{samples:states.length,compatible,share,cavokLike,night,supports:share>CLOUD_SHARE,states};
   }
@@ -149,11 +150,11 @@
   }
 
   // Reguła nocna 18-05 UTC: gdy >75% 12 h ma brak chmur istotnych albo tylko
-  // FEW >=4000 ft, FEW >=4000 ft nie blokuje kodu CAVOK/NSC.
+  // FEW/SCT >=4000 ft, FEW/SCT >=4000 ft nie blokuje kodu CAVOK/NSC.
   function applyForecastCloudRule(line,times,forecast){
     if(!forecast?.supports||!isNightUtc(times.start))return line;
     let t=String(line).split(/\s+/),vis=t.find(x=>/^\d{4}$/.test(x)),clouds=t.map(parseCloud).filter(Boolean),sig=clouds.filter(c=>c.type||c.ft<NSC_FT);
-    const conv=sig.some(c=>c.type),blocking=sig.filter(c=>!c.type&&!(c.amount==='FEW'&&c.ft>=FEW_NIGHT_MIN_FT));if(conv||blocking.length)return line;
+    const conv=sig.some(c=>c.type),blocking=sig.filter(c=>!c.type&&!isFewSctNightCompatible(c,true));if(conv||blocking.length)return line;
     t=t.filter(x=>{const c=parseCloud(x);return !c});
     const wx=t.some(isWx);
     t=t.filter(x=>x!=='CAVOK'&&x!=='NSC');
@@ -166,11 +167,11 @@
     disableSynopUi();const s=$('sources');if(s){
       let w=s.querySelector('[data-taf-vrb02]');if(!w){w=document.createElement('span');w.dataset.tafVrb02='1';s.appendChild(w)}w.className='pill '+(vrb?'ok':'');w.textContent=vrb?`VRB02 ${Math.round(vrb.share*100)}% ✓`:'VRB02 —';
       let c=s.querySelector('[data-metar-cloud-anchor]');if(!c){c=document.createElement('span');c.dataset.metarCloudAnchor='1';s.appendChild(c)}c.className='pill '+(clear?'ok':'');c.textContent=clear?`METAR CAVOK ${Math.round(clear.share*100)}% ✓`:'METAR CAVOK —';
-      let f=s.querySelector('[data-forecast-cavok]');if(!f){f=document.createElement('span');f.dataset.forecastCavok='1';s.appendChild(f)}f.className='pill '+(forecast?.supports?'ok':'');f.textContent=forecast?`18-05 chmury ${Math.round(forecast.share*100)}%${forecast.supports?' ✓':''}`:'18-05 chmury —';
+      let f=s.querySelector('[data-forecast-cavok]');if(!f){f=document.createElement('span');f.dataset.forecastCavok='1';s.appendChild(f)}f.className='pill '+(forecast?.supports?'ok':'');f.textContent=forecast?`18-05 FEW/SCT ${Math.round(forecast.share*100)}%${forecast.supports?' ✓':''}`:'18-05 FEW/SCT —';
     }
     const b=$('reasons');if(b){b.querySelectorAll('[data-taf-policy-reason]').forEach(x=>x.remove());let ul=b.querySelector('ul');if(!ul){ul=document.createElement('ul');b.appendChild(ul)}
       if(vrb){const li=document.createElement('li');li.dataset.tafPolicyReason='vrb';li.textContent=`VRB02KT: ${vrb.count}/${vrb.total} godzin (${Math.round(vrb.share*100)}%) ma końcową prędkość <=02KT; max ${vrb.max}KT.`;ul.appendChild(li)}
-      if(forecast){const li=document.createElement('li');li.dataset.tafPolicyReason='forecastcavok';li.textContent=`CAVOK/NSC 18-05 UTC: ${forecast.compatible}/${forecast.samples} godzin (${Math.round(forecast.share*100)}%) ma brak chmur istotnych lub tylko FEW >=4000 ft. Próg jest >75%.`;ul.appendChild(li)}
+      if(forecast){const li=document.createElement('li');li.dataset.tafPolicyReason='forecastcavok';li.textContent=`CAVOK/NSC 18-05 UTC: ${forecast.compatible}/${forecast.samples} godzin (${Math.round(forecast.share*100)}%) ma brak chmur istotnych lub tylko FEW/SCT >=4000 ft. Próg jest >75%.`;ul.appendChild(li)}
       if(clear){const li=document.createElement('li');li.dataset.tafPolicyReason='cloudobs';li.textContent=`METAR: ${clear.clear}/${clear.samples} ostatnich obserwacji (${Math.round(clear.share*100)}%) wspiera warunki CAVOK.`;ul.appendChild(li)}
     }
   }
