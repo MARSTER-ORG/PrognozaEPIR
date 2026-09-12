@@ -213,11 +213,11 @@
         const style = document.createElement('style');
         style.id = 'epirGlobalNavStyle';
         style.textContent = `
-          #epirGlobalNav{width:100%;border-bottom:1px solid var(--border,var(--line,var(--b,#777)));background:var(--surface,var(--panel,var(--s,var(--bg,#fff))));box-shadow:0 1px 5px rgba(0,0,0,.08)}
-          #epirGlobalNav .epir-global-nav-inner{max-width:1450px;margin:0 auto;padding:7px 8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
-          #epirGlobalNav a{display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:7px 11px;border:1px solid var(--border,var(--line,var(--b,#888)));border-radius:7px;background:var(--surface2,var(--panel2,var(--s2,var(--surface,#f7f7f7))));color:var(--ink,var(--text,var(--fg,#222)));font:700 11px/1 Arial,Helvetica,sans-serif;text-decoration:none;white-space:nowrap}
+          #epirGlobalNav{width:100%;border-bottom:1px solid var(--epir-border,var(--border,var(--line,var(--b,#777))));background:var(--epir-surface,var(--surface,var(--panel,var(--s,var(--bg,#fff)))));box-shadow:0 1px 5px rgba(0,0,0,.08)}
+          #epirGlobalNav .epir-global-nav-inner{max-width:1320px;margin:0 auto;padding:7px 8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+          #epirGlobalNav a{display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:7px 11px;border:1px solid var(--epir-border,var(--border,var(--line,var(--b,#888))));border-radius:8px;background:var(--epir-surface2,var(--surface2,var(--panel2,var(--s2,var(--surface,#f7f7f7)))));color:var(--epir-text,var(--ink,var(--text,var(--fg,#222))));font:700 11px/1 Arial,Helvetica,sans-serif;text-decoration:none;white-space:nowrap}
           #epirGlobalNav a:hover{filter:brightness(.97)}
-          #epirGlobalNav a.active{background:var(--blueText,var(--blue2,var(--blue,var(--accent,#1f2a75))));border-color:var(--blueText,var(--blue2,var(--blue,var(--accent,#1f2a75))));color:#fff}
+          #epirGlobalNav a.active{background:var(--epir-accent,var(--blueText,var(--blue2,var(--blue,var(--accent,#1f2a75)))));border-color:var(--epir-accent,var(--blueText,var(--blue2,var(--blue,var(--accent,#1f2a75)))));color:#fff}
           @media(max-width:620px){#epirGlobalNav .epir-global-nav-inner{padding:5px 4px;gap:4px}#epirGlobalNav a{flex:1 1 calc(33.333% - 4px);min-width:96px;min-height:30px;padding:6px 7px;font-size:9.5px}}
         `;
         document.head.appendChild(style);
@@ -236,6 +236,100 @@
     else install();
   }
   installGlobalNavigation();
+
+  function installUnifiedVisualStyle() {
+    try {
+      if (window.top !== window.self) return;
+    } catch (_) { return; }
+
+    const path = location.pathname.toLowerCase();
+    const allowed = /\/(?:index\.html|radar\.html|sat-fog\.html|taf\.html|arch\.html)?$/.test(path);
+    if (!allowed) return;
+
+    const install = () => {
+      if (!document.documentElement || document.getElementById('epirUnifiedVisualStyle')) return;
+      document.documentElement.classList.add('epir-unified-ui');
+      const style = document.createElement('style');
+      style.id = 'epirUnifiedVisualStyle';
+      style.textContent = `
+        :root.epir-unified-ui{
+          --epir-bg:#f4f4f2;--epir-text:#232323;--epir-muted:#6e6e6e;--epir-border:#b5b5b5;
+          --epir-surface:#ffffff;--epir-surface2:#f7f7f7;--epir-accent:#1f2a75;--epir-shadow:0 2px 10px rgba(0,0,0,.08);
+          --bg:var(--epir-bg)!important;--ink:var(--epir-text)!important;--fg:var(--epir-text)!important;--text:var(--epir-text)!important;
+          --muted:var(--epir-muted)!important;--mut:var(--epir-muted)!important;
+          --border:var(--epir-border)!important;--line:var(--epir-border)!important;--b:var(--epir-border)!important;
+          --surface:var(--epir-surface)!important;--panel:var(--epir-surface)!important;--s:var(--epir-surface)!important;
+          --surface2:var(--epir-surface2)!important;--panel2:var(--epir-surface2)!important;--s2:var(--epir-surface2)!important;
+          --blueText:var(--epir-accent)!important;--blue2:var(--epir-accent)!important;--blue:var(--epir-accent)!important;--accent:var(--epir-accent)!important;
+        }
+        :root.epir-unified-ui[data-theme="dark"]{
+          --epir-bg:#111418;--epir-text:#e7e9ed;--epir-muted:#a6acb5;--epir-border:#4e5660;
+          --epir-surface:#181c21;--epir-surface2:#20252b;--epir-accent:#9aabff;--epir-shadow:none;
+        }
+        @media(prefers-color-scheme:dark){:root.epir-unified-ui:not([data-theme]){
+          --epir-bg:#111418;--epir-text:#e7e9ed;--epir-muted:#a6acb5;--epir-border:#4e5660;
+          --epir-surface:#181c21;--epir-surface2:#20252b;--epir-accent:#9aabff;--epir-shadow:none;
+        }}
+        html.epir-unified-ui,html.epir-unified-ui body{background:var(--epir-bg)!important;color:var(--epir-text)!important;font-family:Arial,Helvetica,sans-serif!important}
+        html.epir-unified-ui .app{max-width:1320px!important;margin:0 auto!important;padding:8px 8px 24px!important}
+        html.epir-unified-ui .top{display:flex!important;justify-content:space-between!important;gap:12px!important;align-items:flex-start!important;padding:8px 4px 7px!important;margin:0!important}
+        html.epir-unified-ui .brand{font-size:17px!important;font-weight:700!important;line-height:1.2!important}
+        html.epir-unified-ui .brand small,html.epir-unified-ui .sub{font-weight:400!important;color:var(--epir-muted)!important}
+        html.epir-unified-ui .place{font-size:12px!important;color:var(--epir-accent)!important;margin-top:3px!important}
+        html.epir-unified-ui .status{font-size:10px!important;color:var(--epir-muted)!important;text-align:right!important}
+        html.epir-unified-ui .badge,html.epir-unified-ui .pill{border:1px solid var(--epir-border)!important;background:var(--epir-surface)!important;border-radius:999px!important;padding:4px 8px!important}
+        html.epir-unified-ui .controls,html.epir-unified-ui .ctrl,html.epir-unified-ui .toolbar{
+          display:flex!important;flex-wrap:wrap!important;gap:6px!important;align-items:center!important;
+          border:1px solid var(--epir-border)!important;background:var(--epir-surface)!important;
+          padding:8px!important;border-radius:8px!important;box-shadow:var(--epir-shadow)!important;margin:0 0 8px!important;
+        }
+        html.epir-unified-ui .toolbar{align-items:end!important}
+        html.epir-unified-ui button,html.epir-unified-ui select,html.epir-unified-ui input,
+        html.epir-unified-ui .link,html.epir-unified-ui .control-link,html.epir-unified-ui .home{
+          border-color:var(--epir-border)!important;border-radius:7px!important;
+        }
+        html.epir-unified-ui .controls button,html.epir-unified-ui .controls select,
+        html.epir-unified-ui .ctrl button,html.epir-unified-ui .ctrl select,html.epir-unified-ui .ctrl .link,
+        html.epir-unified-ui .toolbar button,html.epir-unified-ui .toolbar select,html.epir-unified-ui .toolbar input,html.epir-unified-ui .toolbar a,
+        html.epir-unified-ui .home,html.epir-unified-ui .control-link{
+          min-height:32px!important;background:var(--epir-surface2)!important;color:var(--epir-text)!important;
+          border:1px solid var(--epir-border)!important;padding:7px 9px!important;font-size:11px!important;text-decoration:none!important;
+        }
+        html.epir-unified-ui button.primary,html.epir-unified-ui .primary,
+        html.epir-unified-ui .controls button.active,html.epir-unified-ui .toolbar button.active,html.epir-unified-ui .types button.active{
+          background:var(--epir-accent)!important;color:#fff!important;border-color:var(--epir-accent)!important;
+        }
+        html.epir-unified-ui .card,html.epir-unified-ui .panel,html.epir-unified-ui .wrap,html.epir-unified-ui .mapwrap{
+          border:1px solid var(--epir-border)!important;border-radius:8px!important;background:var(--epir-surface)!important;box-shadow:var(--epir-shadow)!important;
+        }
+        html.epir-unified-ui .card h2{color:var(--epir-accent)!important;border-color:var(--epir-border)!important}
+        html.epir-unified-ui .panel h3,html.epir-unified-ui .panel h4{color:var(--epir-accent)}
+        html.epir-unified-ui .section-info,html.epir-unified-ui .interpret,html.epir-unified-ui .beam,html.epir-unified-ui .metric,
+        html.epir-unified-ui .section-value,html.epir-unified-ui .empty{
+          background:var(--epir-surface2)!important;border-color:var(--epir-border)!important;
+        }
+        html.epir-unified-ui table{background:var(--epir-surface)!important;color:var(--epir-text)!important}
+        html.epir-unified-ui th{background:var(--epir-surface2)!important;color:var(--epir-accent)!important}
+        html.epir-unified-ui td,html.epir-unified-ui th{border-color:var(--epir-border)!important}
+        html.epir-unified-ui .legend-row{border-color:var(--epir-border)!important;background:var(--epir-surface2)!important}
+        html.epir-unified-ui #epirGlobalNav{background:var(--epir-surface)!important;border-color:var(--epir-border)!important}
+        html.epir-unified-ui #epirGlobalNav a{background:var(--epir-surface2)!important;border-color:var(--epir-border)!important;color:var(--epir-text)!important}
+        html.epir-unified-ui #epirGlobalNav a.active{background:var(--epir-accent)!important;border-color:var(--epir-accent)!important;color:#fff!important}
+        @media(max-width:700px){
+          html.epir-unified-ui .app{padding:5px 4px 18px!important}
+          html.epir-unified-ui .top{padding:6px 2px!important}
+          html.epir-unified-ui .brand{font-size:15px!important}
+          html.epir-unified-ui .place{font-size:11px!important}
+          html.epir-unified-ui .controls,html.epir-unified-ui .ctrl,html.epir-unified-ui .toolbar{padding:6px!important;gap:4px!important}
+        }
+      `;
+      document.head.appendChild(style);
+    };
+
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install, {once:true});
+    else install();
+  }
+  installUnifiedVisualStyle();
 
   function loadTafGeneratorPolicy() {
     if (!/\/taf\.html$/i.test(location.pathname) || window.__PROGNOZA_EPIR_TAF_POLICY_LOADER__) return;
