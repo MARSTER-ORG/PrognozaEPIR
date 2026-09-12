@@ -25,7 +25,7 @@ function gen(rows,opts={}){return engine().generate({station:'EPIR',issue,start,
 function genTuned(rows,opts={}){return P.wrapApi(H).createEngine({storage:{get(){return null},set(){}}}).generate({station:'EPIR',issue,start,end,rows,record:false,...opts});}
 
 assert.equal(H.ENGINE_VERSION,'1.0.0');
-assert.equal(P.VERSION,'3.1.0');
+assert.equal(P.VERSION,'3.1.1');
 
 // Basic syntax/instruction invariants.
 let r=genTuned(Array.from({length:12},(_,i)=>row(i)));
