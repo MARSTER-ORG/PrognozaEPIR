@@ -331,6 +331,36 @@
   }
   installUnifiedVisualStyle();
 
+  function removeRedundantLocalNavigation() {
+    try {
+      if (window.top !== window.self) return;
+    } catch (_) { return; }
+
+    const install = () => {
+      const path = location.pathname.toLowerCase();
+      let selectors = [];
+      if (/\/(?:index\.html)?$/.test(path)) {
+        selectors = [
+          '.controls a[href="arch.html"]',
+          '.controls a[href="radar.html"]',
+          '.controls a[href="taf.html"]',
+          '.controls a[href="sat-fog.html"]'
+        ];
+      } else if (/\/taf\.html$/.test(path)) {
+        selectors = ['.ctrl a[href="index.html"]','.ctrl a[href="radar.html"]'];
+      } else if (/\/radar\.html$/.test(path)) {
+        selectors = ['.toolbar a[href="index.html"]'];
+      } else if (/\/arch\.html$/.test(path)) {
+        selectors = ['.top a.home[href="index.html"]'];
+      }
+      selectors.forEach(selector => document.querySelectorAll(selector).forEach(el => el.remove()));
+    };
+
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install, {once:true});
+    else install();
+  }
+  removeRedundantLocalNavigation();
+
   function loadTafGeneratorPolicy() {
     if (!/\/taf\.html$/i.test(location.pathname) || window.__PROGNOZA_EPIR_TAF_POLICY_LOADER__) return;
     window.__PROGNOZA_EPIR_TAF_POLICY_LOADER__ = true;
