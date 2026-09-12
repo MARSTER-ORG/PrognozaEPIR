@@ -1,0 +1,132 @@
+name: Add neighbor observation context
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/add-neighbor-observations.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Integrate neighbor observations
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_once(path, old, new, label):
+              p=Path(path); s=p.read_text(encoding='utf-8')
+              if new in s:
+                  return
+              if old not in s:
+                  raise SystemExit(f'{label}: marker not found in {path}')
+              p.write_text(s.replace(old,new,1),encoding='utf-8')
+
+          # Reuse the PilotHub HTML already downloaded by the neighbor TAF collector.
+          replace_once(
+              'scripts/collect_neighbor_tafs.py',
+              'from pathlib import Path\n\nSTATIONS =',
+              'from pathlib import Path\n\nimport neighbor_observations as neighbor_obs\n\nSTATIONS =',
+              'neighbor import',
+          )
+          replace_once(
+              'scripts/collect_neighbor_tafs.py',
+              '            page = fetch_text(url, accept, retries=1)\n            if mode == "multi":',
+              '            page = fetch_text(url, accept, retries=1)\n            if mode == "station" and source == "PilotHub / IMGW" and station:\n                neighbor_obs.capture_pilothub_page(station, page, source_url)\n            if mode == "multi":',
+              'same-page observation capture',
+          )
+
+          # Bootstrap the contextual archive after Railway container replacement.
+          p=Path('scripts/railway_ingestor_event_server.py'); s=p.read_text(encoding='utf-8')
+          s=s.replace(
+              'for rel in ("status.json", "latest.json", "recent.json", "taf-neighbors.json"):',
+              'for rel in ("status.json", "latest.json", "recent.json", "taf-neighbors.json", "neighbors/latest.json"):',
+              1,
+          )
+          marker='''    result = {\n        "days": _BOOTSTRAP_DAYS,'''
+          if 'neighbors/{station}/{day_rel}' not in s:
+              block='''    for offset in range(_BOOTSTRAP_DAYS):\n        day = today - timedelta(days=offset)\n        day_rel = day.strftime("%Y/%m/%d.jsonl")\n        for station in ("epby", "eppw", "epks"):\n            rel = f"neighbors/{station}/{day_rel}"\n            try:\n                data = _github_get(rel)\n                if data is None:\n                    continue\n                fetched += 1\n                dest = base.ARCHIVE / rel\n                before = dest.read_bytes() if dest.exists() else None\n                _, merged = _merge_jsonl(dest, data)\n                merged_records += merged\n                after = dest.read_bytes() if dest.exists() else None\n                if before != after:\n                    changed += 1\n            except Exception as exc:\n                errors.append(f"{rel}: {type(exc).__name__}: {exc}")\n\n'''
+              if marker not in s:
+                  raise SystemExit('bootstrap result marker not found')
+              s=s.replace(marker,block+marker,1)
+          p.write_text(s,encoding='utf-8')
+
+          # Load the shared GitHub archive context in the main multimodel page and
+          # apply it only after the native multimodel consensus has been computed.
+          replace_once(
+              'index.html',
+              '<script src="utc-ui-guard.js"></script>\n<style>',
+              '<script src="utc-ui-guard.js"></script>\n<script src="message-archive-client.js?v=github-only-v1"></script>\n<script src="neighbor-observation-context.js?v=neighbor-obs-v1"></script>\n<style>',
+              'index neighbor scripts',
+          )
+          replace_once(
+              'index.html',
+              'compute();render()',
+              "try{await window.PrognozaEPIRNeighborObservations?.refresh?.(true)}catch(e){failures.push('METAR/SPECI sąsiednie: '+(e?.message||e))}compute();consensus=window.PrognozaEPIRNeighborObservations?.applySeries?.(consensus)||consensus;render()",
+              'consensus neighbor anchor',
+          )
+
+          # Pass neighbor-observation provenance from the iframe consensus into
+          # the TAF analysis rows, and expose it in the Napływ column.
+          replace_once(
+              'taf.html',
+              'storm:z.storm,count:z.count,mv:',
+              'storm:z.storm,count:z.count,neighborObsStation:z.neighborObsStation,neighborObsScore:z.neighborObsScore,neighborObsLagH:z.neighborObsLagH,neighborObsAgeMin:z.neighborObsAgeMin,neighborObsWeather:z.neighborObsWeather,mv:',
+              'TAF neighbor observation metadata',
+          )
+          p=Path('taf.html'); s=p.read_text(encoding='utf-8')
+          pattern=r"function upstreamText\(z\)\{.*?\}function renderNeighbors\(\)"
+          replacement="function upstreamText(z){let q=z.upstream?.[0],a=[];if(z.neighborObsStation)a.push(`OBS ${z.neighborObsStation} ${Math.round(z.neighborObsScore||0)}% · -${Number(z.neighborObsLagH||0).toFixed(1)}h`);if(q)a.push(`${q.id} TAF ${Math.round(q.score*100)}% · -${q.lag.toFixed(1)}h · ${tafMini(q.state)}`);return a.join(' · ')||'—'}function renderNeighbors()"
+          if 'OBS ${z.neighborObsStation}' not in s:
+              s,n=re.subn(pattern,replacement,s,count=1,flags=re.S)
+              if n!=1: raise SystemExit('TAF upstreamText marker not found')
+          s=s.replace('TAF kierunkowe — warunki na napływie','METAR/SPECI + TAF — warunki na napływie',1)
+          p.write_text(s,encoding='utf-8')
+          PY
+
+      - name: Validate integration
+        run: |
+          python3 -m py_compile scripts/neighbor_observations.py scripts/collect_neighbor_tafs.py scripts/railway_ingestor_event_server.py
+          node --check neighbor-observation-context.js
+          python3 - <<'PY'
+          from pathlib import Path
+          checks={
+            'scripts/collect_neighbor_tafs.py':['neighbor_obs.capture_pilothub_page'],
+            'scripts/railway_ingestor_event_server.py':['neighbors/latest.json','neighbors/{station}/{day_rel}'],
+            'index.html':['neighbor-observation-context.js','PrognozaEPIRNeighborObservations?.applySeries'],
+            'taf.html':['neighborObsStation:z.neighborObsStation','OBS ${z.neighborObsStation}'],
+          }
+          for path,needles in checks.items():
+              text=Path(path).read_text(encoding='utf-8')
+              for needle in needles:
+                  if needle not in text: raise SystemExit(f'{path}: missing {needle}')
+          print('neighbor observation integration OK')
+          PY
+
+      - name: Commit application changes
+        run: |
+          if git diff --quiet -- scripts/collect_neighbor_tafs.py scripts/railway_ingestor_event_server.py index.html taf.html; then
+            echo 'Neighbor observation integration already applied.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add scripts/collect_neighbor_tafs.py scripts/railway_ingestor_event_server.py index.html taf.html
+          git commit -m 'weather: integrate neighboring observations into consensus'
+          for n in 1 2 3 4 5; do
+            git fetch origin main
+            if git rebase origin/main && git push origin HEAD:main; then exit 0; fi
+            git rebase --abort >/dev/null 2>&1 || true
+            sleep $((n*2))
+          done
+          exit 1
