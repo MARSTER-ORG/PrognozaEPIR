@@ -223,5 +223,25 @@
   }
   loadRadarRiskPolicy();
 
+  function installRadarLightningAlertButton() {
+    if (!/\/radar\.html$/i.test(location.pathname)) return;
+    const install = () => {
+      const toolbar = document.querySelector('.toolbar');
+      if (!toolbar || document.getElementById('lightningAlertsSettings')) return;
+      const link = document.createElement('a');
+      link.id = 'lightningAlertsSettings';
+      link.href = 'data/messages/lightning-alerts.html';
+      link.textContent = '⚡ Alarm wyładowań';
+      link.title = 'Ustawienia powiadomień o wyładowaniach do 50 km od EPIR';
+      link.setAttribute('aria-label','Ustawienia alarmu wyładowań');
+      const spacer = toolbar.querySelector('.spacer');
+      if (spacer) spacer.insertAdjacentElement('afterend', link);
+      else toolbar.appendChild(link);
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install, {once:true});
+    else install();
+  }
+  installRadarLightningAlertButton();
+
   window.PrognozaUtcUI = Object.freeze({ markUtc, scan, scanAll });
 })();
