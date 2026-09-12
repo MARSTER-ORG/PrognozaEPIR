@@ -87,7 +87,7 @@ jobs:
           def wanted(rel):
               if rel in {'latest.json','recent.json','taf-neighbors.json'}:
                   return True
-              return rel.startswith(('metar/','speci/','synop/','taf/')) and rel.endswith(('.json','.jsonl'))
+              return rel.startswith(('metar/','speci/','synop/','taf/','neighbors/')) and rel.endswith(('.json','.jsonl'))
 
           changed=0
           checked=0
@@ -183,6 +183,7 @@ jobs:
               'legacy_archives_authoritative':False,
               'taf_history_scope':'EPIR only',
               'taf_neighbors':'current snapshot only; not archived; not learning data',
+              'neighbor_observations':'EPBY/EPPW/EPKS METAR/SPECI context; historical JSONL; excluded from EPIR counts',
           }
           dest=root/'status.json'
           text=json.dumps(payload,ensure_ascii=False,indent=2,sort_keys=True)+'\n'
