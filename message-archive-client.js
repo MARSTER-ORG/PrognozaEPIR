@@ -62,7 +62,7 @@
         return value;
       }catch(error){
         if(error?.status !== 404) allNotFound = false;
-        errors.push({root, error});
+        errors.push({root,error});
       }
     }
     const error = new Error(`MessageArchive ${clean}: GitHub archive unavailable`);
@@ -105,7 +105,7 @@
     return `${String(type).toLowerCase()}/${y}/${m}/${day}.jsonl`;
   }
 
-  function parseJsoll(text, type, station=''){
+  function parseJsonl(text, type, station=''){
     const t = norm(type), s = norm(station), rows = [];
     for(const line of String(text || '').split(/\r?\n/)){
       if(!line.trim()) continue;
@@ -126,8 +126,7 @@
       if(!row) continue;
       const key = String(row.message_id || `${norm(row.type)}|${norm(row.station)}|${row.canonical_raw || row.raw || ''}`);
       if(seen.has(key)) continue;
-      seen.add(key);
-      out.push(row);
+      seen.add(key); out.push(row);
     }
     out.sort((a,b) => rowTime(a) - rowTime(b));
     return out;
@@ -206,7 +205,7 @@
     const out = {...(base || {})};
     if(metar){ out.metar = metar; out.metar_only = metar; }
     if(speci) out.speci = speci;
-    const aviation = newest([out.aviation, metar,speci]);
+    const aviation = newest([out.aviation, metar, speci]);
     if(aviation) out.aviation = aviation;
     if(taf){ out.taf = taf; out.taf_by_station = {...(out.taf_by_station || {}), EPIR:taf}; }
     if(synop) out.synop = synop;
@@ -218,22 +217,21 @@
     const [base,metar,speci,taf,synop] = await Promise.all([
       basePromise,
       directRows('METAR','EPIR',force,2).catch(() => []),
-      directRows('SPECI','EPIR',force,2).catch() => []),
-      directRows('TAF','EPIR',force,2).catch(() => [])
+      directRows('SPECI','EPIR',force,2).catch(() => []),
+      directRows('TAF','EPIR',force,2).catch(() => []),
       directRows('SYNOP','12342',force,2).catch(() => [])
     ]);
     const out = {...(base || {})};
     out.metar_only = mergeRows(out.metar_only, metar);
     out.metar = mergeRows(out.metar, metar);
     out.speci = mergeRows(out.speci, speci);
-    out.aviation = mergeRows(out.viation, metar, speci);
+    out.aviation = mergeRows(out.aviation, metar, speci);
     out.taf = mergeRows(out.taf, taf);
     out.synop = mergeRows(out.synop, synop);
     return out;
   }
 
   async function status(force=false){ return fetchJson('status.json', force); }
-
 
   async function getLatest(type, station='', force=false){
     const t = norm(type), s = norm(station);
@@ -319,7 +317,7 @@
       try{await attachScript(`${name}?v=${version}`);}
       catch(localError){
         try{await attachRawAsBlob(name,version);}
-        catch(rawError){const error=new Error(`Nie udało sięzaładować ${name}`);error.cause={localError,rawError};throw error;}
+        catch(rawError){const error=new Error(`Nie udało się załadować ${name}`);error.cause={localError,rawError};throw error;}
       }
     };
     (async()=>{
