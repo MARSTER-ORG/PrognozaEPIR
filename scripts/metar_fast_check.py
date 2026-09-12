@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Lightweight official-IMGW METAR fast path for PrognozaEPIR.
+"""Lightweight official-IMGW METAR/SPECI fast path for PrognozaEPIR.
 
-This checker deliberately does only three things:
+This checker deliberately does only four things:
 1. query the official IMGW Aviation API for EPIR METAR/SPECI,
-2. stage only records missing from the authoritative central archive,
-3. run the local archive normalizer so data/messages is immediately current.
+2. update bounded first-seen publication-latency telemetry,
+3. stage only records missing from the authoritative central archive,
+4. run the local archive normalizer only when a new bulletin is found.
 
 It performs no TAF, SYNOP, lightning, neighbor-airport or fallback-source work.
 The same flock as central_ingestor.py prevents concurrent archive writes.
@@ -22,6 +23,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+import imgw_publication_latency as latency
 import live_metar_collector as live
 import refresh_epir_metar as refresh
 
@@ -88,7 +90,7 @@ def try_exclusive_lock(path: Path):
             return
         handle.seek(0)
         handle.truncate()
-        handle.write(f"pid={os.getpid()} fast-check={utc_iso()}\n")
+        handle.write(f"pid={os.getpid()} aviation-fast-check={utc_iso()}\n")
         handle.flush()
         yield handle
     finally:
@@ -120,10 +122,18 @@ def normalize_archive() -> tuple[bool, str]:
     return True, "ok"
 
 
+def type_counts(rows: list[dict]) -> dict:
+    return {
+        "metar": sum(1 for row in rows if str(row.get("report_type") or "METAR").upper() == "METAR"),
+        "speci": sum(1 for row in rows if str(row.get("report_type") or "").upper() == "SPECI"),
+    }
+
+
 def run_once(lock_file: Path) -> int:
     with try_exclusive_lock(lock_file) as lock:
         if lock is None:
             print(json.dumps({
+                "aviation_fast_check": True,
                 "metar_fast_check": True,
                 "checked_at": utc_iso(),
                 "ok": True,
@@ -136,14 +146,20 @@ def run_once(lock_file: Path) -> int:
             if live.structurally_valid_metar(row) and refresh.latest_valid(row)
         ]
         rows.sort(key=refresh.rank)
+        query_name = rows[-1].get("imgw_api_query") if rows else None
+        telemetry = latency.observe(rows, query_name=query_name)
+
         if not rows:
             print(json.dumps({
+                "aviation_fast_check": True,
                 "metar_fast_check": True,
                 "checked_at": utc_iso(),
                 "ok": True,
                 "source": "IMGW_AVIATION_METAR",
                 "new": 0,
+                "new_by_type": {"metar": 0, "speci": 0},
                 "newest": None,
+                "telemetry": telemetry,
             }, separators=(",", ":")), flush=True)
             return 0
 
@@ -151,12 +167,16 @@ def run_once(lock_file: Path) -> int:
         if not missing:
             newest = rows[-1]
             print(json.dumps({
+                "aviation_fast_check": True,
                 "metar_fast_check": True,
                 "checked_at": utc_iso(),
                 "ok": True,
                 "source": "IMGW_AVIATION_METAR",
                 "new": 0,
+                "new_by_type": {"metar": 0, "speci": 0},
                 "newest": newest.get("obs_time"),
+                "newest_type": newest.get("report_type"),
+                "telemetry": telemetry,
             }, separators=(",", ":")), flush=True)
             return 0
 
@@ -168,12 +188,15 @@ def run_once(lock_file: Path) -> int:
         ok, reason = normalize_archive()
         if not ok:
             print(json.dumps({
+                "aviation_fast_check": True,
                 "metar_fast_check": True,
                 "checked_at": utc_iso(),
                 "ok": False,
                 "source": "IMGW_AVIATION_METAR",
                 "new": len(missing),
+                "new_by_type": type_counts(missing),
                 "staged": staged,
+                "telemetry": telemetry,
                 "error": reason,
             }, separators=(",", ":")), flush=True)
             return 1
@@ -181,14 +204,18 @@ def run_once(lock_file: Path) -> int:
         unresolved = [row for row in missing if not central_has(row)]
         newest = max(missing, key=refresh.rank)
         result = {
+            "aviation_fast_check": True,
             "metar_fast_check": True,
             "checked_at": utc_iso(),
             "ok": not unresolved,
             "source": "IMGW_AVIATION_METAR",
             "new": len(missing),
+            "new_by_type": type_counts(missing),
             "staged": staged,
             "newest": newest.get("obs_time"),
+            "newest_type": newest.get("report_type"),
             "raw": newest.get("raw"),
+            "telemetry": telemetry,
             "unresolved": len(unresolved),
         }
         print(json.dumps(result, ensure_ascii=False, separators=(",", ":")), flush=True)
