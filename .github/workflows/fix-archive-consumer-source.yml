@@ -19,180 +19,78 @@ jobs:
           fetch-depth: 0
 
       - name: Unify archive consumers
-        shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import base64
           import re
 
-          # 1. One transport owner: message-archive-client.js.
+          addition = base64.b64decode('CgogIGFzeW5jIGZ1bmN0aW9uIGZldGNoVGV4dEZyb20ocm9vdCwgbmFtZSwgbm93KXsKICAgIGNvbnN0IGNvbnRyb2xsZXIgPSBuZXcgQWJvcnRDb250cm9sbGVyKCk7CiAgICBjb25zdCB0aW1lciA9IHNldFRpbWVvdXQoKCkgPT4gY29udHJvbGxlci5hYm9ydCgpLCA4XzAwMCk7CiAgICB0cnkgewogICAgICBjb25zdCByZXNwb25zZSA9IGF3YWl0IG5hdGl2ZUZldGNoKGAke3Jvb3R9LyR7bmFtZX0/dj0ke25vd31gLCB7CiAgICAgICAgY2FjaGU6ICduby1zdG9yZScsCiAgICAgICAgc2lnbmFsOiBjb250cm9sbGVyLnNpZ25hbCwKICAgICAgICBoZWFkZXJzOiB7J0FjY2VwdCc6J2FwcGxpY2F0aW9uL3gtbmRqc29uLHRleHQvcGxhaW4sKi8qJ30KICAgICAgfSk7CiAgICAgIGlmKCFyZXNwb25zZS5vayl7CiAgICAgICAgY29uc3QgZXJyb3IgPSBuZXcgRXJyb3IoYE1lc3NhZ2VBcmNoaXZlICR7bmFtZX06IEhUVFAgJHtyZXNwb25zZS5zdGF0dXN9YCk7CiAgICAgICAgZXJyb3Iuc3RhdHVzID0gcmVzcG9uc2Uuc3RhdHVzOwogICAgICAgIHRocm93IGVycm9yOwogICAgICB9CiAgICAgIHJldHVybiBhd2FpdCByZXNwb25zZS50ZXh0KCk7CiAgICB9IGZpbmFsbHkgewogICAgICBjbGVhclRpbWVvdXQodGltZXIpOwogICAgfQogIH0KCiAgYXN5bmMgZnVuY3Rpb24gZmV0Y2hBcmNoaXZlVGV4dChuYW1lLCBmb3JjZT1mYWxzZSl7CiAgICBjb25zdCBjbGVhbiA9IFN0cmluZyhuYW1lIHx8ICcnKS5yZXBsYWNlKC9eXC8rLywgJycpOwogICAgaWYoIWNsZWFuIHx8IGNsZWFuLmluY2x1ZGVzKCcuLicpIHx8ICEvXltBLVphLXowLTkuXy8tXSskLy50ZXN0KGNsZWFuKSl7CiAgICAgIHRocm93IG5ldyBFcnJvcignTWVzc2FnZUFyY2hpdmU6IGludmFsaWQgYXJjaGl2ZSBwYXRoJyk7CiAgICB9CiAgICBjb25zdCBrZXkgPSBgdGV4dDoke2NsZWFufWA7CiAgICBjb25zdCBub3cgPSBEYXRlLm5vdygpOwogICAgY29uc3QgaGl0ID0gY2FjaGUuZ2V0KGtleSk7CiAgICBpZighZm9yY2UgJiYgaGl0ICYmIG5vdyAtIGhpdC5hdCA8IFRUTF9NUykgcmV0dXJuIGhpdC52YWx1ZTsKCiAgICBjb25zdCBlcnJvcnMgPSBbXTsKICAgIGxldCBhbGxOb3RGb3VuZCA9IHRydWU7CiAgICBmb3IoY29uc3Qgcm9vdCBvZiByZWFkUm9vdHMoKSl7CiAgICAgIHRyeSB7CiAgICAgICAgY29uc3QgdmFsdWUgPSBhd2FpdCBmZXRjaFRleHRGcm9tKHJvb3QsIGNsZWFuLCBub3cpOwogICAgICAgIGNhY2hlLnNldChrZXksIHthdDogbm93LCB2YWx1ZSwgc291cmNlOiByb290fSk7CiAgICAgICAgcmV0dXJuIHZhbHVlOwogICAgICB9IGNhdGNoKGVycm9yKXsKICAgICAgICBpZihlcnJvcj8uc3RhdHVzICE9PSA0MDQpIGFsbE5vdEZvdW5kID0gZmFsc2U7CiAgICAgICAgZXJyb3JzLnB1c2goe3Jvb3QsIGVycm9yfSk7CiAgICAgIH0KICAgIH0KICAgIGNvbnN0IGVycm9yID0gbmV3IEVycm9yKGBNZXNzYWdlQXJjaGl2ZSAke2NsZWFufTogR2l0SHViIGFyY2hpdmUgdW5hdmFpbGFibGVgKTsKICAgIGVycm9yLnN0YXR1cyA9IGFsbE5vdEZvdW5kID8gNDA0IDogMDsKICAgIGVycm9yLmNhdXNlID0gZXJyb3JzOwogICAgdGhyb3cgZXJyb3I7CiAgfQo=').decode('utf-8')
+          replacement = base64.b64decode('ICBhc3luYyBmdW5jdGlvbiBmZXRjaEFyY2hpdmVGaWxlKHBhdGgpewogICAgY29uc3QgYXJjaGl2ZT13aW5kb3cuUHJvZ25vemFFUElSTWVzc2FnZUFyY2hpdmU7CiAgICBpZighYXJjaGl2ZT8uZmV0Y2hUZXh0KXRocm93IG5ldyBFcnJvcignV3Nww7Nsbnkga2xpZW50IGFyY2hpd3VtIEdpdEh1YiBuaWUgamVzdCBkb3N0xJlwbnkuJyk7CiAgICB0cnl7cmV0dXJuIGF3YWl0IGFyY2hpdmUuZmV0Y2hUZXh0KHBhdGgsdHJ1ZSl9Y2F0Y2goZSl7CiAgICAgIGlmKGU/LnN0YXR1cz09PTQwNClyZXR1cm4gJyc7CiAgICAgIHRocm93IG5ldyBFcnJvcihgTmllIHVkYcWCbyBzacSZIG9kY3p5dGHEhyAke3BhdGh9IHogYXJjaGl3dW0gR2l0SHViLmApCiAgICB9CiAgfQo=').decode('utf-8')
+          validator = base64.b64decode('IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwpmcm9tIHBhdGhsaWIgaW1wb3J0IFBhdGgKaW1wb3J0IHJlCmltcG9ydCBzeXMKCmVycm9ycyA9IFtdCmNsaWVudCA9IFBhdGgoJ21lc3NhZ2UtYXJjaGl2ZS1jbGllbnQuanMnKS5yZWFkX3RleHQoZW5jb2Rpbmc9J3V0Zi04JykKYXJjaCA9IFBhdGgoJ2FyY2guaHRtbCcpLnJlYWRfdGV4dChlbmNvZGluZz0ndXRmLTgnKQoKaWYgInJldHVybiBbR0lUSFVCX1JPT1QsIFNUQVRJQ19ST09UXTsiIG5vdCBpbiBjbGllbnQ6CiAgICBlcnJvcnMuYXBwZW5kKCdtZXNzYWdlLWFyY2hpdmUtY2xpZW50LmpzIG11c3Qga2VlcCBHaXRIdWIgcmF3IGZpcnN0IGFuZCBQYWdlcyBvbmx5IGFzIGZhbGxiYWNrJykKaWYgJ2ZldGNoVGV4dDogZmV0Y2hBcmNoaXZlVGV4dCcgbm90IGluIGNsaWVudDoKICAgIGVycm9ycy5hcHBlbmQoJ21lc3NhZ2UtYXJjaGl2ZS1jbGllbnQuanMgbXVzdCBleHBvc2UgdGhlIHNoYXJlZCB0ZXh0L0pTT05MIGFyY2hpdmUgcmVhZGVyJykKaWYgJzxzY3JpcHQgc3JjPSJtZXNzYWdlLWFyY2hpdmUtY2xpZW50LmpzIj48L3NjcmlwdD4nIG5vdCBpbiBhcmNoOgogICAgZXJyb3JzLmFwcGVuZCgnYXJjaC5odG1sIG11c3QgbG9hZCBtZXNzYWdlLWFyY2hpdmUtY2xpZW50LmpzJykKaWYgJ1Byb2dub3phRVBJUk1lc3NhZ2VBcmNoaXZlJyBub3QgaW4gYXJjaCBvciAnYXJjaGl2ZS5mZXRjaFRleHQocGF0aCx0cnVlKScgbm90IGluIGFyY2g6CiAgICBlcnJvcnMuYXBwZW5kKCdhcmNoLmh0bWwgbXVzdCByZWFkIGRhaWx5IGFyY2hpdmUgZmlsZXMgdGhyb3VnaCB0aGUgc2hhcmVkIGFyY2hpdmUgY2xpZW50JykKaWYgJ2NvbnN0IEdJVEhVQl9ST09UPScgaW4gYXJjaCBvciAnY29uc3QgU1RBVElDX1JPT1Q9JyBpbiBhcmNoOgogICAgZXJyb3JzLmFwcGVuZCgnYXJjaC5odG1sIG11c3Qgbm90IG93biBhcmNoaXZlIHJvb3RzIG9yIHNvdXJjZSBwcmlvcml0eScpCmlmIHJlLnNlYXJjaChyJ2h0dHBzPzovL1teXHMiXCddKnJhaWx3YXlbXlxzIlwnXSovZGF0YS9tZXNzYWdlcycsIGFyY2gsIHJlLkkpOgogICAgZXJyb3JzLmFwcGVuZCgnYXJjaC5odG1sIG11c3QgbmV2ZXIgcmVhZCBkYXRhL21lc3NhZ2VzIGZyb20gUmFpbHdheScpCgpmb3IgcGF0aCBpbiBsaXN0KFBhdGgoJy4nKS5nbG9iKCcqLmh0bWwnKSkgKyBsaXN0KFBhdGgoJy4nKS5nbG9iKCcqLmpzJykpICsgbGlzdChQYXRoKCdhcGknKS5nbG9iKCcqLmpzJykpOgogICAgdGV4dCA9IHBhdGgucmVhZF90ZXh0KGVuY29kaW5nPSd1dGYtOCcsIGVycm9ycz0naWdub3JlJykKICAgIGlmIHJlLnNlYXJjaChyJ2h0dHBzPzovL1teXHMiXCddKnJhaWx3YXlbXlxzIlwnXSovZGF0YS9tZXNzYWdlcycsIHRleHQsIHJlLkkpOgogICAgICAgIGVycm9ycy5hcHBlbmQoZid7cGF0aH06IGJyb3dzZXIvQVBJIGJ1bGxldGluIGNvbnN1bWVyIHBvaW50cyBkaXJlY3RseSBhdCBSYWlsd2F5IGRhdGEvbWVzc2FnZXMnKQoKaWYgZXJyb3JzOgogICAgcHJpbnQoJ0FyY2hpdmUgY29uc3VtZXIgYXJjaGl0ZWN0dXJlIGNoZWNrIEZBSUxFRDonKQogICAgZm9yIGl0ZW0gaW4gZXJyb3JzOgogICAgICAgIHByaW50KGYnIC0ge2l0ZW19JykKICAgIHN5cy5leGl0KDEpCnByaW50KCdBcmNoaXZlIGNvbnN1bWVyIGFyY2hpdGVjdHVyZSBjaGVjayBPSzogR2l0SHViIGRhdGEvbWVzc2FnZXMgaXMgYXV0aG9yaXRhdGl2ZTsgc2hhcmVkIGNsaWVudCBvd25zIGJyb3dzZXIgYWNjZXNzLicpCg==').decode('utf-8')
+
           p = Path('message-archive-client.js')
           s = p.read_text(encoding='utf-8')
-
           if 'async function fetchArchiveText(' not in s:
-              marker = "\n  function readRoots(){"
+              marker = '\n  function readRoots(){'
               if marker not in s:
                   raise SystemExit('message-archive-client.js: readRoots marker not found')
-              addition = r'''
-
-  async function fetchTextFrom(root, name, now){
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8_000);
-    try {
-      const response = await nativeFetch(`${root}/${name}?v=${now}`, {
-        cache: 'no-store',
-        signal: controller.signal,
-        headers: {'Accept':'application/x-ndjson,text/plain,*/*'}
-      });
-      if(!response.ok){
-        const error = new Error(`MessageArchive ${name}: HTTP ${response.status}`);
-        error.status = response.status;
-        throw error;
-      }
-      return await response.text();
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  async function fetchArchiveText(name, force=false){
-    const clean = String(name || '').replace(/^\/+/, '');
-    if(!clean || clean.includes('..') || !/^[A-Za-z0-9._/-]+$/.test(clean)){
-      throw new Error('MessageArchive: invalid archive path');
-    }
-    const key = `text:${clean}`;
-    const now = Date.now();
-    const hit = cache.get(key);
-    if(!force && hit && now - hit.at < TTL_MS) return hit.value;
-
-    const errors = [];
-    let allNotFound = true;
-    for(const root of readRoots()){
-      try {
-        const value = await fetchTextFrom(root, clean, now);
-        cache.set(key, {at: now, value, source: root});
-        return value;
-      } catch(error){
-        if(error?.status !== 404) allNotFound = false;
-        errors.push({root, error});
-      }
-    }
-    const error = new Error(`MessageArchive ${clean}: GitHub archive unavailable`);
-    error.status = allNotFound ? 404 : 0;
-    error.cause = errors;
-    throw error;
-  }
-'''
               s = s.replace(marker, addition + marker, 1)
-
           api_marker = "    status,\n    sourceFor(name){ return cache.get(name)?.source || null; },"
-          if api_marker in s and '    fetchText: fetchArchiveText,' not in s:
+          if '    fetchText: fetchArchiveText,' not in s:
+              if api_marker not in s:
+                  raise SystemExit('message-archive-client.js: API marker not found')
               s = s.replace(api_marker, "    status,\n    fetchText: fetchArchiveText,\n    sourceFor(name){ return cache.get(name)?.source || cache.get(`text:${name}`)?.source || null; },", 1)
-          elif '    fetchText: fetchArchiveText,' not in s:
-              raise SystemExit('message-archive-client.js: API marker not found')
-
           p.write_text(s, encoding='utf-8')
 
-          # 2. ARCH must use the same client, never its own root ordering.
           p = Path('arch.html')
           s = p.read_text(encoding='utf-8')
           guard = '<script src="utc-ui-guard.js"></script>'
-          client = '<script src="message-archive-client.js"></script>'
-          if client not in s:
+          client_tag = '<script src="message-archive-client.js"></script>'
+          if client_tag not in s:
               if guard not in s:
                   raise SystemExit('arch.html: utc guard marker not found')
-              s = s.replace(guard, guard + '\n' + client, 1)
-
+              s = s.replace(guard, guard + '\n' + client_tag, 1)
           s = s.replace("  const GITHUB_ROOT='https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/messages';\n", '')
           s = s.replace("  const STATIC_ROOT='data/messages';\n", '')
-
-          pattern = re.compile(
-              r"  async function fetchText\(url\)\{[^\n]*\}\n"
-              r"  async function fetchArchiveFile\(path\)\{[^\n]*\}\n"
-          )
-          replacement = '''  async function fetchArchiveFile(path){
-    const archive=window.PrognozaEPIRMessageArchive;
-    if(!archive?.fetchText)throw new Error('Wspólny klient archiwum GitHub nie jest dostępny.');
-    try{return await archive.fetchText(path,true)}catch(e){
-      if(e?.status===404)return '';
-      throw new Error(`Nie udało się odczytać ${path} z archiwum GitHub.`)
-    }
-  }
-'''
+          pattern = re.compile(r"  async function fetchText\(url\)\{[^\n]*\}\n  async function fetchArchiveFile\(path\)\{[^\n]*\}\n")
           s2, n = pattern.subn(replacement, s, count=1)
-          if n != 1 and 'archive.fetchText(path,true)' not in s:
-              raise SystemExit(f'arch.html: expected fetch helper replacement, got {n}')
           if n == 1:
               s = s2
+          elif 'archive.fetchText(path,true)' not in s:
+              raise SystemExit('arch.html: fetch helper marker not found')
           p.write_text(s, encoding='utf-8')
 
-          # 3. Permanent architecture regression check.
-          check = r'''#!/usr/bin/env python3
-from pathlib import Path
-import re
-import sys
+          Path('scripts/check_message_archive_consumers.py').write_text(validator, encoding='utf-8')
 
-errors = []
-client = Path('message-archive-client.js').read_text(encoding='utf-8')
-arch = Path('arch.html').read_text(encoding='utf-8')
-
-if "return [GITHUB_ROOT, STATIC_ROOT];" not in client:
-    errors.append('message-archive-client.js must keep GitHub raw first and Pages only as fallback')
-if 'fetchText: fetchArchiveText' not in client:
-    errors.append('message-archive-client.js must expose the shared text/JSONL archive reader')
-if '<script src="message-archive-client.js"></script>' not in arch:
-    errors.append('arch.html must load message-archive-client.js')
-if 'PrognozaEPIRMessageArchive' not in arch or 'archive.fetchText(path,true)' not in arch:
-    errors.append('arch.html must read daily archive files through the shared archive client')
-if 'const GITHUB_ROOT=' in arch or 'const STATIC_ROOT=' in arch:
-    errors.append('arch.html must not own archive roots or source priority')
-if re.search(r'https?://[^\s\"\']*railway[^\s\"\']*/data/messages', arch, re.I):
-    errors.append('arch.html must never read data/messages from Railway')
-
-for path in list(Path('.').glob('*.html')) + list(Path('.').glob('*.js')) + list(Path('api').glob('*.js')):
-    text = path.read_text(encoding='utf-8', errors='ignore')
-    if re.search(r'https?://[^\s\"\']*railway[^\s\"\']*/data/messages', text, re.I):
-        errors.append(f'{path}: browser/API bulletin consumer points directly at Railway data/messages')
-
-if errors:
-    print('Archive consumer architecture check FAILED:')
-    for item in errors:
-        print(f' - {item}')
-    sys.exit(1)
-print('Archive consumer architecture check OK: GitHub data/messages is authoritative; shared client owns browser access.')
-'''
-          Path('scripts/check_message_archive_consumers.py').write_text(check, encoding='utf-8')
-
-          # Add the regression check to an existing always-on code policy workflow.
           p = Path('.github/workflows/enforce-global-utc.yml')
           s = p.read_text(encoding='utf-8')
           if 'Validate message archive consumer architecture' not in s:
               marker = '      - name: Validate inline JavaScript on user-facing pages\n'
               if marker not in s:
-                  raise SystemExit('enforce-global-utc.yml: validation marker not found')
+                  raise SystemExit('enforce-global-utc.yml: marker not found')
               step = "      - name: Validate message archive consumer architecture\n        run: python3 scripts/check_message_archive_consumers.py\n\n"
               s = s.replace(marker, step + marker, 1)
           p.write_text(s, encoding='utf-8')
           PY
 
-      - name: Validate JavaScript and architecture
+      - name: Validate fix
         run: |
           node --check message-archive-client.js
           python3 scripts/check_message_archive_consumers.py
           python3 - <<'PY'
           from pathlib import Path
-          import re, subprocess
-          text=Path('arch.html').read_text(encoding='utf-8')
-          blocks=re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>', text, re.S|re.I)
-          for i, block in enumerate(blocks):
-              if not block.strip():
-                  continue
-              f=Path(f'/tmp/arch-inline-{i}.js')
-              f.write_text(block,encoding='utf-8')
-              subprocess.run(['node','--check',str(f)],check=True)
+          import re
+          import subprocess
+          text = Path('arch.html').read_text(encoding='utf-8')
+          for i, block in enumerate(re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>', text, re.S | re.I)):
+              if block.strip():
+                  f = Path(f'/tmp/arch-inline-{i}.js')
+                  f.write_text(block, encoding='utf-8')
+                  subprocess.run(['node', '--check', str(f)], check=True)
           PY
 
-      - name: Commit fix and remove one-shot workflow
+      - name: Commit fix
         run: |
           git rm .github/workflows/fix-archive-consumer-source.yml
           git config user.name 'github-actions[bot]'
