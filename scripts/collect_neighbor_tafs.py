@@ -13,6 +13,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import neighbor_observations as neighbor_obs
+
 STATIONS = ("EPIR", "EPBY", "EPPW", "EPKS")
 OUT = Path("data/taf/neighbors.json")
 EPIR_HISTORY = Path("data/taf/epir")
@@ -399,6 +401,8 @@ def collect_candidates() -> dict[str, list[dict]]:
         else:
             accept = "text/plain,*/*;q=0.8" if source == "AWC" else "text/html,*/*;q=0.8"
             page = fetch_text(url, accept, retries=1)
+            if mode == "station" and source == "PilotHub / IMGW" and station:
+                neighbor_obs.capture_pilothub_page(station, page, source_url)
             if mode == "multi":
                 rows = split_tafs(page)
             else:

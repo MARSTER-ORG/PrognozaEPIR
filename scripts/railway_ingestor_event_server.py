@@ -121,7 +121,7 @@ def bootstrap_from_github() -> dict:
     merged_records = 0
     errors: list[str] = []
 
-    for rel in ("status.json", "latest.json", "recent.json", "taf-neighbors.json"):
+    for rel in ("status.json", "latest.json", "recent.json", "taf-neighbors.json", "neighbors/latest.json"):
         try:
             data = _github_get(rel)
             if data is None:
@@ -162,6 +162,26 @@ def bootstrap_from_github() -> dict:
                     after = dest.read_bytes()
                 except OSError:
                     after = None
+                if before != after:
+                    changed += 1
+            except Exception as exc:
+                errors.append(f"{rel}: {type(exc).__name__}: {exc}")
+
+    for offset in range(_BOOTSTRAP_DAYS):
+        day = today - timedelta(days=offset)
+        day_rel = day.strftime("%Y/%m/%d.jsonl")
+        for station in ("epby", "eppw", "epks"):
+            rel = f"neighbors/{station}/{day_rel}"
+            try:
+                data = _github_get(rel)
+                if data is None:
+                    continue
+                fetched += 1
+                dest = base.ARCHIVE / rel
+                before = dest.read_bytes() if dest.exists() else None
+                _, merged = _merge_jsonl(dest, data)
+                merged_records += merged
+                after = dest.read_bytes() if dest.exists() else None
                 if before != after:
                     changed += 1
             except Exception as exc:
