@@ -1,0 +1,122 @@
+name: Temporary wire neighbor TAF context
+
+on:
+  push:
+    paths:
+      - .github/workflows/temp-wire-neighbor-taf-context.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  wire:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Wire history, consensus and fog context
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def rep(path, old, new):
+              p=Path(path); s=p.read_text(encoding='utf-8'); n=s.count(old)
+              if n != 1:
+                  raise SystemExit(f'{path}: expected one anchor, got {n}: {old[:100]!r}')
+              p.write_text(s.replace(old,new,1),encoding='utf-8')
+
+          # Persist already-fetched neighboring TAFs in the same ingest cycle.
+          rep('scripts/central_ingestor.py',
+              '        results.append(run_step("taf-sanitize", script("sanitize_neighbor_tafs.py"), attempts=1, timeout=60))\n\n        results.append(run_step("archive-normalize",',
+              '        results.append(run_step("taf-sanitize", script("sanitize_neighbor_tafs.py"), attempts=1, timeout=60))\n        results.append(run_step("taf-neighbor-archive", script("archive_neighbor_tafs.py"), attempts=1, timeout=60))\n\n        results.append(run_step("archive-normalize",')
+
+          # Restore recent neighbor TAF history after a stateless Railway restart.
+          p=Path('scripts/railway_ingestor_event_server.py'); s=p.read_text(encoding='utf-8')
+          anchor='    result = {\n        "days": _BOOTSTRAP_DAYS,\n'
+          block='''    for offset in range(_BOOTSTRAP_DAYS):
+              day = today - timedelta(days=offset)
+              day_rel = day.strftime("%Y/%m/%d.jsonl")
+              for station in ("epby", "eppw", "epks"):
+                  rel = f"neighbors/taf/{station}/{day_rel}"
+                  try:
+                      data = _github_get(rel)
+                      if data is None:
+                          continue
+                      fetched += 1
+                      dest = base.ARCHIVE / rel
+                      before = dest.read_bytes() if dest.exists() else None
+                      _, merged = _merge_jsonl(dest, data)
+                      merged_records += merged
+                      after = dest.read_bytes() if dest.exists() else None
+                      if before != after:
+                          changed += 1
+                  except Exception as exc:
+                      errors.append(f"{rel}: {type(exc).__name__}: {exc}")
+
+          result = {
+              "days": _BOOTSTRAP_DAYS,
+          '''
+          if s.count(anchor)!=1: raise SystemExit('railway bootstrap anchor mismatch')
+          p.write_text(s.replace(anchor,block,1),encoding='utf-8')
+
+          # Extend the existing observation adapter instead of replacing it.
+          rep('neighbor-taf-context.js',
+              "  window.PrognozaEPIRNeighborTafContext={refresh,fogContext,applySeries,latest:()=>snapshot,version:'1.0.0'};\n})();\n",
+              "  const api={refresh,fogContext,applySeries,latest:()=>snapshot,version:'1.0.0'};\n  window.PrognozaEPIRNeighborTafContext=api;\n  const obsApi=window.PrognozaEPIRNeighborObservations;\n  if(obsApi&&!obsApi.__neighborTafWrapped){\n    const obsRefresh=typeof obsApi.refresh==='function'?obsApi.refresh.bind(obsApi):null;\n    const obsApply=typeof obsApi.applySeries==='function'?obsApi.applySeries.bind(obsApi):null;\n    if(obsRefresh)obsApi.refresh=async function(force=false){const value=await obsRefresh(force);try{await refresh(force)}catch(_e){}return value};\n    if(obsApply)obsApi.applySeries=function(series){return applySeries(obsApply(series))};\n    obsApi.tafFogContext=fogContext;\n    obsApi.latestNeighborTaf=()=>snapshot;\n    obsApi.__neighborTafWrapped=true;\n  }\n})();\n")
+
+          # Load the additive adapter immediately after the proven METAR/SPECI adapter.
+          rep('index.html',
+              '<script src="neighbor-observation-context.js?v=neighbor-obs-v1"></script>\n',
+              '<script src="neighbor-observation-context.js?v=neighbor-obs-v1"></script>\n<script src="neighbor-taf-context.js?v=neighbor-taf-v1"></script>\n')
+
+          # Add a bounded positive-only TAF term to fog-engine v1.4.
+          helper='''  function weightedWind(models,lead){
+              let u=0,v=0,sw=0;
+              for(const m of models){
+                const s=n(m?.WS),d=n(m?.WD),w=fogModelWeight(m.id,lead);
+                if(!finite(s)||!finite(d)||!finite(w)||w<=0)continue;
+                const r=d*Math.PI/180;u+=(-s*Math.sin(r))*w;v+=(-s*Math.cos(r))*w;sw+=w;
+              }
+              if(!sw)return {WD:null,WS:null};
+              return {WS:Math.hypot(u/sw,v/sw),WD:(Math.atan2(-u,-v)*180/Math.PI+360)%360};
+            }
+            function typeFromMechanisms(models,lead){
+          '''
+          rep('fog-engine.js','  function typeFromMechanisms(models,lead){\n',helper)
+          rep('fog-engine.js','    let finalScore=final.v;\n\n',
+              '''    let finalScore=final.v;
+              const flow=weightedWind(models,lead);
+              const neighborTaf=window.PrognozaEPIRNeighborObservations?.tafFogContext?.({t,WD:flow.WD,WS:flow.WS})||null;
+              if(neighborTaf&&finite(finalScore)&&finite(neighborTaf.risk)&&finite(neighborTaf.weight)&&neighborTaf.risk>finalScore){
+                const nw=clip(neighborTaf.weight,0,.12);
+                finalScore=finalScore+(neighborTaf.risk-finalScore)*nw;
+              }
+
+          ''')
+          rep('fog-engine.js',
+              '      T,fzfg,obsScore:obs?.raw??null,obsUsed:Boolean(obs),obsPhenomenon:obs?.phenomenon??null,obsVisM:obs?.obs?.visM??null,obsSource:obs?.obs?.sourceType??null,sat:finite(sat)?sat*100:null,\n      dmiFog:',
+              '      T,fzfg,obsScore:obs?.raw??null,obsUsed:Boolean(obs),obsPhenomenon:obs?.phenomenon??null,obsVisM:obs?.obs?.visM??null,obsSource:obs?.obs?.sourceType??null,sat:finite(sat)?sat*100:null,\n      neighborTafStation:neighborTaf?.station??null,neighborTafPhenomenon:neighborTaf?.phenomenon??null,neighborTafRisk:neighborTaf?.risk??null,neighborTafWeightPct:finite(neighborTaf?.weight)?Math.round(neighborTaf.weight*100):null,neighborTafGroup:neighborTaf?.kind??null,\n      dmiFog:')
+          PY
+          python -m py_compile scripts/archive_neighbor_tafs.py scripts/central_ingestor.py scripts/railway_ingestor_event_server.py
+          node --check neighbor-taf-context.js
+          node --check fog-engine.js
+          grep -q "version:'1.4.0'" fog-engine.js
+          grep -q 'taf-neighbor-archive' scripts/central_ingestor.py
+          grep -q 'neighbors/taf/{station}' scripts/railway_ingestor_event_server.py
+          grep -q 'MAX_WEIGHT=.12' neighbor-taf-context.js
+          grep -q 'neighborTafPhenomenon' fog-engine.js
+      - name: Commit application wiring
+        shell: bash
+        run: |
+          git config user.name "prognozaepir-maintenance"
+          git config user.email "maintenance@prognozaepir.invalid"
+          git add scripts/central_ingestor.py scripts/railway_ingestor_event_server.py neighbor-taf-context.js fog-engine.js index.html
+          if git diff --cached --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git commit -m "weather: wire neighbor TAF history into consensus and fog"
+          git push origin HEAD:main
