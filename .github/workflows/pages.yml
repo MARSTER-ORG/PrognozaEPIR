@@ -33,7 +33,7 @@ jobs:
           cp index.html radar.html taf.html sat-fog.html arch.html epir-icon.svg epir-icon-192.png epir-icon-512.png \
              index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js meteogram-visfog-split.js meteogram-visfog-cleanup.js \
              rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js shortcut-mode.js utc-ui-guard.js \
-             cloud-learning-client.js message-archive-client.js taf-instruction-guard.js \
+             cloud-learning-client.js message-archive-client.js taf-instruction-guard.js taf-generator-policy.js taf-hybrid-engine.js taf-hybrid-adapter.js \
              radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js opera-nowcast.js opera-convection-bridge.js \
              lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
           cp -R data/messages/. _site/data/messages/
@@ -192,7 +192,7 @@ jobs:
 
       - name: Validate JavaScript
         run: |
-          for f in index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js meteogram-visfog-split.js meteogram-visfog-cleanup.js rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js shortcut-mode.js utc-ui-guard.js cloud-learning-client.js message-archive-client.js taf-instruction-guard.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js opera-nowcast.js opera-convection-bridge.js; do
+          for f in index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js meteogram-visfog-split.js meteogram-visfog-cleanup.js rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js shortcut-mode.js utc-ui-guard.js cloud-learning-client.js message-archive-client.js taf-instruction-guard.js taf-generator-policy.js taf-hybrid-engine.js taf-hybrid-adapter.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js opera-nowcast.js opera-convection-bridge.js; do
             node --check "$f"
           done
           node --check _site/meteogram-visfog-split.js
@@ -204,6 +204,9 @@ jobs:
           node --check _site/cloud-learning-client.js
           node --check _site/message-archive-client.js
           node --check _site/taf-instruction-guard.js
+          node --check _site/taf-generator-policy.js
+          node --check _site/taf-hybrid-engine.js
+          node --check _site/taf-hybrid-adapter.js
           node --check _site/utc-ui-guard.js
           node --check _site/opera-nowcast.js
           node --check _site/opera-convection-bridge.js
@@ -218,6 +221,7 @@ jobs:
           PY
           node --check /tmp/taf-inline.js
           node --check /tmp/sat-fog-inline.js
+          node tests/taf-hybrid-engine.test.js
 
       - name: Verify deployed features
         run: |
@@ -235,6 +239,9 @@ jobs:
           test -s _site/cloud-learning-client.js
           test -s _site/message-archive-client.js
           test -s _site/taf-instruction-guard.js
+          test -s _site/taf-generator-policy.js
+          test -s _site/taf-hybrid-engine.js
+          test -s _site/taf-hybrid-adapter.js
           test -s _site/utc-ui-guard.js
           test -s _site/opera-nowcast.js
           test -s _site/opera-convection-bridge.js
@@ -256,7 +263,7 @@ jobs:
           grep -F '<a class="control-link" href="sat-fog.html">SAT / FOG EUMETSAT</a>' _site/index.html
           grep -F '<a class="control-link" href="arch.html">ARCH</a>' _site/index.html
           grep -F 'PrognozaEPIR · ARCH' _site/arch.html
-          grep -F 'GENERATOR TAF v0.2.0' _site/taf.html
+          grep -F 'GENERATOR TAF v0.3.0 · HYBRID' _site/taf.html
           grep -F 'TAF EPBY/EPPW/EPKS' _site/taf.html
           grep -F 'PROB40 wyłączone' _site/taf.html
           grep -F 'src="message-archive-client.js"' _site/taf.html
