@@ -1,0 +1,208 @@
+name: Fix archive consumer source
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-archive-consumer-source.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Unify archive consumers
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          # 1. One transport owner: message-archive-client.js.
+          p = Path('message-archive-client.js')
+          s = p.read_text(encoding='utf-8')
+
+          if 'async function fetchArchiveText(' not in s:
+              marker = "\n  function readRoots(){"
+              if marker not in s:
+                  raise SystemExit('message-archive-client.js: readRoots marker not found')
+              addition = r'''
+
+  async function fetchTextFrom(root, name, now){
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8_000);
+    try {
+      const response = await nativeFetch(`${root}/${name}?v=${now}`, {
+        cache: 'no-store',
+        signal: controller.signal,
+        headers: {'Accept':'application/x-ndjson,text/plain,*/*'}
+      });
+      if(!response.ok){
+        const error = new Error(`MessageArchive ${name}: HTTP ${response.status}`);
+        error.status = response.status;
+        throw error;
+      }
+      return await response.text();
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function fetchArchiveText(name, force=false){
+    const clean = String(name || '').replace(/^\/+/, '');
+    if(!clean || clean.includes('..') || !/^[A-Za-z0-9._/-]+$/.test(clean)){
+      throw new Error('MessageArchive: invalid archive path');
+    }
+    const key = `text:${clean}`;
+    const now = Date.now();
+    const hit = cache.get(key);
+    if(!force && hit && now - hit.at < TTL_MS) return hit.value;
+
+    const errors = [];
+    let allNotFound = true;
+    for(const root of readRoots()){
+      try {
+        const value = await fetchTextFrom(root, clean, now);
+        cache.set(key, {at: now, value, source: root});
+        return value;
+      } catch(error){
+        if(error?.status !== 404) allNotFound = false;
+        errors.push({root, error});
+      }
+    }
+    const error = new Error(`MessageArchive ${clean}: GitHub archive unavailable`);
+    error.status = allNotFound ? 404 : 0;
+    error.cause = errors;
+    throw error;
+  }
+'''
+              s = s.replace(marker, addition + marker, 1)
+
+          api_marker = "    status,\n    sourceFor(name){ return cache.get(name)?.source || null; },"
+          if api_marker in s and '    fetchText: fetchArchiveText,' not in s:
+              s = s.replace(api_marker, "    status,\n    fetchText: fetchArchiveText,\n    sourceFor(name){ return cache.get(name)?.source || cache.get(`text:${name}`)?.source || null; },", 1)
+          elif '    fetchText: fetchArchiveText,' not in s:
+              raise SystemExit('message-archive-client.js: API marker not found')
+
+          p.write_text(s, encoding='utf-8')
+
+          # 2. ARCH must use the same client, never its own root ordering.
+          p = Path('arch.html')
+          s = p.read_text(encoding='utf-8')
+          guard = '<script src="utc-ui-guard.js"></script>'
+          client = '<script src="message-archive-client.js"></script>'
+          if client not in s:
+              if guard not in s:
+                  raise SystemExit('arch.html: utc guard marker not found')
+              s = s.replace(guard, guard + '\n' + client, 1)
+
+          s = s.replace("  const GITHUB_ROOT='https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/messages';\n", '')
+          s = s.replace("  const STATIC_ROOT='data/messages';\n", '')
+
+          pattern = re.compile(
+              r"  async function fetchText\(url\)\{[^\n]*\}\n"
+              r"  async function fetchArchiveFile\(path\)\{[^\n]*\}\n"
+          )
+          replacement = '''  async function fetchArchiveFile(path){
+    const archive=window.PrognozaEPIRMessageArchive;
+    if(!archive?.fetchText)throw new Error('Wspólny klient archiwum GitHub nie jest dostępny.');
+    try{return await archive.fetchText(path,true)}catch(e){
+      if(e?.status===404)return '';
+      throw new Error(`Nie udało się odczytać ${path} z archiwum GitHub.`)
+    }
+  }
+'''
+          s2, n = pattern.subn(replacement, s, count=1)
+          if n != 1 and 'archive.fetchText(path,true)' not in s:
+              raise SystemExit(f'arch.html: expected fetch helper replacement, got {n}')
+          if n == 1:
+              s = s2
+          p.write_text(s, encoding='utf-8')
+
+          # 3. Permanent architecture regression check.
+          check = r'''#!/usr/bin/env python3
+from pathlib import Path
+import re
+import sys
+
+errors = []
+client = Path('message-archive-client.js').read_text(encoding='utf-8')
+arch = Path('arch.html').read_text(encoding='utf-8')
+
+if "return [GITHUB_ROOT, STATIC_ROOT];" not in client:
+    errors.append('message-archive-client.js must keep GitHub raw first and Pages only as fallback')
+if 'fetchText: fetchArchiveText' not in client:
+    errors.append('message-archive-client.js must expose the shared text/JSONL archive reader')
+if '<script src="message-archive-client.js"></script>' not in arch:
+    errors.append('arch.html must load message-archive-client.js')
+if 'PrognozaEPIRMessageArchive' not in arch or 'archive.fetchText(path,true)' not in arch:
+    errors.append('arch.html must read daily archive files through the shared archive client')
+if 'const GITHUB_ROOT=' in arch or 'const STATIC_ROOT=' in arch:
+    errors.append('arch.html must not own archive roots or source priority')
+if re.search(r'https?://[^\s\"\']*railway[^\s\"\']*/data/messages', arch, re.I):
+    errors.append('arch.html must never read data/messages from Railway')
+
+for path in list(Path('.').glob('*.html')) + list(Path('.').glob('*.js')) + list(Path('api').glob('*.js')):
+    text = path.read_text(encoding='utf-8', errors='ignore')
+    if re.search(r'https?://[^\s\"\']*railway[^\s\"\']*/data/messages', text, re.I):
+        errors.append(f'{path}: browser/API bulletin consumer points directly at Railway data/messages')
+
+if errors:
+    print('Archive consumer architecture check FAILED:')
+    for item in errors:
+        print(f' - {item}')
+    sys.exit(1)
+print('Archive consumer architecture check OK: GitHub data/messages is authoritative; shared client owns browser access.')
+'''
+          Path('scripts/check_message_archive_consumers.py').write_text(check, encoding='utf-8')
+
+          # Add the regression check to an existing always-on code policy workflow.
+          p = Path('.github/workflows/enforce-global-utc.yml')
+          s = p.read_text(encoding='utf-8')
+          if 'Validate message archive consumer architecture' not in s:
+              marker = '      - name: Validate inline JavaScript on user-facing pages\n'
+              if marker not in s:
+                  raise SystemExit('enforce-global-utc.yml: validation marker not found')
+              step = "      - name: Validate message archive consumer architecture\n        run: python3 scripts/check_message_archive_consumers.py\n\n"
+              s = s.replace(marker, step + marker, 1)
+          p.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Validate JavaScript and architecture
+        run: |
+          node --check message-archive-client.js
+          python3 scripts/check_message_archive_consumers.py
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, subprocess
+          text=Path('arch.html').read_text(encoding='utf-8')
+          blocks=re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>', text, re.S|re.I)
+          for i, block in enumerate(blocks):
+              if not block.strip():
+                  continue
+              f=Path(f'/tmp/arch-inline-{i}.js')
+              f.write_text(block,encoding='utf-8')
+              subprocess.run(['node','--check',str(f)],check=True)
+          PY
+
+      - name: Commit fix and remove one-shot workflow
+        run: |
+          git rm .github/workflows/fix-archive-consumer-source.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add arch.html message-archive-client.js scripts/check_message_archive_consumers.py .github/workflows/enforce-global-utc.yml
+          git commit -m 'fix: use one authoritative archive client in ARCH'
+          for attempt in 1 2 3 4; do
+            git fetch origin main
+            if git rebase origin/main && git push origin HEAD:main; then exit 0; fi
+            git rebase --abort 2>/dev/null || true
+            sleep $((attempt * 3))
+          done
+          exit 1
