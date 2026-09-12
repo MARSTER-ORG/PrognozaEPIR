@@ -17,7 +17,7 @@ function gen(rows,opts={}){return H.createEngine({storage:{get(){return null},se
 function genTuned(rows,opts={}){return P.wrapApi(H).createEngine({storage:{get(){return null},set(){}}}).generate({station:'EPIR',issue,start,end,rows,record:false,...opts});}
 
 assert.equal(H.ENGINE_VERSION,'1.0.0');
-assert.equal(P.VERSION,'1.1.0');
+assert.equal(P.VERSION,'2.0.0');
 
 let r=gen(Array.from({length:12},(_,i)=>row(i)));
 assert.match(r.taf,/\bCAVOK\b/);
@@ -98,12 +98,15 @@ assert.ok(tuned[6].mv.every(m=>m.code===0));
 r=genTuned(rows);
 assert.ok(!/\b-?RA\b/.test(r.taf));
 
-// Two adjacent weak-rain hours provide temporal confirmation.
+// Two adjacent weak-rain hours provide temporal confirmation in guidance,
+// but still need operational impact before becoming a TAF change group.
 rows=Array.from({length:12},(_,i)=>row(i));
 for(const k of [6,7]){rows[k].RR=0.10;rows[k].wet=60;for(const m of rows[k].mv)m.code=61;}
 tuned=P.tuneRows(rows);
 assert.equal(tuned[6].__hybridTuning.temporal,true);
 assert.equal(tuned[6].__hybridTuning.suppressWeak,false);
+r=genTuned(rows);
+assert.ok(!/PROB30[^\n]*\b-RA\b/.test(r.taf));
 
 // Weak rain is allowed when visibility is operationally reduced.
 rows=Array.from({length:12},(_,i)=>row(i));
@@ -125,11 +128,13 @@ assert.equal(tuned[5].__hybridTuning.suppressWeak,false);
 assert.equal(tuned[6].__hybridTuning.protectedEvent,true);
 assert.equal(tuned[6].__hybridTuning.suppressWeak,false);
 
-// A one-hour weak event can survive when a sufficiently broad model consensus confirms it.
+// Broad model support is uncertainty evidence, not a license to create a standalone weak-rain TAF group.
 rows=Array.from({length:12},(_,i)=>row(i));
 rows[6].mv=['A','B','C','D','E'].map(id=>model(id,6,220,12000,6000,61));rows[6].RR=0.10;rows[6].wet=60;
 tuned=P.tuneRows(rows);
 assert.equal(tuned[6].__hybridTuning.strongModels,true);
 assert.equal(tuned[6].__hybridTuning.suppressWeak,false);
+r=genTuned(rows);
+assert.ok(!/PROB30[^\n]*\b-RA\b/.test(r.taf));
 
-console.log('taf-hybrid-engine tests: OK', {tests:19, version:H.ENGINE_VERSION, tuning:P.VERSION});
+console.log('taf-hybrid-engine tests: OK', {tests:21, version:H.ENGINE_VERSION, tuning:P.VERSION});
