@@ -25,7 +25,7 @@ function gen(rows,opts={}){return engine().generate({station:'EPIR',issue,start,
 function genTuned(rows,opts={}){return P.wrapApi(H).createEngine({storage:{get(){return null},set(){}}}).generate({station:'EPIR',issue,start,end,rows,record:false,...opts});}
 
 assert.equal(H.ENGINE_VERSION,'1.0.0');
-assert.equal(P.VERSION,'3.1.1');
+assert.equal(P.VERSION,'3.2.0');
 
 // Basic syntax/instruction invariants.
 let r=genTuned(Array.from({length:12},(_,i)=>row(i)));
@@ -70,6 +70,10 @@ r=genTuned(rows,{observations:clearObs,observation:clearObs[clearObs.length-1]})
 assert.equal(r.diagnostics.shortHorizonBase.active,true);
 assert.match(r.base.text,/\bCAVOK\b/);
 assert.ok(r.base.state.windKt>5&&r.base.state.windKt<7,'base wind is blended over short horizon, not copied from one hour');
+assert.equal(r.hourly[0].tafDisplay.cavok,true,'hourly table guidance follows accepted short-horizon correction');
+assert.equal(r.hourly[0].tafDisplay.clouds,'CAVOK');
+assert.ok(r.hourly[0].__tafShortHorizonCorrected,'corrected hour is explicitly marked');
+assert.ok(Array.isArray(r.hourly[0].__tafRawClouds)&&r.hourly[0].__tafRawClouds.length>0,'raw clouds are retained for diagnostics');
 
 // Clear observations may not erase a genuinely significant low BKN layer.
 rows=Array.from({length:12},(_,i)=>i<4?row(i,{lowFt:4500,oktaL:6,ceilFt:4500}):row(i,{lowFt:5900,oktaL:2}));

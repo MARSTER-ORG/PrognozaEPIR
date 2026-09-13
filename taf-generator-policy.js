@@ -5,7 +5,7 @@
   if(typeof module==='object'&&module.exports)module.exports=api;
   if(root)root.PrognozaEPIRTAFHybridTuning=api;
 })(typeof globalThis!=='undefined'?globalThis:this,function(){
-  const VERSION='3.1.1';
+  const VERSION='3.2.0';
   const KT=1.9438444924406,FT=3.2808398950131,HOUR=3600000;
   const CAVOK_BASE_FT=1500*FT,NSC_BASE_FT=5000;
   const VIS_THRESHOLDS=[800,1500,3000,5000],CEIL_THRESHOLDS=[200,300,500,1000,1500];
@@ -242,6 +242,33 @@
     return base;
   }
 
+  // Keep the hourly guidance view on the same accepted state as the TAF encoder.
+  // Raw model clouds are retained separately for diagnostics.
+  function applyShortHorizonToHourly(result,plan,cfg,msaFt){
+    if(!plan?.active||!Array.isArray(result?.hourly))return 0;
+    const sh=cfg.shortHorizon||DEFAULTS.shortHorizon,lim=cloudThresholds(msaFt).cavok;let changed=0;
+    for(let i=0;i<Math.min(sh.hours,result.hourly.length);i++){
+      const h=result.hourly[i];if(!weakClearCompatibleHour(h,msaFt,cfg))continue;
+      const raw=hourClouds(h).map(c=>({...c})),filtered=raw.filter(c=>c.type||c.ft>=lim||c.ft<sh.weakCloudMinFt||(c.okta||amountMin(c.cover))>=5);
+      if(filtered.length!==raw.length){
+        h.__tafRawClouds=raw;
+        h.clouds=filtered;
+        h.__tafCloudsAuthoritative=true;
+        h.__tafShortHorizonCorrected=true;
+        changed++;
+      }
+    }
+    return changed;
+  }
+  function displayForHour(h,msaFt){
+    const cavok=strictCavokEligible(h,msaFt),wx=encodedWxForHour(h);
+    return{cavok,wind:windFromHour(h),visibility:encodedVis(h?.visM),weather:wx,clouds:cavok?'CAVOK':(strictNscEligible(h,msaFt)?'NSC':encodeCloudsStrict(h,msaFt)),corrected:!!h?.__tafShortHorizonCorrected};
+  }
+  function attachHourlyDisplay(result,msaFt){
+    for(const h of result.hourly||[])h.tafDisplay=displayForHour(h,msaFt);
+    if(result.base?.state)result.base.display=displayForHour(result.base.state,msaFt);
+  }
+
   const groupHours=(r,g)=>(r.hourly||[]).filter(h=>h.t>=g.start&&h.t<g.end);
   const previousHour=(r,g)=>{const a=(r.hourly||[]).filter(h=>h.t<g.start);return a[a.length-1]||r.base?.state||r.hourly?.[0]||null;};
   const targetHour=(r,g)=>{const a=groupHours(r,g);return a[a.length-1]||(r.hourly||[]).find(h=>h.t>=g.end)||null;};
@@ -306,12 +333,12 @@
   function postprocessResult(result,ctx={}){
     if(!result||!Array.isArray(result.hourly))return result;
     const cfg=cfgOf(ctx.config),rows=ctx.rows||result.hourly.map(h=>h.sourceRow).filter(Boolean),msaFt=finite(+ctx.msaFt)?+ctx.msaFt:finite(+result?.diagnostics?.msaFt)?+result.diagnostics.msaFt:null;
-    const advisoryPlan=dominantClearPlan(rows,result.start,cfg),shortPlan=shortHorizonBasePlan(result,ctx,cfg,msaFt),suppressed=[],base=reconcileBase(result,shortPlan,cfg,msaFt);if(base){result.base=result.base||{};result.base.state=base;result.base.text=encodeStateStrict(base,msaFt);}
+    const advisoryPlan=dominantClearPlan(rows,result.start,cfg),shortPlan=shortHorizonBasePlan(result,ctx,cfg,msaFt),suppressed=[],correctedHours=applyShortHorizonToHourly(result,shortPlan,cfg,msaFt),base=reconcileBase(result,shortPlan,cfg,msaFt);if(base){result.base=result.base||{};result.base.state=base;result.base.text=encodeStateStrict(base,msaFt);}
     let groups=persistentGroups(result,cfg,msaFt,suppressed);groups.push(...visibilityThresholdGroups(result,cfg,msaFt,groups,suppressed));groups.push(...temporaryGroups(result,cfg,msaFt,groups,suppressed));groups.push(...probabilisticGroups(result,cfg,msaFt,groups,suppressed));
     groups=groups.filter((g,i,a)=>g.payload&&!a.slice(0,i).some(x=>groupDuplicate(x,g))).sort((a,b)=>a.start-b.start||(a.kind==='FM'?-2:a.kind==='BECMG'?-1:1));
     if(groups.length>5){const priority=g=>g.kind==='FM'?100:g.kind==='BECMG'?90:/TS|FZ/.test(g.payload)?85:g.kind==='TEMPO'?70:g.kind==='PROB30 TEMPO'?60:50;groups=groups.map((g,i)=>({g,i,p:priority(g)})).sort((a,b)=>b.p-a.p||a.i-b.i).slice(0,5).map(x=>x.g).sort((a,b)=>a.start-b.start);}
-    result.groups=groups;result.taf=rebuildTaf(result);result.checks={...(result.checks||{}),noProb40:!/\bPROB40\b/.test(result.taf),noVV:!/\bVV\d{3}\b/.test(result.taf),max5:groups.length<=5};
-    const baseVersion=result.version;result.baseEngineVersion=baseVersion;result.version=`${baseVersion}+H${VERSION}`;result.diagnostics=result.diagnostics||{};result.diagnostics.consensusPrimary=true;result.diagnostics.dominantClear=advisoryPlan;result.diagnostics.shortHorizonBase=shortPlan;
+    result.groups=groups;attachHourlyDisplay(result,msaFt);result.taf=rebuildTaf(result);result.checks={...(result.checks||{}),noProb40:!/\bPROB40\b/.test(result.taf),noVV:!/\bVV\d{3}\b/.test(result.taf),max5:groups.length<=5};
+    const baseVersion=result.version;result.baseEngineVersion=baseVersion;result.version=`${baseVersion}+H${VERSION}`;result.diagnostics=result.diagnostics||{};result.diagnostics.consensusPrimary=true;result.diagnostics.dominantClear=advisoryPlan;result.diagnostics.shortHorizonBase=shortPlan?{...shortPlan,correctedHours}:shortPlan;
     result.diagnostics.instructionLock={version:VERSION,visibilityBands:VIS_THRESHOLDS,cavokBaseFt:CAVOK_BASE_FT,nscBaseFt:NSC_BASE_FT,msaFt,suppressedGroups:suppressed.length,suppressed:suppressed.map(x=>({kind:x.kind,reason:x.reason,start:x.start,end:x.end}))};
     if(Array.isArray(result.diagnostics.layers)){result.diagnostics.layers.push({id:'B',name:'short-horizon-base',status:shortPlan?.active?'active':'no-adjustment',forecastShare:shortPlan?Math.round(shortPlan.forecastShare*100):0});result.diagnostics.layers.push({id:'S',name:'TAF-11.2023-instruction-lock',status:'ok',suppressedGroups:suppressed.length});}
     if(Array.isArray(result.diagnostics.reasons)){
@@ -320,7 +347,7 @@
       if(advisoryPlan)result.diagnostics.reasons.push(`Reguła 18–05 UTC ${advisoryPlan.count}/${advisoryPlan.total} h jest sygnałem pomocniczym dla estymacji stanu, nie zastępuje kryteriów CAVOK.`);
       if(!finite(+msaFt))result.diagnostics.reasons.push('MSA nie jest skonfigurowana: CAVOK/NSC sprawdzane względem 1500 m / 5000 ft; pełna kontrola wymaga najwyższej MSA EPIR.');
     }
-    result.tuning={version:VERSION,consensusPrimary:true,instructionLocked:true,shortHorizonBase:shortPlan,dominantClearAdvisory:advisoryPlan,suppressedGroups:suppressed.length,groupsAfter:groups.length};return result;
+    result.tuning={version:VERSION,consensusPrimary:true,instructionLocked:true,shortHorizonBase:shortPlan?{...shortPlan,correctedHours}:shortPlan,dominantClearAdvisory:advisoryPlan,suppressedGroups:suppressed.length,groupsAfter:groups.length};return result;
   }
 
   function wrapApi(core,options={}){
@@ -333,7 +360,7 @@
     });
   }
 
-  return Object.freeze({VERSION,DEFAULTS,wmoPrecipInfo,rowEvidence,significantConsensusChange,clearCloudCandidate,dominantClearPlan,tuneRows,visibilityNeedsGroup,strictPrecipImpact,strictCavokEligible,strictNscEligible,selectedClouds,encodeStateStrict,significantFields,visibilityThresholdGroups,selectiveBecmgPayload,observationClearCompatible,shortHorizonBasePlan,reconcileBase,postprocessResult,wrapApi});
+  return Object.freeze({VERSION,DEFAULTS,wmoPrecipInfo,rowEvidence,significantConsensusChange,clearCloudCandidate,dominantClearPlan,tuneRows,visibilityNeedsGroup,strictPrecipImpact,strictCavokEligible,strictNscEligible,selectedClouds,encodeStateStrict,significantFields,visibilityThresholdGroups,selectiveBecmgPayload,observationClearCompatible,shortHorizonBasePlan,reconcileBase,applyShortHorizonToHourly,displayForHour,postprocessResult,wrapApi});
 });
 
 (()=>{
@@ -341,9 +368,9 @@
   if(!/\/taf\.html$/i.test(location.pathname)||window.__PROGNOZA_EPIR_TAF_HYBRID_BOOT__)return;window.__PROGNOZA_EPIR_TAF_HYBRID_BOOT__=true;
   const loadScript=src=>new Promise((resolve,reject)=>{const key=src.split('?')[0],e=[...document.scripts].find(s=>s.src&&s.src.includes(key));if(e){if(e.dataset.loaded==='1'||(key.includes('taf-hybrid-engine')&&window.PrognozaEPIRTAFHybridEngine))return resolve();e.addEventListener('load',resolve,{once:true});e.addEventListener('error',()=>reject(Error('Nie udało się załadować '+src)),{once:true});return;}const s=document.createElement('script');s.src=src;s.async=false;s.dataset.tafHybrid='1';s.onload=()=>{s.dataset.loaded='1';resolve();};s.onerror=()=>reject(Error('Nie udało się załadować '+src));(document.head||document.documentElement).appendChild(s);});
   (async()=>{try{
-    if(!window.PrognozaEPIRTAFHybridEngine)await loadScript('taf-hybrid-engine.js?v=20260913-short-horizon-v6');
+    if(!window.PrognozaEPIRTAFHybridEngine)await loadScript('taf-hybrid-engine.js?v=20260913-hourly-sync-v7');
     window.PrognozaEPIRTAFHybridEngine=window.PrognozaEPIRTAFHybridTuning.wrapApi(window.PrognozaEPIRTAFHybridEngine);
-    await loadScript('taf-hybrid-adapter.js?v=20260913-short-horizon-v6');
+    await loadScript('taf-hybrid-adapter.js?v=20260913-hourly-sync-v7');
     window.PrognozaEPIRTAFGeneratorPolicy=Object.freeze({mode:'hybrid-instruction-short-horizon',version:window.PrognozaEPIRTAFHybridEngine?.ENGINE_VERSION||null,tuning:window.PrognozaEPIRTAFHybridTuning.VERSION});
   }catch(e){console.error('[TAF Hybrid bootstrap]',e);const b=document.getElementById('badge'),st=document.getElementById('st');if(b){b.textContent='BŁĄD HYBRID';b.className='badge bad';}if(st)st.textContent=e.message;}})();
 })();
