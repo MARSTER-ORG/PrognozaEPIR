@@ -45,7 +45,11 @@
     lowWindWholePeriodMinFraction:.75,
     lowWindRunMinHours:3,
     lowWindMaxOtherKt:10,
-    baseFirstHoursEqualWeight:true
+    baseFirstHoursEqualWeight:true,
+    fogOperationalScoreMin:40,
+    fogOperationalScoreProbAt40:.30,
+    fogOperationalScoreProbAt60:.40,
+    fogOperationalScoreProbAt80:.50
   });
 
   const finite=Number.isFinite;
@@ -55,6 +59,12 @@
   const even=n=>{n=Math.max(0,Math.round(n||0));return n%2?n+1:n;};
   const circ=(a,b)=>{if(!finite(a)||!finite(b))return 180;let d=Math.abs(a-b)%360;return d>180?360-d:d;};
   const prob=v=>!num(v)?0:(+v>1?clamp(+v/100,0,1):clamp(+v,0,1));
+  const operationalFogProbability=v=>{
+    if(!num(v))return 0;
+    const score=clamp(+v,0,100);
+    if(score<RULES.fogOperationalScoreMin)return 0;
+    return clamp((30+(score-40)*.5)/100,.30,.60);
+  };
   const band=(v,cuts,missingTop=false)=>{if(!finite(v))return missingTop?cuts.length:null;for(let i=0;i<cuts.length;i++)if(v<cuts[i])return i;return cuts.length;};
   const mean=a=>{const q=a.filter(finite);return q.length?q.reduce((s,v)=>s+v,0)/q.length:NaN;};
   const quantile=(a,p)=>{const q=a.filter(finite).sort((x,y)=>x-y);if(!q.length)return NaN;if(q.length===1)return q[0];const x=(q.length-1)*p,l=Math.floor(x),h=Math.ceil(x);return q[l]+(q[h]-q[l])*(x-l);};
@@ -154,11 +164,15 @@
     for(const k of Object.keys(p))if(!finite(p[k]))p[k]=0;
     p.ts=Math.max(p.ts,prob(row?.storm));
     p.precip=Math.max(p.precip,prob(row?.wet));
-    const fogEngine=prob(row?.fogRisk),explicitFg=prob(row?.fgRisk);
+    const hasFogOperational=num(row?.fogOperationalScore),hasFgOperational=num(row?.fgOperationalScore),hasBrOperational=num(row?.brOperationalScore);
+    const fogEngine=hasFogOperational?operationalFogProbability(row.fogOperationalScore):prob(row?.fogRisk);
+    const explicitFg=hasFgOperational?operationalFogProbability(row.fgOperationalScore):prob(row?.fgRisk);
+    const explicitBr=hasBrOperational?operationalFogProbability(row.brOperationalScore):prob(row?.brRisk);
+    const legacyVis1000=hasFgOperational?0:prob(row?.fogVis1000Risk);
     p.fog=Math.max(p.fog,fogEngine);
-    // Explicit FG evidence wins. The generic FOG score is a fallback only when no explicit FG probability was supplied.
-    p.fg=Math.max(p.fg,explicitFg,prob(row?.fogVis1000Risk),explicitFg>0?0:fogEngine);
-    p.br=Math.max(p.br,prob(row?.brRisk));
+    // Operational FOG scores are risk indices, not literal percentages. They are calibrated to TAF probability before this gate.
+    p.fg=Math.max(p.fg,explicitFg,legacyVis1000,explicitFg>0?0:fogEngine);
+    p.br=Math.max(p.br,explicitBr);
     // General fog score may support BR, but must never suppress a stronger FG signal.
     if(p.fog>=.30&&p.br<.30&&p.fg<.30&&num(row?.VIS)&&+row.VIS>=1000&&+row.VIS<=5000)p.br=Math.max(p.br,p.fog);
     if(num(row?.VIS)&&+row.VIS<5000)p.lowVis=Math.max(p.lowVis,.50);
@@ -368,7 +382,7 @@
 
   function cloudCategory(s){const c=finite(s.ceilingFt)?s.ceilingFt:Infinity;return band(c,CEIL_THRESH,true);}
   function lowOperationalBkn(s){return (s.clouds||[]).some(c=>!c.type&&(c.cover==='BKN'||c.cover==='OVC')&&c.ft<1500);}
-  function convectiveSignature(s){return (s.clouds||[]).filter(c=>c.type==='CB'||c.type==='TCU').sort((a,b)=>a.ft-b.ft).map(c=>`${c.type}:${band(c.ft,CEIL,true)}:${c.cover}`).join('|');}
+  function convectiveSignature(s){return (s.clouds||[]).filter(c=>c.type==='CB'||c.type==='TCU').sort((a,b)=>a.ft-b.ft).map(c=>`${c.type}:${band(c.ft,CEIL_THRESH,true)}:${c.cover}`).join('|');}
   function weatherSignificantChange(a,b){
     const A=wxFamily(weatherToken(a,.5)),B=wxFamily(weatherToken(b,.5));if(A===B)return false;
     const sig=new Set(['FZPRECIP','MODHEAVYPRECIP','TS','DRIFT','BLOW','SQ','FC']);
@@ -486,7 +500,7 @@
   function conflicts(groups,g){return groups.some(x=>overlaps(x,g)&&x.fields.some(f=>g.fields.includes(f)));}
 
   function buildChangeGroups(states,base,start,end,msaFt){
-    const groups=[],reasons=[],skipped=[];let prevailing=base;
+    const groups=[],reasons=[],skipped=[];let prevailing=base,activeProbFog='NONE';
     for(let i=1;i<states.length&&groups.length<MAX_GROUPS;i++){
       let target=states[i],sig=significantFields(prevailing,target),fields=sig.fields;
       const prevFog=fogFamily(prevailing,.5),targetFog=fogFamily(target,.5);
@@ -494,12 +508,14 @@
       const altFogFamily=(target.prob?.fg||0)>=.30&&(target.prob?.fg||0)>=(target.prob?.br||0)?'FG':(target.prob?.br||0)>=.30?'BR':'NONE';
       const newFog=targetFog!=='NONE'&&targetFog!==prevFog;
       const newFogAlternative=altFogFamily!=='NONE'&&altFogFamily!==prevFog;
+      if(activeProbFog!=='NONE'&&(altFogFamily!==activeProbFog||fogAltProb>=.50))activeProbFog='NONE';
 
-      // FOG is an independent input. Do not discard a 30–49% FG/BR signal merely because the deterministic VIS/cloud/wind state did not cross a threshold first.
+      // FOG is an independent input. A continuous 30–49% onset is represented once by a 2 h PROB30 change window, not stretched by merging hourly windows.
       if(newFogAlternative&&fogAltProb>=.30&&fogAltProb<.50){
+        if(activeProbFog===altFogFamily){skipped.push(`${code(target.t)} UTC: kontynuacja alternatywnego ${altFogFamily} 30–49% jest już objęta wcześniejszą grupą PROB30.`);continue;}
         target=alternativeFogState(prevailing,target);fields=[...new Set([...fields,'visibility'])];
         const w=twoHourWindow(target.t,start,end),g={kind:'PROB30',s:w.s,e:w.e,fields,payload:payload(prevailing,target,fields,'PROB30',msaFt),probability:fogAltProb};
-        if(g.payload&&!conflicts(groups,g)){g.text=`PROB30 ${period(g.s,g.e)} ${g.payload}`;groups.push(g);reasons.push(`${g.text}: alternatywne FG/BR ${Math.round(fogAltProb*100)}%; TEMPO nie może służyć do prognozowania pojawienia się mgły/zamglenia.`);}continue;
+        if(g.payload&&!conflicts(groups,g)){g.text=`PROB30 ${period(g.s,g.e)} ${g.payload}`;groups.push(g);activeProbFog=altFogFamily;reasons.push(`${g.text}: alternatywne FG/BR ${Math.round(fogAltProb*100)}%; 2 h okno możliwej trwałej zmiany, bez TEMPO.`);}continue;
       }
 
       if(!fields.length)continue;
@@ -534,10 +550,10 @@
       if(kind==='BECMG'||kind==='FM')prevailing=mergePrevailing(prevailing,target,fields);
     }
 
-    // Merge adjacent identical PROB30 windows and identical TEMPO windows without creating duplicate parameter groups.
+    // Merge adjacent identical TEMPO/general probability windows; continuous fog PROB30 episodes are already collapsed above to one 2 h onset window.
     groups.sort((a,b)=>a.s-b.s||a.e-b.e);
     const merged=[];
-    for(const g of groups){const last=merged.at(-1);if(last&&last.kind===g.kind&&last.payload===g.payload&&sameFields(last.fields,g.fields)&&g.kind!=='FM'&&g.s<=last.e){last.e=Math.max(last.e,g.e);last.text=`${last.kind} ${period(last.s,last.e)} ${last.payload}`;last.probability=Math.max(last.probability,g.probability);}else merged.push({...g});}
+    for(const g of groups){const last=merged.at(-1);if(last&&last.kind===g.kind&&last.payload===g.payload&&sameFields(last.fields,g.fields)&&g.kind!=='FM'&&g.kind!=='PROB30'&&g.s<=last.e){last.e=Math.max(last.e,g.e);last.text=`${last.kind} ${period(last.s,last.e)} ${last.payload}`;last.probability=Math.max(last.probability,g.probability);}else merged.push({...g});}
     return{groups:merged.slice(0,MAX_GROUPS),reasons:[...reasons,...skipped]};
   }
 
@@ -613,14 +629,14 @@
           base:{state:base,text:encodeFullState(base,msa)},groups:cg.groups,hourly,
           checks:{...checks,noProb40:!taf.includes('PROB40'),noVV:!/\bVV/.test(taf),max5:cg.groups.length<=5,periodHours:12,instructionLocked:true},
           confidence:clamp(Math.round(70+Math.min(20,maxModels*2)+(checks.ok?10:0)),0,100),
-          diagnostics:{instructionLocked:true,authority:AUTH,reasons:cg.reasons,msaMode:msa?'explicit':'fallback',msaFt:msa||NSC_FT,cloudPipeline:'profile→METAR credibility gate→instruction layer order→ceiling→TAF/table',windPolicy:'VRB02: 75%/12h dominant or sustained >=3h hourly; weak-direction change alone never creates BECMG',legacyMutators:false},
+          diagnostics:{instructionLocked:true,authority:AUTH,reasons:cg.reasons,msaMode:msa?'explicit':'fallback',msaFt:msa||NSC_FT,cloudPipeline:'profile→METAR credibility gate→instruction layer order→ceiling→TAF/table',windPolicy:'VRB02: 75%/12h dominant or sustained >=3h hourly; weak-direction change alone never creates BECMG',fogProbabilityPolicy:'operational 40→30%, 60→40%, 80→50%; continuous 30–49% FG/BR => one 2h PROB30 onset window',legacyMutators:false},
           learning:{cells:0,note:'Uczenie może zmieniać estymację meteorologiczną, nigdy reguły instrukcji.'}
         };
       },
       validate:(taf,meta)=>validateTaf(taf,meta),
-      helpers:Object.freeze({windToken,visibilityToken,weatherToken,cleanWxToken:cleanWx,selectedClouds:selectClouds,cavokEligible,significantFields,encodeFullState,stateFromRow,cloudCandidates,profileCloudCandidates,cloudCandidateCredible,applyWindPolicy,tempoAllowed,fogFamily})
+      helpers:Object.freeze({windToken,visibilityToken,weatherToken,cleanWxToken:cleanWx,selectedClouds:selectClouds,cavokEligible,significantFields,encodeFullState,stateFromRow,cloudCandidates,profileCloudCandidates,cloudCandidateCredible,applyWindPolicy,tempoAllowed,fogFamily,operationalFogProbability})
     });
   }
 
-  return Object.freeze({ENGINE_VERSION:VERSION,ENGINE_NAME:NAME,INSTRUCTION:AUTH,RULES,createEngine,validateTaf,helpers:Object.freeze({windToken,visibilityToken,weatherToken,cleanWxToken:cleanWx,selectedClouds:selectClouds,cavokEligible,significantFields,encodeFullState,stateFromRow,cloudCandidates,profileCloudCandidates,cloudCandidateCredible,applyWindPolicy,tempoAllowed,fogFamily})});
+  return Object.freeze({ENGINE_VERSION:VERSION,ENGINE_NAME:NAME,INSTRUCTION:AUTH,RULES,createEngine,validateTaf,helpers:Object.freeze({windToken,visibilityToken,weatherToken,cleanWxToken:cleanWx,selectedClouds:selectClouds,cavokEligible,significantFields,encodeFullState,stateFromRow,cloudCandidates,profileCloudCandidates,cloudCandidateCredible,applyWindPolicy,tempoAllowed,fogFamily,operationalFogProbability})});
 });

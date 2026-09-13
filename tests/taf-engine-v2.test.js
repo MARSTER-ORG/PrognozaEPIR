@@ -9,13 +9,17 @@ function model({vis=12000,code=0,kt=6,dir=220,g=6,w=1,ceilM=null}={}){return{vis
 function row(i,o={}){
   const profile=o.profile!==undefined?o.profile:[{agl:200,cc:0},{agl:2500,cc:0}];
   const members=o.mv||[model({vis:o.vis??12000,code:o.code??0,kt:o.kt??6,dir:o.dir??220,g:o.gust??o.kt??6}),model({vis:o.vis??12000,code:o.code??0,kt:o.kt??6,dir:o.dir??220,g:o.gust??o.kt??6}),model({vis:o.vis??12000,code:o.code??0,kt:o.kt??6,dir:o.dir??220,g:o.gust??o.kt??6})];
-  return{t:start+i*H,T:o.T??10,Td:o.Td??7,RH:o.RH??70,RR:o.RR??0,VIS:o.vis??12000,WS:(o.kt??6)/KT,WD:o.dir??220,G:(o.gust??o.kt??6)/KT,wet:o.wet??0,storm:o.storm??0,dirSpread:o.dirSpread??10,profile,ceiling:o.ceiling??null,lowH:o.lowH??null,midH:o.midH??null,highH:o.highH??null,oktaL:o.oktaL??0,oktaM:o.oktaM??0,oktaH:o.oktaH??0,mv:members,fogRisk:o.fogRisk??0,fgRisk:o.fgRisk??null,brRisk:o.brRisk??null,fogVis1000Risk:o.fogVis1000Risk??null,fogAltVisM:o.fogAltVisM??null,brAltVisM:o.brAltVisM??null,preciseTiming:o.preciseTiming??false};
+  return{t:start+i*H,T:o.T??10,Td:o.Td??7,RH:o.RH??70,RR:o.RR??0,VIS:o.vis??12000,WS:(o.kt??6)/KT,WD:o.dir??220,G:(o.gust??o.kt??6)/KT,wet:o.wet??0,storm:o.storm??0,dirSpread:o.dirSpread??10,profile,ceiling:o.ceiling??null,lowH:o.lowH??null,midH:o.midH??null,highH:o.highH??null,oktaL:o.oktaL??0,oktaM:o.oktaM??0,oktaH:o.oktaH??0,mv:members,fogRisk:o.fogRisk??0,fgRisk:o.fgRisk??null,brRisk:o.brRisk??null,fogOperationalScore:o.fogOperationalScore??null,fgOperationalScore:o.fgOperationalScore??null,brOperationalScore:o.brOperationalScore??null,fogVis1000Risk:o.fogVis1000Risk??null,fogAltVisM:o.fogAltVisM??null,brAltVisM:o.brAltVisM??null,preciseTiming:o.preciseTiming??false};
 }
 const gen=(rows,opt={})=>E.createEngine().generate({station:'EPIR',issue,start,end,rows,rowsAlreadyAnchored:true,...opt});
 assert.equal(E.ENGINE_VERSION,'2.3.0');
 assert.equal(E.RULES.authority,'Instrukcja opracowywania prognoz TAF, Edycja (A), 11.2023');
 assert.equal(E.RULES.prob40,false);assert.equal(E.RULES.verticalVisibility,false);assert.equal(E.RULES.maxChangeGroups,5);
 assert.throws(()=>E.createEngine().generate({station:'EPIR',issue,start,end:start+10*H,rows:Array.from({length:10},(_,i)=>row(i)),rowsAlreadyAnchored:true}),/12 h/);
+
+// Operational FOG 0-100 is a risk index, not a literal percentage for TAF.
+const FOGP=E.helpers.operationalFogProbability;
+assert.equal(FOGP(39),0);assert.equal(FOGP(40),.30);assert.equal(FOGP(60),.40);assert.equal(FOGP(80),.50);assert.equal(FOGP(100),.60);
 
 // Visibility encoding and wind encoding.
 const V=E.helpers.visibilityToken;assert.equal(V(799),'0750');assert.equal(V(1499),'1400');assert.equal(V(4999),'4900');assert.equal(V(5000),'5000');assert.equal(V(9999),'9000');assert.equal(V(10000),'9999');
@@ -43,11 +47,26 @@ let rows=Array.from({length:12},(_,i)=>row(i,{vis:7000}));
 rows[5]=row(5,{vis:2600,fgRisk:42,brRisk:35,fogRisk:60,fogAltVisM:700,mv:[model({vis:700,code:45,w:.42}),model({vis:3000,w:.35}),model({vis:9000,w:.23})]});
 let r=gen(rows);assert.match(r.taf,/PROB30\s+1404\/1406\s+0\d{3}\s+(?:FZ)?FG/);assert.ok(!/TEMPO\s+1405/.test(r.taf));
 
-// FOG ENGINE >=50% is independent prevailing FG evidence even when deterministic VIS stays high.
+// Explicit already-calibrated probability >=50% may become prevailing FG/BECMG when persistent.
 rows=Array.from({length:12},(_,i)=>row(i,{vis:8000,fogRisk:i>=4?65:0,fgRisk:i>=4?65:0,fogVis1000Risk:i>=4?55:0,fogAltVisM:800}));
 r=gen(rows);assert.ok(r.taf.includes('BECMG'),r.taf);assert.match(r.taf,/BECMG[^\n]*0\d{3} (?:FZ)?FG/,r.taf);
 
-// FOG ENGINE 30-49% must create PROB30 even with no deterministic threshold crossing.
+// Operational FOG 60/100 = 40% TAF probability: one 2 h PROB30 onset window, no later BECMG.
+{
+  const s=Date.UTC(2026,8,13,18),e=s+12*H,iss=s-H;
+  const opRows=Array.from({length:12},(_,i)=>{
+    const x=row(i,{vis:6000,fogOperationalScore:i>=4?60:0,fgOperationalScore:i>=4?60:0,fogAltVisM:i>=4?900:null,mv:[model({vis:6000}),model({vis:6500}),model({vis:7000})]});
+    x.t=s+i*H;return x;
+  });
+  const q=E.createEngine().generate({station:'EPIR',issue:iss,start:s,end:e,rows:opRows,rowsAlreadyAnchored:true});
+  assert.match(q.taf,/PROB30\s+1321\/1323\s+0900\s+FG/,q.taf);
+  assert.equal((q.taf.match(/PROB30/g)||[]).length,1,q.taf);
+  assert.ok(!q.taf.includes('BECMG'),q.taf);
+  assert.ok(!q.taf.includes('1321/1401'),q.taf);
+  assert.equal(Math.round(q.groups[0].probability*100),40,q.taf);
+}
+
+// Direct calibrated 30-49% probability must create PROB30 even with no deterministic threshold crossing.
 rows=Array.from({length:12},(_,i)=>row(i,{vis:8000,fogRisk:i===5?40:0,fgRisk:i===5?40:0,fogVis1000Risk:i===5?35:0,fogAltVisM:900}));
 r=gen(rows);assert.match(r.taf,/PROB30\s+1404\/1406\s+0900\s+(?:FZ)?FG/,r.taf);
 
@@ -87,9 +106,9 @@ assert.equal(E.validateTaf('TAF EPIR 132300Z 1400/1412 22008KT CAVOK PROB40 1404
 assert.equal(E.validateTaf('TAF EPIR 132300Z 1400/1412 22008KT 0500 FG VV002=',{issue,start,end}).ok,false);
 assert.equal(E.validateTaf('TAF EPIR 132300Z 1400/1412 22008KT 0500 MIFG NSC=',{issue,start,end}).ok,false);
 
-// HTML/app must use only Engine 2.1, profile data and metre cloud display; no post-mutator stack.
+// HTML/app must use only Engine 2.3, profile data and metre cloud display; no post-mutator stack.
 const html=fs.readFileSync(path.join(__dirname,'..','taf.html'),'utf8'),app=fs.readFileSync(path.join(__dirname,'..','taf-app-v2.js'),'utf8');
 for(const legacy of ['taf-generator-policy.js','taf-cloud-policy.js','taf-weather-policy.js','taf-gust-policy.js','taf-cavok-nsc-policy.js','taf-instruction-guard.js','taf-output-sanitizer.js','taf-hybrid-adapter.js'])assert.ok(!html.includes(legacy),'legacy mutator loaded: '+legacy);
 assert.ok(html.includes('taf-engine-v2.js?v=2.3.0'));assert.ok(html.includes('taf-app-v2.js?v=2.3.0'));assert.ok(html.includes('Chmury (m AGL)'));assert.ok(html.includes('Pułap BKN/OVC (m AGL)'));
-assert.ok(app.includes('profile:Array.isArray(z.profile)'),'app must transfer vertical cloud profile into TAF engine');assert.ok(app.includes('cloudLayers'),'table must render engine cloud layers');assert.ok(app.includes('const fgRisk=Math.max(fogScore'),'FOG score must feed FG probability directly');
+assert.ok(app.includes('profile:Array.isArray(z.profile)'),'app must transfer vertical cloud profile into TAF engine');assert.ok(app.includes('cloudLayers'),'table must render engine cloud layers');assert.ok(app.includes('fgOperationalScore'),'FOG operational score must be separated from TAF probability');assert.ok(!app.includes('const fgRisk=Math.max(fogScore'),'raw FOG score must not be treated as literal percentage');
 console.log('TAF Engine 2.3 tests: OK');

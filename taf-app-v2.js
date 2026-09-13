@@ -60,13 +60,13 @@
       const f=nearest(fog,z.t),m=nearest(mifg,z.t);
       const fogScore=num(f?.score)?+f.score:0,vis1000=num(f?.vis1000)?+f.vis1000:null,vis1500=num(f?.vis1500)?+f.vis1500:null,vis500=num(f?.vis500)?+f.vis500:null;
       const fogVis=num(f?.vis)?+f.vis:null;
-      const fgRisk=Math.max(fogScore,num(vis1000)?vis1000:0);
-      const brRisk=num(fogVis)&&fogVis>=1000&&fogVis<=5000?Math.max(fogScore,num(vis1500)?vis1500:0):null;
-      const fogAltVisM=num(fogVis)&&fogVis<1000?Math.max(100,Math.min(900,fogVis)):(fogScore>=30?(num(vis500)&&vis500>=50?500:(num(vis1000)&&vis1000>=50?800:900)):null);
+      const fgOperationalScore=Math.max(fogScore,num(vis1000)?vis1000:0);
+      const brOperationalScore=num(fogVis)&&fogVis>=1000&&fogVis<=5000?Math.max(fogScore,num(vis1500)?vis1500:0):null;
+      const fogAltVisM=num(fogVis)&&fogVis<1000?Math.max(100,Math.min(900,fogVis)):(fogScore>=40?(num(vis500)&&vis500>=50?500:(num(vis1000)&&vis1000>=50?800:900)):null);
       return {...z,
-        fogRisk:fogScore,
-        fgRisk,
-        brRisk,
+        fogOperationalScore:fogScore,
+        fgOperationalScore,
+        brOperationalScore,
         fogVis1500Risk:vis1500,
         fogVis1000Risk:vis1000,
         fogVis500Risk:vis500,
@@ -97,7 +97,7 @@
     $('taf').textContent=result.taf;$('officialTaf').textContent=rawOf(data.currentTaf)||'Brak aktualnego TAF w archiwum';$('metar').textContent=rawOf(data.observation)||'Brak METAR/SPECI';$('metarMeta').textContent=data.observation?`Archiwum · ${fmtUtc(itemTime(data.observation))}`:'Brak obserwacji do zakotwiczenia';
     $('reasons').innerHTML=result.diagnostics.reasons.length?'<ul>'+result.diagnostics.reasons.map(x=>`<li>${esc(x)}</li>`).join('')+'</ul>':'Brak progów wymagających grup zmian.';
     renderChecks(result);renderHours(result);renderNeighbors(data);
-    const modelCount=Math.max(0,...result.hourly.map(h=>h.sourceRow?.mv?.length||0)),fogOk=rows.some(r=>num(r.fogRisk)||num(r.fgRisk)),neighborStations=[...new Set(rows.map(r=>r.neighborObsStation).filter(Boolean))];
+    const modelCount=Math.max(0,...result.hourly.map(h=>h.sourceRow?.mv?.length||0)),fogOk=rows.some(r=>num(r.fogOperationalScore)||num(r.fgOperationalScore)),neighborStations=[...new Set(rows.map(r=>r.neighborObsStation).filter(Boolean))];
     $('sources').innerHTML=`<span class="pill ${data.observation?'ok':'warn'}">METAR/SPECI ${data.observation?'✓':'—'}</span><span class="pill ${neighborStations.length?'ok':'warn'}">OBS sąsiednie ${neighborStations.length?esc(neighborStations.join('/')):'—'}</span><span class="pill ok">${esc(result.name)} v${esc(result.version)}</span><span class="pill ok">Instrukcja 11.2023 — HARD GATE</span><span class="pill ok">multimodel ${modelCount}</span><span class="pill ok">profil chmur → warstwy/pułap ✓</span><span class="pill ${fogOk?'ok':'warn'}">FG engine ${fogOk?'✓':'—'}</span><span class="pill warn">SYNOP wyłączony</span>`;
     $('conf').textContent=`Pewność ${result.confidence}%. Tabela i depesza korzystają z tej samej struktury warstw chmur; pułap = najniższa BKN/OVC. W tabeli wysokości chmur i pułap są podawane w m AGL. Kod TAF pozostaje zgodny z kluczem i podaje podstawy w setkach ft. MSA: ${result.diagnostics.msaMode==='explicit'?Math.round(result.diagnostics.msaFt)+' ft':'fallback 5000 ft'}.`;
     $('badge').textContent='TAF ENGINE 2.3 · ZGODNY';$('badge').className='badge ok';$('st').textContent=`${fmtUtc(Date.now(),false)} · ${rows.length} h danych`;
