@@ -10,7 +10,6 @@ import argparse
 import hashlib
 import json
 import os
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -20,7 +19,6 @@ ROOT = Path(__file__).resolve().parents[1]
 ARCHIVE = ROOT / "data" / "messages"
 STATE_PATH = Path(os.environ.get("SUPABASE_MIRROR_STATE", "/tmp/prognozaepir-supabase-mirror-state.json"))
 URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
-ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
 INGEST_TOKEN = os.environ.get("SUPABASE_INGEST_TOKEN", "")
 ENABLED = os.environ.get("SUPABASE_INGEST_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
 TIMEOUT = max(10, int(os.environ.get("SUPABASE_INGEST_TIMEOUT_SECONDS", "30")))
@@ -98,10 +96,8 @@ def post_batch(messages: list[dict]) -> dict:
         method="POST",
         headers={
             "content-type": "application/json",
-            "authorization": f"Bearer {ANON_KEY}",
-            "apikey": ANON_KEY,
             "x-ingest-token": INGEST_TOKEN,
-            "user-agent": "PrognozaEPIR-Railway-Supabase-Mirror/1.0",
+            "user-agent": "PrognozaEPIR-Railway-Supabase-Mirror/1.1",
         },
     )
     try:
@@ -122,7 +118,7 @@ def run(lookback_days: int, force: bool = False) -> dict:
     started = utc_iso()
     if not ENABLED:
         return {"ok": True, "enabled": False, "started_at": started, "sent": 0, "reason": "disabled"}
-    missing = [name for name, value in (("SUPABASE_URL", URL), ("SUPABASE_ANON_KEY", ANON_KEY), ("SUPABASE_INGEST_TOKEN", INGEST_TOKEN)) if not value]
+    missing = [name for name, value in (("SUPABASE_URL", URL), ("SUPABASE_INGEST_TOKEN", INGEST_TOKEN)) if not value]
     if missing:
         return {"ok": False, "enabled": True, "started_at": started, "sent": 0, "error": f"missing env: {', '.join(missing)}"}
 
@@ -140,7 +136,6 @@ def run(lookback_days: int, force: bool = False) -> dict:
         duplicates += int(result.get("duplicates") or 0)
         for message in batch:
             seen.add(stable_id(message))
-        # Keep state bounded while preserving enough restart/retry context.
         if len(seen) > 5000:
             current_ids = [stable_id(m) for m in messages]
             seen = set(current_ids[-5000:])
