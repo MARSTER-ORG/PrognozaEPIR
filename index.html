@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
-<title>PrognozaEPIR v0.9.13 HTML — multimodel</title>
+<title>PrognozaEPIR v0.9.14 HTML — multimodel</title>
 <script src="utc-ui-guard.js"></script>
 <script src="message-archive-client.js?v=live-jsonl-v7"></script>
-<script src="neighbor-observation-context.js?v=neighbor-obs-v2"></script>
+<script src="neighbor-observation-context.js?v=neighbor-obs-v3"></script>
 <style>
 :root{--bg:#f4f4f2;--ink:#232323;--muted:#6e6e6e;--line:#8d8d8d;--panel:#ededeb;--surface:#fff;--surface2:#f7f7f7;--soft:#f4f4f2;--border:#b5b5b5;--blue:#22268d;--blueText:#1f2a75;--red:#d43d31;--green:#0aa52b;--orange:#c54c20;--brown:#92511e;--cyan:#63b9d7;--errorBg:#fff4f4;--errorBorder:#d1a0a0;--errorText:#8a2d2d}
 :root[data-theme="dark"]{--bg:#111418;--ink:#e7e9ed;--muted:#a6acb5;--line:#646b74;--panel:#20252b;--surface:#181c21;--surface2:#20252b;--soft:#20252b;--border:#4e5660;--blue:#8fa2ff;--blueText:#9aabff;--errorBg:#2a1719;--errorBorder:#7d4148;--errorText:#ffb8c0}
@@ -20,7 +20,7 @@
 <div class="app">
   <div class="top">
     <div>
-      <div class="brand">PrognozaEPIR <small>v0.9.13 HTML</small></div>
+      <div class="brand">PrognozaEPIR <small>v0.9.14 HTML</small></div>
       <div class="place">Inowrocław (52.80, 18.26) · meteogram lotniczy multimodelowy</div>
     </div>
     <div class="status"><span id="badge" class="badge">ŁADOWANIE</span><div id="updated">—</div></div>
@@ -54,7 +54,7 @@
   <div class="legend"><span><b>Chmury:</b> niskie 0–2 km AGL, średnie 2–6 km, wysokie 6–13 km.</span><span><b>Podstawa:</b> najniższa warstwa ≥5/8.</span><span><b>Opad %:</b> udział modeli wskazujących ≥0.1 mm/h.</span></div>
   <div id="models" class="models"></div>
   <div id="errors" class="errors"></div>
-  <footer>Samodzielny PrognozaEPIR HTML v0.9.13. Dane są prognozami modelowymi i nie zastępują METAR/TAF, ostrzeżeń IMGW ani obserwacji lotniskowych. ICM nie jest składnikiem konsensusu — przycisk „ICM UM meteogram” otwiera zewnętrzny meteogram w meteo.pl.</footer>
+  <footer>Samodzielny PrognozaEPIR HTML v0.9.14. Dane są prognozami modelowymi i nie zastępują METAR/TAF, ostrzeżeń IMGW ani obserwacji lotniskowych. ICM nie jest składnikiem konsensusu — przycisk „ICM UM meteogram” otwiera zewnętrzny meteogram w meteo.pl.</footer>
 </div>
 <script>
 'use strict';
@@ -83,6 +83,8 @@ const _fmtCache=new Map();function fmt(ms,opt={}){const k=JSON.stringify(opt);le
 function f(v,d=1){return finite(v)?Number(v).toFixed(d):'—'}
 function uv(s,d){const r=d*Math.PI/180;return{u:-s*Math.sin(r),v:-s*Math.cos(r)}}
 function sd(u,v){return{speed:Math.hypot(u,v),dir:(Math.atan2(-u,-v)*180/Math.PI+360)%360}}
+const EPIR_WIND_DIR_CORR={from:190,to:235,offset:-25,minSpeedMs:1.5};
+function correctEpirWindDirection(z){if(!z||!finite(Number(z.WS))||!finite(Number(z.WD)))return z;const speed=Number(z.WS),raw=((Number(z.WD)%360)+360)%360;if(speed<EPIR_WIND_DIR_CORR.minSpeedMs||raw<EPIR_WIND_DIR_CORR.from||raw>EPIR_WIND_DIR_CORR.to)return{...z,WD:raw};return{...z,WD:(raw+EPIR_WIND_DIR_CORR.offset+360)%360,windDirRawDeg:raw,windDirSectorCorrectionDeg:EPIR_WIND_DIR_CORR.offset,windDirSectorCorrectionRule:`${EPIR_WIND_DIR_CORR.from}-${EPIR_WIND_DIR_CORR.to}:${EPIR_WIND_DIR_CORR.offset}`};}
 function toOkta(p){if(!finite(p))return null;let o=clamp(Math.round(p/12.5),0,8);if(o>=5&&p<62.5)o=4;return o}
 function build(rows){return rows.map(r=>({...r,_t:parseUTC(r.time)})).filter(r=>finite(r._t)).sort((a,b)=>a._t-b._t)}
 function bracket(a,t){let lo=0,hi=a.length-1;if(!a.length||t<a[0]._t||t>a[hi]._t)return null;while(lo<=hi){const m=(lo+hi)>>1;if(a[m]._t===t)return{a:a[m],b:a[m],q:0};if(a[m]._t<t)lo=m+1;else hi=m-1}const A=a[Math.max(0,hi)],B=a[Math.min(a.length-1,lo)];if(!A||!B||B._t-A._t>2*3600e3)return null;return{a:A,b:B,q:(t-A._t)/(B._t-A._t)}}
@@ -130,7 +132,7 @@ async function fetchModel(m){
   const rows=core.hourly.time.map((time,i)=>{const r={time};for(const v of SURFACE)r[v]=core.hourly[v]?.[i]??null;Object.assign(r,pm.get(time)||{});return r});
   return{model:m,elevation:finite(core.elevation)?core.elevation:(finite(prof?.elevation)?prof.elevation:null),rows:build(rows)}
 }
-async function load(){setBadge('ŁADOWANIE','');failures=[];datasets.clear();demo=false;populateView();try{const res=await Promise.allSettled(MODELS.map(fetchModel));res.forEach((r,i)=>{const m=MODELS[i];if(r.status==='fulfilled')datasets.set(m.id,r.value);else failures.push(m.name+': '+(r.reason?.message||r.reason))});populateView();if(!datasets.size){setBadge('BRAK DANYCH','');$('errors').style.display='block';$('errors').textContent='Nie udało się pobrać żadnego modelu z Open-Meteo. Spróbuj ponownie za chwilę.';return}try{await window.PrognozaEPIRNeighborObservations?.refresh?.(true)}catch(e){failures.push('METAR/SPECI sąsiednie: '+(e?.message||e))}compute();consensus=window.PrognozaEPIRNeighborObservations?.applySeries?.(consensus)||consensus;render()}catch(e){populateView();setBadge('BŁĄD','');$('errors').style.display='block';$('errors').textContent='Błąd programu: '+(e?.message||e);console.error(e)}}
+async function load(){setBadge('ŁADOWANIE','');failures=[];datasets.clear();demo=false;populateView();try{const res=await Promise.allSettled(MODELS.map(fetchModel));res.forEach((r,i)=>{const m=MODELS[i];if(r.status==='fulfilled')datasets.set(m.id,r.value);else failures.push(m.name+': '+(r.reason?.message||r.reason))});populateView();if(!datasets.size){setBadge('BRAK DANYCH','');$('errors').style.display='block';$('errors').textContent='Nie udało się pobrać żadnego modelu z Open-Meteo. Spróbuj ponownie za chwilę.';return}try{await window.PrognozaEPIRNeighborObservations?.refresh?.(true)}catch(e){failures.push('METAR/SPECI sąsiednie: '+(e?.message||e))}compute();consensus=window.PrognozaEPIRNeighborObservations?.applySeries?.(consensus)||consensus;consensus=consensus.map(correctEpirWindDirection);render()}catch(e){populateView();setBadge('BŁĄD','');$('errors').style.display='block';$('errors').textContent='Błąd programu: '+(e?.message||e);console.error(e)}}
 function setBadge(t,cls){$('badge').textContent=t;$('badge').className='badge '+cls}
 function populateView(){const sel=$('view'),old=sel.value;sel.innerHTML='<option value="consensus">PrognozaEPIR CONSENSUS</option>';for(const m of MODELS){const o=document.createElement('option');o.value=m.id;o.textContent=m.name+(datasets.has(m.id)?'':' — brak danych');o.disabled=!datasets.has(m.id);sel.appendChild(o)}sel.value=[...sel.options].some(o=>o.value===old&&!o.disabled)?old:'consensus';selected=sel.value}
 function modelSeries(id){const ds=datasets.get(id);if(!ds)return[];const t=timeline();return t.map(x=>{const r=sample(ds,x);if(!r)return null;const pr=profile([{row:r,w:1,elevation:ds.elevation}],finite(ds.elevation)?ds.elevation:90),ceil=ceiling(pr),low=band(pr,0,2000),mid=band(pr,2000,6000),high=band(pr,6000,13001),oktaL=toOkta(low),oktaM=toOkta(mid),oktaH=toOkta(high),lowH=bandHeightForAmount(pr,0,2000,oktaL),midH=bandHeightForAmount(pr,2000,6000,oktaM),highH=bandHeightForAmount(pr,6000,13001,oktaH);return{t:x,T:r.temperature_2m,Td:r.dew_point_2m,RH:r.relative_humidity_2m,RR:r.precipitation,P:r.pressure_msl,VIS:r.visibility,WS:r.wind_speed_10m,WD:r.wind_direction_10m,G:r.wind_gusts_10m,low,mid,high,lowH,midH,highH,oktaL,oktaM,oktaH,wet:finite(r.precipitation)?(r.precipitation>=.1?100:0):null,storm:finite(r.weather_code)?([95,96,99].includes(Math.round(r.weather_code))?100:0):null,profile:pr,ceiling:ceil,count:1,stormCount:finite(r.weather_code)?1:0}}).filter(Boolean)}

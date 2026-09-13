@@ -101,10 +101,10 @@
     if(!Array.isArray(series)||!series.length)return series;
     const now=Date.now(),records=snapshot?.stations?Object.values(snapshot.stations).filter(Boolean):[];
     return series.map(z=>{
-      if(!records.length)return applySectorWindDirection(z);
+      if(!records.length)return z;
       const candidates=records.map(r=>candidate(r,z,now)).filter(Boolean).sort((a,b)=>b.score-a.score);
       const adjusted=candidates.length?applyOne(z,candidates[0]):z;
-      return applySectorWindDirection(adjusted);
+      return adjusted;
     });
   }
   function latest(){return snapshot}
@@ -113,5 +113,5 @@
     const now=Date.now();
     return Object.values(snapshot.stations).map(r=>candidate(r,z,now)).filter(Boolean).sort((a,b)=>b.score-a.score);
   }
-  window.PrognozaEPIRNeighborObservations={refresh,applySeries,latest,contextFor,applySectorWindDirection,sectorWindDirectionRule:{...SECTOR_WIND_DIR},version:'1.2.0'};
+  window.PrognozaEPIRNeighborObservations={refresh,applySeries,latest,contextFor,applySectorWindDirection,sectorWindDirectionRule:{...SECTOR_WIND_DIR},version:'1.3.0'};
 })();
