@@ -1,0 +1,36 @@
+name: One-shot canonicalize remaining TAF labels
+
+on:
+  push:
+    branches: [audit/canonical-runtime-20260913]
+    paths: ['.github/workflows/audit-taf-version-clean.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: audit/canonical-runtime-20260913
+          fetch-depth: 0
+      - name: Canonicalize labels and self-delete
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('taf-app-v2.js'); s=p.read_text(encoding='utf-8')
+          s=s.replace("console.error('[TAF Engine 2.3]'","console.error('[TAF Engine 2.3.1]'")
+          s=s.replace("'TAF ENGINE 2.3 · BŁĄD'","'TAF ENGINE 2.3.1 · BŁĄD'")
+          s=s.replace("'TAF ENGINE 2.3 · GOTOWY'","'TAF ENGINE 2.3.1 · GOTOWY'")
+          p.write_text(s,encoding='utf-8')
+          PY
+          node --check taf-app-v2.js
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/audit-taf-version-clean.yml
+          git add taf-app-v2.js
+          git commit -m 'audit: canonicalize all TAF 2.3.1 runtime labels'
+          git pull --rebase origin audit/canonical-runtime-20260913
+          git push origin HEAD:audit/canonical-runtime-20260913
