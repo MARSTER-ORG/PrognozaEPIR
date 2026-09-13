@@ -1,0 +1,214 @@
+name: Apply internal EPIR wind calibration v2
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-wind-engine-v2.yml'
+permissions:
+  contents: write
+concurrency:
+  group: fix-wind-engine-v2
+  cancel-in-progress: true
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch wind engine and accelerate learning
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # Main meteogram: internal -30 degree sector calibration, no diagnostic text in UI.
+          p=Path('index.html')
+          s=p.read_text(encoding='utf-8')
+          old="const EPIR_WIND_DIR_CORR={from:190,to:235,offset:-25,minSpeedMs:1.5};"
+          new="const EPIR_WIND_DIR_CORR={from:190,to:235,offset:-30,minSpeedMs:1.5};"
+          if old not in s and new not in s:
+              raise SystemExit('EPIR wind correction constant not found in index.html')
+          s=s.replace(old,new,1)
+          s=s.replace('neighbor-observation-context.js?v=neighbor-obs-v3','neighbor-observation-context.js?v=neighbor-obs-v4')
+          s=s.replace('v0.9.15 HTML','v0.9.16 HTML')
+          s=s.replace('HTML v0.9.15','HTML v0.9.16')
+          old1="f(z.WD,0)+'° '+compass(z.WD)+(finite(z.windDirSectorCorrectionDeg)?' · surowy '+f(z.windDirRawDeg,0)+'° · korekta '+f(z.windDirSectorCorrectionDeg,0)+'°':'')"
+          new1="f(z.WD,0)+'° '+compass(z.WD)"
+          old2="f(z.WD,0)+'°'+(finite(z.windDirSectorCorrectionDeg)?' · surowy '+f(z.windDirRawDeg,0)+'° · korekta '+f(z.windDirSectorCorrectionDeg,0)+'°':'')"
+          new2="f(z.WD,0)+'°'"
+          if old1 not in s or old2 not in s:
+              raise SystemExit('wind diagnostic UI markers not found')
+          s=s.replace(old1,new1,1).replace(old2,new2,1)
+          p.write_text(s,encoding='utf-8')
+
+          # Neighbor module keeps the same internal rule for API/diagnostic consistency.
+          p=Path('neighbor-observation-context.js')
+          s=p.read_text(encoding='utf-8')
+          old="const SECTOR_WIND_DIR={from:190,to:235,offset:-25,minSpeedMs:1.5};"
+          new="const SECTOR_WIND_DIR={from:190,to:235,offset:-30,minSpeedMs:1.5};"
+          if old not in s and new not in s:
+              raise SystemExit('neighbor sector rule not found')
+          s=s.replace(old,new,1).replace("version:'1.3.0'","version:'1.4.0'",1)
+          p.write_text(s,encoding='utf-8')
+
+          # Adaptive learning: accelerate components with abundant verification data.
+          # Keep global minimum-sample gates and clipping unchanged so sparse events cannot overfit.
+          p=Path('scripts/build_adaptive_weights.py')
+          s=p.read_text(encoding='utf-8')
+          anchor="VISIBILITY_EXACT_GOOD_WEIGHT = 1.0\n"
+          block="""VISIBILITY_EXACT_GOOD_WEIGHT = 1.0
+
+# Component-specific response speed. Wind has hundreds of paired EPIR cases and
+# a persistent directional bias, so it can safely react faster to recent skill.
+# Cloud also has a large archive; visibility remains conservative because truly
+# reduced-visibility observations are comparatively rare/censored in METAR.
+COMPONENT_LEARNING = {
+    "wind": {"half_life_days": 21.0, "full_samples": 60, "peer_scale_pct": 26.0},
+    "cloud": {"half_life_days": 30.0, "full_samples": 75, "peer_scale_pct": 30.0},
+    "visibility": {"half_life_days": 45.0, "full_samples": 100, "peer_scale_pct": 32.0},
+}
+
+
+def learning_cfg(comp=None):
+    return COMPONENT_LEARNING.get(comp or "", {})
+"""
+          if 'COMPONENT_LEARNING = {' not in s:
+              if anchor not in s: raise SystemExit('adaptive constants anchor not found')
+              s=s.replace(anchor,block,1)
+
+          old="""def recency_weight(valid, now):
+    age_days = max(0.0, (now - valid).total_seconds() / 86400.0)
+    return 0.5 ** (age_days / HALF_LIFE_DAYS)
+
+
+def confidence(n, effective_n):
+    if n < MIN_SAMPLES or effective_n < MIN_SAMPLES * 0.55:
+        return 0.0
+    raw = (effective_n - MIN_SAMPLES * 0.55) / max(1.0, FULL_SAMPLES - MIN_SAMPLES * 0.55)
+    # Smoothstep avoids a hard jump as soon as the minimum sample count is reached.
+    x = clamp(raw, 0.0, 1.0)
+    return x * x * (3.0 - 2.0 * x)
+
+
+def peer_factor(delta_pct):
+    \"\"\"Convert score advantage vs same-case peer median into a bounded factor.\"\"\"
+    if not mv.finite(delta_pct):
+        return 1.0
+    return clamp(math.exp(delta_pct / PEER_SCALE_PCT), MIN_FACTOR, MAX_FACTOR)
+"""
+          new="""def recency_weight(valid, now, comp=None):
+    age_days = max(0.0, (now - valid).total_seconds() / 86400.0)
+    half_life = float(learning_cfg(comp).get("half_life_days", HALF_LIFE_DAYS))
+    return 0.5 ** (age_days / half_life)
+
+
+def confidence(n, effective_n, comp=None):
+    if n < MIN_SAMPLES or effective_n < MIN_SAMPLES * 0.55:
+        return 0.0
+    full_samples = float(learning_cfg(comp).get("full_samples", FULL_SAMPLES))
+    raw = (effective_n - MIN_SAMPLES * 0.55) / max(1.0, full_samples - MIN_SAMPLES * 0.55)
+    # Smoothstep avoids a hard jump as soon as the minimum sample count is reached.
+    x = clamp(raw, 0.0, 1.0)
+    return x * x * (3.0 - 2.0 * x)
+
+
+def peer_factor(delta_pct, comp=None):
+    \"\"\"Convert score advantage vs same-case peer median into a bounded factor.\"\"\"
+    if not mv.finite(delta_pct):
+        return 1.0
+    scale = float(learning_cfg(comp).get("peer_scale_pct", PEER_SCALE_PCT))
+    return clamp(math.exp(delta_pct / scale), MIN_FACTOR, MAX_FACTOR)
+"""
+          if old in s:
+              s=s.replace(old,new,1)
+          elif 'def recency_weight(valid, now, comp=None):' not in s:
+              raise SystemExit('adaptive learning functions not found')
+
+          old="""        rw = recency_weight(valid, now)
+        samples[(model, bucket)] += 1
+"""
+          new="""        samples[(model, bucket)] += 1
+"""
+          if old in s:s=s.replace(old,new,1)
+          elif 'rw = recency_weight(valid, now)' in s: raise SystemExit('unexpected recency block')
+
+          old="""        vis_weight = visibility_learning_weight(m, s)
+        for comp, score in scores.items():
+            comp_rw = rw * (vis_weight if comp == "visibility" else 1.0)
+            abs_scores[(model, bucket, comp)].append((score, comp_rw))
+"""
+          new="""        vis_weight = visibility_learning_weight(m, s)
+        for comp, score in scores.items():
+            comp_rw = recency_weight(valid, now, comp)
+            if comp == "visibility":
+                comp_rw *= vis_weight
+            abs_scores[(model, bucket, comp)].append((score, comp_rw))
+"""
+          if old in s:
+              s=s.replace(old,new,1)
+          elif 'comp_rw = recency_weight(valid, now, comp)' not in s:
+              raise SystemExit('component recency block not found')
+
+          s=s.replace('conf = confidence(n, effective_n)','conf = confidence(n, effective_n, comp)')
+          s=s.replace('raw_factor = peer_factor(mean_delta) if mean_delta is not None else 1.0','raw_factor = peer_factor(mean_delta, comp) if mean_delta is not None else 1.0')
+
+          method_old='sample-size shrinkage to base weights and conservative clipping; visibility learning emphasizes exact '
+          method_new='component-specific recency/confidence response, sample-size shrinkage to base weights and conservative clipping; visibility learning emphasizes exact '
+          s=s.replace(method_old,method_new)
+
+          marker='        "factor_bounds": [MIN_FACTOR, MAX_FACTOR],\n'
+          addition='''        "factor_bounds": [MIN_FACTOR, MAX_FACTOR],
+        "component_learning": COMPONENT_LEARNING,
+'''
+          if '"component_learning": COMPONENT_LEARNING' not in s:
+              if marker not in s: raise SystemExit('adaptive output marker not found')
+              s=s.replace(marker,addition,1)
+          p.write_text(s,encoding='utf-8')
+          PY
+
+      - name: Rebuild adaptive weights and validate
+        run: |
+          python3 -m py_compile scripts/build_adaptive_weights.py
+          python3 scripts/build_adaptive_weights.py
+          python3 -m json.tool data/learning/adaptive-weights.json >/dev/null
+          node --check neighbor-observation-context.js
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          s=Path('index.html').read_text(encoding='utf-8')
+          assert 'offset:-30' in s
+          assert 'offset:-25' not in s
+          assert 'surowy '+"'" not in s
+          assert "korekta '+f(z.windDirSectorCorrectionDeg" not in s
+          assert 'neighbor-obs-v4' in s
+          js=s.split('<script>',1)[1].split('</script>',1)[0]
+          Path('/tmp/index-inline.js').write_text(js,encoding='utf-8')
+          w=json.loads(Path('data/learning/adaptive-weights.json').read_text(encoding='utf-8'))
+          assert w['component_learning']['wind']['half_life_days']==21.0
+          assert w['component_learning']['wind']['full_samples']==60
+          assert w['component_learning']['wind']['peer_scale_pct']==26.0
+          # Requested operational example: 226 -> 196 inside calibrated sector.
+          assert (226-30)%360 == 196
+          print('EPIR wind calibration: 226 ->', (226-30)%360)
+          print('wind learning:', w['component_learning']['wind'])
+          PY
+          node --check /tmp/index-inline.js
+
+      - name: Commit calibrated engine and learning
+        run: |
+          git config user.name "prognozaepir-bot"
+          git config user.email "actions@users.noreply.github.com"
+          rm -rf scripts/__pycache__
+          git add index.html neighbor-observation-context.js scripts/build_adaptive_weights.py data/learning/adaptive-weights.json
+          if git diff --cached --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git commit -m "Calibrate EPIR wind direction internally and accelerate learning"
+          for attempt in 1 2 3 4 5; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            echo "push retry $attempt"
+            sleep $((attempt*4))
+          done
+          exit 1
