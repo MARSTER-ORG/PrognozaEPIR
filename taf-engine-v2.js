@@ -6,8 +6,8 @@
 })(typeof window!=='undefined'?window:globalThis,function(){
   'use strict';
 
-  const VERSION='2.2.0';
-  const NAME='TAF Engine 2.2 — Instruction First + EPIR Operational Policy';
+  const VERSION='2.3.0';
+  const NAME='TAF Engine 2.3 — Instruction First + EPIR Operational Policy';
   const AUTH='Instrukcja opracowywania prognoz TAF, Edycja (A), 11.2023';
   const HOUR=3600000, KT=1.9438444924406, FT=3.2808398950131;
   const VIS_THRESH=[800,1500,3000,5000];
@@ -154,8 +154,10 @@
     for(const k of Object.keys(p))if(!finite(p[k]))p[k]=0;
     p.ts=Math.max(p.ts,prob(row?.storm));
     p.precip=Math.max(p.precip,prob(row?.wet));
-    p.fog=Math.max(p.fog,prob(row?.fogRisk));
-    p.fg=Math.max(p.fg,prob(row?.fgRisk),prob(row?.fogVis1000Risk));
+    const fogEngine=prob(row?.fogRisk),explicitFg=prob(row?.fgRisk);
+    p.fog=Math.max(p.fog,fogEngine);
+    // Explicit FG evidence wins. The generic FOG score is a fallback only when no explicit FG probability was supplied.
+    p.fg=Math.max(p.fg,explicitFg,prob(row?.fogVis1000Risk),explicitFg>0?0:fogEngine);
     p.br=Math.max(p.br,prob(row?.brRisk));
     // General fog score may support BR, but must never suppress a stronger FG signal.
     if(p.fog>=.30&&p.br<.30&&p.fg<.30&&num(row?.VIS)&&+row.VIS>=1000&&+row.VIS<=5000)p.br=Math.max(p.br,p.fog);
@@ -279,9 +281,13 @@
     const p=probabilities(row),cs=cloudCandidates(row,p);
     const ceiling=cs.filter(c=>!c.type&&(c.cover==='BKN'||c.cover==='OVC')).sort((a,b)=>a.ft-b.ft)[0]?.ft??(num(row?.ceiling)?+row.ceiling*FT:NaN);
     const ws=num(row?.WS)?+row.WS*KT:0,g=num(row?.G)?+row.G*KT:ws;
+    let visM=num(row.VIS)?+row.VIS:10000;
+    // A prevailing >=50% FG/BR forecast cannot coexist with a contradictory prevailing visibility.
+    if(p.fg>=.50&&p.fg>=p.br)visM=Math.min(visM,clamp(p.alt?.fgM||800,100,900));
+    else if(p.br>=.50&&p.br>p.fg)visM=Math.min(visM,clamp(p.alt?.brM||4000,1000,5000));
     return {
       t:+row.t,windKt:ws,windDir:num(row.WD)?(+row.WD+360)%360:null,gustKt:g,dirSpreadDeg:num(row.dirSpread)?+row.dirSpread:0,
-      visM:num(row.VIS)?+row.VIS:10000,T:num(row.T)?+row.T:null,Td:num(row.Td)?+row.Td:null,RH:num(row.RH)?+row.RH:null,RR:num(row.RR)?+row.RR:0,
+      visM,T:num(row.T)?+row.T:null,Td:num(row.Td)?+row.Td:null,RH:num(row.RH)?+row.RH:null,RR:num(row.RR)?+row.RR:0,
       clouds:cs,ceilingFt:ceiling,prob:p,sourceRow:row
     };
   }
@@ -483,21 +489,21 @@
     const groups=[],reasons=[],skipped=[];let prevailing=base;
     for(let i=1;i<states.length&&groups.length<MAX_GROUPS;i++){
       let target=states[i],sig=significantFields(prevailing,target),fields=sig.fields;
-      if(!fields.length)continue;
-      let confidence=changeConfidence(target,fields),persist=persistenceFrom(states,i,target),returnH=returnsTo(states,i,prevailing);
       const prevFog=fogFamily(prevailing,.5),targetFog=fogFamily(target,.5);
       const fogAltProb=Math.max(target.prob?.fg||0,target.prob?.br||0);
       const altFogFamily=(target.prob?.fg||0)>=.30&&(target.prob?.fg||0)>=(target.prob?.br||0)?'FG':(target.prob?.br||0)>=.30?'BR':'NONE';
       const newFog=targetFog!=='NONE'&&targetFog!==prevFog;
       const newFogAlternative=altFogFamily!=='NONE'&&altFogFamily!==prevFog;
 
-      // If fog/mist is an alternative 30–49%, encode it as PROB30 using the worst plausible FG/BR visibility.
+      // FOG is an independent input. Do not discard a 30–49% FG/BR signal merely because the deterministic VIS/cloud/wind state did not cross a threshold first.
       if(newFogAlternative&&fogAltProb>=.30&&fogAltProb<.50){
         target=alternativeFogState(prevailing,target);fields=[...new Set([...fields,'visibility'])];
         const w=twoHourWindow(target.t,start,end),g={kind:'PROB30',s:w.s,e:w.e,fields,payload:payload(prevailing,target,fields,'PROB30',msaFt),probability:fogAltProb};
         if(g.payload&&!conflicts(groups,g)){g.text=`PROB30 ${period(g.s,g.e)} ${g.payload}`;groups.push(g);reasons.push(`${g.text}: alternatywne FG/BR ${Math.round(fogAltProb*100)}%; TEMPO nie może służyć do prognozowania pojawienia się mgły/zamglenia.`);}continue;
       }
 
+      if(!fields.length)continue;
+      let confidence=changeConfidence(target,fields),persist=persistenceFrom(states,i,target),returnH=returnsTo(states,i,prevailing);
       if(confidence<.30){skipped.push(`${code(target.t)} UTC: zmiana <30% (${Math.round(confidence*100)}%).`);continue;}
       let kind=null,s=null,e=null;
       const precise=target.sourceRow?.preciseTiming===true||target.sourceRow?.preciseFm===true;

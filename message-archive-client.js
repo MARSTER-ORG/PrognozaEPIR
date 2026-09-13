@@ -322,12 +322,14 @@
         catch(rawError){const error=new Error(`Nie udało się załadować ${name}`);error.cause={localError,rawError};throw error;}
       }
     };
-    (async()=>{
-      try{
-        await loadPolicy('taf-instruction-guard.js','20260909-7');
-        await loadPolicy('taf-verification-explain.js','20260910-1');
-      }catch(error){console.warn('TAF policy loader:',error);}
-    })();
+    if(!document.querySelector('meta[name="prognozaepir-taf-engine-v2"]')){
+      (async()=>{
+        try{
+          await loadPolicy('taf-instruction-guard.js','20260909-7');
+          await loadPolicy('taf-verification-explain.js','20260910-1');
+        }catch(error){console.warn('TAF policy loader:',error);}
+      })();
+    }
 
     const tafArchiveSignature = payload => [
       payload?.aviation?.message_id || payload?.metar?.message_id || '',
