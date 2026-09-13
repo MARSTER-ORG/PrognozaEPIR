@@ -2,7 +2,6 @@
 """Railway entrypoint with non-blocking Supabase parallel archive mirroring."""
 from __future__ import annotations
 
-import json
 import os
 import threading
 import time
@@ -11,6 +10,7 @@ from datetime import datetime, timezone
 import railway_ingestor_fast_server as fast
 
 base = fast.base
+RUNTIME_VERSION = "supabase-parallel-v1"
 MIRROR_ENABLED = os.environ.get("SUPABASE_INGEST_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
 MIRROR_INTERVAL_SECONDS = max(30, int(os.environ.get("SUPABASE_MIRROR_INTERVAL_SECONDS", "60")))
 MIRROR_TIMEOUT_SECONDS = max(20, int(os.environ.get("SUPABASE_MIRROR_TIMEOUT_SECONDS", "90")))
@@ -18,8 +18,8 @@ MIRROR_TIMEOUT_SECONDS = max(20, int(os.environ.get("SUPABASE_MIRROR_TIMEOUT_SEC
 
 def mirror_scheduler() -> None:
     print(
-        f"[{base.utc_iso()}] Supabase mirror scheduler started; enabled={MIRROR_ENABLED} "
-        f"interval={MIRROR_INTERVAL_SECONDS}s",
+        f"[{base.utc_iso()}] Supabase mirror scheduler started; version={RUNTIME_VERSION} "
+        f"enabled={MIRROR_ENABLED} interval={MIRROR_INTERVAL_SECONDS}s",
         flush=True,
     )
     if not MIRROR_ENABLED:
