@@ -34,6 +34,10 @@ for name in PAGES:
     p=OUT/name
     if not p.exists(): raise SystemExit(f'missing canonical page: {name}')
     s=p.read_text(encoding='utf-8')
+    if name == 'index.html':
+        # Removed module no longer exists in the repository; leaving the tag caused a 404
+        # on every page load and let historical layout code appear to be current.
+        s=re.sub(r'\s*<script[^>]+src=["\']fog-summary-layout\.js(?:\?[^"\']*)?["\'][^>]*></script>\s*','\n',s,flags=re.I)
     if 'site-shell.css' not in s:
         s=s.replace('</head>',f'  <link rel="stylesheet" href="site-shell.css?v={SHA}">\n</head>',1)
     if 'site-shell.js' not in s:
