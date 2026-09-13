@@ -1,31 +1,25 @@
-name: Enforce global UTC policy
+name: Validate global UTC policy
 
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: enforce-global-utc-main
-  cancel-in-progress: false
+  group: validate-global-utc-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  enforce:
-    if: github.actor != 'github-actions[bot]' || github.event_name == 'workflow_dispatch'
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: main
-          fetch-depth: 0
 
-      - name: Apply project-wide UTC rule
-        run: python3 scripts/enforce_global_utc.py
-
-      - name: Validate UTC rule
+      - name: Validate project-wide UTC rule
         run: python3 scripts/enforce_global_utc.py --check
 
       - name: Validate message archive consumer architecture
@@ -39,7 +33,7 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import re
-          pages=['index.html','arch.html','taf.html','radar.html','sat-fog.html']
+          pages=['index.html','arch.html','taf.html','radar.html','sat-fog.html','lightning-alerts.html']
           out=Path('/tmp/utc-js'); out.mkdir(exist_ok=True)
           for page in pages:
               text=Path(page).read_text(encoding='utf-8')
@@ -49,21 +43,3 @@ jobs:
                       (out/f'{page}.{i}.js').write_text(block,encoding='utf-8')
           PY
           for f in /tmp/utc-js/*.js; do node --check "$f"; done
-
-      - name: Commit UTC normalization
-        run: |
-          if git diff --quiet; then
-            echo 'All pages and modules already comply with UTC policy.'
-            exit 0
-          fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git commit -m 'ui: standardize all times on UTC'
-          for attempt in 1 2 3 4; do
-            git fetch origin main
-            if git rebase origin/main && git push origin HEAD:main; then exit 0; fi
-            git rebase --abort 2>/dev/null || true
-            sleep $((attempt * 3))
-          done
-          exit 1
