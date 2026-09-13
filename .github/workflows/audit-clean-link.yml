@@ -1,0 +1,38 @@
+name: One-shot remove legacy lightning route
+
+on:
+  push:
+    branches: [audit/canonical-runtime-20260913]
+    paths: ['.github/workflows/audit-clean-link.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: audit/canonical-runtime-20260913
+          fetch-depth: 0
+      - name: Remove legacy route and self-delete
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('utc-ui-guard.js')
+          s=p.read_text(encoding='utf-8')
+          old="link.href = 'data/messages/lightning-alerts.html';"
+          new="link.href = 'lightning-alerts.html';"
+          if old not in s and new not in s:
+              raise SystemExit('legacy lightning route anchor not found')
+          p.write_text(s.replace(old,new),encoding='utf-8')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/audit-clean-link.yml
+          git add utc-ui-guard.js
+          git commit -m 'audit: canonicalize lightning settings route'
+          git pull --rebase origin audit/canonical-runtime-20260913
+          git push origin HEAD:audit/canonical-runtime-20260913
