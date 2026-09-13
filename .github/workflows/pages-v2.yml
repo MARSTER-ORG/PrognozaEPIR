@@ -1,0 +1,124 @@
+name: Deploy PrognozaEPIR to GitHub Pages v2
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-v2
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Reuse production site preparation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          src=Path('.github/workflows/pages.yml').read_text(encoding='utf-8')
+          start_marker='      - name: Prepare site\n        run: |\n'
+          end_marker='\n      - name: Validate JavaScript\n'
+          start=src.find(start_marker)
+          end=src.find(end_marker,start+1)
+          if start<0 or end<0:
+              raise SystemExit('Nie znaleziono kroku Prepare site w pages.yml')
+          block=src[start+len(start_marker):end]
+          lines=[]
+          for line in block.splitlines():
+              lines.append(line[10:] if line.startswith('          ') else line)
+          Path('/tmp/prepare-site.sh').write_text('\n'.join(lines)+'\n',encoding='utf-8')
+          PY
+          bash /tmp/prepare-site.sh
+
+      - name: Install TAF Engine 2 production artifact
+        shell: bash
+        run: |
+          cp taf-engine-v2.js taf-app-v2.js _site/
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          # TAF HTML: mark instruction-first runtime and cache-bust the hidden model frame.
+          p=Path('_site/taf.html')
+          s=p.read_text(encoding='utf-8')
+          marker='<meta name="prognozaepir-taf-engine-v2" content="2.1.0">'
+          if marker not in s:
+              s=s.replace('<meta name="color-scheme" content="dark">', '<meta name="color-scheme" content="dark">\n  '+marker, 1)
+          s=re.sub(r'src="index\.html(?:\?v=[^"]*)?"', f'src="index.html?v={__import__("os").environ.get("GITHUB_SHA","dev")[:12]}"', s, count=1)
+          p.write_text(s,encoding='utf-8')
+
+          # Navigation to TAF gets a new URL key so phones do not reuse the old HTML artifact.
+          p=Path('_site/index.html')
+          s=p.read_text(encoding='utf-8')
+          s=s.replace('href="taf.html">GENERATOR TAF</a>', 'href="taf.html?v=2.1.0">GENERATOR TAF</a>')
+          p.write_text(s,encoding='utf-8')
+
+          # Common archive client remains the data source, but legacy TAF mutators must not load on Engine 2.
+          p=Path('_site/message-archive-client.js')
+          s=p.read_text(encoding='utf-8')
+          old="""    (async()=>{\n      try{\n        await loadPolicy('taf-instruction-guard.js','20260909-7');\n        await loadPolicy('taf-verification-explain.js','20260910-1');\n      }catch(error){console.warn('TAF policy loader:',error);}\n    })();"""
+          new="""    if(!document.querySelector('meta[name=\"prognozaepir-taf-engine-v2\"]')){\n      (async()=>{\n        try{\n          await loadPolicy('taf-instruction-guard.js','20260909-7');\n          await loadPolicy('taf-verification-explain.js','20260910-1');\n        }catch(error){console.warn('TAF policy loader:',error);}\n      })();\n    }"""
+          if old not in s:
+              raise SystemExit('Nie znaleziono legacy TAF policy loader')
+          s=s.replace(old,new,1)
+          p.write_text(s,encoding='utf-8')
+
+          # Do not sample the FG engine before its hourly series is ready.
+          p=Path('_site/taf-app-v2.js')
+          s=p.read_text(encoding='utf-8')
+          old="""    let fog=[],mifg=[];\n    try{fog=w.PrognozaEPIRFogSeries||[];}catch(_){}"""
+          new="""    let fog=[],mifg=[];\n    try{\n      const fogUntil=Date.now()+8000;\n      do{\n        fog=w.PrognozaEPIRFogSeries||[];\n        if(fog.length)break;\n        await new Promise(r=>setTimeout(r,250));\n      }while(Date.now()<fogUntil);\n    }catch(_){}"""
+          if old not in s:
+              raise SystemExit('Nie znaleziono odczytu PrognozaEPIRFogSeries')
+          s=s.replace(old,new,1)
+          p.write_text(s,encoding='utf-8')
+          PY
+
+      - name: Validate instruction-first TAF deployment
+        run: |
+          node --check taf-engine-v2.js
+          node --check taf-app-v2.js
+          node --check _site/taf-engine-v2.js
+          node --check _site/taf-app-v2.js
+          node --check _site/message-archive-client.js
+          node tests/taf-engine-v2.test.js
+          test -s _site/taf.html
+          test -s _site/taf-engine-v2.js
+          test -s _site/taf-app-v2.js
+          grep -F 'TAF ENGINE 2.1.0 · INSTRUCTION FIRST' _site/taf.html
+          grep -F 'Chmury (m AGL)' _site/taf.html
+          grep -F 'Pułap BKN/OVC (m AGL)' _site/taf.html
+          grep -F 'taf-engine-v2.js?v=2.1.0' _site/taf.html
+          grep -F 'taf-app-v2.js?v=2.1.0' _site/taf.html
+          grep -F 'prognozaepir-taf-engine-v2' _site/taf.html
+          grep -F 'prognozaepir-taf-engine-v2' _site/message-archive-client.js
+          grep -F 'fogUntil=Date.now()+8000' _site/taf-app-v2.js
+          ! grep -F '<script src="taf-hybrid-adapter.js' _site/taf.html
+          ! grep -F '<script src="taf-instruction-guard.js' _site/taf.html
+          ! grep -F '<script src="taf-generator-policy.js' _site/taf.html
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
