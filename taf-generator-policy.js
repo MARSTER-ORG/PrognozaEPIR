@@ -5,7 +5,7 @@
   if(typeof module==='object'&&module.exports)module.exports=api;
   if(root)root.PrognozaEPIRTAFHybridTuning=api;
 })(typeof globalThis!=='undefined'?globalThis:this,function(){
-  const VERSION='3.2.0';
+  const VERSION='3.2.1';
   const KT=1.9438444924406,FT=3.2808398950131,HOUR=3600000;
   const CAVOK_BASE_FT=1500*FT,NSC_BASE_FT=5000;
   const VIS_THRESHOLDS=[800,1500,3000,5000],CEIL_THRESHOLDS=[200,300,500,1000,1500];
@@ -190,13 +190,15 @@
   }
   function lowBkn(h){return hourClouds(h).some(c=>(c.cover==='BKN'||c.cover==='OVC'||c.okta>=5)&&c.ft<1500);}
   function ceilingNeedsGroup(a,b){const ac=finite(+a?.ceilingFt)?+a.ceilingFt:null,bc=finite(+b?.ceilingFt)?+b.ceilingFt:null;if(finite(ac)&&finite(bc)&&ceilBand(ac)!==ceilBand(bc))return true;return lowBkn(a)!==lowBkn(b);}
+  function cloudStateNeedsGroup(a,b,msaFt=null){if(!a||!b)return false;if(strictCavokEligible(a,msaFt)!==strictCavokEligible(b,msaFt))return true;if(strictNscEligible(a,msaFt)!==strictNscEligible(b,msaFt))return true;return ceilingNeedsGroup(a,b);}
+  function cloudRegimeKey(h,msaFt){const ac=finite(+h?.ceilingFt)?ceilBand(+h.ceilingFt):-1;return [strictCavokEligible(h,msaFt)?1:0,strictNscEligible(h,msaFt)?1:0,ac,lowBkn(h)?1:0,hasConvectiveCloud(h)?1:0].join(':');}
   function convectiveNeedsGroup(a,b){const ap=(a?.prob?.ts||0)>=.5||hasConvectiveCloud(a),bp=(b?.prob?.ts||0)>=.5||hasConvectiveCloud(b);return ap!==bp;}
   function significantWeatherToken(h){
     const wx=encodedWxForHour(h),e=h?.sourceRow?.__hybridTuning||{};if(/^(?:FZ|TS)/.test(wx))return wx;
     if((e.moderateOrHeavy||(+h?.RR||0)>=.3)&&/^(?:\+|-)?(?:RA|SN|SHRA|SHSN)$/.test(wx))return wx.replace(/^-/,'');return'';
   }
   function weatherNeedsGroup(a,b){const aw=significantWeatherToken(a),bw=significantWeatherToken(b);return aw!==bw&&(!!aw||!!bw);}
-  function significantFields(a,b,cfg=DEFAULTS){const f=[];if(windNeedsGroup(a,b))f.push('wind');if(visibilityNeedsGroup(a,b,cfg))f.push('visibility');if(weatherNeedsGroup(a,b))f.push('weather');if(ceilingNeedsGroup(a,b))f.push('ceiling');if(convectiveNeedsGroup(a,b))f.push('convective');return[...new Set(f)];}
+  function significantFields(a,b,cfg=DEFAULTS,msaFt=null){const f=[];if(windNeedsGroup(a,b))f.push('wind');if(visibilityNeedsGroup(a,b,cfg))f.push('visibility');if(weatherNeedsGroup(a,b))f.push('weather');if(cloudStateNeedsGroup(a,b,msaFt))f.push('ceiling');if(convectiveNeedsGroup(a,b))f.push('convective');return[...new Set(f)];}
 
   function observationTime(o){for(const k of ['obs_time','message_time','time','timestamp']){const t=Date.parse(o?.[k]||'');if(finite(t))return t;}return NaN;}
   function observationRaw(o){return String(o?.raw||o?.canonical_raw||'').toUpperCase();}
@@ -280,7 +282,7 @@
     const significantMet=set.has('weather')||set.has('ceiling')||set.has('convective'),prevCavok=strictCavokEligible(prev,msaFt),targetCavok=strictCavokEligible(target,msaFt);
     if(targetCavok&&(set.has('visibility')||significantMet)){out.push('CAVOK');return out.join(' ');}
     if(set.has('visibility'))out.push(encodedVis(target?.visM));
-    else if(temporary&&significantMet&&prevCavok&&finite(+target?.visM)&&+target.visM<10000)out.push(encodedVis(target.visM));
+    else if(significantMet&&prevCavok&&!targetCavok&&finite(+target?.visM))out.push(encodedVis(target.visM));
     if(set.has('weather')||set.has('convective')){
       if(wx){const weak=/^-(?:RA|SN|SHRA|SHSN|DZ)$/.test(wx);if(!weak||weakPrecipAllowedInChange(target,fields))out.push(wx);}
       else if(prevWx&&!/^-(?:RA|SN|SHRA|SHSN|DZ)$/.test(prevWx))out.push('NSW');
@@ -288,7 +290,7 @@
     if(set.has('ceiling')||set.has('convective'))out.push(encodeCloudsStrict(target,msaFt));
     return[...new Set(out)].join(' ');
   }
-  function selectiveBecmgPayload(result,g,planOrCfg,cfgMaybe){const cfg=cfgMaybe||planOrCfg||DEFAULTS,prev=previousHour(result,g),target=targetHour(result,g),fields=significantFields(prev,target,cfg);return{payload:payloadForChange(prev,target,fields,result?.diagnostics?.msaFt,{temporary:false}),fields,visNeeded:fields.includes('visibility')};}
+  function selectiveBecmgPayload(result,g,planOrCfg,cfgMaybe){const cfg=cfgMaybe||planOrCfg||DEFAULTS,prev=previousHour(result,g),target=targetHour(result,g),fields=significantFields(prev,target,cfg,result?.diagnostics?.msaFt);return{payload:payloadForChange(prev,target,fields,result?.diagnostics?.msaFt,{temporary:false}),fields,visNeeded:fields.includes('visibility')};}
 
   function ddhh(t){const d=new Date(t);return p2(d.getUTCDate())+p2(d.getUTCHours());}
   function ddhhmm(t){const d=new Date(t);return ddhh(t)+p2(d.getUTCMinutes());}
@@ -300,11 +302,11 @@
   function persistentGroups(result,cfg,msaFt,suppressed){
     const out=[],segs=Array.isArray(result.segments)?result.segments:[],hours=result.hourly||[];if(segs.length<2)return out;
     for(let si=1;si<segs.length;si++){
-      const prevSeg=segs[si-1],s=segs[si],prev=prevSeg.state||hours[Math.max(0,s.i-1)],target=s.state||hours[s.i],fields=significantFields(prev,target,cfg);
+      const prevSeg=segs[si-1],s=segs[si],prev=prevSeg.state||hours[Math.max(0,s.i-1)],target=s.state||hours[s.i],fields=significantFields(prev,target,cfg,msaFt);
       if(!fields.length){suppressed.push({kind:'BECMG',reason:'no-instruction-threshold',start:hours[s.i]?.t});continue;}
       if(fields.includes('weather')&&/^-(?:RA|SN|SHRA|SHSN|DZ)$/.test(encodedWxForHour(target))&&!weakPrecipAllowedInChange(target,fields)){const keep=fields.filter(x=>x!=='weather');fields.splice(0,fields.length,...keep);}
       if(!fields.length){suppressed.push({kind:'BECMG',reason:'weak-precip-no-trigger',start:hours[s.i]?.t});continue;}
-      const onset=hours[s.i]?.t??target.t,stepPrev=hours[Math.max(0,s.i-1)],stepNow=hours[s.i],stepFields=significantFields(stepPrev,stepNow,cfg),abrupt=stepFields.length>=3;
+      const onset=hours[s.i]?.t??target.t,stepPrev=hours[Math.max(0,s.i-1)],stepNow=hours[s.i],stepFields=significantFields(stepPrev,stepNow,cfg,msaFt),abrupt=stepFields.length>=3;
       if(abrupt){const fmTime=Math.max(result.start,onset-HOUR/2),payload=encodeStateStrict(target,msaFt);out.push({kind:'FM',start:fmTime,end:result.end,payload,fields});}
       else{const start=Math.max(result.start,onset-HOUR),end=Math.min(result.end,onset+HOUR),payload=payloadForChange(prev,target,fields,msaFt);if(payload)out.push({kind:'BECMG',start,end,payload,fields});else suppressed.push({kind:'BECMG',reason:'empty-after-instruction-filter',start,end});}
     }
@@ -315,9 +317,27 @@
     while(i<hours.length){
       const prevBand=visBand(+hours[i-1]?.visM,cuts),curBand=visBand(+hours[i]?.visM,cuts);if(prevBand===curBand){i++;continue;}let j=i+1;while(j<hours.length&&visBand(+hours[j]?.visM,cuts)===curBand)j++;
       const transitionT=hours[i].t,already=existing.concat(out).some(g=>(g.fields||[]).includes('visibility')&&g.start<=transitionT+HOUR&&g.end>=transitionT-HOUR);if(already){i=j;continue;}
-      const fields=significantFields(hours[i-1],hours[i],cfg);if(!fields.includes('visibility')){i=j;continue;}const returnsImmediately=j===i+1&&j<hours.length&&visBand(+hours[j]?.visM,cuts)===prevBand;
+      const fields=significantFields(hours[i-1],hours[i],cfg,msaFt);if(!fields.includes('visibility')){i=j;continue;}const returnsImmediately=j===i+1&&j<hours.length&&visBand(+hours[j]?.visM,cuts)===prevBand;
       if(returnsImmediately){const payload=payloadForChange(hours[i-1],hours[i],fields,msaFt,{temporary:true});if(payload)out.push({kind:'TEMPO',start:transitionT,end:Math.min(result.end,transitionT+HOUR),payload,fields,event:'visibility'});else suppressed.push({kind:'TEMPO',reason:'visibility-threshold-empty',start:transitionT,end:Math.min(result.end,transitionT+HOUR)});i=j+1;continue;}
       const abrupt=fields.length>=3;if(abrupt){const fmTime=Math.max(result.start,transitionT-HOUR/2),payload=encodeStateStrict(hours[i],msaFt);out.push({kind:'FM',start:fmTime,end:result.end,payload,fields});}else{const start=Math.max(result.start,transitionT-HOUR),end=Math.min(result.end,transitionT+HOUR),payload=payloadForChange(hours[i-1],hours[i],fields,msaFt);if(payload)out.push({kind:'BECMG',start,end,payload,fields});}i=j;
+    }
+    return out;
+  }
+  function cloudThresholdGroups(result,cfg,msaFt,existing,suppressed){
+    const hours=result.hourly||[],out=[];let i=1;
+    while(i<hours.length){
+      const prev=hours[i-1],target=hours[i];
+      if(!cloudStateNeedsGroup(prev,target,msaFt)&&!convectiveNeedsGroup(prev,target)){i++;continue;}
+      const transitionT=target.t,fields=significantFields(prev,target,cfg,msaFt);
+      if(!fields.some(x=>x==='ceiling'||x==='convective')){i++;continue;}
+      const already=existing.concat(out).some(g=>(g.fields||[]).some(f=>f==='ceiling'||f==='convective')&&g.start<=transitionT+HOUR&&g.end>=transitionT-HOUR);
+      if(already){i++;continue;}
+      const prevKey=cloudRegimeKey(prev,msaFt),curKey=cloudRegimeKey(target,msaFt),next=hours[i+1],oneHourReturn=!!next&&cloudRegimeKey(next,msaFt)===prevKey&&curKey!==prevKey;
+      const payload=payloadForChange(prev,target,fields,msaFt,{temporary:oneHourReturn});
+      if(!payload){suppressed.push({kind:oneHourReturn?'TEMPO':'BECMG',reason:'cloud-threshold-empty',start:transitionT});i++;continue;}
+      if(oneHourReturn)out.push({kind:'TEMPO',start:transitionT,end:Math.min(result.end,transitionT+HOUR),payload,fields,event:'cloud-threshold'});
+      else out.push({kind:'BECMG',start:Math.max(result.start,transitionT-HOUR),end:Math.min(result.end,transitionT+HOUR),payload,fields,event:'cloud-threshold'});
+      i++;
     }
     return out;
   }
@@ -334,7 +354,7 @@
     if(!result||!Array.isArray(result.hourly))return result;
     const cfg=cfgOf(ctx.config),rows=ctx.rows||result.hourly.map(h=>h.sourceRow).filter(Boolean),msaFt=finite(+ctx.msaFt)?+ctx.msaFt:finite(+result?.diagnostics?.msaFt)?+result.diagnostics.msaFt:null;
     const advisoryPlan=dominantClearPlan(rows,result.start,cfg),shortPlan=shortHorizonBasePlan(result,ctx,cfg,msaFt),suppressed=[],correctedHours=applyShortHorizonToHourly(result,shortPlan,cfg,msaFt),base=reconcileBase(result,shortPlan,cfg,msaFt);if(base){result.base=result.base||{};result.base.state=base;result.base.text=encodeStateStrict(base,msaFt);}
-    let groups=persistentGroups(result,cfg,msaFt,suppressed);groups.push(...visibilityThresholdGroups(result,cfg,msaFt,groups,suppressed));groups.push(...temporaryGroups(result,cfg,msaFt,groups,suppressed));groups.push(...probabilisticGroups(result,cfg,msaFt,groups,suppressed));
+    let groups=persistentGroups(result,cfg,msaFt,suppressed);groups.push(...visibilityThresholdGroups(result,cfg,msaFt,groups,suppressed));groups.push(...cloudThresholdGroups(result,cfg,msaFt,groups,suppressed));groups.push(...temporaryGroups(result,cfg,msaFt,groups,suppressed));groups.push(...probabilisticGroups(result,cfg,msaFt,groups,suppressed));
     groups=groups.filter((g,i,a)=>g.payload&&!a.slice(0,i).some(x=>groupDuplicate(x,g))).sort((a,b)=>a.start-b.start||(a.kind==='FM'?-2:a.kind==='BECMG'?-1:1));
     if(groups.length>5){const priority=g=>g.kind==='FM'?100:g.kind==='BECMG'?90:/TS|FZ/.test(g.payload)?85:g.kind==='TEMPO'?70:g.kind==='PROB30 TEMPO'?60:50;groups=groups.map((g,i)=>({g,i,p:priority(g)})).sort((a,b)=>b.p-a.p||a.i-b.i).slice(0,5).map(x=>x.g).sort((a,b)=>a.start-b.start);}
     result.groups=groups;attachHourlyDisplay(result,msaFt);result.taf=rebuildTaf(result);result.checks={...(result.checks||{}),noProb40:!/\bPROB40\b/.test(result.taf),noVV:!/\bVV\d{3}\b/.test(result.taf),max5:groups.length<=5};
@@ -360,7 +380,7 @@
     });
   }
 
-  return Object.freeze({VERSION,DEFAULTS,wmoPrecipInfo,rowEvidence,significantConsensusChange,clearCloudCandidate,dominantClearPlan,tuneRows,visibilityNeedsGroup,strictPrecipImpact,strictCavokEligible,strictNscEligible,selectedClouds,encodeStateStrict,significantFields,visibilityThresholdGroups,selectiveBecmgPayload,observationClearCompatible,shortHorizonBasePlan,reconcileBase,applyShortHorizonToHourly,displayForHour,postprocessResult,wrapApi});
+  return Object.freeze({VERSION,DEFAULTS,wmoPrecipInfo,rowEvidence,significantConsensusChange,clearCloudCandidate,dominantClearPlan,tuneRows,visibilityNeedsGroup,strictPrecipImpact,strictCavokEligible,strictNscEligible,selectedClouds,encodeStateStrict,significantFields,cloudStateNeedsGroup,visibilityThresholdGroups,cloudThresholdGroups,selectiveBecmgPayload,observationClearCompatible,shortHorizonBasePlan,reconcileBase,applyShortHorizonToHourly,displayForHour,postprocessResult,wrapApi});
 });
 
 (()=>{

@@ -25,7 +25,7 @@ function gen(rows,opts={}){return engine().generate({station:'EPIR',issue,start,
 function genTuned(rows,opts={}){return P.wrapApi(H).createEngine({storage:{get(){return null},set(){}}}).generate({station:'EPIR',issue,start,end,rows,record:false,...opts});}
 
 assert.equal(H.ENGINE_VERSION,'1.0.0');
-assert.equal(P.VERSION,'3.2.0');
+assert.equal(P.VERSION,'3.2.1');
 
 // Basic syntax/instruction invariants.
 let r=genTuned(Array.from({length:12},(_,i)=>row(i)));
@@ -89,6 +89,17 @@ assert.match(P.encodeStateStrict(cleanHigh,null),/CAVOK/);
 // Explicit MSA raises the CAVOK/NSC cloud threshold.
 assert.equal(P.strictCavokEligible({...cleanHigh,clouds:[{cover:'FEW',okta:2,ft:5500,type:''}]},6000),false);
 assert.match(P.encodeStateStrict({...cleanHigh,clouds:[{cover:'FEW',okta:2,ft:5500,type:''}]},6000),/FEW055/);
+
+// Leaving CAVOK because an ordinary cloud layer descends below the CAVOK threshold must create a change group.
+rows=Array.from({length:12},(_,i)=>i<9?row(i):row(i,{lowFt:i===9?4500:i===10?3500:3000,oktaL:3}));
+r=genTuned(rows);
+assert.ok(r.groups.some(g=>(g.fields||[]).includes('ceiling')&&/SCT0(?:45|35|30)/.test(g.payload)),'CAVOK exit caused by descending SCT must be represented in TAF');
+assert.ok(r.groups.some(g=>/9999/.test(g.payload)&&/SCT0(?:45|35|30)/.test(g.payload)),'post-CAVOK cloud change must make prevailing visibility explicit');
+
+// Persistent BKN ceiling crossing 1500 ft must be detected from the hourly series even if core segmentation missed it.
+rows=Array.from({length:12},(_,i)=>row(i,{lowFt:i<9?1800:i===9?1600:1300,oktaL:6,ceilFt:i<9?1800:i===9?1600:1300}));
+r=genTuned(rows);
+assert.ok(r.groups.some(g=>(g.fields||[]).includes('ceiling')&&/BKN013/.test(g.payload)),'BKN ceiling crossing 1500 ft must create a change group');
 
 // 3.5.3: no project-wide forced VRB02 when a prevailing direction can be forecast.
 rows=Array.from({length:12},(_,i)=>row(i,{kt:2,dir:220,dirSpread:10}));
