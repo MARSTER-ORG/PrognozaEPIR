@@ -57,6 +57,16 @@ if start >= 0 and end > start:
     ms=ms[:start]+ms[end:]
 m.write_text(ms,encoding='utf-8')
 
+# utc-ui-guard had accumulated an older global navigation/theme implementation and
+# a loader for taf-generator-policy.js. Production keeps only UTC/radar guards;
+# site-shell owns navigation and visual normalization.
+u=OUT/'utc-ui-guard.js'; us=u.read_text(encoding='utf-8')
+start=us.find('  function installGlobalNavigation() {')
+end=us.find('  function loadRadarRiskPolicy() {',start)
+if start >= 0 and end > start:
+    us=us[:start]+us[end:]
+u.write_text(us,encoding='utf-8')
+
 for name in REQUIRED:
     if not (OUT/name).is_file(): raise SystemExit(f'missing required runtime asset: {name}')
 for name in LEGACY_TAF:
