@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Architecture guard for neighboring METAR/SPECI context.
 
-The neighbor observations are context only. Railway may acquire them while it
-already fetches PilotHub TAF pages, but browser consumers must read the mirrored
-GitHub MessageArchive and the main EPIR operational archive counts must remain
-separate.
+Neighbor observations are bounded context only. Railway acquires them while
+collecting neighboring TAF pages, mirrors them into MessageArchive, the main
+consensus applies the bounded upwind correction, and TAF Engine 2.3 preserves
+that provenance when it reads the consensus from the hidden meteogram iframe.
 """
 from pathlib import Path
 import re
@@ -24,7 +24,7 @@ collector=text('scripts/collect_neighbor_tafs.py')
 event=text('scripts/railway_ingestor_event_server.py')
 context=text('neighbor-observation-context.js')
 index=text('index.html')
-taf=text('taf.html')
+taf_app=text('taf-app-v2.js')
 mirror=text('.github/workflows/mirror-central-archive.yml')
 
 for station in ('EPBY','EPPW','EPKS'):
@@ -43,10 +43,14 @@ if "rel.startswith(('metar/','speci/','synop/','taf/','neighbors/'))" not in mir
 if 'neighbor_observations' not in mirror:
     errors.append('archive status must document contextual neighbor observations')
 
-if 'message-archive-client.js?v=github-only-v1' not in index:
-    errors.append('main consensus must load shared GitHub MessageArchive client')
-if 'neighbor-observation-context.js' not in index or 'PrognozaEPIRNeighborObservations?.applySeries' not in index:
-    errors.append('main consensus must load/apply neighboring observations')
+if not re.search(r'<script\b[^>]*src=["\']message-archive-client\.js(?:\?[^"\']*)?["\']',index,re.I):
+    errors.append('main consensus must load the shared MessageArchive client')
+if 'neighbor-observation-context.js' not in index:
+    errors.append('main consensus must load neighboring observation context')
+if 'PrognozaEPIRNeighborObservations?.refresh?.(true)' not in index:
+    errors.append('main consensus must refresh neighboring observations before computing final context')
+if 'PrognozaEPIRNeighborObservations?.applySeries?.(consensus)' not in index:
+    errors.append('main consensus must apply bounded neighboring observations')
 if 'fetchText(' not in context or "neighbors/latest.json" not in context:
     errors.append('neighbor context module must read neighbors/latest.json through MessageArchive')
 if re.search(r'https?://[^\s"\']*(?:pilothub|imgw|railway)[^\s"\']*',context,re.I):
@@ -56,10 +60,11 @@ if 'MAX_WEIGHT=.35' not in context:
 if 'r.visibility_m<10000' not in context:
     errors.append('neighbor visibility logic must preserve METAR 9999 right-censoring')
 
-if 'neighborObsStation:z.neighborObsStation' not in taf:
-    errors.append('TAF engine bridge must preserve neighbor observation provenance')
-if 'OBS ${z.neighborObsStation}' not in taf:
-    errors.append('TAF upstream analysis must expose active neighbor observation signal')
+for field in ('neighborObsStation','neighborObsScore','neighborObsWeightPct','neighborObsLagH','neighborObsAgeMin','neighborObsWeather','neighborObsRaw'):
+    if f'{field}:z.{field}' not in taf_app:
+        errors.append(f'TAF Engine 2.3 bridge must preserve {field}')
+if 'OBS sąsiednie' not in taf_app or 'neighborObsStation' not in taf_app:
+    errors.append('TAF Engine 2.3 UI must expose active neighbor observation signal')
 
 # Neighbor history is intentionally outside the four authoritative EPIR counts.
 count_folder_match=re.search(r"folders=\{(.*?)\n\s*\}",mirror,re.S)
@@ -71,4 +76,4 @@ if errors:
     for e in errors:
         print(' -',e)
     sys.exit(1)
-print('Neighbor observation architecture check OK: EPBY/EPPW/EPKS context is server-acquired, GitHub-mirrored, bounded and separate from EPIR archive counts.')
+print('Neighbor observation architecture check OK: EPBY/EPPW/EPKS are server-acquired, MessageArchive-backed, bounded, applied to consensus and preserved in TAF 2.3 provenance.')

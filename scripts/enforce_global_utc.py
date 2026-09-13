@@ -89,15 +89,8 @@ def patch_arch(text: str) -> str:
 
 
 def patch_taf(text: str) -> str:
-    text = text.replace(
-        "<tr><td>${pad(new Date(z.t).getUTCHours())}:00</td>",
-        "<tr><td>${pad(new Date(z.t).getUTCHours())}:00 UTC</td>",
-    )
-    text = text.replace(
-        "$('st').textContent=new Date().toLocaleTimeString('pl-PL')",
-        "$('st').textContent=fu(Date.now()).slice(6)",
-    )
-    text = text.replace('<tr><th>UTC</th><th>Wiatr</th>', '<tr><th>Czas UTC</th><th>Wiatr</th>')
+    """Normalize only static TAF 2.3 labels; runtime clocks live in taf-app-v2.js."""
+    text = text.replace('<th>Czas</th><th>Wiatr</th>', '<th>Czas UTC</th><th>Wiatr</th>')
     return text
 
 
@@ -208,14 +201,15 @@ def validate() -> list[str]:
     required = {
         'index.html': ["tz:'UTC'", "?value+' UTC':value", "Aktualizacja: '+fmt(Date.now()"],
         'arch.html': ["replace('T',' ')+' UTC'"],
-        'taf.html': [":00 UTC</td>", "$('st').textContent=fu(Date.now()).slice(6)"],
+        'taf.html': ['TAF ENGINE 2.3.0 · INSTRUCTION FIRST', 'Cykl TAF — wszystkie czasy UTC', '<th>Czas UTC</th>', 'czasy prezentowane wyłącznie w UTC'],
+        'taf-app-v2.js': ['function fmtUtc(ms,withDate=true)', 'getUTCHours()', 'getUTCMinutes()', '} UTC`'],
         'radar.html': ["function fmtTime(ms)", "timeZone:'UTC'", ".format(new Date(ms))+' UTC'", 'function fmtUtc(sec)', 'fmtExternalUtc(od)', '<th>Czas UTC</th>'],
         'sat-fog.html': ["timeZone:'UTC'", "+' UTC'"],
     }
     for rel, tokens in required.items():
         path = ROOT / rel
         if not path.exists():
-            errors.append(f'{rel}: missing user-facing page')
+            errors.append(f'{rel}: missing user-facing page/runtime')
             continue
         text = path.read_text(encoding='utf-8')
         for token in tokens:
