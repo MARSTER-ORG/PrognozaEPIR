@@ -1,0 +1,107 @@
+name: Fix wind correction in production views
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-wind-production.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch production wind correction
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          # 1) Make the neighbor module part of the actual Pages artifact.
+          p=Path('.github/workflows/pages.yml')
+          s=p.read_text(encoding='utf-8')
+          old='cloud-learning-client.js message-archive-client.js taf-instruction-guard.js'
+          new='cloud-learning-client.js message-archive-client.js neighbor-observation-context.js taf-instruction-guard.js'
+          if old in s:
+              s=s.replace(old,new,1)
+          elif 'message-archive-client.js neighbor-observation-context.js' not in s:
+              raise SystemExit('pages copy marker not found')
+
+          old='node --check _site/message-archive-client.js\n'
+          new='node --check _site/message-archive-client.js\n          node --check _site/neighbor-observation-context.js\n'
+          if old in s:
+              s=s.replace(old,new,1)
+          elif 'node --check _site/neighbor-observation-context.js' not in s:
+              raise SystemExit('pages node-check marker not found')
+
+          old='test -s _site/message-archive-client.js\n'
+          new='test -s _site/message-archive-client.js\n          test -s _site/neighbor-observation-context.js\n'
+          if old in s:
+              s=s.replace(old,new,1)
+          elif 'test -s _site/neighbor-observation-context.js' not in s:
+              raise SystemExit('pages verify marker not found')
+
+          s=s.replace("APP='v0.10.25 HTML'","APP='v0.10.26 HTML'")
+          s=s.replace("'HTML v0.10.25'","'HTML v0.10.26'")
+          p.write_text(s,encoding='utf-8')
+
+          # 2) Apply the same local EPIR direction correction to individual-model
+          #    display series as to final consensus. Raw model direction is retained
+          #    by correctEpirWindDirection() in windDirRawDeg.
+          p=Path('index.html')
+          s=p.read_text(encoding='utf-8')
+          start='function modelSeries(id){'
+          i=s.find(start)
+          if i<0:
+              raise SystemExit('modelSeries not found')
+          j=s.find('\nfunction dataVisible()',i)
+          if j<0:
+              raise SystemExit('modelSeries end not found')
+          block=s[i:j]
+          if 'return correctEpirWindDirection({' not in block:
+              marker=';return{t:x,T:r.temperature_2m'
+              if marker not in block:
+                  raise SystemExit('modelSeries return marker not found')
+              block=block.replace(marker,';return correctEpirWindDirection({t:x,T:r.temperature_2m',1)
+              tail='stormCount:finite(r.weather_code)?1:0}}).filter(Boolean)}'
+              if tail not in block:
+                  raise SystemExit('modelSeries tail marker not found')
+              block=block.replace(tail,'stormCount:finite(r.weather_code)?1:0})}).filter(Boolean)}',1)
+              s=s[:i]+block+s[j:]
+
+          # 3) Make correction visible in the point details.
+          old="infoValue('Kierunek',f(z.WD,0)+'° '+compass(z.WD))"
+          new="infoValue('Kierunek',f(z.WD,0)+'° '+compass(z.WD)+(finite(z.windDirSectorCorrectionDeg)?' · surowy '+f(z.windDirRawDeg,0)+'° · korekta '+f(z.windDirSectorCorrectionDeg,0)+'°':''))"
+          if old in s:
+              s=s.replace(old,new,1)
+          elif 'surowy '+"'" not in s:
+              raise SystemExit('wind detail marker not found')
+
+          old="infoValue('Kierunek',f(z.WD,0)+'°'),infoValue('Róża wiatrów',compass(z.WD))"
+          new="infoValue('Kierunek',f(z.WD,0)+'°'+(finite(z.windDirSectorCorrectionDeg)?' · surowy '+f(z.windDirRawDeg,0)+'° · korekta '+f(z.windDirSectorCorrectionDeg,0)+'°':'')),infoValue('Róża wiatrów',compass(z.WD))"
+          if old in s:
+              s=s.replace(old,new,1)
+
+          s=s.replace('v0.9.14','v0.9.15')
+          p.write_text(s,encoding='utf-8')
+          PY
+
+          node --check neighbor-observation-context.js
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('index.html').read_text(encoding='utf-8')
+          js=s.split("<script>\n'use strict';",1)[1].split('</script>',1)[0]
+          Path('/tmp/index-inline.js').write_text("'use strict';\n"+js,encoding='utf-8')
+          PY
+          node --check /tmp/index-inline.js
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name 'prognozaepir-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add index.html .github/workflows/pages.yml
+          git diff --cached --quiet && exit 0
+          git commit -m 'Apply EPIR wind correction to all forecast views'
+          git pull --rebase origin main
+          git push
