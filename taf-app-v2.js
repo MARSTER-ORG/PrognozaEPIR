@@ -44,7 +44,7 @@
   async function modelRows(period){
     const w=await waitForConsensus();let data;
     try{
-      data=w.eval(`consensus.map(z=>({t:z.t,T:z.T,Td:z.Td,RH:z.RH,RR:z.RR,VIS:z.VIS,WS:z.WS,WD:z.WD,G:z.G,ceiling:z.ceiling,lowH:z.lowH,midH:z.midH,highH:z.highH,oktaL:z.oktaL,oktaM:z.oktaM,oktaH:z.oktaH,wet:z.wet,storm:z.storm,count:z.count,dirSpread:z.dirSpread,profile:Array.isArray(z.profile)?z.profile.map(q=>({agl:q.agl,cc:q.cc,p:q.p})):[],mv:MODELS.map((m,i)=>{const ds=datasets.get(m.id),r=ds?sample(ds,z.t):null;if(!r)return null;const p=profile([{row:r,w:1,elevation:ds.elevation}],Number.isFinite(ds.elevation)?ds.elevation:90);return{id:m.id||m.name||('model_'+(i+1)),model:m.id||m.name||('model_'+(i+1)),w:m.w,vis:r.visibility,ceil:ceiling(p),code:r.weather_code,ws:r.wind_speed_10m,wd:r.wind_direction_10m,g:r.wind_gusts_10m}}).filter(Boolean)}))`);
+      data=w.eval(`consensus.map(z=>({t:z.t,T:z.T,Td:z.Td,RH:z.RH,RR:z.RR,VIS:z.VIS,WS:z.WS,WD:z.WD,G:z.G,ceiling:z.ceiling,lowH:z.lowH,midH:z.midH,highH:z.highH,oktaL:z.oktaL,oktaM:z.oktaM,oktaH:z.oktaH,wet:z.wet,storm:z.storm,count:z.count,dirSpread:z.dirSpread,neighborObsStation:z.neighborObsStation,neighborObsAgeMin:z.neighborObsAgeMin,neighborObsWeight:z.neighborObsWeight,profile:Array.isArray(z.profile)?z.profile.map(q=>({agl:q.agl,cc:q.cc,p:q.p})):[],mv:MODELS.map((m,i)=>{const ds=datasets.get(m.id),r=ds?sample(ds,z.t):null;if(!r)return null;const p=profile([{row:r,w:1,elevation:ds.elevation}],Number.isFinite(ds.elevation)?ds.elevation:90);return{id:m.id||m.name||('model_'+(i+1)),model:m.id||m.name||('model_'+(i+1)),w:m.w,vis:r.visibility,ceil:ceiling(p),code:r.weather_code,ws:r.wind_speed_10m,wd:r.wind_direction_10m,g:r.wind_gusts_10m}}).filter(Boolean)}))`);
     }catch(e){throw Error('Nie można odczytać danych modeli: '+e.message);}
     let fog=[],mifg=[];
     try{
@@ -98,13 +98,14 @@
     $('reasons').innerHTML=result.diagnostics.reasons.length?'<ul>'+result.diagnostics.reasons.map(x=>`<li>${esc(x)}</li>`).join('')+'</ul>':'Brak progów wymagających grup zmian.';
     renderChecks(result);renderHours(result);renderNeighbors(data);
     const modelCount=Math.max(0,...result.hourly.map(h=>h.sourceRow?.mv?.length||0)),fogOk=rows.some(r=>num(r.fogRisk)||num(r.fgRisk));
-    $('sources').innerHTML=`<span class="pill ${data.observation?'ok':'warn'}">METAR/SPECI ${data.observation?'✓':'—'}</span><span class="pill ok">${esc(result.name)} v${esc(result.version)}</span><span class="pill ok">Instrukcja 11.2023 — HARD GATE</span><span class="pill ok">multimodel ${modelCount}</span><span class="pill ok">profil chmur → warstwy/pułap ✓</span><span class="pill ${fogOk?'ok':'warn'}">FG engine ${fogOk?'✓':'—'}</span><span class="pill warn">SYNOP wyłączony</span>`;
+    const neighborObsStations=[...new Set(rows.map(r=>r.neighborObsStation).filter(Boolean))];
+    $('sources').innerHTML=`<span class="pill ${data.observation?'ok':'warn'}">METAR/SPECI ${data.observation?'✓':'—'}</span><span class="pill ok">${esc(result.name)} v${esc(result.version)}</span><span class="pill ok">Instrukcja 11.2023 — HARD GATE</span><span class="pill ok">multimodel ${modelCount}</span><span class="pill ok">profil chmur → warstwy/pułap ✓</span>${neighborObsStations.length?`<span class="pill ok">OBS ${esc(neighborObsStations.join(', '))} ✓</span>`:''}<span class="pill ${fogOk?'ok':'warn'}">FG engine ${fogOk?'✓':'—'}</span><span class="pill warn">SYNOP wyłączony</span>`;
     $('conf').textContent=`Pewność ${result.confidence}%. Tabela i depesza korzystają z tej samej struktury warstw chmur; pułap = najniższa BKN/OVC. W tabeli wysokości chmur i pułap są podawane w m AGL. Kod TAF pozostaje zgodny z kluczem i podaje podstawy w setkach ft. MSA: ${result.diagnostics.msaMode==='explicit'?Math.round(result.diagnostics.msaFt)+' ft':'fallback 5000 ft'}.`;
-    $('badge').textContent='TAF ENGINE 2.3 · ZGODNY';$('badge').className='badge ok';$('st').textContent=`${fmtUtc(Date.now(),false)} · ${rows.length} h danych`;
+    $('badge').textContent='TAF ENGINE 2.3.1 · ZGODNY';$('badge').className='badge ok';$('st').textContent=`${fmtUtc(Date.now(),false)} · ${rows.length} h danych`;
   }
 
   async function generate(){
-    const period=selectedCycle();if(!period)throw Error('Nie wybrano cyklu TAF');$('badge').textContent='TAF ENGINE 2.3 · LICZENIE';$('badge').className='badge';$('st').textContent='archiwum + modele + profil chmur + FG';$('taf').textContent='Pobieranie danych i generowanie TAF…';
+    const period=selectedCycle();if(!period)throw Error('Nie wybrano cyklu TAF');$('badge').textContent='TAF ENGINE 2.3.1 · LICZENIE';$('badge').className='badge';$('st').textContent='archiwum + modele + profil chmur + FG';$('taf').textContent='Pobieranie danych i generowanie TAF…';
     const [data,rows]=await Promise.all([loadArchive(),modelRows(period)]);if(rows.length<8)throw Error(`Niepełny okres modeli: ${rows.length} h`);
     const api=window.PrognozaEPIRTAFEngine;if(!api?.createEngine)throw Error('taf-engine-v2.js nie został załadowany');const engine=api.createEngine({config:{station:'EPIR'}});
     const result=engine.generate({station:'EPIR',issue:period.issue,start:period.start,end:period.end,rows,observation:data.observation,observations:data.history,msaFt:msaFt(),rowsAlreadyAnchored:false});render(result,data,rows);return result;
