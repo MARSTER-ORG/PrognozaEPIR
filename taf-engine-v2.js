@@ -6,8 +6,8 @@
 })(typeof window!=='undefined'?window:globalThis,function(){
   'use strict';
 
-  const VERSION='2.1.0';
-  const NAME='TAF Engine 2.1 — Instruction First';
+  const VERSION='2.2.0';
+  const NAME='TAF Engine 2.2 — Instruction First + EPIR Operational Policy';
   const AUTH='Instrukcja opracowywania prognoz TAF, Edycja (A), 11.2023';
   const HOUR=3600000, KT=1.9438444924406, FT=3.2808398950131;
   const VIS_THRESH=[800,1500,3000,5000];
@@ -38,7 +38,14 @@
     gustGapKt:10,
     gustChangeMeanMinKt:15,
     ordinaryCloudOperationalLimitFt:5000,
-    cloudAmountChangeLimitFt:1500
+    cloudAmountChangeLimitFt:1500,
+    weakCloudObservationGateMin:.25,
+    weakCloudObservationToleranceLowFt:700,
+    weakCloudObservationToleranceFt:900,
+    lowWindWholePeriodMinFraction:.75,
+    lowWindRunMinHours:3,
+    lowWindMaxOtherKt:10,
+    baseFirstHoursEqualWeight:true
   });
 
   const finite=Number.isFinite;
@@ -65,6 +72,7 @@
     const wm=raw.match(/\b(VRB|\d{3})(\d{2,3})(?:G(P99|\d{2,3}))?KT\b/);
     const vm=raw.match(/\b(9999|\d{4})\b/);
     const tm=raw.match(/\b(M?\d{2})\/(M?\d{2})\b/);
+    const clouds=[...raw.matchAll(/\b(FEW|SCT|BKN|OVC)(\d{3})(CB|TCU)?\b/g)].map(m=>({cover:m[1],ft:+m[2]*100,type:m[3]||'',okta:({FEW:2,SCT:4,BKN:6,OVC:8})[m[1]]}));
     const val=s=>s&&s[0]==='M'?-Number(s.slice(1)):Number(s);
     let t=Date.parse(o.obs_time||o.message_time||o.issue_time||o.time||o.timestamp||'');if(!finite(t))t=Date.now();
     return {
@@ -74,7 +82,8 @@
       gustKt:num(o.wind_gust_ms)?+o.wind_gust_ms*KT:(wm&&wm[3]?(wm[3]==='P99'?100:+wm[3]):null),
       visM:num(o.visibility_m)?+o.visibility_m:(/\bCAVOK\b/.test(raw)?10000:(vm?(vm[1]==='9999'?10000:+vm[1]):null)),
       T:num(o.temperature_c)?+o.temperature_c:(tm?val(tm[1]):null),
-      Td:num(o.dew_point_c)?+o.dew_point_c:num(o.dewpoint_c)?+o.dewpoint_c:(tm?val(tm[2]):null)
+      Td:num(o.dew_point_c)?+o.dew_point_c:num(o.dewpoint_c)?+o.dewpoint_c:(tm?val(tm[2]):null),
+      clouds,cavok:/\bCAVOK\b/.test(raw),nsc:/\b(?:NSC|NCD)\b/.test(raw)
     };
   }
 
@@ -84,6 +93,9 @@
     const fresh=Math.exp(-age/3);
     return rows.map(r=>{
       const z={...r};const lead=Math.max(0,(+z.t-o.t)/HOUR),a=.78*Math.exp(-lead/4.5)*fresh;
+      z.observationClouds=(o.clouds||[]).map(c=>({...c}));
+      z.observationCavok=!!o.cavok;z.observationNsc=!!o.nsc;
+      z.observationCloudWeight=Math.exp(-lead/6);
       if(a<.02)return z;
       if(finite(o.visM)&&num(z.VIS))z.VIS=(1-a)*+z.VIS+a*o.visM;
       if(finite(o.T)&&num(z.T))z.T=(1-a)*+z.T+a*o.T;
@@ -204,6 +216,17 @@
     ].map(c=>({cover:amountFromOkta(c.okta),okta:c.okta,m:c.m,ft:finite(c.m)?c.m*FT:NaN,type:c.type,source:'bands'})).filter(c=>c.cover&&finite(c.ft));
   }
 
+  function cloudCandidateCredible(row,c){
+    if(!c||c.type==='CB'||c.type==='TCU')return true;
+    if(c.cover!=='FEW'&&c.cover!=='SCT')return true;
+    const w=+row?.observationCloudWeight||0;
+    if(w<RULES.weakCloudObservationGateMin)return true;
+    const obs=Array.isArray(row?.observationClouds)?row.observationClouds:[];
+    if(!obs.length&&!row?.observationCavok&&!row?.observationNsc)return true;
+    const tol=c.ft<1500?RULES.weakCloudObservationToleranceLowFt:RULES.weakCloudObservationToleranceFt;
+    return obs.some(o=>finite(+o.ft)&&Math.abs(+o.ft-c.ft)<=tol&&amountRank(o.cover)>=amountRank(c.cover));
+  }
+
   function cloudCandidates(row,p){
     let a=profileCloudCandidates(row);
     if(!a.length)a=fallbackCloudCandidates(row);
@@ -213,6 +236,8 @@
       const ft=num(c.ft)?+c.ft:(num(c.m)?+c.m*FT:NaN);if(!finite(ft))continue;
       const cover=String(c.cover||amountFromOkta(c.okta)||'FEW').toUpperCase();a.push({cover,okta:num(c.okta)?+c.okta:Math.max(1,amountRank(cover)*2),ft,m:ft/FT,type,source:'explicit-convective'});
     }
+    // Recent METAR/SPECI is a credibility gate for weak model-only FEW/SCT. Its influence decays with lead time.
+    a=a.filter(c=>cloudCandidateCredible(row,c));
     // Ceiling is authoritative for the lowest BKN/OVC. Ensure clouds and ceiling cannot contradict each other.
     const ceilFt=num(row?.ceiling)?+row.ceiling*FT:NaN;
     if(finite(ceilFt)){
@@ -297,9 +322,26 @@
     return pad(clamp(Math.floor(v/1000)*1000,5000,9000),4);
   }
 
+  function applyWindPolicy(states){
+    const out=(states||[]).map(s=>({...s}));
+    if(!out.length)return out;
+    const raw=s=>Math.max(0,+s.windKt||0),coded=s=>even(raw(s));
+    const light=s=>raw(s)>=1&&coded(s)<=2;
+    const dominant=out.filter(s=>coded(s)<=2).length>=Math.ceil(out.length*RULES.lowWindWholePeriodMinFraction)
+      &&Math.max(...out.map(coded))<=RULES.lowWindMaxOtherKt;
+    for(let i=0;i<out.length;){
+      if(!light(out[i])){i++;continue;}
+      let j=i+1;while(j<out.length&&light(out[j]))j++;
+      if(j-i>=RULES.lowWindRunMinHours)for(let k=i;k<j;k++)out[k].forceVrb=true;
+      i=j;
+    }
+    for(const s of out){s.periodVrbDominant=dominant;if(dominant&&light(s))s.forceVrb=true;}
+    return out;
+  }
+
   function windToken(s){
     const raw=Math.max(0,+s.windKt||0);if(raw<1)return'00000KT';
-    const sp=even(raw),vrb=!finite(s.windDir)||(sp<3&&(+s.dirSpreadDeg||0)>=60),dir=vrb?'VRB':pad((((Math.round(+s.windDir/10)*10)%360)||360),3);
+    const sp=even(raw),vrb=s.forceVrb===true||!finite(s.windDir)||(sp<3&&(+s.dirSpreadDeg||0)>=60),dir=vrb?'VRB':pad((((Math.round(+s.windDir/10)*10)%360)||360),3);
     let out=dir+(sp>=100?'P99':pad(sp,2)),g=even(Math.max(0,+s.gustKt||0));
     if(g-sp>=10)out+='G'+(g>=100?'P99':pad(g,2));
     return out+'KT';
@@ -344,7 +386,7 @@
 
   function baseState(states){
     const z=states.slice(0,Math.min(3,states.length)),s={...z[0]};
-    const ww=z.map((x,i)=>1/(1+i*.35));
+    const ww=z.map(()=>1);
     s.windKt=mean(z.map((x,i)=>x.windKt*ww[i]))/mean(ww);
     let u=0,v=0,d=0;for(let i=0;i<z.length;i++)if(finite(z[i].windDir)){const r=z[i].windDir*Math.PI/180,k=Math.max(1,z[i].windKt)*ww[i];u+=Math.sin(r)*k;v+=Math.cos(r)*k;d+=k;}
     s.windDir=d?(Math.atan2(u,v)*180/Math.PI+360)%360:z[0].windDir;
@@ -356,6 +398,10 @@
     s.RR=mean(z.map(x=>x.RR).filter(finite));
     // Do not average cloud geometry: use the first representative state so ceiling/layers remain internally coherent.
     s.clouds=z[0].clouds;s.ceilingFt=z[0].ceilingFt;
+    if(states.some(x=>x.periodVrbDominant)){
+      const allCalm=states.every(x=>(+x.windKt||0)<1);
+      s.windKt=allCalm?0:2;s.windDir=null;s.gustKt=s.windKt;s.dirSpreadDeg=180;s.forceVrb=!allCalm;s.periodVrbDominant=true;
+    }
     return s;
   }
 
@@ -545,8 +591,9 @@
         if(!finite(issue)||!finite(start)||!finite(end)||Math.abs((end-start)/HOUR-12)>1e-6)throw Error('Instrukcja TAF: okres ważności musi wynosić 12 h');
         const raw=(input.rows||[]).filter(r=>num(r?.t)&&+r.t>=start&&+r.t<end).sort((a,b)=>+a.t-+b.t);if(raw.length<8)throw Error(`Za mało danych godzinowych: ${raw.length}`);
         const anchored=input.rowsAlreadyAnchored?raw.map(r=>({...r})):anchorRows(raw,input.observation,start);
-        const states=anchored.map(stateFromRow),base=baseState(states),msa=num(input.msaFt)&&+input.msaFt>0?+input.msaFt:null;
-        const cg=buildChangeGroups(states,base,start,end,msa);
+        const msa=num(input.msaFt)&&+input.msaFt>0?+input.msaFt:null;
+        let states=anchored.map(stateFromRow);states=applyWindPolicy(states);
+        const base=baseState(states),cg=buildChangeGroups(states,base,start,end,msa);
         const taf=normalize([`TAF ${station} ${code(issue,true)}Z ${period(start,end)} ${encodeFullState(base,msa)}`,...cg.groups.map(g=>g.text)]);
         const checks=validateTaf(taf,{issue,start,end,msaFt:msa});
         if(!checks.ok){const e=Error('TAF odrzucony przez nadrzędną kontrolę instrukcji: '+checks.errors.join(' | '));e.validation=checks;throw e;}
@@ -560,14 +607,14 @@
           base:{state:base,text:encodeFullState(base,msa)},groups:cg.groups,hourly,
           checks:{...checks,noProb40:!taf.includes('PROB40'),noVV:!/\bVV/.test(taf),max5:cg.groups.length<=5,periodHours:12,instructionLocked:true},
           confidence:clamp(Math.round(70+Math.min(20,maxModels*2)+(checks.ok?10:0)),0,100),
-          diagnostics:{instructionLocked:true,authority:AUTH,reasons:cg.reasons,msaMode:msa?'explicit':'fallback',msaFt:msa||NSC_FT,cloudPipeline:'profile→layers→ceiling→TAF/table',legacyMutators:false},
+          diagnostics:{instructionLocked:true,authority:AUTH,reasons:cg.reasons,msaMode:msa?'explicit':'fallback',msaFt:msa||NSC_FT,cloudPipeline:'profile→METAR credibility gate→instruction layer order→ceiling→TAF/table',windPolicy:'VRB02: 75%/12h dominant or sustained >=3h hourly; weak-direction change alone never creates BECMG',legacyMutators:false},
           learning:{cells:0,note:'Uczenie może zmieniać estymację meteorologiczną, nigdy reguły instrukcji.'}
         };
       },
       validate:(taf,meta)=>validateTaf(taf,meta),
-      helpers:Object.freeze({windToken,visibilityToken,weatherToken,cleanWxToken:cleanWx,selectedClouds:selectClouds,cavokEligible,significantFields,encodeFullState,stateFromRow,cloudCandidates,profileCloudCandidates,tempoAllowed,fogFamily})
+      helpers:Object.freeze({windToken,visibilityToken,weatherToken,cleanWxToken:cleanWx,selectedClouds:selectClouds,cavokEligible,significantFields,encodeFullState,stateFromRow,cloudCandidates,profileCloudCandidates,cloudCandidateCredible,applyWindPolicy,tempoAllowed,fogFamily})
     });
   }
 
-  return Object.freeze({ENGINE_VERSION:VERSION,ENGINE_NAME:NAME,INSTRUCTION:AUTH,RULES,createEngine,validateTaf,helpers:Object.freeze({windToken,visibilityToken,weatherToken,cleanWxToken:cleanWx,selectedClouds:selectClouds,cavokEligible,significantFields,encodeFullState,stateFromRow,cloudCandidates,profileCloudCandidates,tempoAllowed,fogFamily})});
+  return Object.freeze({ENGINE_VERSION:VERSION,ENGINE_NAME:NAME,INSTRUCTION:AUTH,RULES,createEngine,validateTaf,helpers:Object.freeze({windToken,visibilityToken,weatherToken,cleanWxToken:cleanWx,selectedClouds:selectClouds,cavokEligible,significantFields,encodeFullState,stateFromRow,cloudCandidates,profileCloudCandidates,cloudCandidateCredible,applyWindPolicy,tempoAllowed,fogFamily})});
 });

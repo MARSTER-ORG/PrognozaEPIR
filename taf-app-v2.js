@@ -1,7 +1,7 @@
 'use strict';
 (() => {
-  if (!/\/taf\.html$/i.test(location.pathname) || window.__PROGNOZA_EPIR_TAF_APP_V21__) return;
-  window.__PROGNOZA_EPIR_TAF_APP_V21__ = true;
+  if (!/\/taf\.html$/i.test(location.pathname) || window.__PROGNOZA_EPIR_TAF_APP_V22__) return;
+  window.__PROGNOZA_EPIR_TAF_APP_V22__ = true;
 
   const HOUR=3600000, ISSUE_HOURS=[5,11,17,23], NEIGHBORS=['EPBY','EPPW','EPKS'];
   const $=id=>document.getElementById(id), finite=Number.isFinite;
@@ -47,7 +47,14 @@
       data=w.eval(`consensus.map(z=>({t:z.t,T:z.T,Td:z.Td,RH:z.RH,RR:z.RR,VIS:z.VIS,WS:z.WS,WD:z.WD,G:z.G,ceiling:z.ceiling,lowH:z.lowH,midH:z.midH,highH:z.highH,oktaL:z.oktaL,oktaM:z.oktaM,oktaH:z.oktaH,wet:z.wet,storm:z.storm,count:z.count,dirSpread:z.dirSpread,profile:Array.isArray(z.profile)?z.profile.map(q=>({agl:q.agl,cc:q.cc,p:q.p})):[],mv:MODELS.map((m,i)=>{const ds=datasets.get(m.id),r=ds?sample(ds,z.t):null;if(!r)return null;const p=profile([{row:r,w:1,elevation:ds.elevation}],Number.isFinite(ds.elevation)?ds.elevation:90);return{id:m.id||m.name||('model_'+(i+1)),model:m.id||m.name||('model_'+(i+1)),w:m.w,vis:r.visibility,ceil:ceiling(p),code:r.weather_code,ws:r.wind_speed_10m,wd:r.wind_direction_10m,g:r.wind_gusts_10m}}).filter(Boolean)}))`);
     }catch(e){throw Error('Nie można odczytać danych modeli: '+e.message);}
     let fog=[],mifg=[];
-    try{fog=w.PrognozaEPIRFogSeries||[];}catch(_){}
+    try{
+      const fogUntil=Date.now()+8000;
+      do{
+        fog=w.PrognozaEPIRFogSeries||[];
+        if(fog.length)break;
+        await new Promise(r=>setTimeout(r,250));
+      }while(Date.now()<fogUntil);
+    }catch(_){}
     try{if(w.PrognozaEPIRMIFG?.refresh)await w.PrognozaEPIRMIFG.refresh();const until=Date.now()+4000;do{mifg=w.PrognozaEPIRMIFG?.getSeries?.()||[];if(mifg.length)break;await new Promise(r=>setTimeout(r,200));}while(Date.now()<until);}catch(_){}
     return (Array.isArray(data)?data:[]).filter(z=>finite(+z.t)&&+z.t>=period.start&&+z.t<period.end).map(z=>{
       const f=nearest(fog,z.t),m=nearest(mifg,z.t);
@@ -86,17 +93,17 @@
     const modelCount=Math.max(0,...result.hourly.map(h=>h.sourceRow?.mv?.length||0)),fogOk=rows.some(r=>num(r.fogRisk)||num(r.fgRisk));
     $('sources').innerHTML=`<span class="pill ${data.observation?'ok':'warn'}">METAR/SPECI ${data.observation?'✓':'—'}</span><span class="pill ok">${esc(result.name)} v${esc(result.version)}</span><span class="pill ok">Instrukcja 11.2023 — HARD GATE</span><span class="pill ok">multimodel ${modelCount}</span><span class="pill ok">profil chmur → warstwy/pułap ✓</span><span class="pill ${fogOk?'ok':'warn'}">FG engine ${fogOk?'✓':'—'}</span><span class="pill warn">SYNOP wyłączony</span>`;
     $('conf').textContent=`Pewność ${result.confidence}%. Tabela i depesza korzystają z tej samej struktury warstw chmur; pułap = najniższa BKN/OVC. W tabeli wysokości chmur i pułap są podawane w m AGL. Kod TAF pozostaje zgodny z kluczem i podaje podstawy w setkach ft. MSA: ${result.diagnostics.msaMode==='explicit'?Math.round(result.diagnostics.msaFt)+' ft':'fallback 5000 ft'}.`;
-    $('badge').textContent='TAF ENGINE 2.1 · ZGODNY';$('badge').className='badge ok';$('st').textContent=`${fmtUtc(Date.now(),false)} · ${rows.length} h danych`;
+    $('badge').textContent='TAF ENGINE 2.2 · ZGODNY';$('badge').className='badge ok';$('st').textContent=`${fmtUtc(Date.now(),false)} · ${rows.length} h danych`;
   }
 
   async function generate(){
-    const period=selectedCycle();if(!period)throw Error('Nie wybrano cyklu TAF');$('badge').textContent='TAF ENGINE 2.1 · LICZENIE';$('badge').className='badge';$('st').textContent='archiwum + modele + profil chmur + FG';$('taf').textContent='Pobieranie danych i generowanie TAF…';
+    const period=selectedCycle();if(!period)throw Error('Nie wybrano cyklu TAF');$('badge').textContent='TAF ENGINE 2.2 · LICZENIE';$('badge').className='badge';$('st').textContent='archiwum + modele + profil chmur + FG';$('taf').textContent='Pobieranie danych i generowanie TAF…';
     const [data,rows]=await Promise.all([loadArchive(),modelRows(period)]);if(rows.length<8)throw Error(`Niepełny okres modeli: ${rows.length} h`);
     const api=window.PrognozaEPIRTAFEngine;if(!api?.createEngine)throw Error('taf-engine-v2.js nie został załadowany');const engine=api.createEngine({config:{station:'EPIR'}});
     const result=engine.generate({station:'EPIR',issue:period.issue,start:period.start,end:period.end,rows,observation:data.observation,observations:data.history,msaFt:msaFt(),rowsAlreadyAnchored:false});render(result,data,rows);return result;
   }
-  async function guardedGenerate(){try{return await generate();}catch(e){console.error('[TAF Engine 2.1]',e);$('badge').textContent='TAF ENGINE 2.1 · BŁĄD';$('badge').className='badge bad';$('st').textContent=e.message;$('taf').textContent='TAF NIE ZOSTAŁ ZAAKCEPTOWANY: '+e.message;renderChecks({checks:e.validation||{ok:false,instructionLocked:true,periodHours:null,noProb40:true,noVV:true,max5:true,warnings:[]}});return null;}}
+  async function guardedGenerate(){try{return await generate();}catch(e){console.error('[TAF Engine 2.2]',e);$('badge').textContent='TAF ENGINE 2.2 · BŁĄD';$('badge').className='badge bad';$('st').textContent=e.message;$('taf').textContent='TAF NIE ZOSTAŁ ZAAKCEPTOWANY: '+e.message;renderChecks({checks:e.validation||{ok:false,instructionLocked:true,periodHours:null,noProb40:true,noVV:true,max5:true,warnings:[]}});return null;}}
   async function copyTaf(){const text=activeResult?.taf||'';if(!text)return;try{await navigator.clipboard.writeText(text);$('copy').textContent='Skopiowano';setTimeout(()=>$('copy').textContent='Kopiuj TAF',1200);}catch(_){}}
-  function install(){fillCycles();$('gen').addEventListener('click',guardedGenerate);$('copy').addEventListener('click',copyTaf);$('cycle').addEventListener('change',()=>{$('st').textContent='wybrano inny cykl — generuj ponownie';});$('badge').textContent='TAF ENGINE 2.1 · GOTOWY';$('badge').className='badge';$('st').textContent='kliknij „Odśwież i generuj”';setTimeout(()=>{if(new URLSearchParams(location.search).get('autogen')==='1')guardedGenerate();},500);}
+  function install(){fillCycles();$('gen').addEventListener('click',guardedGenerate);$('copy').addEventListener('click',copyTaf);$('cycle').addEventListener('change',()=>{$('st').textContent='wybrano inny cykl — generuj ponownie';});$('badge').textContent='TAF ENGINE 2.2 · GOTOWY';$('badge').className='badge';$('st').textContent='kliknij „Odśwież i generuj”';setTimeout(()=>{if(new URLSearchParams(location.search).get('autogen')==='1')guardedGenerate();},500);}
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',install,{once:true});else install();
 })();
