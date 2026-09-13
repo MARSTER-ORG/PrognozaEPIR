@@ -11,10 +11,7 @@
     EPKS:{name:'Krzesiny',lat:52.3317,lon:16.9664}
   };
   const MAX_AGE_H=3.0, MAX_WEIGHT=.35;
-  // Fixed local EPIR correction for the persistent clockwise bias of the
-  // multimodel wind-direction blend in the SSW-SW sector. Direction only;
-  // speed/gust are left untouched. Do not correct weak/unstable flow.
-  const HARD_WIND_DIR={from:190,to:235,offset:-25,minSpeedMs:1.5};
+  const SECTOR_WIND_DIR={from:190,to:235,offset:-25,minSpeedMs:1.5};
   let snapshot=null,lastLoaded=0;
   const finite=Number.isFinite,rad=x=>x*Math.PI/180,deg=x=>(x*180/Math.PI+360)%360;
   function circular(a,b){let x=Math.abs((a||0)-(b||0))%360;return x>180?360-x:x}
@@ -32,16 +29,16 @@
   function timeOf(row){const t=Date.parse(row?.message_time||row?.obs_time||'');return finite(t)?t:NaN}
   function metaFor(id){return snapshot?.stations_meta?.[id]||FALLBACK_META[id]||null}
   function normDir(value){const d=Number(value);return finite(d)?((d%360)+360)%360:NaN}
-  function applyHardWindDirection(z){
+  function applySectorWindDirection(z){
     if(!z||!finite(Number(z.WS)))return z;
     const speed=Number(z.WS),raw=normDir(z.WD);
-    if(!finite(raw)||speed<HARD_WIND_DIR.minSpeedMs||raw<HARD_WIND_DIR.from||raw>HARD_WIND_DIR.to)return z;
+    if(!finite(raw)||speed<SECTOR_WIND_DIR.minSpeedMs||raw<SECTOR_WIND_DIR.from||raw>SECTOR_WIND_DIR.to)return z;
     return{
       ...z,
-      WD:normDir(raw+HARD_WIND_DIR.offset),
+      WD:normDir(raw+SECTOR_WIND_DIR.offset),
       windDirRawDeg:Number(raw.toFixed(1)),
-      windDirSectorCorrectionDeg:HARD_WIND_DIR.offset,
-      windDirSectorCorrectionRule:`${HARD_WIND_DIR.from}-${HARD_WIND_DIR.to}:${HARD_WIND_DIR.offset}`
+      windDirSectorCorrectionDeg:SECTOR_WIND_DIR.offset,
+      windDirSectorCorrectionRule:`${SECTOR_WIND_DIR.from}-${SECTOR_WIND_DIR.to}:${SECTOR_WIND_DIR.offset}`
     };
   }
   async function refresh(force=false){
@@ -74,7 +71,6 @@
     for(const [key,src] of [['T','temperature_c'],['Td','dew_point_c'],['RH','relative_humidity_pct']]){
       if(finite(r[src])&&finite(o[key]))o[key]=blend(o[key],r[src],w);
     }
-    // METAR 9999/CAVOK is right-censored at >=10 km: never use it to force visibility upward.
     if(finite(r.visibility_m)&&r.visibility_m<10000&&finite(o.VIS))o.VIS=blend(o.VIS,r.visibility_m,w);
     if(finite(r.pressure_hpa)&&finite(o.P))o.P=blend(o.P,r.pressure_hpa,w*.35);
     if(finite(r.wind_speed_ms)&&finite(r.wind_direction_deg)&&finite(o.WS)&&finite(o.WD)){
@@ -105,10 +101,10 @@
     if(!Array.isArray(series)||!series.length)return series;
     const now=Date.now(),records=snapshot?.stations?Object.values(snapshot.stations).filter(Boolean):[];
     return series.map(z=>{
-      const base=applyHardWindDirection(z);
-      if(!records.length)return base;
-      const candidates=records.map(r=>candidate(r,base,now)).filter(Boolean).sort((a,b)=>b.score-a.score);
-      return candidates.length?applyOne(base,candidates[0]):base;
+      if(!records.length)return applySectorWindDirection(z);
+      const candidates=records.map(r=>candidate(r,z,now)).filter(Boolean).sort((a,b)=>b.score-a.score);
+      const adjusted=candidates.length?applyOne(z,candidates[0]):z;
+      return applySectorWindDirection(adjusted);
     });
   }
   function latest(){return snapshot}
@@ -117,5 +113,5 @@
     const now=Date.now();
     return Object.values(snapshot.stations).map(r=>candidate(r,z,now)).filter(Boolean).sort((a,b)=>b.score-a.score);
   }
-  window.PrognozaEPIRNeighborObservations={refresh,applySeries,latest,contextFor,applyHardWindDirection,hardWindDirectionRule:{...HARD_WIND_DIR},version:'1.1.0'};
+  window.PrognozaEPIRNeighborObservations={refresh,applySeries,latest,contextFor,applySectorWindDirection,sectorWindDirectionRule:{...SECTOR_WIND_DIR},version:'1.2.0'};
 })();
