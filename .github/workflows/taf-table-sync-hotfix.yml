@@ -1,0 +1,130 @@
+name: TAF table sync hotfix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/taf-table-sync-hotfix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Patch hybrid hourly guidance and table
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('taf-generator-policy.js')
+          s = p.read_text()
+          s = s.replace("const VERSION='3.1.1';", "const VERSION='3.2.0';")
+
+          needle = """  function reconcileBase(result,plan,cfg,msaFt){
+    const original=result.hourly?.[0]||result.base?.state;if(!original)return null;const base={...original,clouds:hourClouds(original).map(c=>({...c}))};
+    const hs=(result.hourly||[]).slice(0,(cfg.shortHorizon||DEFAULTS.shortHorizon).hours),windStable=hs.length>1&&!hs.slice(1).some(h=>windNeedsGroup(hs[0],h));
+    if(windStable&&(cfg.shortHorizon||DEFAULTS.shortHorizon).blendWind){const w=blendedShortWind(hs);if(w){base.windKt=w.windKt;if(finite(w.windDir))base.windDir=w.windDir;if(finite(w.gustKt))base.gustKt=w.gustKt;}}
+    if(plan?.active){const lim=cloudThresholds(msaFt).cavok,minFt=(cfg.shortHorizon||DEFAULTS.shortHorizon).weakCloudMinFt;base.clouds=base.clouds.filter(c=>c.type||c.ft>=lim||c.ft<minFt||(c.okta||amountMin(c.cover))>=5);base.__tafCloudsAuthoritative=true;}
+    return base;
+  }
+"""
+          insert = needle + """
+  function applyShortHorizonToHourly(result,plan,cfg,msaFt){
+    if(!plan?.active||!Array.isArray(result?.hourly))return 0;
+    const sh=cfg.shortHorizon||DEFAULTS.shortHorizon,lim=cloudThresholds(msaFt).cavok;let changed=0;
+    for(let i=0;i<Math.min(sh.hours,result.hourly.length);i++){
+      const h=result.hourly[i];if(!weakClearCompatibleHour(h,msaFt,cfg))continue;
+      const raw=hourClouds(h).map(c=>({...c})),filtered=raw.filter(c=>c.type||c.ft>=lim||c.ft<sh.weakCloudMinFt||(c.okta||amountMin(c.cover))>=5);
+      if(filtered.length!==raw.length){h.__tafRawClouds=raw;h.clouds=filtered;h.__tafCloudsAuthoritative=true;h.__tafShortHorizonCorrected=true;changed++;}
+    }
+    return changed;
+  }
+  function displayForHour(h,msaFt){
+    const cavok=strictCavokEligible(h,msaFt),wx=encodedWxForHour(h);
+    return{cavok,wind:windFromHour(h),visibility:encodedVis(h?.visM),weather:wx,clouds:cavok?'CAVOK':(strictNscEligible(h,msaFt)?'NSC':encodeCloudsStrict(h,msaFt)),corrected:!!h?.__tafShortHorizonCorrected};
+  }
+  function attachHourlyDisplay(result,msaFt){
+    for(const h of result.hourly||[])h.tafDisplay=displayForHour(h,msaFt);
+    if(result.base?.state)result.base.display=displayForHour(result.base.state,msaFt);
+  }
+"""
+          if needle not in s:
+              raise SystemExit('reconcileBase block not found')
+          s = s.replace(needle, insert, 1)
+
+          old = """    const advisoryPlan=dominantClearPlan(rows,result.start,cfg),shortPlan=shortHorizonBasePlan(result,ctx,cfg,msaFt),suppressed=[],base=reconcileBase(result,shortPlan,cfg,msaFt);if(base){result.base=result.base||{};result.base.state=base;result.base.text=encodeStateStrict(base,msaFt);}
+    let groups=persistentGroups(result,cfg,msaFt,suppressed);groups.push(...visibilityThresholdGroups(result,cfg,msaFt,groups,suppressed));groups.push(...temporaryGroups(result,cfg,msaFt,groups,suppressed));groups.push(...probabilisticGroups(result,cfg,msaFt,groups,suppressed));
+"""
+          new = """    const advisoryPlan=dominantClearPlan(rows,result.start,cfg),shortPlan=shortHorizonBasePlan(result,ctx,cfg,msaFt),suppressed=[],correctedHours=applyShortHorizonToHourly(result,shortPlan,cfg,msaFt),base=reconcileBase(result,shortPlan,cfg,msaFt);if(base){result.base=result.base||{};result.base.state=base;result.base.text=encodeStateStrict(base,msaFt);}
+    let groups=persistentGroups(result,cfg,msaFt,suppressed);groups.push(...visibilityThresholdGroups(result,cfg,msaFt,groups,suppressed));groups.push(...temporaryGroups(result,cfg,msaFt,groups,suppressed));groups.push(...probabilisticGroups(result,cfg,msaFt,groups,suppressed));
+"""
+          if old not in s:
+              raise SystemExit('postprocess prelude not found')
+          s = s.replace(old, new, 1)
+
+          old = """    result.groups=groups;result.taf=rebuildTaf(result);result.checks={...(result.checks||{}),noProb40:/\\bPROB40\\b/.test(result.taf)===false,noVV:/\\bVV\\d{3}\\b/.test(result.taf)===false,max5:groups.length<=5};
+"""
+          if old not in s:
+              old = """    result.groups=groups;result.taf=rebuildTaf(result);result.checks={...(result.checks||{}),noProb40:!/\\bPROB40\\b/.test(result.taf),noVV:!/\\bVV\\d{3}\\b/.test(result.taf),max5:groups.length<=5};
+"""
+          if old not in s:
+              raise SystemExit('result groups line not found')
+          new = old.replace('result.groups=groups;result.taf=rebuildTaf(result);', 'result.groups=groups;attachHourlyDisplay(result,msaFt);result.taf=rebuildTaf(result);')
+          s = s.replace(old, new, 1)
+
+          s = s.replace("result.diagnostics.shortHorizonBase=shortPlan;", "result.diagnostics.shortHorizonBase=shortPlan?{...shortPlan,correctedHours}:shortPlan;")
+          s = s.replace("shortHorizonBase:shortPlan,dominantClearAdvisory", "shortHorizonBase:shortPlan?{...shortPlan,correctedHours}:shortPlan,dominantClearAdvisory")
+          s = s.replace("shortHorizonBasePlan,reconcileBase,postprocessResult", "shortHorizonBasePlan,reconcileBase,applyShortHorizonToHourly,displayForHour,postprocessResult")
+          s = s.replace('20260913-short-horizon-v6', '20260913-hourly-sync-v7')
+          p.write_text(s)
+
+          p = Path('taf-hybrid-adapter.js')
+          s = p.read_text()
+          old = """    if($('hours'))$('hours').innerHTML=result.hourly.map(h=>`<tr><td>${pad(new Date(h.t).getUTCHours())}:00 UTC</td><td>${windText(h,!!result.diagnostics?.vrb02)}</td><td>${visText(h.visM)}</td><td>${wxText(h)||'—'}</td><td>${cloudText(h)}</td><td>${finite(h.ceilingFt)?Math.round(h.ceilingFt)+' ft':'—'}</td><td>${Math.round((h.prob?.precip||0)*100)}% / TS ${Math.round((h.prob?.ts||0)*100)}%</td><td>FG ${Math.round((h.prob?.fog||0)*100)}% · LOW VIS ${Math.round((h.prob?.lowVis||0)*100)}%</td><td>${upstreamText(h)}</td></tr>`).join('');
+"""
+          new = """    if($('hours'))$('hours').innerHTML=result.hourly.map((h,i)=>{const d=i===0&&result.base?.display?result.base.display:(h.tafDisplay||{}),wind=d.wind||windText(h,!!result.diagnostics?.vrb02),vis=d.visibility||visText(h.visM),wx=d.weather??wxText(h),clouds=d.clouds||cloudText(h),mark=d.corrected?' <span title=\"korekta krótkiego horyzontu\">✓</span>':'';return `<tr><td>${pad(new Date(h.t).getUTCHours())}:00 UTC</td><td>${wind}</td><td>${vis}</td><td>${wx||'—'}</td><td>${clouds}${mark}</td><td>${finite(h.ceilingFt)?Math.round(h.ceilingFt)+' ft':'—'}</td><td>${Math.round((h.prob?.precip||0)*100)}% / TS ${Math.round((h.prob?.ts||0)*100)}%</td><td>FG ${Math.round((h.prob?.fog||0)*100)}% · LOW VIS ${Math.round((h.prob?.lowVis||0)*100)}%</td><td>${upstreamText(h)}</td></tr>`;}).join('');
+"""
+          if old not in s:
+              raise SystemExit('adapter hours renderer not found')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          p = Path('tests/taf-hybrid-engine.test.js')
+          s = p.read_text()
+          s = s.replace("assert.equal(P.VERSION,'3.1.1');", "assert.equal(P.VERSION,'3.2.0');")
+          anchor = """assert.equal(r.diagnostics.shortHorizonBase.active,true);
+assert.match(r.base.text,/\\bCAVOK\\b/);
+assert.ok(r.base.state.windKt>5&&r.base.state.windKt<7,'base wind is blended over short horizon, not copied from one hour');
+"""
+          extra = anchor + """assert.equal(r.hourly[0].tafDisplay.cavok,true,'hourly table guidance follows accepted short-horizon correction');
+assert.equal(r.hourly[0].tafDisplay.clouds,'CAVOK');
+assert.ok(r.hourly[0].__tafShortHorizonCorrected,'corrected hour is explicitly marked');
+assert.ok(Array.isArray(r.hourly[0].__tafRawClouds)&&r.hourly[0].__tafRawClouds.length>0,'raw clouds are retained for diagnostics');
+"""
+          if anchor not in s:
+              raise SystemExit('short-horizon test anchor not found')
+          s = s.replace(anchor, extra, 1)
+          p.write_text(s)
+          PY
+
+          node --check taf-generator-policy.js
+          node --check taf-hybrid-adapter.js
+          node tests/taf-hybrid-engine.test.js
+
+      - name: Commit repair
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add taf-generator-policy.js taf-hybrid-adapter.js tests/taf-hybrid-engine.test.js
+          git commit -m 'TAF: synchronize hourly guidance with accepted hybrid corrections'
+          git push
