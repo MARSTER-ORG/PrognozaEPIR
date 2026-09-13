@@ -10,12 +10,11 @@ on:
       - 'taf.html'
       - 'utc-ui-guard.js'
       - 'tests/taf-hybrid-engine.test.js'
-      - 'scripts/patch_taf_hourly_sync.py'
       - '.github/workflows/taf-hybrid-tests.yml'
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   node-test:
@@ -23,13 +22,9 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Apply hourly synchronization patch
-        run: python scripts/patch_taf_hourly_sync.py
       - name: Syntax check
         run: |
           node --check taf-hybrid-engine.js
@@ -37,13 +32,3 @@ jobs:
           node --check taf-generator-policy.js
       - name: Regression tests
         run: node tests/taf-hybrid-engine.test.js
-      - name: Commit synchronization
-        shell: bash
-        run: |
-          git config user.name 'prognozaepir-bot'
-          git config user.email 'actions@users.noreply.github.com'
-          git add taf-generator-policy.js taf-hybrid-adapter.js taf.html tests/taf-hybrid-engine.test.js
-          if git diff --cached --quiet; then exit 0; fi
-          git commit -m 'TAF: synchronize hourly table with corrected hybrid guidance'
-          git pull --rebase origin main
-          git push
