@@ -3,14 +3,15 @@ name: Enforce global UTC policy
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: enforce-global-utc-main
-  cancel-in-progress: false
+  group: enforce-global-utc-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   enforce:
@@ -19,10 +20,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
           fetch-depth: 0
 
       - name: Apply project-wide UTC rule
+        if: github.event_name != 'pull_request'
         run: python3 scripts/enforce_global_utc.py
 
       - name: Validate UTC rule
@@ -51,6 +52,7 @@ jobs:
           for f in /tmp/utc-js/*.js; do node --check "$f"; done
 
       - name: Commit UTC normalization
+        if: github.event_name != 'pull_request'
         run: |
           if git diff --quiet; then
             echo 'All pages and modules already comply with UTC policy.'
