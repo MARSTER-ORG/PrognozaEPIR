@@ -23,7 +23,19 @@ jobs:
           node-version: 22
 
       - name: Apply migration
-        run: python3 scripts/taf-v23-fix.py
+        shell: bash
+        run: |
+          python3 scripts/taf-v23-fix.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('taf-engine-v2.js')
+          s=p.read_text(encoding='utf-8')
+          old="""    const fogEngine=prob(row?.fogRisk);\n    p.fog=Math.max(p.fog,fogEngine);\n    // EPIR FOG ENGINE score is the event probability for FG. VIS thresholds refine severity, not whether the signal exists.\n    p.fg=Math.max(p.fg,fogEngine,prob(row?.fgRisk),prob(row?.fogVis1000Risk));\n    p.br=Math.max(p.br,prob(row?.brRisk));\n"""
+          new="""    const fogEngine=prob(row?.fogRisk),explicitFg=prob(row?.fgRisk);\n    p.fog=Math.max(p.fog,fogEngine);\n    // Explicit FG evidence wins. The generic FOG score is a fallback only when no explicit FG probability was supplied.\n    p.fg=Math.max(p.fg,explicitFg,prob(row?.fogVis1000Risk),explicitFg>0?0:fogEngine);\n    p.br=Math.max(p.br,prob(row?.brRisk));\n"""
+          if old not in s:
+              raise SystemExit('fog probability precedence marker not found')
+          p.write_text(s.replace(old,new,1),encoding='utf-8')
+          PY
 
       - name: Validate source and regression suite
         run: |
@@ -37,6 +49,7 @@ jobs:
           grep -F 'prognozaepir-taf-engine-v2' message-archive-client.js
           grep -F 'const fgRisk=Math.max(fogScore' taf-app-v2.js
           grep -F 'FOG is an independent input' taf-engine-v2.js
+          grep -F 'explicitFg>0?0:fogEngine' taf-engine-v2.js
           grep -F 'workflow_dispatch' .github/workflows/pages.yml
 
       - name: Commit tested correction
