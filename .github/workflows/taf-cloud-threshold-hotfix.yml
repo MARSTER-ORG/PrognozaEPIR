@@ -1,0 +1,76 @@
+name: TAF cloud threshold hotfix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/taf-cloud-threshold-hotfix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Patch cloud transition logic
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('taf-generator-policy.js')
+          s=p.read_text(encoding='utf-8')
+          s=s.replace("const VERSION='3.2.0';","const VERSION='3.2.1';",1)
+          old="  function lowBkn(h){return hourClouds(h).some(c=>(c.cover==='BKN'||c.cover==='OVC'||c.okta>=5)&&c.ft<1500);}\n  function ceilingNeedsGroup(a,b){const ac=finite(+a?.ceilingFt)?+a.ceilingFt:null,bc=finite(+b?.ceilingFt)?+b.ceilingFt:null;if(finite(ac)&&finite(bc)&&ceilBand(ac)!==ceilBand(bc))return true;return lowBkn(a)!==lowBkn(b);}\n  function convectiveNeedsGroup(a,b){const ap=(a?.prob?.ts||0)>=.5||hasConvectiveCloud(a),bp=(b?.prob?.ts||0)>=.5||hasConvectiveCloud(b);return ap!==bp;}\n"
+          new="  function lowBkn(h){return hourClouds(h).some(c=>(c.cover==='BKN'||c.cover==='OVC'||c.okta>=5)&&c.ft<1500);}\n  function ceilingNeedsGroup(a,b){const ac=finite(+a?.ceilingFt)?+a.ceilingFt:null,bc=finite(+b?.ceilingFt)?+b.ceilingFt:null;if(finite(ac)&&finite(bc)&&ceilBand(ac)!==ceilBand(bc))return true;return lowBkn(a)!==lowBkn(b);}\n  function cloudStateNeedsGroup(a,b,msaFt=null){if(!a||!b)return false;if(strictCavokEligible(a,msaFt)!==strictCavokEligible(b,msaFt))return true;if(strictNscEligible(a,msaFt)!==strictNscEligible(b,msaFt))return true;return ceilingNeedsGroup(a,b);}\n  function cloudRegimeKey(h,msaFt){const ac=finite(+h?.ceilingFt)?ceilBand(+h.ceilingFt):-1;return [strictCavokEligible(h,msaFt)?1:0,strictNscEligible(h,msaFt)?1:0,ac,lowBkn(h)?1:0,hasConvectiveCloud(h)?1:0].join(':');}\n  function convectiveNeedsGroup(a,b){const ap=(a?.prob?.ts||0)>=.5||hasConvectiveCloud(a),bp=(b?.prob?.ts||0)>=.5||hasConvectiveCloud(b);return ap!==bp;}\n"
+          if old not in s: raise SystemExit('cloud threshold insertion anchor not found')
+          s=s.replace(old,new,1)
+          old="function significantFields(a,b,cfg=DEFAULTS){const f=[];if(windNeedsGroup(a,b))f.push('wind');if(visibilityNeedsGroup(a,b,cfg))f.push('visibility');if(weatherNeedsGroup(a,b))f.push('weather');if(ceilingNeedsGroup(a,b))f.push('ceiling');if(convectiveNeedsGroup(a,b))f.push('convective');return[...new Set(f)];}"
+          new="function significantFields(a,b,cfg=DEFAULTS,msaFt=null){const f=[];if(windNeedsGroup(a,b))f.push('wind');if(visibilityNeedsGroup(a,b,cfg))f.push('visibility');if(weatherNeedsGroup(a,b))f.push('weather');if(cloudStateNeedsGroup(a,b,msaFt))f.push('ceiling');if(convectiveNeedsGroup(a,b))f.push('convective');return[...new Set(f)];}"
+          if old not in s: raise SystemExit('significantFields anchor not found')
+          s=s.replace(old,new,1)
+          old="    if(set.has('visibility'))out.push(encodedVis(target?.visM));\n    else if(temporary&&significantMet&&prevCavok&&finite(+target?.visM)&&+target.visM<10000)out.push(encodedVis(target.visM));\n"
+          new="    if(set.has('visibility'))out.push(encodedVis(target?.visM));\n    else if(significantMet&&prevCavok&&!targetCavok&&finite(+target?.visM))out.push(encodedVis(target.visM));\n"
+          if old not in s: raise SystemExit('CAVOK exit payload anchor not found')
+          s=s.replace(old,new,1)
+          s=s.replace("fields=significantFields(prev,target,cfg);return{payload:payloadForChange(prev,target,fields,result?.diagnostics?.msaFt,{temporary:false})","fields=significantFields(prev,target,cfg,result?.diagnostics?.msaFt);return{payload:payloadForChange(prev,target,fields,result?.diagnostics?.msaFt,{temporary:false})",1)
+          s=s.replace("fields=significantFields(prev,target,cfg);\n      if(!fields.length)","fields=significantFields(prev,target,cfg,msaFt);\n      if(!fields.length)",1)
+          s=s.replace("stepFields=significantFields(stepPrev,stepNow,cfg),abrupt","stepFields=significantFields(stepPrev,stepNow,cfg,msaFt),abrupt",1)
+          s=s.replace("const fields=significantFields(hours[i-1],hours[i],cfg);if(!fields.includes('visibility'))","const fields=significantFields(hours[i-1],hours[i],cfg,msaFt);if(!fields.includes('visibility'))",1)
+          anchor="  function temporaryGroups(result,cfg,msaFt,existing,suppressed){\n"
+          insert="  function cloudThresholdGroups(result,cfg,msaFt,existing,suppressed){\n    const hours=result.hourly||[],out=[];let i=1;\n    while(i<hours.length){\n      const prev=hours[i-1],target=hours[i];\n      if(!cloudStateNeedsGroup(prev,target,msaFt)&&!convectiveNeedsGroup(prev,target)){i++;continue;}\n      const transitionT=target.t,fields=significantFields(prev,target,cfg,msaFt);\n      if(!fields.some(x=>x==='ceiling'||x==='convective')){i++;continue;}\n      const already=existing.concat(out).some(g=>(g.fields||[]).some(f=>f==='ceiling'||f==='convective')&&g.start<=transitionT+HOUR&&g.end>=transitionT-HOUR);\n      if(already){i++;continue;}\n      const prevKey=cloudRegimeKey(prev,msaFt),curKey=cloudRegimeKey(target,msaFt),next=hours[i+1],oneHourReturn=!!next&&cloudRegimeKey(next,msaFt)===prevKey&&curKey!==prevKey;\n      const payload=payloadForChange(prev,target,fields,msaFt,{temporary:oneHourReturn});\n      if(!payload){suppressed.push({kind:oneHourReturn?'TEMPO':'BECMG',reason:'cloud-threshold-empty',start:transitionT});i++;continue;}\n      if(oneHourReturn)out.push({kind:'TEMPO',start:transitionT,end:Math.min(result.end,transitionT+HOUR),payload,fields,event:'cloud-threshold'});\n      else out.push({kind:'BECMG',start:Math.max(result.start,transitionT-HOUR),end:Math.min(result.end,transitionT+HOUR),payload,fields,event:'cloud-threshold'});\n      i++;\n    }\n    return out;\n  }\n"
+          if anchor not in s: raise SystemExit('cloudThresholdGroups insertion anchor not found')
+          s=s.replace(anchor,insert+anchor,1)
+          old="let groups=persistentGroups(result,cfg,msaFt,suppressed);groups.push(...visibilityThresholdGroups(result,cfg,msaFt,groups,suppressed));groups.push(...temporaryGroups(result,cfg,msaFt,groups,suppressed));"
+          new="let groups=persistentGroups(result,cfg,msaFt,suppressed);groups.push(...visibilityThresholdGroups(result,cfg,msaFt,groups,suppressed));groups.push(...cloudThresholdGroups(result,cfg,msaFt,groups,suppressed));groups.push(...temporaryGroups(result,cfg,msaFt,groups,suppressed));"
+          if old not in s: raise SystemExit('postprocess group pipeline anchor not found')
+          s=s.replace(old,new,1)
+          old="return Object.freeze({VERSION,DEFAULTS,wmoPrecipInfo,rowEvidence,significantConsensusChange,clearCloudCandidate,dominantClearPlan,tuneRows,visibilityNeedsGroup,strictPrecipImpact,strictCavokEligible,strictNscEligible,selectedClouds,encodeStateStrict,significantFields,visibilityThresholdGroups,selectiveBecmgPayload,observationClearCompatible,shortHorizonBasePlan,reconcileBase,applyShortHorizonToHourly,displayForHour,postprocessResult,wrapApi});"
+          new="return Object.freeze({VERSION,DEFAULTS,wmoPrecipInfo,rowEvidence,significantConsensusChange,clearCloudCandidate,dominantClearPlan,tuneRows,visibilityNeedsGroup,strictPrecipImpact,strictCavokEligible,strictNscEligible,selectedClouds,encodeStateStrict,significantFields,cloudStateNeedsGroup,visibilityThresholdGroups,cloudThresholdGroups,selectiveBecmgPayload,observationClearCompatible,shortHorizonBasePlan,reconcileBase,applyShortHorizonToHourly,displayForHour,postprocessResult,wrapApi});"
+          if old not in s: raise SystemExit('export anchor not found')
+          s=s.replace(old,new,1)
+          p.write_text(s,encoding='utf-8')
+          t=Path('tests/taf-hybrid-engine.test.js')
+          q=t.read_text(encoding='utf-8')
+          q=q.replace("assert.equal(P.VERSION,'3.2.0');","assert.equal(P.VERSION,'3.2.1');",1)
+          marker="// 3.5.3: no project-wide forced VRB02 when a prevailing direction can be forecast.\n"
+          tests="// Leaving CAVOK because an ordinary cloud layer descends below the CAVOK threshold must create a change group.\nrows=Array.from({length:12},(_,i)=>i<9?row(i):row(i,{lowFt:i===9?4500:i===10?3500:3000,oktaL:3}));\nr=genTuned(rows);\nassert.ok(r.groups.some(g=>(g.fields||[]).includes('ceiling')&&/SCT0(?:45|35|30)/.test(g.payload)),'CAVOK exit caused by descending SCT must be represented in TAF');\nassert.ok(r.groups.some(g=>/9999/.test(g.payload)&&/SCT0(?:45|35|30)/.test(g.payload)),'post-CAVOK cloud change must make prevailing visibility explicit');\n\n// Persistent BKN ceiling crossing 1500 ft must be detected from the hourly series even if core segmentation missed it.\nrows=Array.from({length:12},(_,i)=>row(i,{lowFt:i<9?1800:i===9?1600:1300,oktaL:6,ceilFt:i<9?1800:i===9?1600:1300}));\nr=genTuned(rows);\nassert.ok(r.groups.some(g=>(g.fields||[]).includes('ceiling')&&/BKN013/.test(g.payload)),'BKN ceiling crossing 1500 ft must create a change group');\n\n"
+          if marker not in q: raise SystemExit('test insertion marker not found')
+          q=q.replace(marker,tests+marker,1)
+          t.write_text(q,encoding='utf-8')
+          PY
+      - name: Validate JavaScript and TAF tests
+        run: |
+          node --check taf-generator-policy.js
+          node tests/taf-hybrid-engine.test.js
+      - name: Commit hotfix
+        run: |
+          git config user.name 'prognozaepir-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add taf-generator-policy.js tests/taf-hybrid-engine.test.js
+          git diff --cached --quiet && exit 0
+          git commit -m 'TAF: detect cloud threshold transitions in hourly guidance'
+          git push origin HEAD:main
