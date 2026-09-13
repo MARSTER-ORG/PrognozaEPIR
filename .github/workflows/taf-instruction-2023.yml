@@ -1,24 +1,22 @@
-name: TAF Instruction 11.2023 compliance
+name: TAF Engine 2.3 / Instruction 11.2023 compliance
 
 on:
   push:
-    branches: [main, codex/taf-instruction-2023-audit, fix/taf-stable-cavok-nsc-audit]
+    branches: [main]
     paths:
       - 'taf.html'
-      - 'taf-*.js'
+      - 'taf-engine-v2.js'
+      - 'taf-app-v2.js'
       - 'message-archive-client.js'
-      - 'scripts/test-taf-instruction-2023.js'
-      - 'scripts/test-taf-output-sanitizer.js'
-      - 'scripts/test-taf-stability.js'
+      - 'tests/taf-engine-v2.test.js'
       - '.github/workflows/taf-instruction-2023.yml'
   pull_request:
     paths:
       - 'taf.html'
-      - 'taf-*.js'
+      - 'taf-engine-v2.js'
+      - 'taf-app-v2.js'
       - 'message-archive-client.js'
-      - 'scripts/test-taf-instruction-2023.js'
-      - 'scripts/test-taf-output-sanitizer.js'
-      - 'scripts/test-taf-stability.js'
+      - 'tests/taf-engine-v2.test.js'
       - '.github/workflows/taf-instruction-2023.yml'
   workflow_dispatch:
 
@@ -28,31 +26,26 @@ permissions:
 jobs:
   taf-rules:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+
       - name: JavaScript syntax
         run: |
-          node --check taf-cloud-policy.js
-          node --check taf-weather-policy.js
-          node --check taf-instruction-guard.js
-          node --check taf-output-sanitizer.js
-          node --check taf-radar-nowcast-sync.js
+          node --check taf-engine-v2.js
+          node --check taf-app-v2.js
           node --check message-archive-client.js
-          node --check scripts/test-taf-stability.js
-      - name: Instruction 11.2023 regression suite
+          node --check tests/taf-engine-v2.test.js
+
+      - name: TAF Engine 2.3 regression and Instruction 11.2023 gate
+        run: node tests/taf-engine-v2.test.js
+
+      - name: Confirm sole production engine
         run: |
-          node scripts/test-taf-instruction-2023.js
-          node scripts/test-taf-output-sanitizer.js
-          node scripts/test-taf-stability.js
-      - name: Single final-output owner
-        run: |
-          grep -F "loadPolicy('taf-instruction-guard.js'" message-archive-client.js
-          ! grep -F "loadPolicy('taf-cloud-policy.js'" message-archive-client.js
-          ! grep -F "loadPolicy('taf-weather-policy.js'" message-archive-client.js
-          ! grep -F "loadPolicy('taf-output-sanitizer.js'" message-archive-client.js
-          ! grep -F "loadPolicy('taf-radar-nowcast-sync.js'" message-archive-client.js
-          ! grep -F "loadPolicy('taf-gust-policy.js'" message-archive-client.js
-          ! grep -F "loadPolicy('taf-cavok-nsc-policy.js'" message-archive-client.js
+          grep -F 'TAF ENGINE 2.3.0 · INSTRUCTION FIRST' taf.html
+          grep -F 'taf-engine-v2.js?v=2.3.0' taf.html
+          grep -F 'taf-app-v2.js?v=2.3.0' taf.html
+          ! grep -E 'taf-(hybrid-engine|hybrid-adapter|generator-policy|cloud-policy|weather-policy|gust-policy|cavok-nsc-policy|instruction-guard|output-sanitizer)\.js' taf.html
