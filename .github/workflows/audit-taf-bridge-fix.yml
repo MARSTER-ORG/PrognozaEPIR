@@ -1,0 +1,59 @@
+name: One-shot canonical TAF bridge fix
+
+on:
+  push:
+    branches: [audit/canonical-runtime-20260913]
+    paths: ['.github/workflows/audit-taf-bridge-fix.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: audit/canonical-runtime-20260913
+          fetch-depth: 0
+      - name: Preserve provenance and canonicalize visible version
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path('taf-app-v2.js'); s=p.read_text(encoding='utf-8')
+          old='dirSpread:z.dirSpread,profile:Array.isArray(z.profile)'
+          new='dirSpread:z.dirSpread,neighborObsStation:z.neighborObsStation,neighborObsAgeMin:z.neighborObsAgeMin,neighborObsWeight:z.neighborObsWeight,profile:Array.isArray(z.profile)'
+          if old in s: s=s.replace(old,new,1)
+          elif new not in s: raise SystemExit('TAF bridge provenance anchor not found')
+
+          old2="const modelCount=Math.max(0,...result.hourly.map(h=>h.sourceRow?.mv?.length||0)),fogOk=rows.some(r=>num(r.fogRisk)||num(r.fgRisk));\n    $('sources').innerHTML=`"
+          new2="const modelCount=Math.max(0,...result.hourly.map(h=>h.sourceRow?.mv?.length||0)),fogOk=rows.some(r=>num(r.fogRisk)||num(r.fgRisk));\n    const neighborObsStations=[...new Set(rows.map(r=>r.neighborObsStation).filter(Boolean))];\n    $('sources').innerHTML=`"
+          if old2 in s: s=s.replace(old2,new2,1)
+          elif new2 not in s: raise SystemExit('TAF render provenance anchor not found')
+
+          anchor='<span class="pill ok">profil chmur → warstwy/pułap ✓</span>'
+          extra=anchor+'${neighborObsStations.length?`<span class="pill ok">OBS ${esc(neighborObsStations.join(\', \'))} ✓</span>`:\'\'}'
+          if extra not in s:
+              if anchor not in s: raise SystemExit('TAF sources anchor not found')
+              s=s.replace(anchor,extra,1)
+
+          s=s.replace('TAF ENGINE 2.3 · ZGODNY','TAF ENGINE 2.3.1 · ZGODNY')
+          s=s.replace('TAF ENGINE 2.3 · LICZENIE','TAF ENGINE 2.3.1 · LICZENIE')
+          p.write_text(s,encoding='utf-8')
+
+          p=Path('taf.html'); h=p.read_text(encoding='utf-8')
+          h=h.replace('TAF ENGINE 2 · START','TAF ENGINE 2.3.1 · START')
+          h=h.replace('TAF Engine 2.3.0 · czasy','TAF Engine 2.3.1 · czasy')
+          p.write_text(h,encoding='utf-8')
+          PY
+          node --check taf-app-v2.js
+          node tests/taf-engine-v2.test.js
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/audit-taf-bridge-fix.yml
+          git add taf-app-v2.js taf.html
+          git commit -m 'audit: preserve neighbor provenance in TAF 2.3.1 bridge'
+          git pull --rebase origin audit/canonical-runtime-20260913
+          git push origin HEAD:audit/canonical-runtime-20260913
