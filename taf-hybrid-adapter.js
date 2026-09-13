@@ -3,175 +3,93 @@
   if (!/\/taf\.html$/i.test(location.pathname) || window.__PROGNOZA_EPIR_TAF_HYBRID_ADAPTER__) return;
   window.__PROGNOZA_EPIR_TAF_HYBRID_ADAPTER__ = true;
 
-  const HOUR = 3600000;
-  const KT = 1.9438444924406;
-  const FT = 3.2808398950131;
-  const ISS = [5, 11, 17, 23];
-  const EPIR = {lat:52.83, lon:18.33};
-  const NSTA = {
-    EPBY:{name:'Bydgoszcz',lat:53.0968,lon:17.9777},
-    EPPW:{name:'Powidz',lat:52.3792,lon:17.8539},
-    EPKS:{name:'Krzesiny',lat:52.3317,lon:16.9664}
-  };
-  const $ = id => document.getElementById(id);
-  const finite = Number.isFinite;
-  const pad = (n,w=2) => String(Math.max(0,Math.round(n))).padStart(w,'0');
-  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const rad = x => x*Math.PI/180;
-  const deg = x => (x*180/Math.PI+360)%360;
-  const circ = (a,b) => { let d=Math.abs((a||0)-(b||0))%360; return d>180?360-d:d; };
-  let activeTaf = '';
-  let engine = null;
+  const HOUR=3600000, KT=1.9438444924406, FT=3.2808398950131;
+  const ISS=[5,11,17,23], EPIR={lat:52.8275,lon:18.3175};
+  const NSTA={EPBY:{name:'Bydgoszcz',lat:53.0968,lon:17.9777},EPPW:{name:'Powidz',lat:52.3792,lon:17.8539},EPKS:{name:'Krzesiny',lat:52.3317,lon:16.9664}};
+  const $=id=>document.getElementById(id), finite=Number.isFinite, clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+  const pad=(n,w=2)=>String(Math.max(0,Math.round(n))).padStart(w,'0');
+  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const rad=x=>x*Math.PI/180, deg=x=>(x*180/Math.PI+360)%360;
+  const circ=(a,b)=>{let d=Math.abs((a||0)-(b||0))%360;return d>180?360-d:d;};
+  let activeTaf='', engine=null, radarFrame=null, radarKickStarted=false;
 
   function fu(t){const d=new Date(t);return `${pad(d.getUTCDate())}.${pad(d.getUTCMonth()+1)} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;}
-  function monthTime(code,ref,minutes=false){
-    const s=String(code||''); if(!/^\d{4,6}$/.test(s)) return NaN;
-    const day=+s.slice(0,2),h=+s.slice(2,4),m=minutes?+s.slice(4,6):0,R=new Date(ref),cand=[];
-    for(let dm=-1;dm<=1;dm++) cand.push(Date.UTC(R.getUTCFullYear(),R.getUTCMonth()+dm,day,h,m));
-    cand.sort((a,b)=>Math.abs(a-ref)-Math.abs(b-ref)); return cand[0];
-  }
-  function itemTime(x,ref=Date.now()){
-    if(!x) return NaN;
-    for(const k of ['obs_time','message_time','issue_time','time','timestamp']){const t=Date.parse(x[k]||'');if(finite(t))return t;}
-    const m=String(x.raw||x.canonical_raw||'').match(/\b(\d{6})Z\b/); return m?monthTime(m[1],ref,true):NaN;
-  }
+  function monthTime(code,ref,minutes=false){const s=String(code||'');if(!/^\d{4,6}$/.test(s))return NaN;const day=+s.slice(0,2),h=+s.slice(2,4),m=minutes?+s.slice(4,6):0,R=new Date(ref),a=[];for(let dm=-1;dm<=1;dm++)a.push(Date.UTC(R.getUTCFullYear(),R.getUTCMonth()+dm,day,h,m));a.sort((x,y)=>Math.abs(x-ref)-Math.abs(y-ref));return a[0];}
+  function itemTime(x,ref=Date.now()){if(!x)return NaN;for(const k of ['obs_time','message_time','issue_time','time','timestamp']){const t=Date.parse(x[k]||'');if(finite(t))return t;}const m=String(x.raw||x.canonical_raw||'').match(/\b(\d{6})Z\b/);return m?monthTime(m[1],ref,true):NaN;}
   function rawOf(x){return String(x?.raw||x?.canonical_raw||'').trim();}
   function newest(a){return a.filter(Boolean).sort((x,y)=>(itemTime(y)||0)-(itemTime(x)||0))[0]||null;}
-  function obsRows(recent){
-    const out=[]; for(const k of ['metar','speci','aviation']) if(Array.isArray(recent?.[k])) out.push(...recent[k]);
-    const seen=new Set(); return out.filter(x=>/\bEPIR\b/.test(rawOf(x))).filter(x=>{const key=x?.message_id||`${itemTime(x)}|${rawOf(x)}`;if(seen.has(key))return false;seen.add(key);return true;});
-  }
-  function cycles(now=Date.now()){
-    const s=new Date(now-12*HOUR);s.setUTCMinutes(0,0,0);const a=[];
-    for(let i=0;i<48;i++){const t=s.getTime()+i*HOUR;if(ISS.includes(new Date(t).getUTCHours()))a.push({issue:t,start:t+HOUR,end:t+13*HOUR});}
-    return a.filter(x=>x.issue>=now-6*HOUR&&x.issue<=now+24*HOUR);
-  }
-  function selectedCycle(){
-    const a=cycles(), n=+$('cycle')?.value; if(a[n])return a[n];
-    const now=Date.now(); return a.reduce((best,x)=>!best||Math.abs(x.issue-now)<Math.abs(best.issue-now)?x:best,null);
-  }
-  function geo(a,b){
-    const p1=rad(a.lat),p2=rad(b.lat),dl=rad(b.lon-a.lon),dp=rad(b.lat-a.lat),q=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
-    const km=6371*2*Math.atan2(Math.sqrt(q),Math.sqrt(1-q)),y=Math.sin(dl)*Math.cos(p2),x=Math.cos(p1)*Math.sin(p2)-Math.sin(p1)*Math.cos(p2)*Math.cos(dl);
-    return {km,bearing:deg(Math.atan2(y,x))};
-  }
+  function obsRows(recent){const out=[];for(const k of ['metar','speci','aviation'])if(Array.isArray(recent?.[k]))out.push(...recent[k]);const seen=new Set();return out.filter(x=>/\bEPIR\b/.test(rawOf(x))).filter(x=>{const k=x?.message_id||`${itemTime(x)}|${rawOf(x)}`;if(seen.has(k))return false;seen.add(k);return true;});}
+  function cycles(now=Date.now()){const s=new Date(now-12*HOUR);s.setUTCMinutes(0,0,0);const a=[];for(let i=0;i<48;i++){const t=s.getTime()+i*HOUR;if(ISS.includes(new Date(t).getUTCHours()))a.push({issue:t,start:t+HOUR,end:t+13*HOUR});}return a.filter(x=>x.issue>=now-6*HOUR&&x.issue<=now+24*HOUR);}
+  function selectedCycle(){const a=cycles(),n=+$('cycle')?.value;if(a[n])return a[n];const now=Date.now();return a.reduce((best,x)=>!best||Math.abs(x.issue-now)<Math.abs(best.issue-now)?x:best,null);}
+  function geo(a,b){const p1=rad(a.lat),p2=rad(b.lat),dl=rad(b.lon-a.lon),dp=rad(b.lat-a.lat),q=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;const km=6371*2*Math.atan2(Math.sqrt(q),Math.sqrt(1-q)),y=Math.sin(dl)*Math.cos(p2),x=Math.cos(p1)*Math.sin(p2)-Math.sin(p1)*Math.cos(p2)*Math.cos(dl);return{km,bearing:deg(Math.atan2(y,x))};}
 
   function tafPart(txt){
-    const t=String(txt||'').toUpperCase(), wind=t.match(/\b(\d{3}|VRB)(\d{2,3})(?:G(P99|\d{2,3}))?KT\b/),vis=t.match(/\b(9999|\d{4})\b/);
+    const t=String(txt||'').toUpperCase(),wind=t.match(/\b(\d{3}|VRB)(\d{2,3})(?:G(P99|\d{2,3}))?KT\b/),vis=t.match(/\b(9999|\d{4})\b/);
     const clouds=[...t.matchAll(/\b(FEW|SCT|BKN|OVC)(\d{3})(CB|TCU)?\b/g)].map(m=>({cover:m[1],ft:+m[2]*100,type:m[3]||''}));
     const wx=(t.match(/\b(?:\+|-)?(?:MIFG|FZFG|FG|BR|HZ|TSRA|TSGR|TSGS|TS|SHRA|SHSN|RASN|SNRA|FZRA|FZDZ|RA|DZ|SN|GR|GS|SQ)\b/g)||[]).join(' ');
-    const out={wx,clouds};
-    if(wind){out.windDir=wind[1]==='VRB'?null:+wind[1];out.windKt=+wind[2];out.gustKt=wind[3]?(wind[3]==='P99'?100:+wind[3]):null;}
-    if(/\bCAVOK\b/.test(t)){out.vis=10000;out.clouds=[];out.wx='';out.cavok=true;} else if(vis) out.vis=vis[1]==='9999'?10000:+vis[1];
-    if(/\bNSC\b/.test(t)) out.clouds=[];
-    return out;
+    const out={wx,clouds};if(wind){out.windDir=wind[1]==='VRB'?null:+wind[1];out.windKt=+wind[2];out.gustKt=wind[3]?(wind[3]==='P99'?100:+wind[3]):null;}
+    if(/\bCAVOK\b/.test(t)){out.vis=10000;out.clouds=[];out.wx='';out.cavok=true;}else if(vis)out.vis=vis[1]==='9999'?10000:+vis[1];if(/\bNSC\b/.test(t))out.clouds=[];return out;
   }
   function parseTaf(raw){
     const text=String(raw||'').replace(/\s+/g,' ').trim(),im=text.match(/\b(\d{6})Z\b/),vm=text.match(/\b(\d{4})\/(\d{4})\b/);if(!im||!vm)return null;
     const issue=monthTime(im[1],Date.now(),true),vs=monthTime(vm[1],issue);let ve=monthTime(vm[2],vs+6*HOUR);if(ve<=vs)ve=monthTime(vm[2],vs+18*HOUR);
     const start=vm.index+vm[0].length,re=/(FM\d{6}|BECMG\s+\d{4}\/\d{4}|(?:PROB(?:30|40)(?:\s+TEMPO)?|TEMPO)\s+\d{4}\/\d{4})/g,marks=[];let m;re.lastIndex=start;while((m=re.exec(text)))marks.push({i:m.index,token:m[0],end:re.lastIndex});
     const base=tafPart(text.slice(start,marks.length?marks[0].i:text.length)),events=[];
-    for(let i=0;i<marks.length;i++){
-      const q=marks[i],body=text.slice(q.end,i+1<marks.length?marks[i+1].i:text.length),ev={token:q.token,state:tafPart(body)};
-      if(q.token.startsWith('FM')){ev.kind='FM';ev.s=monthTime(q.token.slice(2),issue,true);ev.e=ve;}
-      else {const r=q.token.match(/(\d{4})\/(\d{4})/);ev.s=monthTime(r[1],issue);ev.e=monthTime(r[2],ev.s+3*HOUR);if(ev.e<=ev.s)ev.e=monthTime(r[2],ev.s+12*HOUR);ev.kind=q.token.startsWith('BECMG')?'BECMG':q.token.startsWith('TEMPO')?'TEMPO':'PROB';}
-      events.push(ev);
-    }
-    return {raw:text,issue,vs,ve,base,events};
+    for(let i=0;i<marks.length;i++){const q=marks[i],body=text.slice(q.end,i+1<marks.length?marks[i+1].i:text.length),ev={token:q.token,state:tafPart(body),probability:/PROB30/.test(q.token)?.30:/PROB40/.test(q.token)?.40:1};if(q.token.startsWith('FM')){ev.kind='FM';ev.s=monthTime(q.token.slice(2),issue,true);ev.e=ve;}else{const r=q.token.match(/(\d{4})\/(\d{4})/);ev.s=monthTime(r[1],issue);ev.e=monthTime(r[2],ev.s+3*HOUR);if(ev.e<=ev.s)ev.e=monthTime(r[2],ev.s+12*HOUR);ev.kind=q.token.startsWith('BECMG')?'BECMG':q.token.startsWith('TEMPO')?'TEMPO':q.token.includes('TEMPO')?'PROB_TEMPO':'PROB';}events.push(ev);}
+    return{raw:text,issue,vs,ve,base,events};
   }
-  function mergeState(a,b){return {...(a||{}),...(b||{})};}
-  function tafAt(p,t){
-    if(!p||t<p.vs||t>=p.ve)return null;let s={...p.base};
-    for(const e of p.events){if(e.kind==='FM'&&t>=e.s)s={...e.state};else if(e.kind==='BECMG'&&t>=e.e)s=mergeState(s,e.state);}
-    return s;
+  function mergeState(a,b){return{...(a||{}),...(b||{})};}
+  function tafSignalAt(p,t){
+    if(!p||t<p.vs||t>=p.ve)return null;let state={...p.base};const hazards=[];
+    for(const e of p.events){if(e.kind==='FM'&&t>=e.s)state={...e.state};else if(e.kind==='BECMG'&&t>=e.e)state=mergeState(state,e.state);else if((e.kind==='TEMPO'||e.kind==='PROB'||e.kind==='PROB_TEMPO')&&t>=e.s&&t<e.e)hazards.push({kind:e.kind,weight:e.kind==='TEMPO'?.60:e.probability||.30,state:e.state});}
+    return{state,hazards};
   }
   function attachUpstream(rows,neighborParsed){
-    for(const row of rows){row.upstream=[];if(!finite(row.WD))continue;
-      for(const [id,p] of Object.entries(neighborParsed)){
-        const g=geo(EPIR,NSTA[id]),ang=circ(row.WD,g.bearing);let score=Math.max(0,Math.cos(rad(Math.min(90,ang))));score=score*score*Math.exp(-g.km/150);const kt=finite(row.WS)?row.WS*KT:0;if(kt<4)score*=0.35;if(score<0.05)continue;
-        const kmh=Math.max(12,kt*1.852),lag=Math.max(0.75,Math.min(6,g.km/kmh)),state=tafAt(p,row.t-lag*HOUR);if(state)row.upstream.push({id,station:id,score,lag,state});
-      }
-      row.upstream.sort((a,b)=>b.score-a.score);
+    for(const row of rows){row.upstream=[];if(!finite(row.WD))continue;for(const[id,p]of Object.entries(neighborParsed)){const g=geo(EPIR,NSTA[id]),ang=circ(row.WD,g.bearing);let score=Math.max(0,Math.cos(rad(Math.min(90,ang))));score=score*score*Math.exp(-g.km/150);const kt=finite(row.WS)?row.WS*KT:0;if(kt<4)score*=.35;if(score<.04)continue;const kmh=Math.max(12,kt*1.852),lag=clamp(g.km/kmh,.75,6),sig=tafSignalAt(p,row.t-lag*HOUR);if(sig)row.upstream.push({id,station:id,score,lag,state:sig.state,hazards:sig.hazards});}row.upstream.sort((a,b)=>b.score-a.score);}
+    return rows;
+  }
+  function neighborStateEvidence(q){const out=[];if(q?.state)out.push({state:q.state,w:q.score,kind:'det'});for(const h of q?.hazards||[])out.push({state:h.state,w:q.score*(h.weight||.3),kind:h.kind});return out;}
+  function bknBase(state){return(state?.clouds||[]).filter(c=>c.cover==='BKN'||c.cover==='OVC').sort((a,b)=>a.ft-b.ft)[0]?.ft??null;}
+  function hasConvective(state){return(state?.clouds||[]).some(c=>c.type==='CB'||c.type==='TCU')||/\b(?:TS|TSRA|SHRA)\b/.test(String(state?.wx||''));}
+  function applyNeighborGuidance(rows){
+    for(const row of rows){const ev=(row.upstream||[]).flatMap(neighborStateEvidence);if(!ev.length)continue;const total=ev.reduce((s,x)=>s+x.w,0)||1,cloud=ev.filter(x=>finite(bknBase(x.state))),conv=ev.filter(x=>hasConvective(x.state)),wet=ev.filter(x=>/\b(?:RA|DZ|SN|SHRA|SHSN|RASN|SNRA)\b/.test(String(x.state?.wx||'')));
+      const cloudW=cloud.reduce((s,x)=>s+x.w,0)/total,convW=conv.reduce((s,x)=>s+x.w,0)/total,wetW=wet.reduce((s,x)=>s+x.w,0)/total,contributorCount=new Set((row.upstream||[]).filter(q=>neighborStateEvidence(q).some(x=>finite(bknBase(x.state)))).map(q=>q.id)).size;
+      let targetFt=null;if(cloud.length){const a=cloud.map(x=>({ft:bknBase(x.state),w:x.w})).sort((a,b)=>a.ft-b.ft),sw=a.reduce((s,x)=>s+x.w,0);let acc=0;for(const x of a){acc+=x.w;if(acc>=sw*.5){targetFt=x.ft;break;}}}
+      if(finite(targetFt)&&cloudW>=.42&&(contributorCount>=2||(row.upstream[0]?.score||0)>=.45)){const localFt=finite(row.ceiling)?row.ceiling*FT:finite(row.lowH)?row.lowH*FT:null,blend=clamp(.25+.35*cloudW,.25,.55),newFt=finite(localFt)?localFt+(targetFt-localFt)*blend:targetFt;if(!finite(localFt)||newFt<localFt-150){row.ceiling=newFt/FT;row.lowH=newFt/FT;row.oktaL=Math.max(+row.oktaL||0,5);}}
+      if(wetW>=.25)row.wet=Math.max(+row.wet||0,Math.round(35+45*wetW));
+      if(convW>=.20)row.storm=Math.max(+row.storm||0,Math.round(25+70*convW));
+      row.neighborEvidence={cloudWeight:cloudW,convectiveWeight:convW,weatherWeight:wetW,contributors:contributorCount,targetCeilingFt:targetFt,stations:(row.upstream||[]).map(q=>q.id)};
     }
     return rows;
   }
 
-  async function loadArchive(){
-    const A=window.PrognozaEPIRMessageArchive;if(!A)throw Error('MessageArchive niedostępne');
-    const req=[A.latest(true),A.recent(true),A.getLatest('AVIATION','EPIR',true),...Object.keys(NSTA).map(id=>A.getLatest('TAF',id,true).catch(()=>null))];
-    const v=await Promise.allSettled(req),latest=v[0].status==='fulfilled'?(v[0].value||{}):{},recent=v[1].status==='fulfilled'?v[1].value:null,history=obsRows(recent);
-    const observation=newest([v[2].status==='fulfilled'?v[2].value:null,latest.aviation,latest.metar,...history]);
-    const neighborRaw={},neighborParsed={};Object.keys(NSTA).forEach((id,i)=>{const x=newest([v[i+3]?.status==='fulfilled'?v[i+3].value:null,latest?.taf_by_station?.[id]]);if(x){neighborRaw[id]=x;const p=parseTaf(rawOf(x));if(p)neighborParsed[id]=p;}});
-    const currentTaf=latest?.taf_by_station?.EPIR||latest?.taf||null;
-    return {latest,recent,history,observation,neighborRaw,neighborParsed,currentTaf};
-  }
+  async function loadArchive(){const A=window.PrognozaEPIRMessageArchive;if(!A)throw Error('MessageArchive niedostępne');const req=[A.latest(true),A.recent(true),A.getLatest('AVIATION','EPIR',true),...Object.keys(NSTA).map(id=>A.getLatest('TAF',id,true).catch(()=>null))],v=await Promise.allSettled(req),latest=v[0].status==='fulfilled'?(v[0].value||{}):{},recent=v[1].status==='fulfilled'?v[1].value:null,history=obsRows(recent),observation=newest([v[2].status==='fulfilled'?v[2].value:null,latest.aviation,latest.metar,...history]),neighborRaw={},neighborParsed={};Object.keys(NSTA).forEach((id,i)=>{const x=newest([v[i+3]?.status==='fulfilled'?v[i+3].value:null,latest?.taf_by_station?.[id]]);if(x){neighborRaw[id]=x;const p=parseTaf(rawOf(x));if(p)neighborParsed[id]=p;}});return{latest,recent,history,observation,neighborRaw,neighborParsed,currentTaf:latest?.taf_by_station?.EPIR||latest?.taf||null};}
 
-  async function meteogramRows(period){
-    const f=$('engine'),w=f?.contentWindow;if(!w)throw Error('Brak silnika meteogramu');const deadline=Date.now()+25000;
-    while(Date.now()<deadline){try{if(w.eval('typeof consensus!=="undefined"?consensus.length:0')>10)break;}catch(_){}await new Promise(r=>setTimeout(r,300));}
-    let data;
-    try{
-      data=w.eval(`consensus.map(z=>({t:z.t,T:z.T,Td:z.Td,RH:z.RH,RR:z.RR,VIS:z.VIS,WS:z.WS,WD:z.WD,G:z.G,ceiling:z.ceiling,lowH:z.lowH,midH:z.midH,highH:z.highH,oktaL:z.oktaL,oktaM:z.oktaM,oktaH:z.oktaH,wet:z.wet,storm:z.storm,count:z.count,dirSpread:z.dirSpread,mv:MODELS.map((m,i)=>{const ds=datasets.get(m.id),r=ds?sample(ds,z.t):null;if(!r)return null;const p=profile([{row:r,w:1,elevation:ds.elevation}],Number.isFinite(ds.elevation)?ds.elevation:90);return{id:m.id||m.name||('model_'+(i+1)),model:m.id||m.name||('model_'+(i+1)),w:m.w,vis:r.visibility,ceil:ceiling(p),code:r.weather_code,ws:r.wind_speed_10m,wd:r.wind_direction_10m,g:r.wind_gusts_10m}}).filter(Boolean)}))`);
-    }catch(e){throw Error('Silnik meteogramu nie udostępnił danych: '+e.message);}
-    let fog=[];try{fog=w.PrognozaEPIRFogSeries||[];}catch(_){}
-    let mifg=[];try{if(w.PrognozaEPIRMIFG?.refresh)await w.PrognozaEPIRMIFG.refresh();const until=Date.now()+4000;do{mifg=w.PrognozaEPIRMIFG?.getSeries?.()||[];if(mifg.length)break;await new Promise(r=>setTimeout(r,200));}while(Date.now()<until);}catch(_){}
-    return (Array.isArray(data)?data:[]).filter(z=>finite(z.t)&&z.t>=period.start&&z.t<period.end).map(z=>{
-      const q=fog.find(x=>Math.abs((x.t||x.time||0)-z.t)<1800000),m=mifg.find(x=>Math.abs((x.t||x.time||0)-z.t)<1800000);
-      return {...z,fogRisk:Math.max(0,q?.risk||q?.probability||0),mifgRisk:finite(m?.score)?m.score:null};
-    });
-  }
+  async function meteogramRows(period){const f=$('engine'),w=f?.contentWindow;if(!w)throw Error('Brak silnika meteogramu');const deadline=Date.now()+25000;while(Date.now()<deadline){try{if(w.eval('typeof consensus!=="undefined"?consensus.length:0')>10)break;}catch(_){}await new Promise(r=>setTimeout(r,300));}let data;try{data=w.eval(`consensus.map(z=>({t:z.t,T:z.T,Td:z.Td,RH:z.RH,RR:z.RR,VIS:z.VIS,WS:z.WS,WD:z.WD,G:z.G,ceiling:z.ceiling,lowH:z.lowH,midH:z.midH,highH:z.highH,oktaL:z.oktaL,oktaM:j.oktaM,oktaH:z.oktaH,wet:z.wet,storm:z.storm,count:z.count,dirSpread:z.dirSpread,mv:MODELS.map((m,i)=>{const ds=datasets.get(m.id),r=ds?sample(ds,z.t):null;if(!r)return null;const p=profile([{row:r,w:1,elevation:ds.elevation}],Number.isFinite(ds.elevation)?ds.elevation:90);return{id:m.id||m.name||('model_'+(i+1)),model:m.id||m.name||('model_'+(i+1)),w:m.w,vis:r.visibility,ceil:ceiling(p),code:r.weather_code,ws:r.wind_speed_10m,wd:r.wind_direction_10m,g:r.wind_gusts_10m}}).filter(Boolean)}))`);}catch(e){throw Error('Silnik meteogramu nie udostępnił danych: '+e.message);}let fog=[];try{fog=w.PrognozaEPIRFogSeries||[];}catch(_){}let mifg=[];try{if(w.ProgozaEPIRMIFG?.refresh)await w.ProgozaEPIRMIFG.refresh();const until=Date.now()+4000;do{mifg=w.PrognozaEPIRMIFG?.getSeries?.()||[];if(mifg.length)break;await new Promise(r=>setTimeout(r,200));}while(Date.now()<until);}catch(_){}return(Array.isArray(data)?data:[]).filter(z=>finite(z.t)&&z.t>=period.start&&z.t<period.end).map(z=>{const q=fog.find(x=>Math.abs((x.t||x.time||0)-z.t)<1800000),m=mifg.find(x=>Math.abs((x.t||x.time||0).z.t)<1800000);return{...z,fogRisk:Math.max(0,q?.risk||q?.probability||0),mifgRisk:finite(m?.score)?m.score:null};});}
 
-  function msaFt(){
-    const global=+window.PrognozaEPIRTAFConfig?.msaFt;if(finite(global)&&global>0)return global;
-    try{const v=+localStorage.getItem('prognozaepir.taf.msaFt');if(finite(v)&&v>0)return v;}catch(_){}
-    return null;
-  }
-  function windText(h,force=false){
-    if(force)return'VRB02KT';const raw=finite(h.windKt)?h.windKt:0;if(raw<1)return'00000KT';let s=Math.max(0,Math.round(raw));if(s%2)s++;const vrb=s<3&&(h.dirSpreadDeg>=60||!finite(h.windDir)),d=vrb?'VRB':pad(((Math.round((h.windDir||0)/10)*10)%360)||360,3);let out=d+pad(Math.min(s,98));let g=Math.max(0,Math.round(h.gustKt||0));if(g%2)g++;if(finite(h.gustKt)&&g-s>=10)out+='G'+(g>99?'P99':pad(g));return out+'KT';
-  }
-  function visText(v){if(!finite(v)||v>=10000)return'9999';if(v<800)return pad(Math.max(0,Math.min(750,Math.round(v/50)*50)),4);if(v<5000)return pad(Math.max(800,Math.min(4900,Math.round(v/100)*100)),4);return pad(Math.min(9000,Math.round(v/1000)*1000),4);}
+  function kickRadarBridge(){if(radarKickStarted)return;radarKickStarted=true;try{radarFrame=document.createElement('iframe');radarFrame.src='radar.html?taf_bridge=1&_='+Date.now();radarFrame.setAttribute('aria-hidden','true');radarFrame.style.cssText='position:fixed;left:-10000px;top:-10000px;width:900px;height:700px;opacity:0;pointer-events:none;border:0';document.body.appendChild(radarFrame);}catch(e){console.warn('[TAF radar bridge]',e);}}
+  function radarDomNumber(id){try{const s=radarFrame?.contentDocument?.getElementById(id)?.textContent||'';const m=s.replace(',','.').match(/-?\d+(?:\.\.\d+)?/);return m?+m[0]:null;}catch(_){return null;}}
+  async function radarSnapshot(maxWait=3500){kickRadarBridge();const end=Date.now()+maxWait;while(Date.now()<end){try{const w=radarFrame?.contentWindow,r=w?.PrognozaEPIRRadarNowcast;if(r?.updatedAt&&!r.error){const age=(Date.now()-Date.parse(r.updatedAt))/60000;if(age<=45)return{...r,cape:radarDomNumber('cape'),li:radarDomNumber('li'),gfsStorm:radarDomNumber('gfsStorm')};}if(w?.PrognozaEPIRRadarNowcastEngine?.refresh)w.PrognozaEPIRRadarNowcastEngine.refresh();}catch(_){}await new Promise(r=>setTimeout(r,350));}return null;}
+  function nearestPrediction(snap,min){const a=(snap?.predictions||[]).map(p=>({m:+(p.minutes||p.min||p.horizon||0),v:+hp.value||p.precipitation||p.dbz)||0)}).filter(p=>finite(p.m)&&finite(p.v));if(!a.length)return null;a.sort((x,y)=>Math.abs(x.m-min)-Math.abs(y.m-min));return a[0];}
+  function applyRadarGuidance(rows,s){if(!s||s.error)return rows;const now=Date.now(),thr=s.source==='sri'?.1:27,modelFrac=s.models?.total?s.models.support/s.models.total:0;for(const row of rows){const min=(row.t-now)/60000;if(min<0||min>210)continue;const p=nearestPrediction(s,min);if(!p||Math.abs(p.m-min)>50)continue;const wet=finite(p.v)&&p.v>=thr,conf=+s.confidence||0;if(!wet||conf<35)continue;const strong=s.source==='cmax'?p.v>=35:p.v>=1,very=s.source==='cmax'?p.v>=42:p.v>=2.5;row.wet=Math.max+row.wet||0,Math.round(45+Math.min(45,conf*.45)));if(strong&&modelFrac>=.5)row.RR=Math.max(+row.RR||0,.18);if(very&&modelFrac>=.5)row.RR=Math.max(+row.RR||0,.32);const convSupport=(s.source==='cmax'&&p.v>=38&&(++s.trend?.rate||0)>1.5||(+s.cape||0)>=400||(+s.gfsStorm||0)>=20));if(convSupport){const risk=clamp(30+(p.v-35)*2+Math.max(0,(+s.cape||0)-300)/40+Math.max(0,+s.gfsStorm||0)*.4,30,75);row.storm=Math.max(+row.storm||0,risk);}row.radarSignal={source:s.source,value:p.v,horizonMin:p.m,confidence:conf,modelSupport:modelFrac,trend:s.trend?.label||null,convective:convSupport,cape:s.cape,gfsStorm:s.gfsStorm};}return rows;}
+
+  function msaFt(){const global=+window.PrognozaEPIRTAFConfig?.msaFt;if(finite(global)&&global>0)return global;try{const v=+localStorage.getItem('prognozaepir.taf.msaFt');if(finite(v)&&v>0)return v;}catch(_){}return null;}
+  function windText(h){const raw=finite(h.windKt)?h.windKt:0;if(raw<1)return'00000KT';const s=Math.max(0,Math.round(raw)),vrb=s<3&&(!!finite(h.windDir)||(h.dirSpreadDeg||0)>=60),d=vrb?'VRB':pad(((Math.round((h.windDir||0)/10)*10)%360)||360,3);let out=d+pad(Math.min(s,98));const g=Math.max(0,Math.round(h.gustKt||0));if(finite(h.gustKt)&&g-s>=10)out+='G'+(g>99?'P99':pad(g));return out+'KT';}
+  function visText(v){if(!finite(v)||v>=10000)return'9999';if(v<800)return pad(clamp(Math.round(v/50)*50,0,750),4);if(v<5000)return pad(clamp(Math.round(v/100)*100,800,4900),4);return pad(clamp(Math.round(v/1000)*1000,5000,9000),4);}
   function cloudText(h){const a=(h.clouds||[]).slice().sort((x,y)=>x.ft-y.ft);if(!a.length)return'NSC';return a.slice(0,4).map(c=>`${c.cover}${pad(Math.min(999,Math.round(c.ft/100)),3)}${c.type||''}`).join(' ');}
-  function wxText(h){const p=h.prob||{};if(p.ts>=0.5)return p.precip>=0.35?'TSRA':'TS';if(p.frozen>=0.5)return'FZRA';if(p.fog>=0.5&&h.visM<=1000)return h.T<=0?'FZFG':'FG';if(p.precip>=0.5)return p.snow>=0.5?'SN':'RA';if(p.fog>=0.3&&h.visM<=5000)return'BR';return'';}
-  function upstreamText(h){const a=h.advection;if(!a)return'—';return `${a.station||'TAF'} ${Math.round((a.weight||0)*100)}% · -${Number(a.lagH||0).toFixed(1)}h`;}
-  function renderNeighbors(data,rows){
-    const host=$('neighborTafs'),sum=$('neighborSummary');if(!host||!sum)return;const first=rows[0]?.upstream||[];
-    sum.textContent=first.length?`Najsilniejszy sygnał adwekcyjny dla początku okresu: ${first[0].id}, opóźnienie około ${first[0].lag.toFixed(1)} h. TAF stacji sąsiednich jest miękkim sygnałem wejściowym silnika hybrydowego.`:'Brak wystarczająco silnego sygnału adwekcyjnego z EPBY / EPPW / EPKS.';
-    host.innerHTML=Object.keys(NSTA).map(id=>{const g=geo(EPIR,NSTA[id]),q=first.find(x=>x.id===id),x=data.neighborRaw[id];return `<tr><td><b>${id}</b> ${esc(NSTA[id].name)}</td><td>${Math.round(g.bearing)}°</td><td>${Math.round(g.km)} km</td><td>${q?`${Math.round(q.score*100)}% · opóźnienie ${q.lag.toFixed(1)} h`:'brak istotnego napływu'}</td><td><pre style="max-width:650px">${esc(rawOf(x)||'brak danych')}</pre></td></tr>`;}).join('');
-  }
-  function renderResult(result,data,inputRows){
-    activeTaf=result.taf;window.PrognozaEPIRTAFHybridResult=result;window.PrognozaEPIRTAFCurrentGenerated=result.taf;
-    if($('taf'))$('taf').textContent=result.taf;
-    if($('metar'))$('metar').textContent=rawOf(data.observation)||'Brak METAR/SPECI';
-    if($('metarMeta')&&data.observation)$('metarMeta').textContent=`${data.observation.source||data.observation.sources?.[0]?.name||'ARCHIWUM'} · ${fu(itemTime(data.observation))} · najnowszy METAR/SPECI`;
-    if($('synop'))$('synop').textContent='Wyłączony z analizy TAF';if($('synopMeta'))$('synopMeta').textContent='SYNOP nie wpływa na silnik hybrydowy.';
-    const reasons=result.diagnostics?.reasons||[];if($('reasons'))$('reasons').innerHTML=reasons.length?'<ul>'+reasons.map(x=>`<li>${esc(x)}</li>`).join('')+'</ul>':'Brak istotnych progów wymagających grup zmian.';
-    if($('checks'))$('checks').innerHTML=[['PROB40',result.checks.noProb40],['VV',result.checks.noVV],['≤ 5 grup zmian',result.checks.max5],['Okres ważności 12 h',result.checks.periodHours===12]].map(x=>`<li class="${x[1]?'ok':'bad'}">${x[0]}: ${x[1]?'OK':'BŁĄD'}</li>`).join('');
-    if($('hours'))$('hours').innerHTML=result.hourly.map((h,i)=>{const d=i===0&&result.base?.display?result.base.display:(h.tafDisplay||{}),wind=d.wind||windText(h,!!result.diagnostics?.vrb02),vis=d.visibility||visText(h.visM),wx=d.weather??wxText(h),clouds=d.clouds||cloudText(h),mark=d.corrected?' ✓':'';return `<tr><td>${pad(new Date(h.t).getUTCHours())}:00 UTC</td><td>${wind}</td><td>${vis}</td><td>${wx||'—'}</td><td>${clouds}${mark}</td><td>${finite(h.ceilingFt)?Math.round(h.ceilingFt)+' ft':'—'}</td><td>${Math.round((h.prob?.precip||0)*100)}% / TS ${Math.round((h.prob?.ts||0)*100)}%</td><td>FG ${Math.round((h.prob?.fog||0)*100)}% · LOW VIS ${Math.round((h.prob?.lowVis||0)*100)}%</td><td>${upstreamText(h)}</td></tr>`;}).join('');
-    if($('sources'))$('sources').innerHTML=`<span class="pill ${data.observation?'ok':'bad'}">METAR/SPECI ${data.observation?'✓':'×'}</span><span class="pill warn">SYNOP wyłączony</span><span class="pill ok">Hybrid Engine v${esc(result.version)} ✓</span><span class="pill ok">multimodel ${Math.max(...result.hourly.map(h=>h.modelCount||0),0)} ✓</span><span class="pill ${result.hourly.some(h=>h.advection)?'ok':'warn'}">adwekcja ${result.hourly.some(h=>h.advection)?'✓':'—'}</span><span class="pill ok">MOS/uczenie ${esc(result.learning?.cells??0)} komórek</span><span class="pill ok">TAF Rules ✓</span>`;
-    const d=result.diagnostics,v=d?.vrb02,msa=d?.msaMode==='explicit'?`${Math.round(d.msaFt)} ft`:'fallback 5000 ft';if($('conf'))$('conf').textContent=`HYBRID v${result.version}: pewność ${result.confidence}%. Warstwy: ${d.layers.map(x=>`${x.id}:${x.status}`).join(' · ')}. MSA: ${msa}.${v?` VRB02: ${v.count}/${v.total} h ≤02KT (${Math.round(v.share*100)}%), max ${v.max}KT.`:''} Uczenie: ${result.learning?.cells||0} komórek statystycznych.`;
-    if($('badge')){$('badge').textContent='HYBRID GOTOWY';$('badge').className='badge ok';}if($('st'))$('st').textContent=fu(Date.now()).slice(6);
-    renderNeighbors(data,inputRows);
-  }
+  function wxText(h){const d=h.tafDisplay;if(d&&Object.prototype.hasOwnProperty.call(d,'weather'))return d.weather||'';const p=h.prob||{};if(p.ts>=.5)return(+h.RR||0)>=.1?'TSRA':'TS';if(p.frozen>=.5)return'FZRA';if(p.fog>=.5&&h.visM<=900)return'FG';if(p.precip>=.5)return(+h.RR||0)>=.3?'RA':'-RA';if(p.fog>=.3&&h.visM<=5000)return'BR';return'';}
+  function upstreamText(h){const a=h.advection,n=h.sourceRow?.neighborEvidence,r=h.sourceRow?.radarSignal,parts=[];if(a)parts.push(`${a.station||'TAF'} ${Math.round((a.weight||0)*100)}%`);if(n/.contributors)parts.push(`TAF×${n.contributors} CIG ${n.targetCeilingFt?Math.round(n.targetCeilingFt):'—'}ft`);if(r)parts.push(`RAD ${Math.round(r.value)}${r.source==='cmax'?'dBZ':'mm/h'} ${r.confidence}%`);return parts.join(' · )||'—';}
+  function ddhh(t){const d=new Date(t);return pad(d.getUTCDate())+pad(d.getUTCHours());}
+  function ddhhEnd(t){const d=new Date(t);if(d.getUTCHours()===0){const q=new Date(t-1);return pad(q.getUTCDate())+'24';}return ddhh(t);}
+  function rebuild(result){let t=`TAF ${result.station} ${pad(new Date(result.issue).getUTCDate())}${pad(new Date(result.issue).getUTCHours())}${pad(new Date(result.issue).getUTCMinutes())}Z ${ddhh(result.start)}/${ddhhEnd(result.end)} ${result.base.text}`;for(const g of result.groups||[]){if(g.kind==='FM')t+=`\nFM${pad(new Date(g.start).getUTCDate())}${pad(new Date(g.start).getUTCHours())}${pad(new Date(g.start).getUTCMinutes())} ${g.payload}`;else t+=`\n${g.kind} ${ddhh(g.start)}/${ddhhEnd(g.end)} ${g.payload}`;return t+'=';}
+  function persistentLowCloudGroup(result){if(!/\bCAVOK\b/.test(result.base?.text||''))return null;const h=result.hourly||[];let i=0;while(i<h.length){const low=(h[i].clouds||[]).filter(c=>(c.cover==='BKN'||c.cover==='OVC')&&c.ft<5000).sort((a,b)=>a.ft-b.ft)[0];if(!low){i++;continue;}let j=i+1;while(j<h.length&&(h[j].clouds||[]).some(c=>(c.cover==='BKN'||c.cover==='OVC')&&c.ft<5000))j++;if(j-i>=2){const target=h[Math.min(j-1,i+1)],clouds=cloudText(target),wx=wxText(target),payload=[wx&&(+target.RR||0)>=.3?wx:'',clouds].filter(Boolean).join(' ');if(payload)return{kind:'BECMG',start:Math.max(result.start,h[i].t-HOUR),end:Math.min(result.end,h[i].t+HOUR),payload,fields:['cavok-loss','ceiling'],event:'persistent-cavok-loss'};}i=j;}return null;}
+  function operationalPostprocess(result){const g=persistentLowCloudGroup(result);if(g){const duplicate=(result.groups||[]).some(x=>x.start<=g.start+HOUR&&x.end>=g.end-HOUR&&/(BKN|OVC)/.test(x.payload||''));if(!duplicate&&(result.groups||[]).length<5){result.groups.push(g);result.groups.sort((a,b)=>a.start-b.start);result.taf=rebuild(result);result.diagnostics=result.diagnostics||{};result.diagnostics.operationalCloudTrend={active:true,reason:'persistent BKN/OVC below CAVOK cloud limit after CAVOK base',start:g.start};if(Array.isArray(result.diagnostics.reasons))result.diagnostics.reasons.push('Warstwa operacyjna: trwałe BKN/OVC <5000 ft po bazie CAVOK zostało uwzględnione jako utrata reżimu CAVOK; analizowano cały przebieg, nie jedną godzinę.');}}return result;}
 
-  async function generate(){
-    const c=selectedCycle();if(!c)throw Error('Nie udało się ustalić cyklu TAF');
-    if($('badge')){$('badge').textContent='HYBRID — LICZENIE';$('badge').className='badge';}if($('st'))$('st').textContent='archiwum / modele / MOS';if($('taf'))$('taf').textContent='Silnik hybrydowy: odczyt danych i budowa 12 h…';
-    const [data,rows0]=await Promise.all([loadArchive(),meteogramRows(c)]);if(rows0.length<8)throw Error(`Niepełny okres: ${rows0.length} h`);
-    const rows=attachUpstream(rows0,data.neighborParsed);
-    const api=window.PrognozaEPIRTAFHybridEngine;if(!api?.createEngine)throw Error('taf-hybrid-engine.js nie został załadowany');if(!engine)engine=api.createEngine({config:{station:'EPIR'}});
-    const result=engine.generate({station:'EPIR',issue:c.issue,start:c.start,end:c.end,rows,observation:data.observation,observations:data.history,msaFt:msaFt(),rowsAlreadyAnchored:false,record:true});
-    renderResult(result,data,rows);return result;
-  }
-  async function guardedGenerate(){try{return await generate();}catch(e){if($('badge')){$('badge').textContent='BŁĄD HYBRID';$('badge').className='badge bad';}if($('st'))$('st').textContent=e.message;if($('taf'))$('taf').textContent='Nie udało się wygenerować projektu TAF: '+e.message;console.error('[TAF Hybrid]',e);return null;}}
+  function renderNeighbors(data,rows){const host=$('neighborTafs'),sum=$('neighborSummary');if(!host||!sum)return;const evidence=rows.flatMap(r=>r.upstream||[]),ids=[...new Set(evidence.map(x=>x.id))];sum.textContent=ids.length?`TAF-y sąsiednie są wejściem guidance dla wszystkich 12 h: ${ids.join(', ')}. Uwzględniane są FM/BECMG oraz ryzyka TEMPO/PROB30 z opóźnieniem adwekcyjnym.`:'Brak wystarczającego sygnału adwekcyjnego z EPBY / EPPW / EPKS.';host.innerHTML=Object.keys(NSTA).map(id=>{const g=geo(EPIR,NSTA[id]),q=evidence.filter(x=>x.id===id).sort((a,b)=>b.score-a.score)[0],x=data.neighborRaw[id];return `<tr><td><b>${id}</b> ${esc(NSTA[id].name)}</td><td>${Math.round(g.bearing)}°</td><td>${Math.round(g.km)} km</td><td>${q?`${Math.round(q.score*100)}% · lag ${q.lag.toFixed(1)} h · ${q.hazards?.length||0} ryzyk`:'brak istotnego napływu'}</td><td><pre style="max-width:650px">${esc(rawOf(x)||'brak danych')}</pre></td></tr>`;}).join('');}
+  function renderResult(result,data,inputRows,radar){activeTaf=result.taf;window.PrognozaEPIRTAFHybridResult=result;window.PrognozaEPIRTAFCurrentGenerated=result.taf;if($('taf'))$('taf').textContent=result.taf;if($('metar'))$('metar').textContent=rawOf(data.observation)||'Brak METAR/SPECI';if($('metarMeta')&&data.observation)$('metarMeta').textContent=`${data.observation.source||data.observation.sources?.[0]?.name||'ARCHIWUM'} · ${fu(itemTime(data.observation))} · najnowszy METAR/SPECI`;if($('synop'))$('synop').textContent='Wyłączony z analizy TAF';if($('synopMeta'))$('synopMeta').textContent='SYNOP nie wpływa na silnik hybrydowy.';const reasons=result.diagnostics?.reasons||[];if($('reasons'))$('reasons').innerHTML=reasons.length?'<ul>'+reasons.map(x=>`<li>${esc(x)}</li>`).join('')+'</ul>':'Brak istotnych progów wymagających grup zmian.';if($('checks'))$('checks').innerHTML=[['PROB40',result.checks.noProb40],['VV',result.checks.noVV],['≤ 5 grup zmian',result.checks.max5],['Okres ważności 12 h',result.checks.periodHours===12]].map(x=>`<li class="${x[1]?'ok':'bad'}">${x[0]}: ${x[1]?'OK':'BŁĄD'}</li>`).join('');if($('hours'))$('hours').innerHTML=result.hourly.map((h,i)=>{const d=i===0&&result.base?.display?result.base.display:(h.tafDisplay||{}),wind=d.wind||windText(h),vis=d.visibility||visText(h.visM),wx=d.weather??wxText(h),clouds=d.clouds||cloudText(h),mark=d.corrected?' ✓':'';return `<tr><td>${pad(new Date(h.t).getUTCHours())}:00 UTC</td><td>${wind}</td><td>${vis}</td><td>${wx||'—'}</td><td>${clouds}${mark}</td><td>${finite(h.ceilingFt)?Math.round(h.ceilingFt)+' ft':'—'}</td><td>${Math.round((h.prob?.precip||0)*100)}% / TS ${Math.round((h.prob?.ts||0)*100)}%</td><td>FG ${Math.round((h.prob?.fog||0)*100)}% · LOW VIS ${Math.round((h.prob?.lowVis||0)*100)}%</td><td>${upstreamText(h)}</td></tr>`;}).join('');const neigh=inputRows.filter(r=>r.neighborEvidence?.contributors).length,radarActive=!!radar&&!radar.error;if($('sources'))$('sources').innerHTML=`<span class="pill ${data.observation?'ok':'bad'}">METAR/SPECI ${data.observation?'✓':'×'}</span><span class="pill warn">SYNOP wyłączony</span><span class="pill ok">Hybrid Engine v${esc(result.version)} ✓</span><span class="pill ok">multimodel ${Math.max(...result.hourly.map(h=>h.modelCount||0),0)} ✓</span><span class="pill ${neigh?'ok':'warn'}">TAF sąsiednie ${neigh?`${neigh}h ✓`:'—'}</span><span class="pill ${radarActive?'ok':'warn'}">radar nowcast ${radarActive?'✓':'—'}</span><span class="pill ok">MOS/uczenie ${esc(result.learning?.cells??0)} komórek</span><span class="pill ok">TAF Rules ✓</span>`;const d=result.diagnostics,msa=d?.msaMode==='explicit'?`${Math.round(d.msaFt)} ft`:'fallback 5000 ft';if($('conf'))$('conf').textContent=`HYBRID v${result.version} + OPS4: pewność ${result.confidence}%. Warstwy: ${d.layers.map(x=>`${x.id}:${x.status}`).join(' · ')}. MSA: ${msa}. Sąsiednie TAF: ${neigh} h. Radar: ${radarActive?`${radar.source.toUpperCase()} ${radar.confidence}/100`:'brak świeżego sygnału'}. Uczenie: ${result.learning?.cells||0} komórek.`;if($('badge')){$('badge').textContent='HYBRID OPS4 GOTOWY';$('badge').className='badge ok';}if($('st'))$('st').textContent=fu(Date.now()).slice(6);renderNeighbors(data,inputRows);}
 
-  function install(){
-    const gen=$('gen'),copy=$('copy');if(!gen)return false;
-    gen.onclick=guardedGenerate;gen.dataset.hybridEngine='1';gen.title='Generuj przez taf-hybrid-engine.js';
-    if(copy)copy.onclick=async()=>{if(!activeTaf)return;try{await navigator.clipboard.writeText(activeTaf);}catch(_){}copy.textContent='Skopiowano';setTimeout(()=>copy.textContent='Kopiuj TAF',1200);};
-    const sub=document.querySelector('.brand .sub');if(sub)sub.textContent='GENERATOR TAF v0.3.0 · HYBRID';
-    if($('badge')){$('badge').textContent='HYBRID GOTOWY DO ODŚWIEŻENIA';$('badge').className='badge';}
-    if($('st'))$('st').textContent='kliknij Odśwież i generuj';
-    return true;
-  }
+  async function generate(){const c=selectedCycle();if(!c)throw Error('Nie udało się ustalić cyklu TAF');if($('badge')){$('badge').textContent='HYBRID OPS4 — LICZENIE';$('badge').className='badge';}if($('st'))$('st').textContent='archiwum / consensus / TAF sąsiednie / radar';if($('taf'))$('taf').textContent='Silnik hybrydowy: budowa guidance z pełnych 12 h…';const [data,rows0,radar]=await Promise.all([loadArchive(),meteogramRows(c),radarSnapshot(4500)]);if(rows0.length<8)throw Error(`Niepełny okres: ${rows0.length} h`);let rows=attachUpstream(rows0,data.neighborParsed);rows=applyNeighborGuidance(rows);rows=applyRadarGuidance(rows,radar);const api=window.PrognozaEPIRTAFHybridEngine;if(!api?.createEngine)throw Error('taf-hybrid-engine.js nie został załadowany');if(!engine)engine=api.createEngine({config:{station:'EPIR'}});let result=engine.generate({station:'EPIR',issue:c.issue,start:c.start,end:c.end,rows,observation:data.observation,observations:data.history,msaFt:msaFt(),rowsAlreadyAnchored:false,record:true});result=operationalPostprocess(result);renderResult(result,data,rows,radar);return result;}
+  async function guardedGenerate(){try{return await generate();}catch(e){if($('badge')){$('badge').textContent='BŁĄD HYBRID';$('badge').className='bad';}if($('st'))$('st').textContent=e.message;if($('taf'))$('taf').textContent='Nie udało się wygenerować projektu TAF: '+e.message;console.error('[TAF Hybrid]',e);return null;}}
+  function install(){const gen=$('gen'),copy=$('copy');if(!gen)return false;gen.onclick=guardedGenerate;gen.dataset.hybridEngine='ops4';gen.title='Generuj przez Hybrid OPS4: consensus + METAR + TAF sąsiednie + radar nowcast';if(copy)copy.onclick=async()=>{if(!activeTaf)return;try{await navigator.clipboard.writeText(activeTaf);}catch(_){}copy.textContent='Skopiowano';setTimeout(()=>copy.textContent='Kopiuj TAF',1200);};const sub=document.querySelector('.brand .sub');if(sub)sub.textContent='GENERATOR TAF v0.4.0 · HYBRID OPS4';if($('badge')){$('badge').textContent='HYBRID OPS4 GOTOWY DO ODŚWIEŻENIA';$('badge').className='badge';}if($('st'))$('st').textContent='kliknij Odśwież i generuj';kickRadarBridge();return true;}
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',install,{once:true});else install();
 })();
