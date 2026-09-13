@@ -129,6 +129,38 @@
   function windText(h,force=false){
     if(force)return'VRB02KT';const raw=finite(h.windKt)?h.windKt:0;if(raw<1)return'00000KT';let s=Math.max(0,Math.round(raw));if(s%2)s++;const vrb=s<3&&(h.dirSpreadDeg>=60||!finite(h.windDir)),d=vrb?'VRB':pad(((Math.round((h.windDir||0)/10)*10)%360)||360,3);let out=d+pad(Math.min(s,98));let g=Math.max(0,Math.round(h.gustKt||0));if(g%2)g++;if(finite(h.gustKt)&&g-s>=10)out+='G'+(g>99?'P99':pad(g));return out+'KT';
   }
+  function windPeriodStable(hours){
+    const a=(hours||[]).filter(h=>finite(+h?.windKt));if(a.length<3)return false;
+    for(let i=0;i<a.length;i++)for(let j=i+1;j<a.length;j++){
+      const x=a[i],y=a[j],xs=+x.windKt||0,ys=+y.windKt||0;
+      if(Math.abs(xs-ys)>=10)return false;
+      if(finite(+x.windDir)&&finite(+y.windDir)&&circ(+x.windDir,+y.windDir)>=60&&(xs>=10||ys>=10))return false;
+      const xg=finite(+x.gustKt)&&+x.gustKt-xs>=10,yg=finite(+y.gustKt)&&+y.gustKt-ys>=10;
+      if(xg!==yg&&(xs>=15||ys>=15))return false;
+    }
+    return true;
+  }
+  function averagedPeriodWind(hours){
+    const a=(hours||[]).filter(h=>finite(+h?.windKt));if(!a.length)return null;
+    let speed=0,u=0,v=0,dw=0,gust=0,gw=0,spread=0;
+    for(const h of a){const ws=Math.max(0,+h.windKt||0);speed+=ws;if(finite(+h.windDir)){const r=rad(+h.windDir),w=Math.max(1,ws);u+=Math.sin(r)*w;v+=Math.cos(r)*w;dw+=w;}if(finite(+h.gustKt)){gust+=+h.gustKt;gw++;}}
+    const windKt=speed/a.length,windDir=dw?deg(Math.atan2(u,v)):null,gustKt=gw?gust/gw:null;
+    if(finite(windDir))for(const h of a)if(finite(+h.windDir))spread=Math.max(spread,circ(+h.windDir,windDir));
+    return{windKt,windDir,gustKt,dirSpreadDeg:spread};
+  }
+  function applyStablePeriodBaseWind(result){
+    const hours=result?.hourly||[];if(!result?.base?.state||!windPeriodStable(hours))return result;
+    const w=averagedPeriodWind(hours);if(!w)return result;
+    const token=windText(w,false),old=result.base.text||'',m=old.match(/^(?:VRB|\d{3})\d{2,3}(?:G(?:P99|\d{2,3}))?KT\b/);if(!m)return result;
+    const oldToken=m[0];
+    result.base.state={...result.base.state,windKt:w.windKt,windDir:w.windDir,gustKt:w.gustKt,dirSpreadDeg:w.dirSpreadDeg};
+    result.base.text=old.replace(oldToken,token);
+    if(result.base.display)result.base.display={...result.base.display,wind:token};
+    if(typeof result.taf==='string')result.taf=result.taf.replace(oldToken,token);
+    result.diagnostics=result.diagnostics||{};result.diagnostics.baseWindAverage={active:true,hours:hours.length,windKt:w.windKt,windDir:w.windDir,gustKt:w.gustKt,token};
+    if(Array.isArray(result.diagnostics.reasons))result.diagnostics.reasons.push(`Wiatr bazowy ${token}: średnia z ${hours.length} h, ponieważ różnice w całym okresie nie spełniają kryteriów istotnej zmiany wiatru TAF.`);
+    return result;
+  }
   function visText(v){if(!finite(v)||v>=10000)return'9999';if(v<800)return pad(Math.max(0,Math.min(750,Math.round(v/50)*50)),4);if(v<5000)return pad(Math.max(800,Math.min(4900,Math.round(v/100)*100)),4);return pad(Math.min(9000,Math.round(v/1000)*1000),4);}
   function cloudText(h){const a=(h.clouds||[]).slice().sort((x,y)=>x.ft-y.ft);if(!a.length)return'NSC';return a.slice(0,4).map(c=>`${c.cover}${pad(Math.min(999,Math.round(c.ft/100)),3)}${c.type||''}`).join(' ');}
   function wxText(h){const p=h.prob||{};if(p.ts>=0.5)return p.precip>=0.35?'TSRA':'TS';if(p.frozen>=0.5)return'FZRA';if(p.fog>=0.5&&h.visM<=1000)return h.T<=0?'FZFG':'FG';if(p.precip>=0.5)return p.snow>=0.5?'SN':'RA';if(p.fog>=0.3&&h.visM<=5000)return'BR';return'';}
@@ -160,6 +192,7 @@
     const rows=attachUpstream(rows0,data.neighborParsed);
     const api=window.PrognozaEPIRTAFHybridEngine;if(!api?.createEngine)throw Error('taf-hybrid-engine.js nie został załadowany');if(!engine)engine=api.createEngine({config:{station:'EPIR'}});
     const result=engine.generate({station:'EPIR',issue:c.issue,start:c.start,end:c.end,rows,observation:data.observation,observations:data.history,msaFt:msaFt(),rowsAlreadyAnchored:false,record:true});
+    applyStablePeriodBaseWind(result);
     renderResult(result,data,rows);return result;
   }
   async function guardedGenerate(){try{return await generate();}catch(e){if($('badge')){$('badge').textContent='BŁĄD HYBRID';$('badge').className='badge bad';}if($('st'))$('st').textContent=e.message;if($('taf'))$('taf').textContent='Nie udało się wygenerować projektu TAF: '+e.message;console.error('[TAF Hybrid]',e);return null;}}
