@@ -39,30 +39,47 @@ VISIBILITY_LOW_CASE_WEIGHT = 3.0
 VISIBILITY_CENSORED_GOOD_WEIGHT = 0.5
 VISIBILITY_EXACT_GOOD_WEIGHT = 1.0
 
+# Component-specific response speed. Wind has a deep verified EPIR sample and a
+# persistent directional bias, so it may react faster to recent model skill.
+# Cloud also has substantial history. Visibility stays conservative because
+# genuinely reduced-visibility METAR cases are much rarer and right-censored.
+COMPONENT_LEARNING = {
+    "wind": {"half_life_days": 21.0, "full_samples": 60, "peer_scale_pct": 26.0},
+    "cloud": {"half_life_days": 30.0, "full_samples": 75, "peer_scale_pct": 30.0},
+    "visibility": {"half_life_days": 45.0, "full_samples": 100, "peer_scale_pct": 32.0},
+}
+
+
+def learning_cfg(comp=None):
+    return COMPONENT_LEARNING.get(comp or "", {})
+
 
 def clamp(v, a, b):
     return max(a, min(b, v))
 
 
-def recency_weight(valid, now):
+def recency_weight(valid, now, comp=None):
     age_days = max(0.0, (now - valid).total_seconds() / 86400.0)
-    return 0.5 ** (age_days / HALF_LIFE_DAYS)
+    half_life = float(learning_cfg(comp).get("half_life_days", HALF_LIFE_DAYS))
+    return 0.5 ** (age_days / half_life)
 
 
-def confidence(n, effective_n):
+def confidence(n, effective_n, comp=None):
     if n < MIN_SAMPLES or effective_n < MIN_SAMPLES * 0.55:
         return 0.0
-    raw = (effective_n - MIN_SAMPLES * 0.55) / max(1.0, FULL_SAMPLES - MIN_SAMPLES * 0.55)
+    full_samples = float(learning_cfg(comp).get("full_samples", FULL_SAMPLES))
+    raw = (effective_n - MIN_SAMPLES * 0.55) / max(1.0, full_samples - MIN_SAMPLES * 0.55)
     # Smoothstep avoids a hard jump as soon as the minimum sample count is reached.
     x = clamp(raw, 0.0, 1.0)
     return x * x * (3.0 - 2.0 * x)
 
 
-def peer_factor(delta_pct):
+def peer_factor(delta_pct, comp=None):
     """Convert score advantage vs same-case peer median into a bounded factor."""
     if not mv.finite(delta_pct):
         return 1.0
-    return clamp(math.exp(delta_pct / PEER_SCALE_PCT), MIN_FACTOR, MAX_FACTOR)
+    scale = float(learning_cfg(comp).get("peer_scale_pct", PEER_SCALE_PCT))
+    return clamp(math.exp(delta_pct / scale), MIN_FACTOR, MAX_FACTOR)
 
 
 def weighted_mean(pairs):
@@ -137,7 +154,6 @@ def main():
         if not scores:
             continue
 
-        rw = recency_weight(valid, now)
         samples[(model, bucket)] += 1
         if m:
             raw = str(m.get("raw") or "").lstrip().upper()
@@ -159,7 +175,9 @@ def main():
 
         vis_weight = visibility_learning_weight(m, s)
         for comp, score in scores.items():
-            comp_rw = rw * (vis_weight if comp == "visibility" else 1.0)
+            comp_rw = recency_weight(valid, now, comp)
+            if comp == "visibility":
+                comp_rw *= vis_weight
             abs_scores[(model, bucket, comp)].append((score, comp_rw))
             ckey = (f.get("run_time"), f.get("valid_time"), bucket, comp)
             case_scores[ckey].append((model, score, comp_rw))
@@ -190,7 +208,7 @@ def main():
         "method": (
             "Archived operational forecasts verified against corresponding-hour EPIR METAR/SPECI and WMO 12342 SYNOP; "
             "parameter/lead factors use same-case model score minus peer median, exponential recency weighting, "
-            "sample-size shrinkage to base weights and conservative clipping; visibility learning emphasizes exact "
+            "component-specific recency/confidence response, sample-size shrinkage to base weights and conservative clipping; visibility learning emphasizes exact "
             "observed reductions below 10 km and downweights censored METAR 9999 good-visibility cases"
         ),
         "min_samples": MIN_SAMPLES,
@@ -198,6 +216,7 @@ def main():
         "half_life_days": HALF_LIFE_DAYS,
         "minimum_peer_models": MIN_PEERS,
         "factor_bounds": [MIN_FACTOR, MAX_FACTOR],
+        "component_learning": COMPONENT_LEARNING,
         "visibility_learning": {
             "threshold_m": VISIBILITY_LOW_THRESHOLD_M,
             "low_lt_10km_weight": VISIBILITY_LOW_CASE_WEIGHT,
@@ -221,8 +240,8 @@ def main():
                 mean_delta = weighted_mean(rel)
                 n = len(rel)
                 effective_n = sum(w for _v, w in rel)
-                conf = confidence(n, effective_n)
-                raw_factor = peer_factor(mean_delta) if mean_delta is not None else 1.0
+                conf = confidence(n, effective_n, comp)
+                raw_factor = peer_factor(mean_delta, comp) if mean_delta is not None else 1.0
                 factor = 1.0 + (raw_factor - 1.0) * conf
                 factor = clamp(factor, MIN_FACTOR, MAX_FACTOR)
 

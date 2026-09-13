@@ -11,7 +11,7 @@
     EPKS:{name:'Krzesiny',lat:52.3317,lon:16.9664}
   };
   const MAX_AGE_H=3.0, MAX_WEIGHT=.35;
-  const SECTOR_WIND_DIR={from:190,to:235,offset:-25,minSpeedMs:1.5};
+  const SECTOR_WIND_DIR={from:190,to:235,offset:-30,minSpeedMs:1.5};
   let snapshot=null,lastLoaded=0;
   const finite=Number.isFinite,rad=x=>x*Math.PI/180,deg=x=>(x*180/Math.PI+360)%360;
   function circular(a,b){let x=Math.abs((a||0)-(b||0))%360;return x>180?360-x:x}
@@ -113,5 +113,5 @@
     const now=Date.now();
     return Object.values(snapshot.stations).map(r=>candidate(r,z,now)).filter(Boolean).sort((a,b)=>b.score-a.score);
   }
-  window.PrognozaEPIRNeighborObservations={refresh,applySeries,latest,contextFor,applySectorWindDirection,sectorWindDirectionRule:{...SECTOR_WIND_DIR},version:'1.3.0'};
+  window.PrognozaEPIRNeighborObservations={refresh,applySeries,latest,contextFor,applySectorWindDirection,sectorWindDirectionRule:{...SECTOR_WIND_DIR},version:'1.4.0'};
 })();
