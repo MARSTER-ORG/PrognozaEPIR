@@ -214,7 +214,7 @@
       if (!toolbar || document.getElementById('lightningAlertsSettings')) return;
       const link = document.createElement('a');
       link.id = 'lightningAlertsSettings';
-      link.href = 'data/messages/lightning-alerts.html';
+      link.href = 'lightning-alerts.html';
       link.textContent = '⚡ Alarm wyładowań';
       link.title = 'Ustawienia powiadomień o wyładowaniach do 50 km od EPIR';
       link.setAttribute('aria-label','Ustawienia alarmu wyładowań');
