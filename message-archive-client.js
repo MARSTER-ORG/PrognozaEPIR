@@ -2,9 +2,6 @@
 (() => {
   const GITHUB_ROOT = 'https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/messages';
   const STATIC_ROOT = 'data/messages';
-  const RAILWAY_ROOT = 'https://central-ingestor-production.up.railway.app/data/messages';
-  const CUSTOM_ROOT = window.PROGNOZAEPIR_ARCHIVE_ROOT ? String(window.PROGNOZAEPIR_ARCHIVE_ROOT).replace(/\/+$/,'') : '';
-  const PRIMARY_ROOT = CUSTOM_ROOT || RAILWAY_ROOT;
   const TTL_MS = 30_000;
   const DAY_MS = 86_400_000;
   const cache = new Map();
@@ -44,7 +41,9 @@
     } finally { clearTimeout(timer); }
   }
 
-  function readRoots(){ return [...new Set([CUSTOM_ROOT, RAILWAY_ROOT, GITHUB_ROOT, STATIC_ROOT].filter(Boolean))]; }
+  // Browser consumers never read the ingestion server directly. GitHub archive is
+  // authoritative and GitHub Pages is the only browser fallback.
+  function readRoots(){ return [GITHUB_ROOT, STATIC_ROOT]; }
 
   async function fetchArchiveText(name, force=false){
     const clean = String(name || '').replace(/^\/+/, '');
@@ -67,7 +66,7 @@
         errors.push({root,error});
       }
     }
-    const error = new Error(`MessageArchive ${clean}: live/GitHub/static archive unavailable`);
+    const error = new Error(`MessageArchive ${clean}: GitHub/static archive unavailable`);
     error.status = allNotFound ? 404 : 0;
     error.cause = errors;
     throw error;
@@ -85,7 +84,7 @@
         return value;
       }catch(error){ errors.push({root,error}); }
     }
-    const error = new Error(`MessageArchive ${name}: live/GitHub/static archive unavailable`);
+    const error = new Error(`MessageArchive ${name}: GitHub/static archive unavailable`);
     error.cause = errors;
     throw error;
   }
@@ -265,9 +264,9 @@
   }
 
   const api = Object.freeze({
-    root:PRIMARY_ROOT, liveRoot:PRIMARY_ROOT, railwayRoot:RAILWAY_ROOT, githubRoot:GITHUB_ROOT,
+    root:GITHUB_ROOT, githubRoot:GITHUB_ROOT,
     fallbackRoot:STATIC_ROOT, staticFallbackRoot:STATIC_ROOT,
-    latest, recent, status, getLatest, getRecent, fetchText:fetchArchiveText,
+    latest, recent, status, getLatest, getRecent, fetchText: fetchArchiveText,
     sourceFor(name){ return cache.get(name)?.source || cache.get(`text:${name}`)?.source || null; },
     clear(){ cache.clear(); }
   });
