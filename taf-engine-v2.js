@@ -6,8 +6,8 @@
 })(typeof window!=='undefined'?window:globalThis,function(){
   'use strict';
 
-  const VERSION='2.3.0';
-  const NAME='TAF Engine 2.3 — Instruction First + EPIR Operational Policy';
+  const VERSION='2.3.1';
+  const NAME='TAF Engine 2.3.1 — Instruction First + EPIR Operational Policy';
   const AUTH='Instrukcja opracowywania prognoz TAF, Edycja (A), 11.2023';
   const HOUR=3600000, KT=1.9438444924406, FT=3.2808398950131;
   const VIS_THRESH=[800,1500,3000,5000];
@@ -441,7 +441,10 @@
     if(fields.includes('weather')){
       if(newWx)out.push(newWx);
       else if(oldWx)out.push('NSW');
-    } else if((fields.includes('visibility')||kind.startsWith('PROB30'))&&newWx)out.push(newWx);
+    } else if(fields.includes('visibility')||kind.startsWith('PROB30')){
+      if(newWx)out.push(newWx);
+      else if(oldWx)out.push('NSW');
+    }
     if(fields.includes('clouds')){
       const cs=selectClouds(target,msaFt);if(cs.length)out.push(...cs.map(cloudToken));else if(!cavokEligible(target,msaFt))out.push('NSC');
     } else if(fields.includes('weather')&&!selectClouds(target,msaFt).length&&!cavokEligible(target,msaFt))out.push('NSC');
@@ -567,6 +570,9 @@
         const wx=(line.match(/\b(?:FZFG|FG|BR)\b/)||[])[0]||'NONE';
         if((wx==='FG'||wx==='FZFG')&&prevailingFog!=='FG')errors.push(`TEMPO nie może prognozować pojawienia się FG: ${line}`);
         if(wx==='BR'&&prevailingFog!=='BR')errors.push(`TEMPO nie może prognozować pojawienia się BR: ${line}`);
+      }
+      if(/^PROB30\b/.test(line)&&prevailingFog!=='NONE'&&/\b(?:9999|[0-9]{4})\b/.test(line)&&!/\b(?:FZFG|FG|BR|NSW|CAVOK|DZ|RA|SN|SG|PL|FZDZ|FZRA|SHRA|SHSN|TS|TSRA|HZ|FU|DU|SA)\b/.test(line)){
+        errors.push(`PROB30 zmienia widzialność przy przeważającym ${prevailingFog}, ale nie określa zmiany zjawiska: ${line}`);
       }
       if(/^FM\d{6}\b/.test(line)){
         const b=line.replace(/^FM\d{6}\s+/,'');const w=/\b(?:VRB|\d{3})(?:P99|\d{2,3})(?:G(?:P99|\d{2,3}))?KT\b/.test(b),c=/\bCAVOK\b/.test(b),v=/\b(?:9999|\d{4})\b/.test(b),cl=/\b(?:NSC|(?:FEW|SCT|BKN|OVC)\d{3}(?:CB|TCU)?)\b/.test(b);if(!w||(!c&&(!v||!cl)))errors.push(`FM musi zawierać pełny opis: ${line}`);

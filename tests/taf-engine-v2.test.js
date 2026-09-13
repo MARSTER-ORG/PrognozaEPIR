@@ -12,7 +12,7 @@ function row(i,o={}){
   return{t:start+i*H,T:o.T??10,Td:o.Td??7,RH:o.RH??70,RR:o.RR??0,VIS:o.vis??12000,WS:(o.kt??6)/KT,WD:o.dir??220,G:(o.gust??o.kt??6)/KT,wet:o.wet??0,storm:o.storm??0,dirSpread:o.dirSpread??10,profile,ceiling:o.ceiling??null,lowH:o.lowH??null,midH:o.midH??null,highH:o.highH??null,oktaL:o.oktaL??0,oktaM:o.oktaM??0,oktaH:o.oktaH??0,mv:members,fogRisk:o.fogRisk??0,fgRisk:o.fgRisk??null,brRisk:o.brRisk??null,fogVis1000Risk:o.fogVis1000Risk??null,fogAltVisM:o.fogAltVisM??null,brAltVisM:o.brAltVisM??null,preciseTiming:o.preciseTiming??false};
 }
 const gen=(rows,opt={})=>E.createEngine().generate({station:'EPIR',issue,start,end,rows,rowsAlreadyAnchored:true,...opt});
-assert.equal(E.ENGINE_VERSION,'2.3.0');
+assert.equal(E.ENGINE_VERSION,'2.3.1');
 assert.equal(E.RULES.authority,'Instrukcja opracowywania prognoz TAF, Edycja (A), 11.2023');
 assert.equal(E.RULES.prob40,false);assert.equal(E.RULES.verticalVisibility,false);assert.equal(E.RULES.maxChangeGroups,5);
 assert.throws(()=>E.createEngine().generate({station:'EPIR',issue,start,end:start+10*H,rows:Array.from({length:10},(_,i)=>row(i)),rowsAlreadyAnchored:true}),/12 h/);
@@ -37,6 +37,7 @@ assert.equal(E.validateTaf('TAF EPIR 132300Z 1400/1412 27004KT 7000 NSC TEMPO 14
 assert.equal(E.validateTaf('TAF EPIR 132300Z 1400/1412 27004KT 9999 NSC TEMPO 1404/1406 0800 FG=',{issue,start,end}).ok,false);
 assert.equal(E.validateTaf('TAF EPIR 132300Z 1400/1412 27004KT 3000 BR NSC TEMPO 1404/1406 2000 BR=',{issue,start,end}).ok,true);
 assert.equal(E.validateTaf('TAF EPIR 132300Z 1400/1412 27004KT 0800 FG OVC004 TEMPO 1404/1406 0400 FG OVC002=',{issue,start,end}).ok,true);
+assert.equal(E.validateTaf('TAF EPIR 132300Z 1400/1412 VRB02KT 0900 FG FEW002 PROB30 1407/1409 9999=',{issue,start,end}).ok,false,'bare PROB30 visibility improvement may not silently retain prevailing FG');
 
 // PROB30: if FG is more probable than BR, encode FG alternative, not mean-vis BR.
 let rows=Array.from({length:12},(_,i)=>row(i,{vis:7000}));
@@ -50,6 +51,11 @@ r=gen(rows);assert.ok(r.taf.includes('BECMG'),r.taf);assert.match(r.taf,/BECMG[^
 // FOG ENGINE 30-49% must create PROB30 even with no deterministic threshold crossing.
 rows=Array.from({length:12},(_,i)=>row(i,{vis:8000,fogRisk:i===5?40:0,fgRisk:i===5?40:0,fogVis1000Risk:i===5?35:0,fogAltVisM:900}));
 r=gen(rows);assert.match(r.taf,/PROB30\s+1404\/1406\s+0900\s+(?:FZ)?FG/,r.taf);
+
+
+// When prevailing FG ceases only probabilistically, the group must explicitly carry NSW.
+rows=Array.from({length:12},(_,i)=>row(i,{vis:i<5?900:9999,fgRisk:i<5?70:(i===7?35:0),fogRisk:i<5?70:(i===7?35:0),fogAltVisM:800}));
+r=gen(rows);for(const line of r.taf.split(/\n/)){if(/^PROB30\b/.test(line)&&/\b9999\b/.test(line))assert.match(line,/\bNSW\b|\b(?:RA|DZ|SN|FG|BR)\b/,line);}
 
 // PROB30 BR: one 2h probability window, never duplicate TEMPO/BECMG for the same event.
 rows=Array.from({length:12},(_,i)=>row(i,{vis:7000}));
@@ -90,6 +96,6 @@ assert.equal(E.validateTaf('TAF EPIR 132300Z 1400/1412 22008KT 0500 MIFG NSC=',{
 // HTML/app must use only Engine 2.1, profile data and metre cloud display; no post-mutator stack.
 const html=fs.readFileSync(path.join(__dirname,'..','taf.html'),'utf8'),app=fs.readFileSync(path.join(__dirname,'..','taf-app-v2.js'),'utf8');
 for(const legacy of ['taf-generator-policy.js','taf-cloud-policy.js','taf-weather-policy.js','taf-gust-policy.js','taf-cavok-nsc-policy.js','taf-instruction-guard.js','taf-output-sanitizer.js','taf-hybrid-adapter.js'])assert.ok(!html.includes(legacy),'legacy mutator loaded: '+legacy);
-assert.ok(html.includes('taf-engine-v2.js?v=2.3.0'));assert.ok(html.includes('taf-app-v2.js?v=2.3.0'));assert.ok(html.includes('Chmury (m AGL)'));assert.ok(html.includes('Pułap BKN/OVC (m AGL)'));
+assert.ok(html.includes('taf-engine-v2.js?v=2.3.1'));assert.ok(html.includes('taf-app-v2.js?v=2.3.1'));assert.ok(html.includes('Chmury (m AGL)'));assert.ok(html.includes('Pułap BKN/OVC (m AGL)'));
 assert.ok(app.includes('profile:Array.isArray(z.profile)'),'app must transfer vertical cloud profile into TAF engine');assert.ok(app.includes('cloudLayers'),'table must render engine cloud layers');assert.ok(app.includes('const fgRisk=Math.max(fogScore'),'FOG score must feed FG probability directly');
-console.log('TAF Engine 2.3 tests: OK');
+console.log('TAF Engine 2.3.1 tests: OK');
