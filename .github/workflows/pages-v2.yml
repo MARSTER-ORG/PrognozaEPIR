@@ -46,6 +46,8 @@ jobs:
           Path('/tmp/prepare-site.sh').write_text('\n'.join(lines)+'\n',encoding='utf-8')
           PY
           bash /tmp/prepare-site.sh
+          # index.html loads this runtime module directly; it must be present in the Pages artifact.
+          cp neighbor-observation-context.js _site/
 
       - name: Install TAF Engine 2 production artifact
         shell: bash
@@ -95,13 +97,16 @@ jobs:
         run: |
           node --check taf-engine-v2.js
           node --check taf-app-v2.js
+          node --check neighbor-observation-context.js
           node --check _site/taf-engine-v2.js
           node --check _site/taf-app-v2.js
           node --check _site/message-archive-client.js
+          node --check _site/neighbor-observation-context.js
           node tests/taf-engine-v2.test.js
           test -s _site/taf.html
           test -s _site/taf-engine-v2.js
           test -s _site/taf-app-v2.js
+          test -s _site/neighbor-observation-context.js
           grep -F 'TAF ENGINE 2.1.0 · INSTRUCTION FIRST' _site/taf.html
           grep -F 'Chmury (m AGL)' _site/taf.html
           grep -F 'Pułap BKN/OVC (m AGL)' _site/taf.html
@@ -110,6 +115,10 @@ jobs:
           grep -F 'prognozaepir-taf-engine-v2' _site/taf.html
           grep -F 'prognozaepir-taf-engine-v2' _site/message-archive-client.js
           grep -F 'fogUntil=Date.now()+8000' _site/taf-app-v2.js
+          grep -F 'neighbor-observation-context.js?v=neighbor-obs-v4' _site/index.html
+          grep -F 'offset:-30' _site/index.html
+          ! grep -F ' · surowy ' _site/index.html
+          ! grep -F ' · korekta ' _site/index.html
           ! grep -F '<script src="taf-hybrid-adapter.js' _site/taf.html
           ! grep -F '<script src="taf-instruction-guard.js' _site/taf.html
           ! grep -F '<script src="taf-generator-policy.js' _site/taf.html
