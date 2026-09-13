@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Architecture guard for neighboring METAR/SPECI context.
 
-The neighbor observations are context only. Railway may acquire them while it
-already fetches PilotHub TAF pages, but browser consumers must read the mirrored
-GitHub MessageArchive and the main EPIR operational archive counts must remain
-separate.
+Neighbor observations are context only. Railway may acquire them while it
+already fetches PilotHub TAF pages, but browser consumers read the mirrored
+GitHub MessageArchive and the main EPIR operational archive counts remain
+separate. The canonical TAF v2 app must preserve provenance when it bridges
+consensus rows into the current TAF engine.
 """
 from pathlib import Path
 import re
@@ -24,13 +25,14 @@ collector=text('scripts/collect_neighbor_tafs.py')
 event=text('scripts/railway_ingestor_event_server.py')
 context=text('neighbor-observation-context.js')
 index=text('index.html')
-taf=text('taf.html')
+tafapp=text('taf-app-v2.js')
 mirror=text('.github/workflows/mirror-central-archive.yml')
 
 for station in ('EPBY','EPPW','EPKS'):
     if f'"{station}"' not in helper:
         errors.append(f'neighbor helper must include {station}')
-if '"EPIR"' in re.search(r'NEIGHBORS\s*=\s*\{(.*?)\n\}',helper,re.S).group(1) if re.search(r'NEIGHBORS\s*=\s*\{(.*?)\n\}',helper,re.S) else '':
+match=re.search(r'NEIGHBORS\s*=\s*\{(.*?)\n\}',helper,re.S)
+if '"EPIR"' in (match.group(1) if match else ''):
     errors.append('EPIR must not be stored in neighbor context archive')
 if 'ROOT = Path("data/messages/neighbors")' not in helper:
     errors.append('neighbor records must live below data/messages/neighbors')
@@ -43,11 +45,11 @@ if "rel.startswith(('metar/','speci/','synop/','taf/','neighbors/'))" not in mir
 if 'neighbor_observations' not in mirror:
     errors.append('archive status must document contextual neighbor observations')
 
-if 'message-archive-client.js?v=github-only-v1' not in index:
+if not re.search(r'<script\s+src=["\']message-archive-client\.js(?:\?[^"\']*)?["\']\s*></script>',index,re.I):
     errors.append('main consensus must load shared GitHub MessageArchive client')
 if 'neighbor-observation-context.js' not in index or 'PrognozaEPIRNeighborObservations?.applySeries' not in index:
     errors.append('main consensus must load/apply neighboring observations')
-if 'fetchText(' not in context or "neighbors/latest.json" not in context:
+if 'fetchText(' not in context or 'neighbors/latest.json' not in context:
     errors.append('neighbor context module must read neighbors/latest.json through MessageArchive')
 if re.search(r'https?://[^\s"\']*(?:pilothub|imgw|railway)[^\s"\']*',context,re.I):
     errors.append('browser neighbor context must not contact PilotHub/IMGW/Railway directly')
@@ -56,10 +58,12 @@ if 'MAX_WEIGHT=.35' not in context:
 if 'r.visibility_m<10000' not in context:
     errors.append('neighbor visibility logic must preserve METAR 9999 right-censoring')
 
-if 'neighborObsStation:z.neighborObsStation' not in taf:
-    errors.append('TAF engine bridge must preserve neighbor observation provenance')
-if 'OBS ${z.neighborObsStation}' not in taf:
-    errors.append('TAF upstream analysis must expose active neighbor observation signal')
+if 'neighborObsStation:z.neighborObsStation' not in tafapp:
+    errors.append('canonical TAF app must preserve neighbor observation provenance')
+if 'neighborObsAgeMin:z.neighborObsAgeMin' not in tafapp or 'neighborObsWeight:z.neighborObsWeight' not in tafapp:
+    errors.append('canonical TAF app must preserve neighbor observation age/weight')
+if 'OBS ${esc(neighborObsStations.join' not in tafapp:
+    errors.append('canonical TAF UI must expose active neighbor observation signal')
 
 # Neighbor history is intentionally outside the four authoritative EPIR counts.
 count_folder_match=re.search(r"folders=\{(.*?)\n\s*\}",mirror,re.S)
@@ -71,4 +75,4 @@ if errors:
     for e in errors:
         print(' -',e)
     sys.exit(1)
-print('Neighbor observation architecture check OK: EPBY/EPPW/EPKS context is server-acquired, GitHub-mirrored, bounded and separate from EPIR archive counts.')
+print('Neighbor observation architecture check OK: EPBY/EPPW/EPKS context is server-acquired, GitHub-mirrored, bounded, provenance-preserving and separate from EPIR archive counts.')
