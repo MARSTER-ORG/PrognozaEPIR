@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+import os, re, shutil
+from pathlib import Path
+
+ROOT=Path(__file__).resolve().parents[1]
+OUT=ROOT/'_site'
+SHA=os.environ.get('GITHUB_SHA','dev')[:12]
+PAGES=('index.html','radar.html','taf.html','sat-fog.html','arch.html','lightning-alerts.html')
+LEGACY_TAF={
+ 'taf-hybrid-engine.js','taf-hybrid-adapter.js','taf-generator-policy.js','taf-instruction-guard.js',
+ 'taf-cloud-policy.js','taf-weather-policy.js','taf-output-sanitizer.js','taf-radar-nowcast-sync.js',
+ 'taf-gust-policy.js','taf-cavok-nsc-policy.js'
+}
+REQUIRED={'taf-engine-v2.js','taf-app-v2.js','message-archive-client.js','utc-ui-guard.js','site-shell.css','site-shell.js'}
+
+if OUT.exists(): shutil.rmtree(OUT)
+OUT.mkdir()
+
+# Static client files. TAF legacy modules are explicitly excluded from production.
+for p in ROOT.iterdir():
+    if not p.is_file(): continue
+    if p.name in LEGACY_TAF: continue
+    if p.suffix.lower() in {'.html','.js','.css','.png','.svg','.ico','.webmanifest'}:
+        shutil.copy2(p,OUT/p.name)
+
+for rel in ('data/messages','data/learning'):
+    src=ROOT/rel
+    if src.exists(): shutil.copytree(src,OUT/rel,dirs_exist_ok=True)
+
+for name in PAGES:
+    p=OUT/name
+    if not p.exists(): raise SystemExit(f'missing canonical page: {name}')
+    s=p.read_text(encoding='utf-8')
+    if 'site-shell.css' not in s:
+        s=s.replace('</head>',f'  <link rel="stylesheet" href="site-shell.css?v={SHA}">\n</head>',1)
+    if 'site-shell.js' not in s:
+        s=s.replace('</body>',f'  <script src="site-shell.js?v={SHA}"></script>\n</body>',1)
+    p.write_text(s,encoding='utf-8')
+
+# Deterministic TAF production runtime: exactly one engine/app pair.
+t=OUT/'taf.html'; s=t.read_text(encoding='utf-8')
+s=re.sub(r'<meta name="prognozaepir-taf-engine-v2" content="[^"]+">','<meta name="prognozaepir-taf-engine-v2" content="2.3.0">',s,count=1)
+s=re.sub(r'taf-engine-v2\.js(?:\?v=[^"\']*)?',f'taf-engine-v2.js?v=2.3.0-{SHA}',s)
+s=re.sub(r'taf-app-v2\.js(?:\?v=[^"\']*)?',f'taf-app-v2.js?v=2.3.0-{SHA}',s)
+s=re.sub(r'src="index\.html(?:\?v=[^"]*)?"',f'src="index.html?v={SHA}"',s,count=1)
+t.write_text(s,encoding='utf-8')
+
+for name in REQUIRED:
+    if not (OUT/name).is_file(): raise SystemExit(f'missing required runtime asset: {name}')
+for name in LEGACY_TAF:
+    if (OUT/name).exists(): raise SystemExit(f'legacy TAF asset leaked to production: {name}')
+
+legacy_tokens=('taf-hybrid-engine.js','taf-hybrid-adapter.js','taf-generator-policy.js','taf-instruction-guard.js','TAF ENGINE 2.2')
+for p in OUT.glob('*.html'):
+    text=p.read_text(encoding='utf-8')
+    for token in legacy_tokens:
+        if token in text: raise SystemExit(f'{p.name}: legacy token present: {token}')
+
+# Validate local static references so stale subpage links cannot ship.
+attr=re.compile(r'(?:href|src)=["\']([^"\']+)["\']',re.I)
+missing=[]
+for p in OUT.glob('*.html'):
+    text=p.read_text(encoding='utf-8')
+    for raw in attr.findall(text):
+        ref=raw.split('#',1)[0].split('?',1)[0]
+        if not ref or ref.startswith(('http://','https://','data:','mailto:','tel:','javascript:','//')): continue
+        target=(OUT/ref.lstrip('/'))
+        if not target.exists(): missing.append(f'{p.name} -> {raw}')
+if missing: raise SystemExit('stale local references:\n'+'\n'.join(sorted(set(missing))))
+
+print(f'Canonical Pages artifact ready: {len(list(OUT.iterdir()))} top-level items; TAF 2.3 only; UI shell {SHA}')
