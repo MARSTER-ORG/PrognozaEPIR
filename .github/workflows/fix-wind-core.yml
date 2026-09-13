@@ -1,0 +1,67 @@
+name: Fix EPIR wind correction core
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-wind-core.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch consensus wind correction
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('index.html')
+          s = p.read_text(encoding='utf-8')
+
+          marker = "function sd(u,v){return{speed:Math.hypot(u,v),dir:(Math.atan2(-u,-v)*180/Math.PI+360)%360}}"
+          insert = marker + "\nconst EPIR_WIND_DIR_CORR={from:190,to:235,offset:-25,minSpeedMs:1.5};\nfunction correctEpirWindDirection(z){if(!z||!finite(Number(z.WS))||!finite(Number(z.WD)))return z;const speed=Number(z.WS),raw=((Number(z.WD)%360)+360)%360;if(speed<EPIR_WIND_DIR_CORR.minSpeedMs||raw<EPIR_WIND_DIR_CORR.from||raw>EPIR_WIND_DIR_CORR.to)return{...z,WD:raw};return{...z,WD:(raw+EPIR_WIND_DIR_CORR.offset+360)%360,windDirRawDeg:raw,windDirSectorCorrectionDeg:EPIR_WIND_DIR_CORR.offset,windDirSectorCorrectionRule:`${EPIR_WIND_DIR_CORR.from}-${EPIR_WIND_DIR_CORR.to}:${EPIR_WIND_DIR_CORR.offset}`};}"
+          if 'const EPIR_WIND_DIR_CORR=' not in s:
+              if marker not in s:
+                  raise SystemExit('index marker sd() not found')
+              s = s.replace(marker, insert, 1)
+
+          old_load = "compute();consensus=window.PrognozaEPIRNeighborObservations?.applySeries?.(consensus)||consensus;render()"
+          new_load = "compute();consensus=window.PrognozaEPIRNeighborObservations?.applySeries?.(consensus)||consensus;consensus=consensus.map(correctEpirWindDirection);render()"
+          if old_load in s:
+              s = s.replace(old_load, new_load, 1)
+          elif new_load not in s:
+              raise SystemExit('index load() consensus pipeline marker not found')
+
+          s = s.replace('neighbor-observation-context.js?v=neighbor-obs-v2','neighbor-observation-context.js?v=neighbor-obs-v3')
+          s = s.replace('v0.9.13','v0.9.14')
+          p.write_text(s, encoding='utf-8')
+
+          p = Path('neighbor-observation-context.js')
+          s = p.read_text(encoding='utf-8')
+          old1 = "if(!records.length)return applySectorWindDirection(z);"
+          new1 = "if(!records.length)return z;"
+          old2 = "return applySectorWindDirection(adjusted);"
+          new2 = "return adjusted;"
+          if old1 in s:
+              s = s.replace(old1,new1,1)
+          elif new1 not in s:
+              raise SystemExit('neighbor no-record marker not found')
+          if old2 in s:
+              s = s.replace(old2,new2,1)
+          elif new2 not in s:
+              raise SystemExit('neighbor adjusted marker not found')
+          s = s.replace("version:'1.2.0'","version:'1.3.0'")
+          p.write_text(s, encoding='utf-8')
+          PY
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name 'prognozaepir-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add index.html neighbor-observation-context.js
+          git diff --cached --quiet && exit 0
+          git commit -m 'Apply EPIR wind sector correction to final consensus'
+          git pull --rebase origin main
+          git push
