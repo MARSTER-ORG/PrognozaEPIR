@@ -11,6 +11,10 @@
     EPKS:{name:'Krzesiny',lat:52.3317,lon:16.9664}
   };
   const MAX_AGE_H=3.0, MAX_WEIGHT=.35;
+  // Fixed local EPIR correction for the persistent clockwise bias of the
+  // multimodel wind-direction blend in the SSW-SW sector. Direction only;
+  // speed/gust are left untouched. Do not correct weak/unstable flow.
+  const HARD_WIND_DIR={from:190,to:235,offset:-25,minSpeedMs:1.5};
   let snapshot=null,lastLoaded=0;
   const finite=Number.isFinite,rad=x=>x*Math.PI/180,deg=x=>(x*180/Math.PI+360)%360;
   function circular(a,b){let x=Math.abs((a||0)-(b||0))%360;return x>180?360-x:x}
@@ -27,6 +31,19 @@
   function coverOkta(c){return c==='FEW'?2:c==='SCT'?4:c==='BKN'?6:(c==='OVC'||c==='VV')?8:null}
   function timeOf(row){const t=Date.parse(row?.message_time||row?.obs_time||'');return finite(t)?t:NaN}
   function metaFor(id){return snapshot?.stations_meta?.[id]||FALLBACK_META[id]||null}
+  function normDir(value){const d=Number(value);return finite(d)?((d%360)+360)%360:NaN}
+  function applyHardWindDirection(z){
+    if(!z||!finite(Number(z.WS)))return z;
+    const speed=Number(z.WS),raw=normDir(z.WD);
+    if(!finite(raw)||speed<HARD_WIND_DIR.minSpeedMs||raw<HARD_WIND_DIR.from||raw>HARD_WIND_DIR.to)return z;
+    return{
+      ...z,
+      WD:normDir(raw+HARD_WIND_DIR.offset),
+      windDirRawDeg:Number(raw.toFixed(1)),
+      windDirSectorCorrectionDeg:HARD_WIND_DIR.offset,
+      windDirSectorCorrectionRule:`${HARD_WIND_DIR.from}-${HARD_WIND_DIR.to}:${HARD_WIND_DIR.offset}`
+    };
+  }
   async function refresh(force=false){
     if(!force&&snapshot&&Date.now()-lastLoaded<60e3)return snapshot;
     const A=window.PrognozaEPIRMessageArchive;
@@ -85,11 +102,13 @@
     return o;
   }
   function applySeries(series){
-    if(!snapshot?.stations||!Array.isArray(series)||!series.length)return series;
-    const now=Date.now(),records=Object.values(snapshot.stations).filter(Boolean);
+    if(!Array.isArray(series)||!series.length)return series;
+    const now=Date.now(),records=snapshot?.stations?Object.values(snapshot.stations).filter(Boolean):[];
     return series.map(z=>{
-      const candidates=records.map(r=>candidate(r,z,now)).filter(Boolean).sort((a,b)=>b.score-a.score);
-      return candidates.length?applyOne(z,candidates[0]):z;
+      const base=applyHardWindDirection(z);
+      if(!records.length)return base;
+      const candidates=records.map(r=>candidate(r,base,now)).filter(Boolean).sort((a,b)=>b.score-a.score);
+      return candidates.length?applyOne(base,candidates[0]):base;
     });
   }
   function latest(){return snapshot}
@@ -98,5 +117,5 @@
     const now=Date.now();
     return Object.values(snapshot.stations).map(r=>candidate(r,z,now)).filter(Boolean).sort((a,b)=>b.score-a.score);
   }
-  window.PrognozaEPIRNeighborObservations={refresh,applySeries,latest,contextFor,version:'1.0.0'};
+  window.PrognozaEPIRNeighborObservations={refresh,applySeries,latest,contextFor,applyHardWindDirection,hardWindDirectionRule:{...HARD_WIND_DIR},version:'1.1.0'};
 })();
