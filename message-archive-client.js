@@ -292,7 +292,7 @@
         : await status(true);
       return new Response(JSON.stringify(body), {
         status:200,
-        headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store, max-age=0','X-PrognozaEPIR-Source':'daily-jsonl-first'}
+        headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store, max-age=0','X-PrognozaEPIR-Source':'MessageArchive-live-first'}
       });
     }catch(error){
       console.warn(`MessageArchive legacy bridge ${name}:`, error);
@@ -303,34 +303,6 @@
   window.dispatchEvent(new CustomEvent('prognozaepir:message-archive-ready'));
 
   if (/\/taf\.html$/i.test(location.pathname)) {
-    const RAW = 'https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/';
-    const attachScript = src => new Promise((resolve,reject) => {
-      const s=document.createElement('script'); s.src=src; s.async=true;
-      s.onload=()=>resolve(); s.onerror=()=>{s.remove();reject(new Error(`Nie udało się załadować ${src}`));};
-      document.head.appendChild(s);
-    });
-    const attachRawAsBlob = async (name,version) => {
-      const response=await fetch(`${RAW}${name}?v=${version}`,{cache:'no-store'});
-      if(!response.ok) throw new Error(`TAF policy ${name}: HTTP ${response.status}`);
-      const blobUrl=URL.createObjectURL(new Blob([await response.text()],{type:'text/javascript'}));
-      try{await attachScript(blobUrl);}finally{URL.revokeObjectURL(blobUrl);}
-    };
-    const loadPolicy = async (name,version) => {
-      try{await attachScript(`${name}?v=${version}`);}
-      catch(localError){
-        try{await attachRawAsBlob(name,version);}
-        catch(rawError){const error=new Error(`Nie udało się załadować ${name}`);error.cause={localError,rawError};throw error;}
-      }
-    };
-    if(!document.querySelector('meta[name="prognozaepir-taf-engine-v2"]')){
-      (async()=>{
-        try{
-          await loadPolicy('taf-instruction-guard.js','20260909-7');
-          await loadPolicy('taf-verification-explain.js','20260910-1');
-        }catch(error){console.warn('TAF policy loader:',error);}
-      })();
-    }
-
     const tafArchiveSignature = payload => [
       payload?.aviation?.message_id || payload?.metar?.message_id || '',
       payload?.speci?.message_id || '',

@@ -1,23 +1,14 @@
 #!/usr/bin/env python3
-"""Wire FOG/MIFG to live MessageArchive and make their clock semantics explicit UTC."""
+"""Make deployed FOG/MIFG clock semantics explicit UTC.
+
+Archive routing is owned solely by message-archive-client.js. This build step
+only normalizes the remaining FOG/MIFG display/input clock semantics in the
+canonical Pages artifact.
+"""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "_site"
-
-
-def patch_index() -> None:
-    p = SITE / "index.html"
-    s = p.read_text(encoding="utf-8")
-    addon = '<script src="message-archive-fetch-bridge.js"></script>'
-    if addon not in s:
-        marker = '<script src="message-archive-client.js?v=live-jsonl-v7"></script>'
-        if marker not in s:
-            marker = '<script src="message-archive-client.js"></script>'
-        if marker not in s:
-            raise SystemExit("MessageArchive script marker not found in _site/index.html")
-        s = s.replace(marker, marker + "\n" + addon, 1)
-    p.write_text(s, encoding="utf-8")
 
 
 def patch_fog() -> None:
@@ -70,11 +61,8 @@ def patch_mifg() -> None:
 
 
 def validate() -> None:
-    index = (SITE / "index.html").read_text(encoding="utf-8")
     fog = (SITE / "fog-engine.js").read_text(encoding="utf-8")
     mifg = (SITE / "mifg-engine.js").read_text(encoding="utf-8")
-    if "message-archive-fetch-bridge.js" not in index:
-        raise SystemExit("live archive bridge not wired")
     if "function parseLocalInput(v){return v?Date.parse(/[zZ]|[+-]\\d\\d:\\d\\d$/.test(v)?v:v+'Z'):NaN;}" not in fog:
         raise SystemExit("FOG datetime-local is not UTC")
     if "timeZone:PLACE.tz" in fog or "timeZone:PLACE.tz" in mifg:
@@ -84,11 +72,10 @@ def validate() -> None:
 
 
 def main() -> int:
-    patch_index()
     patch_fog()
     patch_mifg()
     validate()
-    print("wired live MessageArchive bridge and UTC FOG/MIFG runtime")
+    print("wired explicit UTC FOG/MIFG runtime")
     return 0
 
 
