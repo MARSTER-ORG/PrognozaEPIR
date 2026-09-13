@@ -33,16 +33,20 @@ jobs:
           node --check taf-engine-v2.js
           node --check taf-app-v2.js
           node --check message-archive-client.js
+          node --check utc-ui-guard.js
           node tests/taf-engine-v2.test.js
           python3 scripts/build-pages.py
-          grep -F 'TAF ENGINE 2.3.0 · INSTRUCTION FIRST' _site/taf.html
-          grep -F 'prognozaepir-taf-engine-v2' _site/taf.html
+          grep -F 'TAF ENGINE 2.3.1 · INSTRUCTION FIRST' _site/taf.html
+          grep -F 'content="2.3.1"' _site/taf.html
           grep -F 'site-shell.css' _site/index.html
           grep -F 'site-shell.js' _site/taf.html
           test ! -e _site/taf-hybrid-engine.js
           test ! -e _site/taf-hybrid-adapter.js
           test ! -e _site/taf-generator-policy.js
           test ! -e _site/taf-instruction-guard.js
+          test ! -e _site/taf-cloud-policy.js
+          test ! -e _site/taf-weather-policy.js
+          ! grep -R -E 'taf-hybrid|taf-generator-policy|taf-instruction-guard|TAF ENGINE 2\.2' _site --include='*.html' --include='*.js'
 
   deploy:
     if: github.event_name != 'pull_request'
