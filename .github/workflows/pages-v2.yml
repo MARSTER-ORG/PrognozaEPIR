@@ -25,22 +25,21 @@ jobs:
       - name: Prepare canonical site
         run: |
           python3 scripts/prepare_pages.py
-          python3 scripts/wire_live_archive_runtime.py
+          python3 scripts/wire_fog_mifg_utc_runtime.py
 
       - name: Validate JavaScript and TAF 2.3
         run: |
-          python3 -m py_compile scripts/prepare_pages.py scripts/wire_live_archive_runtime.py
+          python3 -m py_compile scripts/prepare_pages.py scripts/wire_fog_mifg_utc_runtime.py
           for f in \
-            taf-engine-v2.js taf-app-v2.js message-archive-client.js message-archive-fetch-bridge.js neighbor-observation-context.js \
+            taf-engine-v2.js taf-app-v2.js message-archive-client.js neighbor-observation-context.js \
             fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js \
             radar-risk-policy.js lightning-alert-sw.js opera-nowcast.js opera-convection-bridge.js \
-            _site/taf-engine-v2.js _site/taf-app-v2.js _site/message-archive-client.js _site/message-archive-fetch-bridge.js \
+            _site/taf-engine-v2.js _site/taf-app-v2.js _site/message-archive-client.js \
             _site/fog-engine.js _site/observation-engine.js _site/mifg-engine.js \
             _site/radar-risk-policy.js _site/lightning-alert-sw.js; do
             node --check "$f"
           done
           node tests/taf-engine-v2.test.js
-          node tests/message-archive-fetch-bridge.test.js
 
       - name: Validate canonical artifact
         run: |
@@ -52,7 +51,6 @@ jobs:
           test -s _site/lightning-alerts.html
           test -s _site/lightning-alert-sw.js
           test -s _site/radar-risk-policy.js
-          test -s _site/message-archive-fetch-bridge.js
           test -s _site/data/messages/latest.json
           test -s _site/data/messages/recent.json
           test -s _site/data/messages/status.json
@@ -65,14 +63,16 @@ jobs:
           grep -F 'prognozaepir-taf-engine-v2' _site/taf.html
           grep -F 'radar-risk-policy.js?v=' _site/radar.html
           grep -F 'lightning-alerts.html' _site/radar.html
-          grep -F 'message-archive-fetch-bridge.js' _site/index.html
           grep -F 'observation-engine.js' _site/index.html
           grep -F 'mifg-engine.js?v=' _site/index.html
           grep -F 'fog-meteogram-overlay.js' _site/index.html
-          grep -F "MessageArchive-live-first" _site/message-archive-fetch-bridge.js
+          grep -F 'const legacyArchiveName = input =>' _site/message-archive-client.js
+          grep -F 'MessageArchive legacy bridge' _site/message-archive-client.js
           grep -F "v+'Z'" _site/fog-engine.js
           grep -F "+' UTC'" _site/fog-engine.js
           grep -F "+' UTC'" _site/mifg-engine.js
+          ! grep -F 'message-archive-fetch-bridge.js' _site/index.html
+          ! test -e _site/message-archive-fetch-bridge.js
           ! grep -F 'timeZone:PLACE.tz' _site/fog-engine.js
           ! grep -F 'timeZone:PLACE.tz' _site/mifg-engine.js
           ! grep -F 'fog-summary-layout.js' _site/index.html
