@@ -1,0 +1,62 @@
+name: Audit validate canonical runtime
+
+# Temporary pre-merge validator for the canonical-runtime audit branch.
+on:
+  push:
+    branches: [audit/canonical-runtime-20260913]
+    paths: ['.github/workflows/audit-validate.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: audit/canonical-runtime-20260913
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate JavaScript and TAF 2.3.1
+        run: |
+          node --check site-shell.js
+          node --check utc-ui-guard.js
+          node --check message-archive-client.js
+          node --check taf-engine-v2.js
+          node --check taf-app-v2.js
+          node tests/taf-engine-v2.test.js
+      - name: Validate archive, UTC and neighbor architecture
+        run: |
+          python3 scripts/check_message_archive_consumers.py
+          python3 scripts/check_neighbor_observation_context.py
+          python3 - <<'PY'
+          from pathlib import Path
+          guard=Path('utc-ui-guard.js').read_text(encoding='utf-8')
+          assert "timeZone: 'UTC'" in guard
+          assert 'data/messages/lightning-alerts.html' not in guard
+          assert "link.href = 'lightning-alerts.html';" in guard
+          client=Path('message-archive-client.js').read_text(encoding='utf-8')
+          assert 'railway.app/data/messages' not in client.lower()
+          assert 'return [GITHUB_ROOT, STATIC_ROOT];' in client
+          taf=Path('taf.html').read_text(encoding='utf-8')
+          assert 'TAF Engine 2.3.0' not in taf
+          assert 'TAF ENGINE 2.3 ·' not in taf
+          app=Path('taf-app-v2.js').read_text(encoding='utf-8')
+          assert 'TAF ENGINE 2.3 ·' not in app
+          assert 'neighborObsStation:z.neighborObsStation' in app
+          PY
+      - name: Build and validate production artifact
+        run: |
+          python3 scripts/build-pages.py
+          grep -F 'TAF ENGINE 2.3.1 · INSTRUCTION FIRST' _site/taf.html
+          grep -F 'TAF Engine 2.3.1 · czasy' _site/taf.html
+          grep -F 'content="2.3.1"' _site/taf.html
+          grep -F 'site-shell.css' _site/index.html
+          grep -F 'site-shell.js' _site/taf.html
+          test ! -e _site/taf-hybrid-engine.js
+          test ! -e _site/taf-hybrid-adapter.js
+          test ! -e _site/taf-generator-policy.js
+          test ! -e _site/taf-instruction-guard.js
+          ! grep -R -E 'taf-hybrid|taf-generator-policy|taf-instruction-guard|TAF ENGINE 2\.2|TAF Engine 2\.3\.0|data/messages/lightning-alerts\.html' _site --include='*.html' --include='*.js'

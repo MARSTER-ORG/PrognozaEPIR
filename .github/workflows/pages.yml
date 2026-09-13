@@ -3,6 +3,7 @@ name: Deploy PrognozaEPIR to GitHub Pages
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -11,334 +12,60 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  validate:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate canonical runtime
+        shell: bash
+        run: |
+          python3 -m py_compile scripts/build-pages.py
+          node --check site-shell.js
+          node --check taf-engine-v2.js
+          node --check taf-app-v2.js
+          node --check message-archive-client.js
+          node --check utc-ui-guard.js
+          node tests/taf-engine-v2.test.js
+          python3 scripts/build-pages.py
+          grep -F 'TAF ENGINE 2.3.1 · INSTRUCTION FIRST' _site/taf.html
+          grep -F 'content="2.3.1"' _site/taf.html
+          grep -F 'site-shell.css' _site/index.html
+          grep -F 'site-shell.js' _site/taf.html
+          test ! -e _site/taf-hybrid-engine.js
+          test ! -e _site/taf-hybrid-adapter.js
+          test ! -e _site/taf-generator-policy.js
+          test ! -e _site/taf-instruction-guard.js
+          test ! -e _site/taf-cloud-policy.js
+          test ! -e _site/taf-weather-policy.js
+          ! grep -R -E 'taf-hybrid|taf-generator-policy|taf-instruction-guard|TAF ENGINE 2\.2' _site --include='*.html' --include='*.js'
 
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
       - name: Configure Pages
         uses: actions/configure-pages@v5
-
-      - name: Prepare site
-        run: |
-          mkdir -p _site/data/messages _site/data/learning
-          cp index.html radar.html taf.html sat-fog.html arch.html epir-icon.svg epir-icon-192.png epir-icon-512.png \
-             index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js meteogram-visfog-split.js meteogram-visfog-cleanup.js \
-             rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js shortcut-mode.js utc-ui-guard.js \
-             cloud-learning-client.js message-archive-client.js taf-instruction-guard.js taf-generator-policy.js taf-hybrid-engine.js taf-hybrid-adapter.js \
-             radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js opera-nowcast.js opera-convection-bridge.js \
-             lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js _site/
-          cp -R data/messages/. _site/data/messages/
-          cp data/learning/cloud-skill.json data/learning/adaptive-weights.json data/learning/fog-event-skill.json _site/data/learning/
-          python3 - <<'PY'
-          from pathlib import Path
-          import os
-          import re
-
-          APP='v0.10.25 HTML'
-          ASSET_V=os.environ.get('GITHUB_SHA','dev')[:12]
-          favicon = '<link rel="icon" href="epir-icon-192.png" type="image/png" sizes="192x192">\n<link rel="shortcut icon" href="epir-icon-192.png" type="image/png">\n<link rel="apple-touch-icon" href="epir-icon-192.png">'
-          shortcut_addon = '<script src="shortcut-mode.js"></script>'
-          cloud_loader = '<script src="cloud-learning-client.js"></script>'
-          split_addon = '<script src="meteogram-visfog-split.js"></script>'
-          cleanup_addon = '<script src="meteogram-visfog-cleanup.js"></script>'
-          fog_overlay_addon = '<script src="fog-meteogram-overlay.js"></script>'
-          mifg_addon = f'<script src="mifg-engine.js?v={ASSET_V}"></script>'
-          opera_addon = f'<script src="opera-nowcast.js?v={ASSET_V}"></script>'
-          opera_convection_addon = f'<script src="opera-convection-bridge.js?v={ASSET_V}"></script>'
-
-          p=Path('_site/index.html')
-          s=p.read_text(encoding='utf-8')
-          if 'href="epir-icon-192.png"' not in s:
-              s=s.replace('<title>',favicon+'\n<title>',1)
-          s=re.sub(r'v0\.\d+\.\d+ HTML',APP,s)
-          s=re.sub(r'HTML v0\.\d+\.\d+','HTML v0.10.25',s)
-          s=s.replace('function timeline(){const now=Date.now(),t0=Math.ceil(now/3600e3)*3600e3',
-                      'function timeline(){const now=Date.now(),t0=Math.floor(now/3600e3)*3600e3')
-          icm='<a class="control-link" href="https://www.meteo.pl/um/php/meteorogram_id_um.php?ntype=0n&amp;id=2077" target="_blank" rel="noopener noreferrer">ICM UM meteogram ↗</a>'
-          radar='<a class="control-link" href="radar.html">RADAR / SAT / AI</a>'
-          taf='<a class="control-link" href="taf.html">GENERATOR TAF</a>'
-          satfog='<a class="control-link" href="sat-fog.html">SAT / FOG EUMETSAT</a>'
-          if radar not in s and icm in s:
-              s=s.replace(icm,radar+'\n    '+icm,1)
-          if taf not in s:
-              if radar in s:
-                  s=s.replace(radar,radar+'\n    '+taf,1)
-              elif icm in s:
-                  s=s.replace(icm,taf+'\n    '+icm,1)
-          if satfog not in s:
-              if taf in s:
-                  s=s.replace(taf,taf+'\n    '+satfog,1)
-              elif radar in s:
-                  s=s.replace(radar,radar+'\n    '+satfog,1)
-              elif icm in s:
-                  s=s.replace(icm,satfog+'\n    '+icm,1)
-          s=s.replace("{id:'icon_global',name:'ICON',w:.05,provider:'openmeteo'},",
-                      "{id:'icon_global',name:'ICON',w:.05,provider:'openmeteo',surfaceExclude:['visibility']},")
-          s=s.replace("const vars=prof?profileVarsFor(model):SURFACE;",
-                      "const vars=prof?profileVarsFor(model):SURFACE.filter(v=>!(model.surfaceExclude||[]).includes(v));")
-          s=s.replace("const msg=j?.error||j?.reason||j?.message||('HTTP '+r.status);",
-                      "const msg=j?.reason||j?.message||(typeof j?.error==='string'?j.error:('HTTP '+r.status));")
-
-          if cloud_loader not in s:
-              s=s.replace("<script>\n'use strict';",cloud_loader+"\n<script>\n'use strict';",1)
-
-          old_cloud="const pr=profile(items,terr),ceil=ceiling(pr)"
-          new_cloud="const cloudItems=items.map(i=>({...i,w:i.w*(window.PrognozaEPIRCloudLearning?.factor?.(i.model.id,t)||1)})),cloudSw=cloudItems.reduce((a,b)=>a+b.w,0);if(cloudSw)cloudItems.forEach(i=>i.w/=cloudSw);const pr=profile(cloudItems,terr),ceil=ceiling(pr)"
-          if old_cloud not in s:
-              raise SystemExit('Cloud Learning profile hook not found')
-          s=s.replace(old_cloud,new_cloud,1)
-
-          old_load="async function load(){setBadge('ŁADOWANIE','');failures=[];datasets.clear();demo=false;"
-          new_load="async function load(){try{await window.PrognozaEPIRCloudLearning?.loadSkill?.()}catch(_){ }setBadge('ŁADOWANIE','');failures=[];datasets.clear();demo=false;"
-          if old_load not in s:
-              raise SystemExit('Cloud Learning load hook not found')
-          s=s.replace(old_load,new_load,1)
-
-          addons=[
-              '<script src="index-fixes.js"></script>',
-              '<script src="axis-layout-fix.js"></script>',
-              '<script src="visual-style-fix.js"></script>',
-              '<script src="meteogram-layout-v2.js"></script>',
-              split_addon,
-              '<script src="rh-axis-fix.js"></script>',
-              cleanup_addon,
-              '<script src="day-night-fix.js"></script>',
-              '<script src="observation-engine.js"></script>',
-              mifg_addon,
-              fog_overlay_addon,
-              shortcut_addon,
-          ]
-          for addon in addons:
-              if addon not in s:
-                  s=s.replace('</body>',addon+'\n</body>')
-          s=s.replace('<script src="fog-engine.js"></script>\n','')
-          s=s.replace('<script src="fog-archive.js"></script>\n','')
-          p.write_text(s,encoding='utf-8')
-
-          p=Path('_site/taf.html')
-          s=p.read_text(encoding='utf-8')
-          s=re.sub(r'<iframe id="engine" src="index\.html(?:\?v=[^"]*)?"',
-                   f'<iframe id="engine" src="index.html?v={ASSET_V}"',s,count=1)
-          p.write_text(s,encoding='utf-8')
-
-          for name in ('meteogram-layout-v2.js','observation-engine.js','fog-engine.js'):
-              p=Path('_site')/name
-              s=p.read_text(encoding='utf-8')
-              s=re.sub(r"const VERSION = 'v0\.\d+\.\d+ HTML';",f"const VERSION = '{APP}';",s)
-              s=re.sub(r"const APP_VERSION = 'v0\.\d+\.\d+ HTML';",f"const APP_VERSION = '{APP}';",s)
-              if name == 'fog-engine.js':
-                  old='fogSeries=out;renderFog();'
-                  new="fogSeries=out;window.PrognozaEPIRFogSeries=fogSeries;window.dispatchEvent(new CustomEvent('prognozaepir:fog-series-updated',{detail:{count:fogSeries.length}}));renderFog();"
-                  if old not in s:
-                      raise SystemExit('Fog Engine series export hook not found')
-                  s=s.replace(old,new,1)
-              p.write_text(s,encoding='utf-8')
-
-          p=Path('_site/radar.html')
-          s=p.read_text(encoding='utf-8')
-          if 'href="epir-icon-192.png"' not in s:
-              s=s.replace('<title>',favicon+'\n<title>',1)
-          s=re.sub(r'RADAR / SAT / AI v\d+\.\d+\.\d+','RADAR / SAT / AI v0.12.3',s)
-          s=s.replace("function setDot(id,ok){$(id).className='dot '+(ok?'ok':'bad')}",
-                      "function setDot(id,ok){const el=$(id);if(el)el.className='dot '+(ok?'ok':'bad')}")
-          brand_old='<div class="brand">PrognozaEPIR <small>'
-          brand_new='<div class="brand"><a href="index.html" title="Przejdź do meteogramu" aria-label="PrognozaEPIR — meteogram" style="color:inherit;text-decoration:none;cursor:pointer">PrognozaEPIR</a> <small>'
-          if brand_old in s:
-              s=s.replace(brand_old,brand_new,1)
-          radar_addons=[
-              '<script src="radar-enhance.js"></script>',
-              '<script src="warnings-readable.js"></script>',
-              '<script src="radar-intelligence.js"></script>',
-              '<script src="echo-analysis.js"></script>',
-              '<script src="echo-fix.js"></script>',
-              '<script src="lightning-layer.js"></script>',
-              '<script src="ui-cleanup.js"></script>',
-              '<script src="map-extras.js"></script>',
-              '<script src="analysis-plus.js"></script>',
-              '<script src="range-rings-reset.js"></script>',
-              opera_addon,
-              opera_convection_addon,
-              shortcut_addon,
-          ]
-          for addon in radar_addons:
-              if addon not in s:
-                  s=s.replace('</body>',addon+'\n</body>')
-          p.write_text(s,encoding='utf-8')
-
-          for name in ('radar-enhance.js','radar-intelligence.js','echo-analysis.js','echo-fix.js','lightning-layer.js','map-extras.js','analysis-plus.js','range-rings-reset.js'):
-              p=Path('_site')/name
-              s=p.read_text(encoding='utf-8')
-              s=re.sub(r'RADAR / SAT / AI v\d+\.\d+\.\d+','RADAR / SAT / AI v0.12.3',s)
-              p.write_text(s,encoding='utf-8')
-
-          p=Path('_site/radar-enhance.js')
-          s=p.read_text(encoding='utf-8')
-          s=s.replace('    setTimeout(loadPolradProducts, 150);\n','')
-          start=s.find('  // --- Official IMGW / POLRAD product API ---')
-          end=s.rfind("  const sources = document.querySelector('.sources');")
-          if start>=0 and end>start:
-              s=s[:start]+s[end:]
-          p.write_text(s,encoding='utf-8')
-          PY
-
-      - name: Validate JavaScript
-        run: |
-          for f in index-fixes.js axis-layout-fix.js visual-style-fix.js meteogram-layout-v2.js meteogram-visfog-split.js meteogram-visfog-cleanup.js rh-axis-fix.js day-night-fix.js fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js shortcut-mode.js utc-ui-guard.js cloud-learning-client.js message-archive-client.js taf-instruction-guard.js taf-generator-policy.js taf-hybrid-engine.js taf-hybrid-adapter.js radar-enhance.js warnings-readable.js radar-intelligence.js echo-analysis.js echo-fix.js lightning-layer.js ui-cleanup.js map-extras.js analysis-plus.js range-rings-reset.js opera-nowcast.js opera-convection-bridge.js; do
-            node --check "$f"
-          done
-          node --check _site/meteogram-visfog-split.js
-          node --check _site/meteogram-visfog-cleanup.js
-          node --check _site/observation-engine.js
-          node --check _site/fog-engine.js
-          node --check _site/fog-meteogram-overlay.js
-          node --check _site/mifg-engine.js
-          node --check _site/cloud-learning-client.js
-          node --check _site/message-archive-client.js
-          node --check _site/taf-instruction-guard.js
-          node --check _site/taf-generator-policy.js
-          node --check _site/taf-hybrid-engine.js
-          node --check _site/taf-hybrid-adapter.js
-          node --check _site/utc-ui-guard.js
-          node --check _site/opera-nowcast.js
-          node --check _site/opera-convection-bridge.js
-          python3 - <<'PY'
-          from pathlib import Path
-          s=Path('_site/taf.html').read_text(encoding='utf-8')
-          js=s.split('<script>',1)[1].split('</script>',1)[0]
-          Path('/tmp/taf-inline.js').write_text(js,encoding='utf-8')
-          sf=Path('_site/sat-fog.html').read_text(encoding='utf-8')
-          sfjs=sf.rsplit('<script>',1)[1].split('</script>',1)[0]
-          Path('/tmp/sat-fog-inline.js').write_text(sfjs,encoding='utf-8')
-          PY
-          node --check /tmp/taf-inline.js
-          node --check /tmp/sat-fog-inline.js
-          node tests/taf-hybrid-engine.test.js
-
-      - name: Verify deployed features
-        run: |
-          test -s _site/epir-icon-192.png
-          test -s _site/epir-icon-512.png
-          test -s _site/taf.html
-          test -s _site/sat-fog.html
-          test -s _site/arch.html
-          test -s _site/fog-engine.js
-          test -s _site/observation-engine.js
-          test -s _site/mifg-engine.js
-          test -s _site/fog-meteogram-overlay.js
-          test -s _site/meteogram-visfog-split.js
-          test -s _site/meteogram-visfog-cleanup.js
-          test -s _site/cloud-learning-client.js
-          test -s _site/message-archive-client.js
-          test -s _site/taf-instruction-guard.js
-          test -s _site/taf-generator-policy.js
-          test -s _site/taf-hybrid-engine.js
-          test -s _site/taf-hybrid-adapter.js
-          test -s _site/utc-ui-guard.js
-          test -s _site/opera-nowcast.js
-          test -s _site/opera-convection-bridge.js
-          test -s _site/data/messages/latest.json
-          test -s _site/data/messages/recent.json
-          test -s _site/data/messages/status.json
-          test -s _site/data/messages/taf-neighbors.json
-          test -s _site/data/learning/cloud-skill.json
-          test -s _site/data/learning/adaptive-weights.json
-          test -s _site/data/learning/fog-event-skill.json
-          python3 -m json.tool _site/data/messages/latest.json >/dev/null
-          python3 -m json.tool _site/data/messages/recent.json >/dev/null
-          python3 -m json.tool _site/data/messages/status.json >/dev/null
-          python3 -m json.tool _site/data/messages/taf-neighbors.json >/dev/null
-          python3 -m json.tool _site/data/learning/cloud-skill.json >/dev/null
-          python3 -m json.tool _site/data/learning/adaptive-weights.json >/dev/null
-          python3 -m json.tool _site/data/learning/fog-event-skill.json >/dev/null
-          grep -F '<a class="control-link" href="taf.html">GENERATOR TAF</a>' _site/index.html
-          grep -F '<a class="control-link" href="sat-fog.html">SAT / FOG EUMETSAT</a>' _site/index.html
-          grep -F '<a class="control-link" href="arch.html">ARCH</a>' _site/index.html
-          grep -F 'PrognozaEPIR · ARCH' _site/arch.html
-          grep -F 'GENERATOR TAF v0.3.0 · HYBRID' _site/taf.html
-          grep -F 'TAF EPBY/EPPW/EPKS' _site/taf.html
-          grep -F 'PROB40 wyłączone' _site/taf.html
-          grep -F 'src="message-archive-client.js"' _site/taf.html
-          grep -F 'PrognozaEPIRMessageArchive' _site/taf.html
-          grep -F 'loadNeighborArchive' _site/taf.html
-          grep -F "loadPolicy('taf-instruction-guard.js'" _site/message-archive-client.js
-          ! grep -F "loadPolicy('taf-cloud-policy.js'" _site/message-archive-client.js
-          ! grep -F "loadPolicy('taf-weather-policy.js'" _site/message-archive-client.js
-          ! grep -F "loadPolicy('taf-output-sanitizer.js'" _site/message-archive-client.js
-          ! grep -F "loadPolicy('taf-radar-nowcast-sync.js'" _site/message-archive-client.js
-          ! grep -F 'taf-archive-source.js' _site/taf.html
-          ! grep -F 'loadImgwLive(' _site/taf.html
-          ! grep -F 'awiacja.imgw.pl' _site/taf.html
-          ! grep -F 'aviationweather.gov' _site/taf.html
-          ! grep -F '/api/taf-proxy' _site/taf.html
-          grep -F 'https://view.eumetsat.int/geoserver/wms' _site/sat-fog.html
-          grep -F 'Night Microphysics RGB' _site/sat-fog.html
-          grep -F 'Interpretacja punktu' _site/sat-fog.html
-          grep -F '<script src="meteogram-visfog-split.js"></script>' _site/index.html
-          grep -F '<script src="meteogram-visfog-cleanup.js"></script>' _site/index.html
-          grep -F '<script src="observation-engine.js"></script>' _site/index.html
-          grep -F '<script src="mifg-engine.js?v=' _site/index.html
-          grep -F 'src="index.html?v=' _site/taf.html
-          grep -F '<script src="fog-meteogram-overlay.js"></script>' _site/index.html
-          grep -F '<script src="cloud-learning-client.js"></script>' _site/index.html
-          grep -F "{id:'visfog',h:96,label:'widzialność / mgła'" _site/meteogram-visfog-split.js
-          grep -F "x.id === 'visfog'" _site/fog-meteogram-overlay.js
-          grep -F "panelId !== 'visfog'" _site/fog-meteogram-overlay.js
-          grep -F 'const cloudItems=items.map' _site/index.html
-          grep -F 'PrognozaEPIRCloudLearning?.factor' _site/index.html
-          grep -F 'PrognozaEPIRCloudLearning?.loadSkill' _site/index.html
-          grep -F "if(row)items.push({model:m,row,w:m.w,elevation:ds.elevation})" _site/index.html
-          ! grep -F '<script src="fog-engine.js"></script>' _site/index.html
-          ! grep -F 'fog-archive.js' _site/index.html
-          grep -F "loadFogEngine" _site/observation-engine.js
-          grep -F "automatic-epir-metar-synop" _site/observation-engine.js
-          grep -F "shallowFog" _site/observation-engine.js
-          grep -F "SYNOP ma pierwszeństwo" _site/observation-engine.js
-          grep -F "PrognozaEPIRMessageArchive" _site/observation-engine.js
-          grep -F "archiveRecent" _site/observation-engine.js
-          grep -F "osobny score płytkiej mgły" _site/mifg-engine.js
-          grep -F "surface_temperature" _site/mifg-engine.js
-          grep -F "EPIR FOG ENGINE v1.2" _site/fog-engine.js
-          grep -F "KNMI_MODEL = 'knmi_harmonie_arome_europe'" _site/fog-engine.js
-          grep -F "FOG_EVENT_SKILL_URL" _site/fog-engine.js
-          grep -F "PrognozaEPIRFogSeries" _site/fog-engine.js
-          grep -F "prognozaepir:fog-series-updated" _site/fog-engine.js
-          grep -F "FOG_DRAW_THRESHOLD = 40" _site/fog-meteogram-overlay.js
-          grep -F "FOG 40" _site/fog-meteogram-overlay.js
-          grep -F "if(o.freezingFog||o.fog)" _site/fog-engine.js
-          grep -F "if(o.mist)" _site/fog-engine.js
-          grep -F "Math.floor(now/3600e3)" _site/index.html
-          ! grep -F "Math.ceil(now/3600e3)" _site/index.html
-          grep -F "v0.10.25 HTML" _site/index.html
-          grep -F '<link rel="icon" href="epir-icon-192.png" type="image/png" sizes="192x192">' _site/index.html
-          grep -F '<script src="shortcut-mode.js"></script>' _site/index.html
-          grep -F '<script src="day-night-fix.js"></script>' _site/index.html
-          grep -F "RADAR / SAT / AI v0.12.3" _site/range-rings-reset.js
-          grep -F 'src="opera-nowcast.js?v=' _site/radar.html
-          grep -F '<h2>OPERA CIRRUS</h2>' _site/opera-nowcast.js
-          grep -F "mapButton.textContent = 'OPERA Europa CMAX'" _site/opera-nowcast.js
-          grep -F 'const ANALYSIS_RADIUS_KM = 250;' _site/opera-nowcast.js
-          grep -F 'const OPERATIONAL_RADIUS_KM = 160;' _site/opera-nowcast.js
-          grep -F 'scoutApproach' _site/opera-nowcast.js
-          grep -F 'GeoTIFF.fromArrayBuffer' _site/opera-nowcast.js
-          grep -F 'prognozaepir:radar-fusion-updated' _site/opera-nowcast.js
-          grep -F 'PrognozaEPIRConvectionRadarEvidence' _site/opera-convection-bridge.js
-          grep -F 'TCu / Cb · zagrożenie dla EPIR 0–3 h' _site/opera-convection-bridge.js
-          grep -F "eta.textContent = 'brak'" _site/opera-convection-bridge.js
-
+      - name: Build canonical site
+        run: python3 scripts/build-pages.py
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
           path: _site
-
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

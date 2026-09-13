@@ -1,32 +1,44 @@
-name: Enforce global UTC policy
+name: Validate global UTC policy
 
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: enforce-global-utc-main
-  cancel-in-progress: false
+  group: validate-global-utc-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  enforce:
-    if: github.actor != 'github-actions[bot]' || github.event_name == 'workflow_dispatch'
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: main
-          fetch-depth: 0
 
-      - name: Apply project-wide UTC rule
-        run: python3 scripts/enforce_global_utc.py
-
-      - name: Validate UTC rule
-        run: python3 scripts/enforce_global_utc.py --check
+      - name: Validate UTC runtime invariant
+        shell: bash
+        run: |
+          node --check utc-ui-guard.js
+          python3 - <<'PY'
+          from pathlib import Path
+          pages=['index.html','arch.html','taf.html','radar.html','sat-fog.html','lightning-alerts.html']
+          for page in pages:
+              p=Path(page)
+              if not p.exists():
+                  raise SystemExit(f'missing public page: {page}')
+              text=p.read_text(encoding='utf-8')
+              if 'utc-ui-guard.js' not in text:
+                  raise SystemExit(f'{page}: missing utc-ui-guard.js')
+          guard=Path('utc-ui-guard.js').read_text(encoding='utf-8')
+          required=["timeZone: 'UTC'",'CLOCK_RE','markUtc','toLocaleTimeString']
+          for marker in required:
+              if marker not in guard: raise SystemExit(f'UTC guard missing invariant: {marker}')
+          print('UTC runtime invariant: OK')
+          PY
 
       - name: Validate message archive consumer architecture
         run: python3 scripts/check_message_archive_consumers.py
@@ -39,7 +51,7 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import re
-          pages=['index.html','arch.html','taf.html','radar.html','sat-fog.html']
+          pages=['index.html','arch.html','taf.html','radar.html','sat-fog.html','lightning-alerts.html']
           out=Path('/tmp/utc-js'); out.mkdir(exist_ok=True)
           for page in pages:
               text=Path(page).read_text(encoding='utf-8')
@@ -48,22 +60,6 @@ jobs:
                   if block.strip():
                       (out/f'{page}.{i}.js').write_text(block,encoding='utf-8')
           PY
-          for f in /tmp/utc-js/*.js; do node --check "$f"; done
-
-      - name: Commit UTC normalization
-        run: |
-          if git diff --quiet; then
-            echo 'All pages and modules already comply with UTC policy.'
-            exit 0
-          fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git commit -m 'ui: standardize all times on UTC'
-          for attempt in 1 2 3 4; do
-            git fetch origin main
-            if git rebase origin/main && git push origin HEAD:main; then exit 0; fi
-            git rebase --abort 2>/dev/null || true
-            sleep $((attempt * 3))
-          done
-          exit 1
+          shopt -s nullglob
+          files=(/tmp/utc-js/*.js)
+          for f in "${files[@]}"; do node --check "$f"; done

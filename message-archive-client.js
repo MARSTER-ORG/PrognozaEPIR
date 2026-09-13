@@ -2,9 +2,6 @@
 (() => {
   const GITHUB_ROOT = 'https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/messages';
   const STATIC_ROOT = 'data/messages';
-  const RAILWAY_ROOT = 'https://central-ingestor-production.up.railway.app/data/messages';
-  const CUSTOM_ROOT = window.PROGNOZAEPIR_ARCHIVE_ROOT ? String(window.PROGNOZAEPIR_ARCHIVE_ROOT).replace(/\/+$/,'') : '';
-  const PRIMARY_ROOT = CUSTOM_ROOT || RAILWAY_ROOT;
   const TTL_MS = 30_000;
   const DAY_MS = 86_400_000;
   const cache = new Map();
@@ -44,7 +41,9 @@
     } finally { clearTimeout(timer); }
   }
 
-  function readRoots(){ return [...new Set([CUSTOM_ROOT, RAILWAY_ROOT, GITHUB_ROOT, STATIC_ROOT].filter(Boolean))]; }
+  // Browser consumers never read the ingestion server directly. GitHub archive is
+  // authoritative and GitHub Pages is the only browser fallback.
+  function readRoots(){ return [GITHUB_ROOT, STATIC_ROOT]; }
 
   async function fetchArchiveText(name, force=false){
     const clean = String(name || '').replace(/^\/+/, '');
@@ -67,7 +66,7 @@
         errors.push({root,error});
       }
     }
-    const error = new Error(`MessageArchive ${clean}: live/GitHub/static archive unavailable`);
+    const error = new Error(`MessageArchive ${clean}: GitHub/static archive unavailable`);
     error.status = allNotFound ? 404 : 0;
     error.cause = errors;
     throw error;
@@ -85,7 +84,7 @@
         return value;
       }catch(error){ errors.push({root,error}); }
     }
-    const error = new Error(`MessageArchive ${name}: live/GitHub/static archive unavailable`);
+    const error = new Error(`MessageArchive ${name}: GitHub/static archive unavailable`);
     error.cause = errors;
     throw error;
   }
@@ -265,9 +264,9 @@
   }
 
   const api = Object.freeze({
-    root:PRIMARY_ROOT, liveRoot:PRIMARY_ROOT, railwayRoot:RAILWAY_ROOT, githubRoot:GITHUB_ROOT,
+    root:GITHUB_ROOT, githubRoot:GITHUB_ROOT,
     fallbackRoot:STATIC_ROOT, staticFallbackRoot:STATIC_ROOT,
-    latest, recent, status, getLatest, getRecent, fetchText:fetchArchiveText,
+    latest, recent, status, getLatest, getRecent, fetchText: fetchArchiveText,
     sourceFor(name){ return cache.get(name)?.source || cache.get(`text:${name}`)?.source || null; },
     clear(){ cache.clear(); }
   });
@@ -303,34 +302,6 @@
   window.dispatchEvent(new CustomEvent('prognozaepir:message-archive-ready'));
 
   if (/\/taf\.html$/i.test(location.pathname)) {
-    const RAW = 'https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/';
-    const attachScript = src => new Promise((resolve,reject) => {
-      const s=document.createElement('script'); s.src=src; s.async=true;
-      s.onload=()=>resolve(); s.onerror=()=>{s.remove();reject(new Error(`Nie udało się załadować ${src}`));};
-      document.head.appendChild(s);
-    });
-    const attachRawAsBlob = async (name,version) => {
-      const response=await fetch(`${RAW}${name}?v=${version}`,{cache:'no-store'});
-      if(!response.ok) throw new Error(`TAF policy ${name}: HTTP ${response.status}`);
-      const blobUrl=URL.createObjectURL(new Blob([await response.text()],{type:'text/javascript'}));
-      try{await attachScript(blobUrl);}finally{URL.revokeObjectURL(blobUrl);}
-    };
-    const loadPolicy = async (name,version) => {
-      try{await attachScript(`${name}?v=${version}`);}
-      catch(localError){
-        try{await attachRawAsBlob(name,version);}
-        catch(rawError){const error=new Error(`Nie udało się załadować ${name}`);error.cause={localError,rawError};throw error;}
-      }
-    };
-    if(!document.querySelector('meta[name="prognozaepir-taf-engine-v2"]')){
-      (async()=>{
-        try{
-          await loadPolicy('taf-instruction-guard.js','20260909-7');
-          await loadPolicy('taf-verification-explain.js','20260910-1');
-        }catch(error){console.warn('TAF policy loader:',error);}
-      })();
-    }
-
     const tafArchiveSignature = payload => [
       payload?.aviation?.message_id || payload?.metar?.message_id || '',
       payload?.speci?.message_id || '',
