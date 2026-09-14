@@ -14,7 +14,7 @@ function row(i,o={}){
 const gen=(rows,opt={})=>E.createEngine().generate({station:'EPIR',issue,start,end,rows,rowsAlreadyAnchored:true,...opt});
 assert.equal(E.ENGINE_VERSION,'2.3.0');
 assert.equal(E.RULES.authority,'Instrukcja opracowywania prognoz TAF, Edycja (A), 11.2023');
-assert.equal(E.RULES.prob40,false);assert.equal(E.RULES.verticalVisibility,false);assert.equal(E.RULES.maxChangeGroups,5);assert.equal(E.RULES.maxProb30Groups,1);
+assert.equal(E.RULES.prob40,false);assert.equal(E.RULES.verticalVisibility,false);assert.equal(E.RULES.maxChangeGroups,5);assert.equal(E.RULES.maxProb30Groups,2);assert.equal(E.RULES.maxPlainProb30Groups,1);assert.equal(E.RULES.maxProb30TempoGroups,1);
 assert.throws(()=>E.createEngine().generate({station:'EPIR',issue,start,end:start+10*H,rows:Array.from({length:10},(_,i)=>row(i)),rowsAlreadyAnchored:true}),/12 h/);
 
 // Operational FOG 0-100 is a risk index, not a literal percentage for TAF.
@@ -75,6 +75,25 @@ r=gen(rows);assert.ok(r.taf.includes('BECMG'),r.taf);assert.match(r.taf,/BECMG[^
   assert.ok(!q.taf.includes('PROB30 1406/1408'),q.taf);
 }
 assert.equal(E.validateTaf('TAF EPIR 132300Z 1400/1412 22004KT 7000 NSC PROB30 1404/1406 0900 FG PROB30 1406/1408 0900 FG=',{issue,start,end}).ok,false);
+assert.equal(E.validateTaf('TAF EPIR 132300Z 1400/1412 22004KT CAVOK PROB30 1404/1406 0900 FG PROB30 TEMPO 1407/1409 26018G28KT=',{issue,start,end}).ok,true);
+assert.equal(E.validateTaf('TAF EPIR 132300Z 1400/1412 22004KT CAVOK PROB30 TEMPO 1404/1406 26018G28KT PROB30 TEMPO 1407/1409 25018G28KT=',{issue,start,end}).ok,false);
+
+// PROB30 payload carries concurrent 30-49% phenomena instead of dropping the second element.
+{
+  const mix=Array.from({length:12},(_,i)=>row(i,{vis:7000}));
+  mix[5]=row(5,{vis:7000,mv:[model({vis:700,code:61,w:.4}),model({vis:7000,code:0,w:.6})],fogAltVisM:700});
+  const q=gen(mix);
+  assert.match(q.taf,/PROB30\s+1404\/1406\s+0700\s+-RA\s+(?:FZ)?FG/,q.taf);
+}
+
+// Intermittent convective/shower alternative at 30-49% uses PROB30 TEMPO.
+{
+  const sh=Array.from({length:12},(_,i)=>row(i,{vis:9999}));
+  sh[5]=row(5,{vis:9999,mv:[model({vis:9999,code:80,w:.4}),model({vis:9999,code:0,w:.6})]});
+  const q=gen(sh);
+  assert.match(q.taf,/PROB30 TEMPO\s+1404\/1406\s+-SHRA/,q.taf);
+  assert.equal((q.taf.match(/PROB30 TEMPO/g)||[]).length,1,q.taf);
+}
 
 // Direct calibrated 30-49% probability must create PROB30 even with no deterministic threshold crossing.
 rows=Array.from({length:12},(_,i)=>row(i,{vis:8000,fogRisk:i===5?40:0,fgRisk:i===5?40:0,fogVis1000Risk:i===5?35:0,fogAltVisM:900}));

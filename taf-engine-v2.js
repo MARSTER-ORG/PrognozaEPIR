@@ -21,7 +21,9 @@
     validityHours:12,
     issueLeadHours:1,
     maxChangeGroups:5,
-    maxProb30Groups:1,
+    maxProb30Groups:2,
+    maxPlainProb30Groups:1,
+    maxProb30TempoGroups:1,
     prob30:{min:.30,maxExclusive:.50},
     prob40:false,
     verticalVisibility:false,
@@ -154,6 +156,7 @@
     const p={
       ts:weightedShare(row,m=>weatherCodeInfo(m.code).ts),
       precip:weightedShare(row,m=>weatherCodeInfo(m.code).precip),
+      shower:weightedShare(row,m=>weatherCodeInfo(m.code).shower),
       moderateHeavyPrecip:weightedShare(row,m=>weatherCodeInfo(m.code).moderateHeavy),
       snow:weightedShare(row,m=>weatherCodeInfo(m.code).snow),
       frozen:weightedShare(row,m=>weatherCodeInfo(m.code).frozen),
@@ -319,12 +322,22 @@
   }
 
   function weatherToken(s,threshold=.50){
-    const p=s.prob||{},rr=s.RR||0;
-    if(p.ts>=threshold)return p.precip>=.30||rr>=.05?'TSRA':'TS';
-    if(p.frozen>=threshold)return'FZRA';
-    const fog=prevailingFogCode(s,threshold);if(fog)return fog;
-    if(p.precip>=threshold){if(p.snow>=threshold)return rr>=.7?'+SN':rr>=.15?'SN':'-SN';return rr>=.7?'+RA':rr>=.15?'RA':'-RA';}
-    return'';
+    return weatherTokens(s,threshold)[0]||'';
+  }
+
+  function weatherTokens(s,threshold=.50){
+    const p=s.prob||{},rr=s.RR||0,out=[];
+    if(p.ts>=threshold)out.push(p.precip>=.30||rr>=.05?'TSRA':'TS');
+    else if(p.frozen>=threshold)out.push('FZRA');
+    else if(p.precip>=threshold){
+      if(p.snow>=threshold)out.push(rr>=.7?'+SN':rr>=.15?'SN':'-SN');
+      else {
+        const rain=rr>=.7?'+RA':rr>=.15?'RA':'-RA';
+        out.push(p.shower>=threshold?rain.replace('RA','SHRA'):rain);
+      }
+    }
+    const fog=prevailingFogCode(s,threshold);if(fog)out.push(fog);
+    return [...new Set(out.map(cleanWx).filter(Boolean))].slice(0,3);
   }
 
   const allowedWx=new Set(['DZ','RA','SN','SG','PL','DS','SS','FZDZ','FZRA','SHGR','SHGS','SHRA','SHSN','TSGR','TSGS','TSRA','TSSN','FG','BR','SA','DU','HZ','FU','VA','SQ','PO','FC','TS','BLDU','BLSA','BLSN','DRDU','DRSA','DRSN','FZFG']);
@@ -453,11 +466,11 @@
     const out=[];
     if(fields.includes('wind'))out.push(windToken(target));
     if(fields.includes('visibility'))out.push(visibilityToken(target.visM));
-    const oldWx=cleanWx(weatherToken(prev,.5)),newWx=cleanWx(weatherToken(target,.5));
-    if(fields.includes('weather')){
-      if(newWx)out.push(newWx);
-      else if(oldWx)out.push('NSW');
-    } else if((fields.includes('visibility')||kind.startsWith('PROB30'))&&newWx)out.push(newWx);
+    const oldWx=weatherTokens(prev,.5),newWx=weatherTokens(target,.5);
+    if(fields.includes('weather')||kind.startsWith('PROB30')){
+      if(newWx.length)out.push(...newWx);
+      else if(fields.includes('weather')&&oldWx.length)out.push('NSW');
+    } else if(fields.includes('visibility')&&newWx.length)out.push(...newWx);
     if(fields.includes('clouds')){
       const cs=selectClouds(target,msaFt);if(cs.length)out.push(...cs.map(cloudToken));else if(!cavokEligible(target,msaFt))out.push('NSC');
     } else if(fields.includes('weather')&&!selectClouds(target,msaFt).length&&!cavokEligible(target,msaFt))out.push('NSC');
@@ -465,11 +478,37 @@
     return[...new Set(out.filter(Boolean))].join(' ');
   }
 
-  function alternativeFogState(prev,target){
-    const p=target.prob||{},x={...target,prob:{...p}};
-    if(p.fg>=.30&&p.fg>=p.br){x.visM=clamp(p.alt?.fgM||800,100,900);x.prob.fg=Math.max(.5,p.fg);x.prob.br=0;x.prob.fog=Math.max(x.prob.fog||0,x.prob.fg);return x;}
-    if(p.br>=.30){x.visM=clamp(p.alt?.brM||4000,1000,5000);x.prob.br=Math.max(.5,p.br);x.prob.fg=0;x.prob.fog=Math.max(x.prob.fog||0,x.prob.br);return x;}
-    return target;
+  function alternativeProbabilityState(prev,target){
+    const p=target.prob||{},x={...target,prob:{...p,alt:{...(p.alt||{})}}};
+    for(const k of ['ts','precip','shower','moderateHeavyPrecip','snow','frozen','fg','br','fog']){
+      const v=+x.prob[k]||0;if(v>=.30&&v<.50)x.prob[k]=.50;
+    }
+    if((p.fg||0)>=.30&&(p.fg||0)>=(p.br||0)){
+      x.visM=clamp(p.alt?.fgM||800,100,900);x.prob.fg=Math.max(.5,x.prob.fg||0);x.prob.br=0;x.prob.fog=Math.max(x.prob.fog||0,x.prob.fg);return x;
+    }
+    if((p.br||0)>=.30){
+      x.visM=clamp(p.alt?.brM||4000,1000,5000);x.prob.br=Math.max(.5,x.prob.br||0);x.prob.fg=0;x.prob.fog=Math.max(x.prob.fog||0,x.prob.br);return x;
+    }
+    return x;
+  }
+
+  function alternativeFogState(prev,target){return alternativeProbabilityState(prev,target);}
+
+  function prob30Band(v){return num(v)&&+v>=.30&&+v<.50;}
+  function probabilityAlternative(prev,target){
+    const p=target.prob||{},fields=[],values=[];
+    const prevFog=fogFamily(prev,.5);
+    const altFog=(prob30Band(p.fg)&&p.fg>=p.br)?'FG':prob30Band(p.br)?'BR':'NONE';
+    const newFog=altFog!=='NONE'&&altFog!==prevFog;
+    if(newFog){fields.push('visibility');values.push(altFog==='FG'?+p.fg:+p.br);}
+    const convective=prob30Band(p.ts)||prob30Band(p.shower);
+    if(prob30Band(p.ts)){fields.push('weather','clouds');values.push(+p.ts);}
+    if(prob30Band(p.shower)){fields.push('weather');values.push(+p.shower);}
+    if(prob30Band(p.frozen)){fields.push('weather');values.push(+p.frozen);}
+    if(prob30Band(p.moderateHeavyPrecip)){fields.push('weather');values.push(+p.moderateHeavyPrecip);}
+    else if(prob30Band(p.precip)){fields.push('weather');values.push(+p.precip);}
+    if(!values.length)return null;
+    return {fields:[...new Set(fields)],probability:Math.max(...values),temporary:!newFog&&convective,newFog};
   }
 
   function twoHourWindow(t,start,end){
@@ -502,7 +541,7 @@
   function conflicts(groups,g){return groups.some(x=>overlaps(x,g)&&x.fields.some(f=>g.fields.includes(f)));}
 
   function buildChangeGroups(states,base,start,end,msaFt){
-    const groups=[],reasons=[],skipped=[];let prevailing=base,prob30Used=false;
+    const groups=[],reasons=[],skipped=[];let prevailing=base,prob30Used=false,prob30TempoUsed=false;
     for(let i=1;i<states.length&&groups.length<MAX_GROUPS;i++){
       let target=states[i],sig=significantFields(prevailing,target),fields=sig.fields;
       const prevFog=fogFamily(prevailing,.5),targetFog=fogFamily(target,.5);
@@ -510,12 +549,19 @@
       const altFogFamily=(target.prob?.fg||0)>=.30&&(target.prob?.fg||0)>=(target.prob?.br||0)?'FG':(target.prob?.br||0)>=.30?'BR':'NONE';
       const newFog=targetFog!=='NONE'&&targetFog!==prevFog;
       const newFogAlternative=altFogFamily!=='NONE'&&altFogFamily!==prevFog;
-      // Operational policy: use PROB30 at most once in one TAF and keep the first qualifying event.
-      if(newFogAlternative&&fogAltProb>=.30&&fogAltProb<.50){
-        if(prob30Used){skipped.push(`${code(target.t)} UTC: pominięto kolejne PROB30 (${altFogFamily}) — w jednym TAF zachowujemy pierwszą kwalifikującą się grupę PROB30.`);continue;}
-        target=alternativeFogState(prevailing,target);fields=[...new Set([...fields,'visibility'])];
-        const w=twoHourWindow(target.t,start,end),g={kind:'PROB30',s:w.s,e:w.e,fields,payload:payload(prevailing,target,fields,'PROB30',msaFt),probability:fogAltProb};
-        if(g.payload&&!conflicts(groups,g)){g.text=`PROB30 ${period(g.s,g.e)} ${g.payload}`;groups.push(g);prob30Used=true;reasons.push(`${g.text}: alternatywne FG/BR ${Math.round(fogAltProb*100)}%; pierwsza kwalifikująca się grupa PROB30, 2 h okno zmiany, bez TEMPO.`);}continue;
+      const alt=probabilityAlternative(prevailing,target);
+      if(alt){
+        const kind=alt.temporary?'PROB30 TEMPO':'PROB30';
+        const used=alt.temporary?prob30TempoUsed:prob30Used;
+        if(used){skipped.push(`${code(target.t)} UTC: pominięto kolejne ${kind} — polityka EPIR zachowuje pierwszą grupę danego rodzaju.`);continue;}
+        target=alternativeProbabilityState(prevailing,target);fields=[...new Set([...fields,...alt.fields])];
+        const w=twoHourWindow(target.t,start,end),g={kind,s:w.s,e:w.e,fields,payload:payload(prevailing,target,fields,kind,msaFt),probability:alt.probability};
+        if(g.payload&&!conflicts(groups,g)){
+          g.text=`${kind} ${period(g.s,g.e)} ${g.payload}`;groups.push(g);
+          if(alt.temporary)prob30TempoUsed=true;else prob30Used=true;
+          reasons.push(`${g.text}: alternatywne warunki ${Math.round(alt.probability*100)}%; ${alt.temporary?'zmiana chwilowa → PROB30 TEMPO':'zmiana alternatywna/trwała → PROB30'}.`);
+        }
+        continue;
       }
 
       if(!fields.length)continue;
@@ -525,8 +571,10 @@
       const precise=target.sourceRow?.preciseTiming===true||target.sourceRow?.preciseFm===true;
 
       if(confidence<.50){
-        if(prob30Used){skipped.push(`${code(target.t)} UTC: pominięto kolejne PROB30 — w jednym TAF zachowujemy pierwszą kwalifikującą się grupę PROB30.`);continue;}
-        kind='PROB30';const w=twoHourWindow(target.t,start,end);s=w.s;e=w.e;
+        const temporary=!!returnH&&tempoAllowed(prevailing,target,fields);
+        kind=temporary?'PROB30 TEMPO':'PROB30';
+        if((temporary&&prob30TempoUsed)||(!temporary&&prob30Used)){skipped.push(`${code(target.t)} UTC: pominięto kolejne ${kind} — polityka EPIR zachowuje pierwszą grupę danego rodzaju.`);continue;}
+        target=alternativeProbabilityState(prevailing,target);const w=twoHourWindow(target.t,start,end);s=w.s;e=w.e;
       }else if(newFog){
         // Ordinary FG/BR onset/cessation must not be introduced by TEMPO.
         if(precise){kind='FM';s=target.t;e=target.t;}
@@ -548,7 +596,7 @@
       if(kind==='FM')g.text=`FM${code(s,true)} ${g.payload}`;else g.text=`${kind} ${period(s,e)} ${g.payload}`;
       if(conflicts(groups,g)){skipped.push(`${code(target.t)} UTC: pominięto nakładającą się grupę dla tego samego parametru.`);continue;}
       groups.push(g);reasons.push(`${g.text}: ${fields.join(', ')}; pewność ${Math.round(confidence*100)}%.`);
-      if(kind==='PROB30')prob30Used=true;
+      if(kind==='PROB30')prob30Used=true;else if(kind==='PROB30 TEMPO')prob30TempoUsed=true;
       if(kind==='BECMG'||kind==='FM')prevailing=mergePrevailing(prevailing,target,fields);
     }
 
@@ -576,7 +624,12 @@
     if(finite(start)&&finite(end)&&Math.abs((end-start)/HOUR-12)>1e-6)errors.push('Okres ważności nie wynosi 12 h.');
     if(finite(issue)&&finite(start)&&Math.abs((start-issue)/HOUR-1)>1/60)errors.push('Regularny TAF musi być wydany 1 h przed początkiem ważności.');
     const count=(text.match(/\b(?:BECMG|TEMPO|FM\d{6}|PROB30(?:\s+TEMPO)?)\b/g)||[]).length;if(count>MAX_GROUPS)errors.push(`Liczba grup zmian ${count} > ${MAX_GROUPS}.`);
-    const prob30Count=(text.match(/\bPROB30\b/g)||[]).length;if(prob30Count>RULES.maxProb30Groups)errors.push(`PROB30 może wystąpić maksymalnie ${RULES.maxProb30Groups} raz w jednym TAF (polityka operacyjna EPIR).`);
+    const prob30TempoCount=(text.match(/\bPROB30\s+TEMPO\b/g)||[]).length;
+    const plainProb30Count=(text.match(/\bPROB30\b(?!\s+TEMPO)/g)||[]).length;
+    const prob30Count=plainProb30Count+prob30TempoCount;
+    if(prob30Count>RULES.maxProb30Groups)errors.push(`Łączna liczba grup PROB30/PROB30 TEMPO ${prob30Count} > ${RULES.maxProb30Groups} (polityka operacyjna EPIR).`);
+    if(plainProb30Count>RULES.maxPlainProb30Groups)errors.push(`PROB30 może wystąpić maksymalnie ${RULES.maxPlainProb30Groups} raz jako grupa alternatywnej zmiany (polityka operacyjna EPIR).`);
+    if(prob30TempoCount>RULES.maxProb30TempoGroups)errors.push(`PROB30 TEMPO może wystąpić maksymalnie ${RULES.maxProb30TempoGroups} raz (polityka operacyjna EPIR).`);
     const lines=raw.replace(/\s+(?=(?:BECMG|TEMPO|PROB30(?:\s+TEMPO)?|FM\d{6})\b)/g,'\n').split(/\n+/).map(x=>x.trim().replace(/=$/,''));
     let prevailingFog='NONE';
     for(let i=0;i<lines.length;i++){
