@@ -120,6 +120,14 @@ def _file_state(path: Path) -> tuple[str, int, int]:
         return (path.as_posix(), 0, 0)
 
 
+def _tree_state(root: Path) -> tuple:
+    if not root.exists():
+        return ((root.as_posix(), 0, 0),)
+    if root.is_file():
+        return (_file_state(root),)
+    return tuple(_file_state(path) for path in sorted(root.rglob("*")) if path.is_file())
+
+
 def taf_cache_state() -> tuple:
     return tuple(_file_state(ROOT / rel) for rel in (
         "data/taf/neighbors.json",
@@ -127,13 +135,26 @@ def taf_cache_state() -> tuple:
     ))
 
 
-def archive_payload_state() -> tuple:
-    """Cheap structural signature, not a full archive scan.
+def staging_payload_state() -> tuple:
+    """Track only durable bulletin staging, not volatile latest/recent metadata.
 
-    JSONL files are atomically rewritten only when records change. Including the
-    current neighbour TAF snapshots catches updates that intentionally do not
-    create historical neighbour TAF JSONL in the fallback tree.
+    This avoids treating changing collection timestamps/age counters as new
+    weather data. New METAR/SYNOP/manual/EPIR-TAF rows do change these trees.
     """
+    roots = (
+        ROOT / "data" / "observations" / "metar",
+        ROOT / "data" / "observations" / "synop",
+        ROOT / "data" / "observations" / "manual",
+        ROOT / "data" / "taf" / "epir",
+    )
+    items: list[tuple[str, int, int]] = []
+    for root in roots:
+        items.extend(_tree_state(root))
+    return tuple(items)
+
+
+def archive_payload_state() -> tuple:
+    """Cheap structural signature, not a full archive content scan."""
     root = ROOT / "data" / "messages"
     items = []
     if root.exists():
@@ -229,8 +250,12 @@ def cycle(*, publish: bool, state_path: Path) -> dict:
     published = False
     recovery_cycle = previous_cycle_needs_recovery(state_path)
     taf_changed = False
+    staging_changed = False
     archive_changed = False
     skipped: list[str] = []
+
+    staging_before = staging_payload_state()
+    archive_before_acquisition = archive_payload_state()
 
     try:
         results.append(run_step("observations-primary", script("collect_epir_observations.py"), attempts=2, timeout=120))
@@ -260,10 +285,17 @@ def cycle(*, publish: bool, state_path: Path) -> dict:
             log("taf-sanitize: skipped; TAF cache unchanged")
             skipped.append("taf-sanitize")
 
+        staging_changed = staging_before != staging_payload_state()
+        direct_archive_changed = archive_before_acquisition != archive_payload_state()
+
         before_normalize = archive_payload_state()
-        results.append(run_step("archive-normalize", script("message_archive.py"), attempts=1, timeout=180, critical=True))
+        if staging_changed or recovery_cycle:
+            results.append(run_step("archive-normalize", script("message_archive.py"), attempts=1, timeout=180, critical=True))
+        else:
+            log("archive-normalize: skipped; durable bulletin staging unchanged")
+            skipped.append("archive-normalize")
         after_normalize = archive_payload_state()
-        archive_changed = before_normalize != after_normalize or taf_changed
+        archive_changed = direct_archive_changed or before_normalize != after_normalize or taf_changed
 
         if archive_changed or recovery_cycle:
             results.append(run_step("archive-finalize", script("finalize_central_message_architecture.py"), attempts=1, timeout=120, critical=True))
@@ -287,8 +319,6 @@ def cycle(*, publish: bool, state_path: Path) -> dict:
             log("metar-freshness: skipped; precheck already passed and no repair was needed")
             skipped.append("metar-freshness")
 
-        # SYNOP's former per-cycle audit was informational only and duplicated
-        # the acquisition/sync path. TAF freshness remains operationally useful.
         skipped.append("synop-archive-audit")
         results.append(run_step("taf-freshness", script("check_epir_archive_freshness.py", "--taf-only", "--all-tafs"), attempts=1, timeout=60))
 
@@ -302,7 +332,7 @@ def cycle(*, publish: bool, state_path: Path) -> dict:
         cleanup_staging()
 
     state = {
-        "schema": "prognozaepir-central-ingestor-state-v3-lean",
+        "schema": "prognozaepir-central-ingestor-state-v4-lean",
         "finished_at": utc_iso(),
         "duration_s": round(time.monotonic() - started, 3),
         "ok": cycle_error is None,
@@ -310,6 +340,7 @@ def cycle(*, publish: bool, state_path: Path) -> dict:
         "error": cycle_error,
         "recovery_cycle": recovery_cycle,
         "taf_changed": taf_changed,
+        "staging_changed": staging_changed,
         "archive_changed": archive_changed,
         "skipped": skipped,
         "steps": [asdict(r) for r in results],
