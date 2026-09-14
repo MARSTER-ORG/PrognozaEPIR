@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Mirror the central message archive to Supabase.
 
-Normal runtime mirrors recent JSONL rows plus the current neighbor-TAF snapshot.
-A one-time --all-history mode is used to backfill the complete archive before
-Supabase becomes the primary read source.
+Supabase is the primary read archive. Normal runtime mirrors recent canonical
+EPIR rows, archived neighbour observations (EPBY/EPKS/EPPW METAR/SPECI), and
+the current neighbour-TAF snapshot. ``--all-history`` is reserved for one-time
+or repair backfills.
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 ARCHIVE = ROOT / "data" / "messages"
+NEIGHBOR_ROOT = ARCHIVE / "neighbors"
 STATE_PATH = Path(os.environ.get("SUPABASE_MIRROR_STATE", "/tmp/prognozaepir-supabase-mirror-state.json"))
 URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 INGEST_TOKEN = os.environ.get("SUPABASE_INGEST_TOKEN", "")
@@ -25,6 +27,7 @@ ENABLED = os.environ.get("SUPABASE_INGEST_ENABLED", "0").strip().lower() in {"1"
 TIMEOUT = max(10, int(os.environ.get("SUPABASE_INGEST_TIMEOUT_SECONDS", "30")))
 BATCH_SIZE = max(1, min(500, int(os.environ.get("SUPABASE_INGEST_BATCH_SIZE", "200"))))
 TYPES = ("metar", "speci", "taf", "synop")
+NEIGHBOR_STATIONS = ("epby", "epks", "eppw")
 
 
 def utc_iso() -> str:
@@ -61,6 +64,12 @@ def recent_day_files(lookback_days: int):
             path = ARCHIVE / kind / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.jsonl"
             if path.exists():
                 yield path
+        # Neighbour observations are intentionally kept as a compatibility
+        # JSONL mirror, but Supabase receives them as ordinary message rows.
+        for station in NEIGHBOR_STATIONS:
+            path = NEIGHBOR_ROOT / station / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.jsonl"
+            if path.exists():
+                yield path
 
 
 def all_history_files():
@@ -68,6 +77,11 @@ def all_history_files():
         root = ARCHIVE / kind
         if root.exists():
             yield from sorted(root.rglob("*.jsonl"))
+    if NEIGHBOR_ROOT.exists():
+        for station in NEIGHBOR_STATIONS:
+            root = NEIGHBOR_ROOT / station
+            if root.exists():
+                yield from sorted(root.rglob("*.jsonl"))
 
 
 def add_jsonl(path: Path, found: dict[str, dict]) -> None:
@@ -81,6 +95,8 @@ def add_jsonl(path: Path, found: dict[str, dict]) -> None:
         try:
             item = json.loads(raw_line)
         except json.JSONDecodeError:
+            # A concurrent atomic archive rewrite can briefly expose a partial
+            # file through a mounted/synchronised filesystem. Next pass retries.
             continue
         if isinstance(item, dict):
             found[stable_id(item)] = item
@@ -119,7 +135,7 @@ def post_batch(messages: list[dict]) -> dict:
     request = Request(endpoint, data=body, method="POST", headers={
         "content-type": "application/json",
         "x-ingest-token": INGEST_TOKEN,
-        "user-agent": "PrognozaEPIR-Railway-Supabase-Mirror/1.2",
+        "user-agent": "PrognozaEPIR-Railway-Supabase-Mirror/1.3",
     })
     try:
         with urlopen(request, timeout=TIMEOUT) as response:
@@ -157,9 +173,9 @@ def run(lookback_days: int, force: bool = False, all_history: bool = False) -> d
         duplicates += int(result.get("duplicates") or 0)
         for message in batch:
             seen.add(stable_id(message))
-        if len(seen) > 10000:
+        if len(seen) > 12000:
             current_ids = [stable_id(m) for m in messages]
-            seen = set(current_ids[-10000:])
+            seen = set(current_ids[-12000:])
         save_json(STATE_PATH, {"schema": "prognozaepir-supabase-mirror-state-v1", "updated_at": utc_iso(), "seen": sorted(seen)})
 
     return {
