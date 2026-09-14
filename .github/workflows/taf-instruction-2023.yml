@@ -1,4 +1,4 @@
-name: TAF Engine 2.3 / Instruction 11.2023 compliance
+name: TAF Engine 2.4 / Instruction 11.2023 compliance
 
 on:
   push:
@@ -6,17 +6,27 @@ on:
     paths:
       - 'taf.html'
       - 'taf-engine-v2.js'
+      - 'taf-engine-v24.js'
       - 'taf-app-v2.js'
       - 'message-archive-client.js'
       - 'tests/taf-engine-v2.test.js'
+      - 'tests/taf-engine-v24.test.js'
+      - 'data/learning/adaptive-weights.json'
+      - 'data/learning/fog-event-skill.json'
+      - 'data/learning/model-verification.json'
       - '.github/workflows/taf-instruction-2023.yml'
   pull_request:
     paths:
       - 'taf.html'
       - 'taf-engine-v2.js'
+      - 'taf-engine-v24.js'
       - 'taf-app-v2.js'
       - 'message-archive-client.js'
       - 'tests/taf-engine-v2.test.js'
+      - 'tests/taf-engine-v24.test.js'
+      - 'data/learning/adaptive-weights.json'
+      - 'data/learning/fog-event-skill.json'
+      - 'data/learning/model-verification.json'
       - '.github/workflows/taf-instruction-2023.yml'
   workflow_dispatch:
 
@@ -36,16 +46,25 @@ jobs:
       - name: JavaScript syntax
         run: |
           node --check taf-engine-v2.js
+          node --check taf-engine-v24.js
           node --check taf-app-v2.js
           node --check message-archive-client.js
           node --check tests/taf-engine-v2.test.js
+          node --check tests/taf-engine-v24.test.js
 
-      - name: TAF Engine 2.3 regression and Instruction 11.2023 gate
+      - name: Formal kernel regression and Instruction 11.2023 gate
         run: node tests/taf-engine-v2.test.js
 
-      - name: Confirm sole production engine
+      - name: TAF Engine 2.4 probabilistic calibration regression
+        run: node tests/taf-engine-v24.test.js
+
+      - name: Confirm sole public production engine
         run: |
-          grep -F 'TAF ENGINE 2.3.0 · INSTRUCTION FIRST' taf.html
-          grep -F 'taf-engine-v2.js?v=2.3.0' taf.html
-          grep -F 'taf-app-v2.js?v=2.3.0' taf.html
+          grep -F 'TAF ENGINE 2.4.0 · CALIBRATED · INSTRUCTION FIRST' taf.html
+          grep -F 'taf-engine-v2.js?v=2.3.0-kernel' taf.html
+          grep -F 'taf-engine-v24.js?v=2.4.0' taf.html
+          grep -F 'taf-app-v2.js?v=2.4.0-ui' taf.html
+          grep -F "const VERSION='2.4.0'" taf-engine-v24.js
+          grep -F 'FORMAL_KERNEL_VERSION:core.ENGINE_VERSION' taf-engine-v24.js
+          grep -F 'postGenerationMutation:false' taf-engine-v24.js
           ! grep -E 'taf-(hybrid-engine|hybrid-adapter|generator-policy|cloud-policy|weather-policy|gust-policy|cavok-nsc-policy|instruction-guard|output-sanitizer)\.js' taf.html
