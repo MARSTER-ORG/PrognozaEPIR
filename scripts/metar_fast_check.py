@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Lightweight official-IMGW METAR/SPECI fast path for PrognozaEPIR.
 
-This checker deliberately does only four things:
-1. query the official IMGW Aviation API for EPIR METAR/SPECI,
-2. update bounded first-seen publication-latency telemetry,
-3. stage only records missing from the authoritative central archive,
-4. run the local archive normalizer only when a new bulletin is found.
+Fast path intentionally does only:
+1. one bounded official IMGW Aviation `metar` request for EPIR METAR/SPECI,
+2. first-seen latency telemetry,
+3. stage records missing from the local fallback archive,
+4. normalize only when a new bulletin appears.
 
-It performs no TAF, SYNOP, lightning, neighbor-airport or fallback-source work.
-The same flock as central_ingestor.py prevents concurrent archive writes.
+It performs no TAF, SYNOP, lightning, neighbour-airport or multi-source fallback
+work. The five-minute full cycle owns broader recovery. Supabase synchronisation
+is performed by railway_ingestor_fast_server.py immediately after this script.
 """
 from __future__ import annotations
 
@@ -32,6 +33,8 @@ SCRIPTS = ROOT / "scripts"
 MESSAGES = ROOT / "data" / "messages"
 PYTHON = sys.executable or "python3"
 DEFAULT_LOCK = Path(os.environ.get("PROGNOZAEPIR_INGEST_LOCK", "/tmp/prognozaepir-central-ingest.lock"))
+FAST_IMGW_URL = "https://aviation-api.imgw.pl/data/last?params=metar&format=json"
+FAST_IMGW_TIMEOUT = max(4, min(15, int(os.environ.get("IMGW_FAST_HTTP_TIMEOUT_SECONDS", "10"))))
 
 
 def utc_iso() -> str:
@@ -40,8 +43,7 @@ def utc_iso() -> str:
 
 def compact_raw(value: str) -> str:
     raw = re.sub(r"\s+", " ", str(value or "")).strip().rstrip("=").strip().upper()
-    raw = re.sub(r"^(?:METAR|SPECI)\s+", "", raw)
-    return raw
+    return re.sub(r"^(?:METAR|SPECI)\s+", "", raw)
 
 
 def read_jsonl(path: Path) -> list[dict]:
@@ -95,11 +97,26 @@ def try_exclusive_lock(path: Path):
         yield handle
     finally:
         try:
-            if handle:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         except OSError:
             pass
         handle.close()
+
+
+def fetch_fast_imgw_reports() -> list[dict]:
+    """Use only the cheapest currently supported IMGW query.
+
+    If this single request fails, the fast probe degrades quietly; the normal
+    five-minute cycle still has the broader source/fallback strategy.
+    """
+    try:
+        payload = json.loads(refresh.c.get_text(FAST_IMGW_URL, timeout=FAST_IMGW_TIMEOUT))
+        rows = live._decode_imgw_payload(payload, "metar-fast")
+        print(f"IMGW Aviation fast selected query=metar rows={len(rows)}", flush=True)
+        return rows
+    except Exception as exc:
+        print(f"IMGW Aviation fast warning: {type(exc).__name__}: {exc}", flush=True)
+        return []
 
 
 def normalize_archive() -> tuple[bool, str]:
@@ -142,12 +159,11 @@ def run_once(lock_file: Path) -> int:
             return 0
 
         rows = [
-            row for row in live.fetch_imgw_api_reports()
+            row for row in fetch_fast_imgw_reports()
             if live.structurally_valid_metar(row) and refresh.latest_valid(row)
         ]
         rows.sort(key=refresh.rank)
-        query_name = rows[-1].get("imgw_api_query") if rows else None
-        telemetry = latency.observe(rows, query_name=query_name)
+        telemetry = latency.observe(rows, query_name="metar-fast")
 
         if not rows:
             print(json.dumps({
@@ -155,6 +171,7 @@ def run_once(lock_file: Path) -> int:
                 "metar_fast_check": True,
                 "checked_at": utc_iso(),
                 "ok": True,
+                "degraded": True,
                 "source": "IMGW_AVIATION_METAR",
                 "new": 0,
                 "new_by_type": {"metar": 0, "speci": 0},
