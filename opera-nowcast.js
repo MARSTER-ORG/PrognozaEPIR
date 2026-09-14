@@ -32,6 +32,7 @@
   const MAX_FRAME_AGE_MIN = 35;
   const HORIZONS = [15, 30, 45, 60];
   const QIND_MIN = 0.25;
+  const SYNC_TOLERANCE_MIN = 7.5;
 
   const $ = id => document.getElementById(id);
   const finite = Number.isFinite;
@@ -56,8 +57,12 @@
   };
   const dbzText=v=>finite(Number(v))?`${Math.round(Number(v))} dBZ`:'—';
   const pad2=n=>String(n).padStart(2,'0');
+  const normalizeMs=value=>{const n=Number(value);return finite(n)?(n<1e12?n*1000:n):NaN};
+  const polradFrameMs=p=>normalizeMs(p?.timeMs ?? p?.frameEnd ?? p?.timeSec);
 
   let running=false,lastRun=0,latestOpera=null,libPromise=null,operaLayer=null,mapEnabled=false,mapButton=null;
+  let operaFrameHistory=[];
+  let lastPolradFrame=null;
 
   function currentPoint(){
     try{
@@ -98,7 +103,7 @@
     mapButton.addEventListener('click',async()=>{
       mapEnabled=!mapEnabled;mapButton.classList.toggle('active',mapEnabled);
       if(!mapEnabled){try{if(operaLayer&&typeof map!=='undefined'&&map.hasLayer(operaLayer))map.removeLayer(operaLayer)}catch(_){}return}
-      if(latestOpera?.latest&&!latestOpera.error)renderMapLayer(latestOpera.latest);else await run(true);
+      if(latestOpera?.latest&&!latestOpera.error)renderSynchronizedMap();else await run(true);
     });
     return mapButton;
   }
@@ -268,22 +273,79 @@
 
   function polradSignal(polrad){if(!polrad||polrad.error)return false;if(polrad.source==='cmax'){const vals=Object.values(polrad.predictions||{}).map(Number).filter(finite);return vals.some(v=>v>=35)||Number(polrad.approach?.value)>=35||Number(polrad.nearest?.value)>=40}return false}
   function fuse(opera,polrad){
-    const pvec=polrad?.vector||null,ovec=opera?.vector||null,dirDiff=pvec&&ovec?circularDiff(Number(pvec.bearingDeg),Number(ovec.bearingDeg)):NaN,ps=Number(pvec?.speedKmh),os=Number(ovec?.speedKmh),speedDiff=finite(ps)&&finite(os)?Math.abs(ps-os):NaN;
-    const vectorAgree=finite(dirDiff)&&finite(speedDiff)&&dirDiff<=45&&speedDiff<=Math.max(25,ps*.6),pSignal=polradSignal(polrad),oStrong=Number(opera?.approach?.value)>=35||Number(opera?.nearest?.value)>=40||Object.values(opera?.predictions||{}).some(v=>Number(v)>=35);
-    let convLevel='brak sygnału do potwierdzenia';if(pSignal&&oStrong&&vectorAgree)convLevel='potwierdza';else if(pSignal&&oStrong)convLevel='częściowo potwierdza';else if(pSignal&&!oStrong)convLevel='nie potwierdza';
-    const level=!pvec||!ovec?'brak porównania':vectorAgree?'zgodne':finite(dirDiff)&&dirDiff<=70?'częściowo zgodne':'rozbieżne';return{updatedAt:new Date().toISOString(),level,vectorAgree,dirDiffDeg:dirDiff,speedDiffKmh:speedDiff,convectiveSupport:convLevel,polradSignal:pSignal,operaSignal:oStrong,primary:'POLRAD',secondary:'OPERA CIRRUS'};
+    const pvec=polrad?.vector||null,ovec=opera?.vector||null;
+    const pTime=normalizeMs(polrad?.frameEnd),oTime=normalizeMs(opera?.frameEnd ?? opera?.latest?.time);
+    const frameSkewMin=finite(pTime)&&finite(oTime)?Math.abs(oTime-pTime)/60000:NaN;
+    const timeAligned=finite(frameSkewMin)&&frameSkewMin<=SYNC_TOLERANCE_MIN;
+    const dirDiff=pvec&&ovec?circularDiff(Number(pvec.bearingDeg),Number(ovec.bearingDeg)):NaN,ps=Number(pvec?.speedKmh),os=Number(ovec?.speedKmh),speedDiff=finite(ps)&&finite(os)?Math.abs(ps-os):NaN;
+    const vectorAgree=timeAligned&&finite(dirDiff)&&finite(speedDiff)&&dirDiff<=45&&speedDiff<=Math.max(25,ps*.6),pSignal=polradSignal(polrad),oStrong=Number(opera?.approach?.value)>=35||Number(opera?.nearest?.value)>=40||Object.values(opera?.predictions||{}).some(v=>Number(v)>=35);
+    let convLevel='brak sygnału do potwierdzenia';
+    if(!timeAligned)convLevel='brak porównania — różny czas';
+    else if(pSignal&&oStrong&&vectorAgree)convLevel='potwierdza';
+    else if(pSignal&&oStrong)convLevel='częściowo potwierdza';
+    else if(pSignal&&!oStrong)convLevel='nie potwierdza';
+    const level=!timeAligned?'czasowo rozbieżne':!pvec||!ovec?'brak porównania':vectorAgree?'zgodne':finite(dirDiff)&&dirDiff<=70?'częściowo zgodne':'rozbieżne';
+    return{updatedAt:new Date().toISOString(),level,vectorAgree,dirDiffDeg:dirDiff,speedDiffKmh:speedDiff,convectiveSupport:convLevel,polradSignal:pSignal,operaSignal:oStrong,primary:'POLRAD',secondary:'OPERA CIRRUS',timeAligned,frameSkewMin:finite(frameSkewMin)?frameSkewMin:null,syncToleranceMin:SYNC_TOLERANCE_MIN};
   }
 
   function colorForDbz(v){if(!finite(v)||v<5)return[0,0,0,0];const p=[[62,245,140,255],[56,255,25,204],[50,230,0,89],[44,255,22,0],[38,255,136,0],[32,255,242,0],[26,255,251,216],[20,184,244,241],[14,27,200,240],[8,0,51,232],[5,0,0,204]];for(const x of p)if(v>=x[0])return[x[1],x[2],x[3],185];return[0,0,170,150]}
   function rasterDataUrl(latest){const c=document.createElement('canvas');c.width=GRID_N;c.height=GRID_N;const ctx=c.getContext('2d');if(!ctx)return null;const im=ctx.createImageData(GRID_N,GRID_N);for(let i=0;i<latest.values.length;i++){const[r,g,b,a]=colorForDbz(Number(latest.values[i])),j=i*4;im.data[j]=r;im.data[j+1]=g;im.data[j+2]=b;im.data[j+3]=a}ctx.putImageData(im,0,0);return c.toDataURL('image/png')}
-  function renderMapLayer(latest){ensureMapButton();if(!mapEnabled||!latest?.geoBounds||typeof L==='undefined'||typeof map==='undefined')return;const url=rasterDataUrl(latest);if(!url)return;try{if(operaLayer&&map.hasLayer(operaLayer))map.removeLayer(operaLayer)}catch(_){}operaLayer=L.imageOverlay(url,latest.geoBounds,{opacity:.52,interactive:false,attribution:'EUMETNET OPERA CIRRUS'});operaLayer.addTo(map)}
+  function renderMapLayer(latest){
+    ensureMapButton();
+    if(!mapEnabled||!latest?.geoBounds||typeof L==='undefined'||typeof map==='undefined')return;
+    const url=rasterDataUrl(latest);if(!url)return;
+    if(!map.getPane('operaSyncPane')){map.createPane('operaSyncPane');map.getPane('operaSyncPane').style.zIndex='475';map.getPane('operaSyncPane').style.pointerEvents='none'}
+    if(!operaLayer){
+      operaLayer=L.imageOverlay(url,latest.geoBounds,{pane:'operaSyncPane',opacity:.52,interactive:false,attribution:'EUMETNET OPERA CIRRUS'});
+      operaLayer.addTo(map);
+    }else{
+      operaLayer.setBounds(latest.geoBounds);
+      operaLayer.setUrl(url);
+      if(!map.hasLayer(operaLayer))operaLayer.addTo(map);
+    }
+  }
+
+  function hideOperaLayer(){try{if(operaLayer&&typeof map!=='undefined'&&map.hasLayer(operaLayer))map.removeLayer(operaLayer)}catch(_){}}
+
+  function closestOperaFrame(targetMs){
+    if(!finite(targetMs)||!operaFrameHistory.length)return null;
+    let best=null,bestDiff=Infinity;
+    for(const frame of operaFrameHistory){const t=normalizeMs(frame?.time),d=Math.abs(t-targetMs);if(finite(t)&&d<bestDiff){best=frame;bestDiff=d}}
+    return best?{frame:best,skewMin:bestDiff/60000}:null;
+  }
+
+  function renderSynchronizedMap(polrad=lastPolradFrame||window.PrognozaEPIRPolradState||null){
+    lastPolradFrame=polrad||lastPolradFrame;
+    if(!mapEnabled)return;
+    if(!polrad){
+      if(latestOpera?.latest)renderMapLayer(latestOpera.latest);
+      return;
+    }
+    if(!polrad.comparableToOpera){
+      hideOperaLayer();
+      if(mapButton)mapButton.title=`OPERA CMAX: brak bezpośredniego porównania z produktem ${String(polrad.short||polrad.product||'POLRAD')}`;
+      setStatus(`OPERA ukryta: ${String(polrad.short||polrad.product||'wybrany produkt POLRAD')} nie jest polem odbiciowości porównywalnym 1:1 z OPERA CMAX.`);
+      return;
+    }
+    const target=polradFrameMs(polrad),match=closestOperaFrame(target);
+    if(!match||match.skewMin>SYNC_TOLERANCE_MIN){
+      hideOperaLayer();
+      const d=match?`Δt ${match.skewMin.toFixed(1)} min`:'brak wspólnej klatki';
+      if(mapButton)mapButton.title=`OPERA ukryta: ${d}; tolerancja ${SYNC_TOLERANCE_MIN} min`;
+      setStatus(`OPERA: ${d} względem ${String(polrad.short||polrad.product||'POLRAD')} — warstwa ukryta, aby nie pokazywać przesuniętego czasu.`);
+      return;
+    }
+    renderMapLayer(match.frame);
+    if(mapButton)mapButton.title=`OPERA zsynchronizowana z ${String(polrad.short||polrad.product||'POLRAD')} · Δt ${match.skewMin.toFixed(1)} min`;
+    setStatus(`OPERA ${fmtUtcMs(match.frame.time)} · synchronizacja z ${String(polrad.short||polrad.product||'POLRAD')} · Δt ${match.skewMin.toFixed(1)} min UTC.`);
+  }
 
   function publishOpera(result){latestOpera=result;window.PrognozaEPIROperaNowcast=result;window.dispatchEvent(new CustomEvent('prognozaepir:opera-nowcast-updated',{detail:result}));publishFusion()}
   function publishFusion(){if(!latestOpera)return;const fusion=fuse(latestOpera,window.PrognozaEPIRRadarNowcast||null);window.PrognozaEPIRRadarFusion=fusion;window.dispatchEvent(new CustomEvent('prognozaepir:radar-fusion-updated',{detail:fusion}));renderFusion(fusion)}
-  function renderFusion(f){if($('opFusion'))$('opFusion').textContent=f.level;if($('opConv'))$('opConv').textContent=f.convectiveSupport;if($('opFusionSub'))$('opFusionSub').textContent=finite(f.dirDiffDeg)?`różnica kierunku ${Math.round(f.dirDiffDeg)}° · prędkości ${Math.round(f.speedDiffKmh)} km/h`:'wektor jednego źródła niedostępny'}
+  function renderFusion(f){if($('opFusion'))$('opFusion').textContent=f.level;if($('opConv'))$('opConv').textContent=f.convectiveSupport;if($('opFusionSub'))$('opFusionSub').textContent=f.frameSkewMin!=null?`Δt POLRAD–OPERA ${f.frameSkewMin.toFixed(1)} min · ${finite(f.dirDiffDeg)?'kierunek '+Math.round(f.dirDiffDeg)+'°':'brak wspólnego wektora'}`:(finite(f.dirDiffDeg)?`różnica kierunku ${Math.round(f.dirDiffDeg)}° · prędkości ${Math.round(f.speedDiffKmh)} km/h`:'wektor jednego źródła niedostępny')}
   function renderResult(r){
     ensureUi();$('operaNowcastCard')?.classList.remove('op-error');const latest=r.latest;setState('DZIAŁA','ok');$('opFrame').textContent=fmtUtcMs(latest.time);$('opFrames').textContent=`Historia: ${r.frames} klatek · ${fmtUtcMs(r.frameStart)}–${fmtUtcMs(r.frameEnd)}`;$('opMax').textContent=dbzText(latest.operational?.max);$('opNearest').textContent=r.nearest?`${Math.round(r.nearest.distance)} km ${compass16(r.nearest.bearing)} · ${dbzText(r.nearest.value)}`:r.scoutNearest?`wczesne: ${Math.round(r.scoutNearest.distance)} km ${compass16(r.scoutNearest.bearing)} · ${dbzText(r.scoutNearest.value)}`:'brak ≥27 dBZ do 250 km';$('opMotion').textContent=r.vector?`${compass16(r.vector.bearingDeg)} · ${Math.round(r.vector.speedKmh)} km/h`:'brak stabilnego ruchu';$('opTrend').textContent=`trend: ${r.trend.label}`;$('opQind').textContent=latest.qUsable?`QIND ${Math.round(latest.qMean*100)}/100`:'QIND bez osobnego pasma';const oa=latest.operational?.area||{ge35:0,ge40:0,ge45:0,ge50:0};$('opArea').textContent=`0–160 km: ≥35 ${oa.ge35} · ≥40 ${oa.ge40} · ≥45 ${oa.ge45} · ≥50 ${oa.ge50}`;$('opPred').textContent=HORIZONS.map(h=>`+${h} ${dbzText(r.predictions[h])}`).join(' · ');
-    const eta=r.approach?Math.round(r.approach.tHours*60):null,scoutEta=r.scoutApproach?Math.round(r.scoutApproach.tHours*60):null;$('opSummary').textContent=r.approach?`Podejście ≤30 km za ok. ${eta} min.`:r.scoutApproach?`Wczesne wykrycie 160–250 km: możliwe podejście ≤30 km za ok. ${scoutEta} min.`:'Brak echa ≥27 dBZ na torze do EPIR w analizie 250 km.';setStatus(`klatka ${fmtUtcMs(latest.time)} · analiza 250 km · operacyjna 160 km · central-ingestor`);renderMapLayer(latest);
+    const eta=r.approach?Math.round(r.approach.tHours*60):null,scoutEta=r.scoutApproach?Math.round(r.scoutApproach.tHours*60):null;$('opSummary').textContent=r.approach?`Podejście ≤30 km za ok. ${eta} min.`:r.scoutApproach?`Wczesne wykrycie 160–250 km: możliwe podejście ≤30 km za ok. ${scoutEta} min.`:'Brak echa ≥27 dBZ na torze do EPIR w analizie 250 km.';setStatus(`klatka ${fmtUtcMs(latest.time)} · analiza 250 km · operacyjna 160 km · central-ingestor`);renderSynchronizedMap();
   }
   function renderError(msg){ensureUi();$('operaNowcastCard')?.classList.add('op-error');setState('NIEDOSTĘPNA','bad');$('opFrame').textContent='—';$('opSummary').textContent='OPERA niedostępna. POLRAD działa niezależnie.';setStatus(`OPERA: ${msg}`);try{if(operaLayer&&typeof map!=='undefined'&&map.hasLayer(operaLayer))map.removeLayer(operaLayer)}catch(_){}
   }
@@ -302,12 +364,13 @@
       const latest=grids.at(-1),age=(Date.now()-latest.time)/60000;if(age>50)throw new Error(`ostatnia klatka ma ${Math.round(age)} min`);
       setStatus(`OPERA: przygotowuję czytelną warstwę 1 km · ${fmtUtcMs(latest.time)}`);
       try{latest.display=await readDisplayRaster(latest,p)}catch(e){console.warn('OPERA 1 km display raster unavailable; using 4 km fallback',e)}
+      operaFrameHistory=grids.slice();
       const vector=vectorStats(grids),trend=trendStats(grids),nearest=nearestEcho(latest,0,OPERATIONAL_RADIUS_KM),scoutNearest=nearestEcho(latest,OPERATIONAL_RADIUS_KM+0.01,ANALYSIS_RADIUS_KM),approach=vector?approachEcho(latest,vector,0,OPERATIONAL_RADIUS_KM,1.5):null,scoutApproach=vector?approachEcho(latest,vector,OPERATIONAL_RADIUS_KM+0.01,ANALYSIS_RADIUS_KM,3):null,predictions=vector?advect(latest,vector,trend):Object.fromEntries(HORIZONS.map(h=>[h,NaN])),conf=confidence(grids,vector);
       const result={updatedAt:new Date().toISOString(),point:p,source:'opera_cirrus_dbzh_central',analysisRadiusKm:ANALYSIS_RADIUS_KM,operationalRadiusKm:OPERATIONAL_RADIUS_KM,frames:grids.length,frameStart:grids[0].time,frameEnd:latest.time,latest,vector:vector?{eastKmh:vector.east,northKmh:vector.north,speedKmh:vector.speed,bearingDeg:vector.bearing,score:vector.score,consistency:vector.consistency}:null,confidence:conf,trend,nearest,scoutNearest,approach,scoutApproach,etaMin:approach?approach.tHours*60:null,scoutEtaMin:scoutApproach?scoutApproach.tHours*60:null,predictions,quality:{qindAvailable:latest.qUsable,qindMean:latest.qMean,qindThreshold:QIND_MIN}};
       renderResult(result);publishOpera(result);
     }catch(e){console.error('OPERA Nowcast:',e);const msg=String(e?.message||e);renderError(msg);publishOpera({updatedAt:new Date().toISOString(),point:p,error:msg,source:'opera_cirrus_dbzh_central'})}finally{running=false}
   }
 
-  ensureUi();window.addEventListener('prognozaepir:radar-nowcast-updated',publishFusion);for(const id of ['apply','resetPoint','refresh'])$(id)?.addEventListener('click',()=>setTimeout(()=>run(true),650));document.addEventListener('visibilitychange',()=>{if(!document.hidden&&Date.now()-lastRun>AUTO_MS)run(false)});setTimeout(()=>run(false),1200);setInterval(()=>{if(!document.hidden)run(false)},AUTO_MS);
-  window.PrognozaEPIROperaNowcastEngine={refresh:()=>run(true),get:()=>window.PrognozaEPIROperaNowcast||null,getFusion:()=>window.PrognozaEPIRRadarFusion||null,toggleMap:()=>mapButton?.click()};
+  ensureUi();window.addEventListener('prognozaepir:radar-nowcast-updated',publishFusion);window.addEventListener('prognozaepir:polrad-frame-changed',ev=>{lastPolradFrame=ev?.detail||null;renderSynchronizedMap(lastPolradFrame)});for(const id of ['apply','resetPoint','refresh'])$(id)?.addEventListener('click',()=>setTimeout(()=>run(true),650));document.addEventListener('visibilitychange',()=>{if(!document.hidden&&Date.now()-lastRun>AUTO_MS)run(false)});setTimeout(()=>run(false),1200);setInterval(()=>{if(!document.hidden)run(false)},AUTO_MS);
+  window.PrognozaEPIROperaNowcastEngine={refresh:()=>run(true),get:()=>window.PrognozaEPIROperaNowcast||null,getFusion:()=>window.PrognozaEPIRRadarFusion||null,toggleMap:()=>mapButton?.click(),syncToPolrad:p=>renderSynchronizedMap(p||window.PrognozaEPIRPolradState||null)};
 })();

@@ -1,6 +1,6 @@
 'use strict';
 
-// PrognozaEPIR v0.11.0
+// PrognozaEPIR v0.11.2
 // Official POLRAD map layers + IMGW warning overlay + multi-model AIFS/ICON/GFS nowcast.
 (() => {
   if (typeof L === 'undefined' || typeof map === 'undefined' || !map) return;
@@ -15,10 +15,16 @@
   // CMAX composite geographic extent used by IMGW national products.
   // Source images are published in EPSG:3857; Leaflet projects these corner bounds.
   const POLRAD_BOUNDS = L.latLngBounds([[48.5, 13.5], [56.0, 25.0]]);
+  // Six visualisations exposed by the official IMGW radar viewer.
+  // API aliases are probed at runtime. If IMGW does not expose a list endpoint
+  // for a product, its button is disabled instead of showing a different field.
   const POLRAD_PRODUCTS = {
-    cmax: {label:'POLRAD CMAX', short:'CMAX'},
-    sri:  {label:'POLRAD SRI', short:'SRI'},
-    pac:  {label:'POLRAD PAC 1h', short:'PAC'}
+    cmax:  {label:'POLRAD CMAX', short:'CMAX', apiKeys:['cmax'], operaComparable:true},
+    cappi: {label:'POLRAD CAPPI 1 km', short:'CAPPI', apiKeys:['cappi','cappi1','cappi_1km'], operaComparable:true},
+    eht:   {label:'POLRAD EHT', short:'EHT', apiKeys:['eht','etop','echo_top'], operaComparable:false},
+    sri:   {label:'POLRAD SRI', short:'SRI', apiKeys:['sri'], operaComparable:false},
+    pac:   {label:'POLRAD PAC 1 h', short:'PAC', apiKeys:['pac'], operaComparable:false},
+    hail:  {label:'POLRAD grad', short:'GRAD', apiKeys:['hail','hails','hailprob','hail_prob','grad'], operaComparable:false}
   };
 
   let polradProduct = 'cmax';
@@ -27,6 +33,9 @@
   let polradLayer = null;
   let polradTimer = null;
   let polradAvailable = false;
+  let polradFrameToken = 0;
+  const polradFrameCache = new Map();
+  const POLRAD_PANE = 'polradImagePane';
   let warningsLayer = null;
   let warningRows = [];
   let warningByCounty = new Map();
@@ -35,7 +44,7 @@
 
   // Version badge.
   const version = document.querySelector('.brand small');
-  if (version) version.textContent = 'RADAR / SAT / AI v0.11.0';
+  if (version) version.textContent = 'RADAR / SAT / AI v0.11.2';
   const aiHeading = [...document.querySelectorAll('.card h2')].find(h => h.textContent.includes('Prognoza AI'));
   if (aiHeading) aiHeading.textContent = 'Nowcast AI / ensemble 0–6 h';
 
@@ -131,7 +140,7 @@
       Object.values(polradButtons).forEach(b => b.classList.remove('active'));
       if (polradLayer && map.hasLayer(polradLayer)) map.removeLayer(polradLayer);
       stopPolradAnimation();
-      setPolradStatus('Mapa: RainViewer (fallback). Oficjalne produkty POLRAD pozostają dostępne przyciskami CMAX/SRI/PAC.');
+      setPolradStatus('Mapa: RainViewer (fallback). Oficjalne produkty POLRAD pozostają dostępne przyciskami produktów POLRAD.');
     });
   }
 
@@ -141,28 +150,102 @@
     return String(url || '').replace(/^http:\/\//i, 'https://');
   }
 
-  async function fetchPolradFrames(product) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 12000);
-    try {
-      const r = await fetch(`https://meteo.imgw.pl/api/radars/v1/list/${encodeURIComponent(product)}`, {
-        cache:'no-cache', signal:controller.signal
-      });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const data = await r.json();
-      const frames = data?.[product]?.list;
-      if (!Array.isArray(frames) || !frames.length) throw new Error('brak klatek');
-      return frames
-        .filter(f => f && f.url && Number.isFinite(Number(f.date)))
-        .sort((a, b) => Number(a.date) - Number(b.date));
-    } finally {
-      clearTimeout(timeout);
+  async function fetchPolradFrames(product, {force=false}={}) {
+    if (!force && polradFrameCache.has(product)) return polradFrameCache.get(product).frames;
+    const meta = POLRAD_PRODUCTS[product] || {apiKeys:[product]};
+    let lastError = null;
+    for (const apiKey of (meta.apiKeys || [product])) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 9000);
+      try {
+        const r = await fetch(`https://meteo.imgw.pl/api/radars/v1/list/${encodeURIComponent(apiKey)}`, {
+          cache:'no-cache', signal:controller.signal
+        });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const data = await r.json();
+        const direct = data?.[apiKey]?.list || data?.[product]?.list;
+        const fallback = direct || Object.values(data || {}).find(v => Array.isArray(v?.list))?.list;
+        if (!Array.isArray(fallback) || !fallback.length) throw new Error('brak klatek');
+        const frames = fallback
+          .filter(f => f && f.url && Number.isFinite(Number(f.date)))
+          .sort((a, b) => Number(a.date) - Number(b.date));
+        if (!frames.length) throw new Error('brak poprawnych klatek');
+        polradFrameCache.set(product,{frames,apiKey,checkedAt:Date.now()});
+        meta.resolvedApiKey = apiKey;
+        return frames;
+      } catch (e) {
+        lastError = e;
+      } finally {
+        clearTimeout(timeout);
+      }
     }
+    throw lastError || new Error('produkt niedostępny w API listy');
+  }
+
+  async function auditPolradProducts() {
+    await Promise.all(Object.keys(POLRAD_PRODUCTS).map(async product => {
+      const b = polradButtons[product];
+      if (!b) return;
+      try {
+        const frames = await fetchPolradFrames(product);
+        b.disabled = false;
+        b.dataset.available = '1';
+        const key = POLRAD_PRODUCTS[product].resolvedApiKey || product;
+        b.title = `${POLRAD_PRODUCTS[product].short}: ${frames.length} klatek · IMGW / ${key}`;
+      } catch (_) {
+        b.dataset.available = '0';
+        b.disabled = product !== 'cmax';
+        b.title = `${POLRAD_PRODUCTS[product].short}: oficjalny produkt IMGW, ale brak działającego endpointu listy obrazów`;
+      }
+    }));
+  }
+
+  function ensurePolradPane() {
+    let pane = map.getPane(POLRAD_PANE);
+    if (!pane) pane = map.createPane(POLRAD_PANE);
+    pane.style.zIndex = '470';
+    pane.style.pointerEvents = 'none';
+    return pane;
   }
 
   function removePolradLayer() {
-    if (polradLayer && map.hasLayer(polradLayer)) map.removeLayer(polradLayer);
+    try {
+      map.eachLayer(layer => {
+        if (!L.ImageOverlay || !(layer instanceof L.ImageOverlay)) return;
+        if (layer === polradLayer || layer?.options?.attribution === 'IMGW-PIB / POLRAD') {
+          if (map.hasLayer(layer)) map.removeLayer(layer);
+        }
+      });
+    } catch (_) {}
     polradLayer = null;
+  }
+
+  function preloadPolradFrame(index) {
+    if (!polradFrames.length) return;
+    const i = clamp01(Math.round(Number(index) || 0), 0, polradFrames.length - 1);
+    const frame = polradFrames[i];
+    if (!frame?.url) return;
+    try {
+      const img = new Image();
+      img.decoding = 'async';
+      img.src = normalizeImgwUrl(frame.url);
+    } catch (_) {}
+  }
+
+  function publishPolradFrame(frame) {
+    const meta = POLRAD_PRODUCTS[polradProduct] || {};
+    const detail = {
+      product:polradProduct,
+      short:meta.short || polradProduct,
+      timeSec:Number(frame.date),
+      timeMs:Number(frame.date) * 1000,
+      comparableToOpera:!!meta.operaComparable,
+      index:polradIndex,
+      count:polradFrames.length,
+      url:normalizeImgwUrl(frame.url)
+    };
+    window.PrognozaEPIRPolradState = detail;
+    window.dispatchEvent(new CustomEvent('prognozaepir:polrad-frame-changed',{detail}));
   }
 
   function setPolradFrame(index) {
@@ -170,19 +253,43 @@
     polradIndex = clamp01(Math.round(Number(index) || 0), 0, polradFrames.length - 1);
     if (historyRange) historyRange.value = polradIndex;
     const frame = polradFrames[polradIndex];
-    removePolradLayer();
-    polradLayer = L.imageOverlay(normalizeImgwUrl(frame.url), POLRAD_BOUNDS, {
-      opacity:0.70, interactive:false, crossOrigin:true,
-      attribution:'IMGW-PIB / POLRAD'
-    });
-    polradLayer.on('error', () => {
-      polradAvailable = false;
-      setPolradStatus('POLRAD: obraz IMGW nie załadował się. Możesz chwilowo użyć RainViewer.');
-    });
-    if (polradButtons[polradProduct]?.classList.contains('active')) polradLayer.addTo(map);
+    const url = normalizeImgwUrl(frame.url);
+    const active = !!polradButtons[polradProduct]?.classList.contains('active');
+    const token = ++polradFrameToken;
+    ensurePolradPane();
+
+    const onLoad = () => {
+      if (token !== polradFrameToken || !polradLayer) return;
+      if (active && map.hasLayer(polradLayer)) polradLayer.setOpacity(.70);
+      preloadPolradFrame(polradIndex + 1 < polradFrames.length ? polradIndex + 1 : Math.max(0,polradFrames.length - 18));
+    };
+    const onError = () => {
+      if (token !== polradFrameToken) return;
+      if (polradLayer) polradLayer.setOpacity(0);
+      setPolradStatus('POLRAD: błąd tej klatki — poprzedni obraz nie jest pozostawiany jako zamrożone tło.');
+    };
+
+    if (!polradLayer) {
+      polradLayer = L.imageOverlay(url, POLRAD_BOUNDS, {
+        pane:POLRAD_PANE, opacity:0, interactive:false, crossOrigin:true,
+        attribution:'IMGW-PIB / POLRAD'
+      });
+      polradLayer.once('load', onLoad);
+      polradLayer.once('error', onError);
+      if (active) polradLayer.addTo(map);
+    } else {
+      polradLayer.setOpacity(0);
+      polradLayer.setBounds(POLRAD_BOUNDS);
+      polradLayer.once('load', onLoad);
+      polradLayer.once('error', onError);
+      polradLayer.setUrl(url);
+      if (active && !map.hasLayer(polradLayer)) polradLayer.addTo(map);
+    }
+
     const timeEl = byId('radarTime');
-    if (timeEl) timeEl.textContent = `${POLRAD_PRODUCTS[polradProduct]?.short || polradProduct}: ${fmtRadarTime(frame.date)}`;
-    setPolradStatus(`Mapa: IMGW/POLRAD ${POLRAD_PRODUCTS[polradProduct]?.short || polradProduct} · ${fmtRadarTime(frame.date)} · klatki co ok. 5 min.`);
+    if (timeEl) timeEl.textContent = `${POLRAD_PRODUCTS[polradProduct]?.short || polradProduct}: ${fmtRadarTime(frame.date)} UTC`;
+    setPolradStatus(`Mapa: IMGW/POLRAD ${POLRAD_PRODUCTS[polradProduct]?.short || polradProduct} · ${fmtRadarTime(frame.date)} UTC · jedna aktywna klatka.`);
+    publishPolradFrame(frame);
   }
 
   async function selectPolrad(product) {
@@ -195,7 +302,7 @@
     }
     setPolradStatus(`POLRAD ${POLRAD_PRODUCTS[product]?.short || product}: pobieranie listy klatek z IMGW…`);
     try {
-      polradFrames = await fetchPolradFrames(product);
+      polradFrames = await fetchPolradFrames(product,{force:true});
       polradAvailable = true;
       polradIndex = polradFrames.length - 1;
       if (historyRange) {
@@ -223,14 +330,18 @@
     if (polradTimer) { stopPolradAnimation(); return; }
     if (!polradAvailable || !polradFrames.length) return;
     if (playButton) playButton.textContent = '■ Stop';
-    // Animate the latest 18 frames (~90 min) rather than the entire list.
     const start = Math.max(0, polradFrames.length - 18);
     let i = start;
+    // Draw immediately, then reuse the SAME ImageOverlay via setUrl().
+    setPolradFrame(i);
+    i = i + 1 < polradFrames.length ? i + 1 : start;
+    preloadPolradFrame(i);
     polradTimer = setInterval(() => {
       setPolradFrame(i);
       i++;
       if (i >= polradFrames.length) i = start;
-    }, 650);
+      preloadPolradFrame(i);
+    }, 700);
   }
 
   // ---------- Official IMGW warning overlay (powiat boundaries) ----------
@@ -493,5 +604,6 @@
 
   // Initial official layer and ensemble. Direct POLRAD is preferred; RainViewer is fallback only.
   selectPolrad('cmax').catch(() => {});
+  setTimeout(() => auditPolradProducts().catch(() => {}), 700);
   scheduleEnhanced(1400);
 })();
