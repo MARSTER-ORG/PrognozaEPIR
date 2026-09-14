@@ -2,16 +2,17 @@
 """Railway entrypoint with lightweight EPIR METAR/SPECI fast probing.
 
 The full acquisition cycle remains on the five-minute low-memory scheduler. The
-fast path probes only IMGW Aviation METAR/SPECI and then performs a tiny recent
-Supabase sync. It deliberately does not rebuild/dispatch the GitHub fallback on
-every probe; the full cycle owns fallback publication.
+fast path probes only IMGW Aviation METAR/SPECI. Supabase synchronisation is
+spawned only when the probe actually changes today's/yesterday's central
+METAR/SPECI JSONL; unchanged one-minute probes therefore cost one short process,
+not two.
 """
 from __future__ import annotations
 
 import os
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import railway_ingestor_lowmem_server as base
 import railway_ingestor_event_server as event
@@ -24,7 +25,28 @@ FAST_TIMEOUT_SECONDS = max(20, int(os.environ.get("METAR_FAST_TIMEOUT_SECONDS", 
 SUPABASE_FAST_SYNC_TIMEOUT_SECONDS = max(20, int(os.environ.get("SUPABASE_FAST_SYNC_TIMEOUT_SECONDS", "60")))
 
 
+def _fast_archive_signature(now: datetime) -> tuple:
+    """Cheap change detector for files the fast path can modify.
+
+    Reports around midnight may belong to yesterday UTC, so both UTC dates are
+    watched. Size + nanosecond mtime is enough because metar_fast_check writes
+    atomically only when a new bulletin is staged/normalised.
+    """
+    items = []
+    for offset in (0, 1):
+        day = now - timedelta(days=offset)
+        for kind in ("metar", "speci"):
+            path = base.ARCHIVE / kind / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.jsonl"
+            try:
+                stat = path.stat()
+                items.append((path.as_posix(), stat.st_size, stat.st_mtime_ns))
+            except OSError:
+                items.append((path.as_posix(), 0, 0))
+    return tuple(items)
+
+
 def run_fast_check(now: datetime, reason: str) -> dict:
+    before = _fast_archive_signature(now)
     result = base.run_child(
         "aviation-fast-check",
         [
@@ -35,12 +57,11 @@ def run_fast_check(now: datetime, reason: str) -> dict:
         ],
         timeout=FAST_TIMEOUT_SECONDS,
     )
+    after = _fast_archive_signature(datetime.now(timezone.utc))
+    archive_changed = before != after
 
     mirror = None
-    if result.get("ok"):
-        # Supabase is PRIMARY. The mirror state makes an unchanged probe a very
-        # cheap no-op, while a newly published METAR/SPECI is visible to all
-        # frontend modules without waiting for the five-minute heavy cycle.
+    if result.get("ok") and archive_changed:
         mirror = base.run_child(
             "supabase-fast-sync",
             [
@@ -53,11 +74,20 @@ def run_fast_check(now: datetime, reason: str) -> dict:
         )
         if not mirror.get("ok"):
             result = {**result, "ok": False, "error": "fast bulletin acquired but Supabase sync failed"}
+    elif result.get("ok"):
+        mirror = {
+            "ok": True,
+            "skipped": True,
+            "reason": "archive-unchanged",
+            "duration_s": 0.0,
+        }
+        print(f"[{base.utc_iso()}] supabase-fast-sync: skipped; archive unchanged", flush=True)
 
     snapshot = {
         "scheduled_for": now.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "reason": reason,
         "probe_interval_seconds": PROBE_INTERVAL_SECONDS,
+        "archive_changed": archive_changed,
         "supabase_sync": mirror,
         **result,
     }
@@ -82,9 +112,6 @@ def fast_scheduler() -> None:
     if not FAST_ENABLED:
         return
 
-    # Let bootstrap + the first heavy cycle establish a complete archive first.
-    # Afterwards SPECI polling is continuous and waits only while a heavy cycle
-    # owns the ingest lock/runtime slot.
     saw_initial_full_cycle = False
     startup_probe_done = False
     next_due = time.monotonic()
@@ -110,8 +137,6 @@ def fast_scheduler() -> None:
 
 
 def main() -> int:
-    # Bootstrap local fallback files once. Full-cycle manifest publication stays
-    # available as disaster fallback, but the fast path writes PRIMARY directly.
     event.bootstrap_from_github()
     worker = threading.Thread(target=fast_scheduler, name="metar-speci-fast-check", daemon=True)
     worker.start()
