@@ -33,6 +33,9 @@
   const HORIZONS = [15, 30, 45, 60];
   const QIND_MIN = 0.25;
   const SYNC_TOLERANCE_MIN = 7.5;
+  const WEB_MERCATOR_R = 6378137;
+  const WEB_MERCATOR_MAX_LAT = 85.05112878;
+  const OPERA_RENDER_MAX_N = 241;
 
   const $ = id => document.getElementById(id);
   const finite = Number.isFinite;
@@ -63,6 +66,7 @@
   let running=false,lastRun=0,latestOpera=null,libPromise=null,operaLayer=null,mapEnabled=false,mapButton=null;
   let operaFrameHistory=[];
   let lastPolradFrame=null;
+  const operaRenderCache=new Map();
 
   function currentPoint(){
     try{
@@ -215,7 +219,7 @@
     const lons=corners.map(x=>x[0]),lats=corners.map(x=>x[1]),geoBounds=corners.length===4?[[Math.min(...lats),Math.min(...lons)],[Math.max(...lats),Math.max(...lons)]]:null;
     const operational=zoneStats(values,mask,0,OPERATIONAL_RADIUS_KM);
     const scout=zoneStats(values,mask,OPERATIONAL_RADIUS_KM+0.01,ANALYSIS_RADIUS_KM);
-    return{time:frame.time,url:frame.url,values,mask,active,mean:active?sum/active:NaN,max,area,operational,scout,qMean,qUsable,projection:pp.name,geoBounds};
+    return{time:frame.time,url:frame.url,values,width:GRID_N,height:GRID_N,mask,active,mean:active?sum/active:NaN,max,area,operational,scout,qMean,qUsable,projection:pp.name,proj:pp.proj,projectedBounds:{x0:wx0,x1:wx1,yTop:wyTop,yBottom:wyBottom},geoBounds};
   }
 
   async function readDisplayRaster(frame,p){
@@ -289,20 +293,61 @@
   }
 
   function colorForDbz(v){if(!finite(v)||v<5)return[0,0,0,0];const p=[[62,245,140,255],[56,255,25,204],[50,230,0,89],[44,255,22,0],[38,255,136,0],[32,255,242,0],[26,255,251,216],[20,184,244,241],[14,27,200,240],[8,0,51,232],[5,0,0,204]];for(const x of p)if(v>=x[0])return[x[1],x[2],x[3],185];return[0,0,170,150]}
-  function rasterDataUrl(latest){const c=document.createElement('canvas');c.width=GRID_N;c.height=GRID_N;const ctx=c.getContext('2d');if(!ctx)return null;const im=ctx.createImageData(GRID_N,GRID_N);for(let i=0;i<latest.values.length;i++){const[r,g,b,a]=colorForDbz(Number(latest.values[i])),j=i*4;im.data[j]=r;im.data[j+1]=g;im.data[j+2]=b;im.data[j+3]=a}ctx.putImageData(im,0,0);return c.toDataURL('image/png')}
+  const mercX=lon=>WEB_MERCATOR_R*Number(lon)*Math.PI/180;
+  const mercY=lat=>{const a=clamp(Number(lat),-WEB_MERCATOR_MAX_LAT,WEB_MERCATOR_MAX_LAT)*Math.PI/180;return WEB_MERCATOR_R*Math.log(Math.tan(Math.PI/4+a/2))};
+  const mercLon=x=>Number(x)/WEB_MERCATOR_R*180/Math.PI;
+  const mercLat=y=>(2*Math.atan(Math.exp(Number(y)/WEB_MERCATOR_R))-Math.PI/2)*180/Math.PI;
+
+  function rasterDataUrl(raster){
+    const w=Number(raster?.width)||GRID_N,h=Number(raster?.height)||GRID_N;
+    if(!raster?.values||raster.values.length!==w*h)return null;
+    const c=document.createElement('canvas');c.width=w;c.height=h;const ctx=c.getContext('2d');if(!ctx)return null;
+    const im=ctx.createImageData(w,h);for(let i=0;i<raster.values.length;i++){const[r,g,b,a]=colorForDbz(Number(raster.values[i])),j=i*4;im.data[j]=r;im.data[j+1]=g;im.data[j+2]=b;im.data[j+3]=a}ctx.putImageData(im,0,0);return c.toDataURL('image/png')
+  }
+
+  function reprojectForLeaflet(raster){
+    if(!raster?.geoBounds)return null;
+    const srcW=Number(raster.width)||GRID_N,srcH=Number(raster.height)||GRID_N;
+    const pb=raster.projectedBounds,srcProj=raster.proj;
+    if(!pb||!srcProj||!raster.values||raster.values.length!==srcW*srcH){const url=rasterDataUrl(raster);return url?{url,bounds:raster.geoBounds,reprojected:false}:null}
+    const key=`${Number(raster.time)||0}:${srcW}x${srcH}:${srcProj}`;
+    if(operaRenderCache.has(key))return operaRenderCache.get(key);
+    const south=Number(raster.geoBounds[0][0]),west=Number(raster.geoBounds[0][1]),north=Number(raster.geoBounds[1][0]),east=Number(raster.geoBounds[1][1]);
+    if(![south,west,north,east].every(finite))return null;
+    const mx0=mercX(west),mx1=mercX(east),my0=mercY(south),my1=mercY(north);
+    const outW=Math.min(srcW,OPERA_RENDER_MAX_N),outH=Math.min(srcH,OPERA_RENDER_MAX_N),out=new Float32Array(outW*outH);out.fill(NaN);
+    const sxDen=Number(pb.x1)-Number(pb.x0),syDen=Number(pb.yTop)-Number(pb.yBottom);if(!finite(sxDen)||!finite(syDen)||sxDen===0||syDen===0)return null;
+    for(let y=0;y<outH;y++){
+      const my=my1-(y+.5)/outH*(my1-my0),lat=mercLat(my);
+      for(let x=0;x<outW;x++){
+        const mx=mx0+(x+.5)/outW*(mx1-mx0),lon=mercLon(mx);let q;
+        try{q=window.proj4(PROJ_WGS84,srcProj,[lon,lat])}catch(_){continue}
+        if(!q||!finite(q[0])||!finite(q[1]))continue;
+        const sx=(q[0]-Number(pb.x0))/sxDen*(srcW-1),sy=(Number(pb.yTop)-q[1])/syDen*(srcH-1);
+        if(sx<0||sy<0||sx>srcW-1||sy>srcH-1)continue;
+        const ix=Math.round(sx),iy=Math.round(sy),v=Number(raster.values[iy*srcW+ix]);if(finite(v))out[y*outW+x]=v;
+      }
+    }
+    const url=rasterDataUrl({values:out,width:outW,height:outH});if(!url)return null;
+    const result={url,bounds:[[south,west],[north,east]],reprojected:true,width:outW,height:outH};
+    operaRenderCache.set(key,result);while(operaRenderCache.size>24)operaRenderCache.delete(operaRenderCache.keys().next().value);
+    return result;
+  }
+
   function renderMapLayer(latest){
     ensureMapButton();
     if(!mapEnabled||!latest?.geoBounds||typeof L==='undefined'||typeof map==='undefined')return;
-    const url=rasterDataUrl(latest);if(!url)return;
+    const raster=latest.display?.geoBounds?latest.display:latest,visual=reprojectForLeaflet(raster);if(!visual?.url)return;
     if(!map.getPane('operaSyncPane')){map.createPane('operaSyncPane');map.getPane('operaSyncPane').style.zIndex='475';map.getPane('operaSyncPane').style.pointerEvents='none'}
     if(!operaLayer){
-      operaLayer=L.imageOverlay(url,latest.geoBounds,{pane:'operaSyncPane',opacity:.52,interactive:false,attribution:'EUMETNET OPERA CIRRUS'});
+      operaLayer=L.imageOverlay(visual.url,visual.bounds,{pane:'operaSyncPane',opacity:.52,interactive:false,attribution:'EUMETNET OPERA CIRRUS'});
       operaLayer.addTo(map);
     }else{
-      operaLayer.setBounds(latest.geoBounds);
-      operaLayer.setUrl(url);
+      operaLayer.setBounds(visual.bounds);
+      operaLayer.setUrl(visual.url);
       if(!map.hasLayer(operaLayer))operaLayer.addTo(map);
     }
+    operaLayer.options.epirReprojected=!!visual.reprojected;
   }
 
   function hideOperaLayer(){try{if(operaLayer&&typeof map!=='undefined'&&map.hasLayer(operaLayer))map.removeLayer(operaLayer)}catch(_){}}
@@ -365,6 +410,7 @@
       setStatus(`OPERA: przygotowuję czytelną warstwę 1 km · ${fmtUtcMs(latest.time)}`);
       try{latest.display=await readDisplayRaster(latest,p)}catch(e){console.warn('OPERA 1 km display raster unavailable; using 4 km fallback',e)}
       operaFrameHistory=grids.slice();
+      if(operaRenderCache.size>24)operaRenderCache.clear();
       const vector=vectorStats(grids),trend=trendStats(grids),nearest=nearestEcho(latest,0,OPERATIONAL_RADIUS_KM),scoutNearest=nearestEcho(latest,OPERATIONAL_RADIUS_KM+0.01,ANALYSIS_RADIUS_KM),approach=vector?approachEcho(latest,vector,0,OPERATIONAL_RADIUS_KM,1.5):null,scoutApproach=vector?approachEcho(latest,vector,OPERATIONAL_RADIUS_KM+0.01,ANALYSIS_RADIUS_KM,3):null,predictions=vector?advect(latest,vector,trend):Object.fromEntries(HORIZONS.map(h=>[h,NaN])),conf=confidence(grids,vector);
       const result={updatedAt:new Date().toISOString(),point:p,source:'opera_cirrus_dbzh_central',analysisRadiusKm:ANALYSIS_RADIUS_KM,operationalRadiusKm:OPERATIONAL_RADIUS_KM,frames:grids.length,frameStart:grids[0].time,frameEnd:latest.time,latest,vector:vector?{eastKmh:vector.east,northKmh:vector.north,speedKmh:vector.speed,bearingDeg:vector.bearing,score:vector.score,consistency:vector.consistency}:null,confidence:conf,trend,nearest,scoutNearest,approach,scoutApproach,etaMin:approach?approach.tHours*60:null,scoutEtaMin:scoutApproach?scoutApproach.tHours*60:null,predictions,quality:{qindAvailable:latest.qUsable,qindMean:latest.qMean,qindThreshold:QIND_MIN}};
       renderResult(result);publishOpera(result);
