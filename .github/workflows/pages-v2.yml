@@ -26,6 +26,8 @@ jobs:
         run: |
           python3 scripts/prepare_pages.py
           python3 scripts/wire_fog_mifg_utc_runtime.py
+          printf '{"commit":"%s","built_at":"%s"}\n' \
+            "$GITHUB_SHA" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" > _site/pages-build.json
 
       - name: Validate JavaScript and TAF 2.3
         run: |
@@ -51,9 +53,11 @@ jobs:
           test -s _site/lightning-alerts.html
           test -s _site/lightning-alert-sw.js
           test -s _site/radar-risk-policy.js
+          test -s _site/pages-build.json
           test -s _site/data/messages/latest.json
           test -s _site/data/messages/recent.json
           test -s _site/data/messages/status.json
+          python3 -m json.tool _site/pages-build.json >/dev/null
           python3 -m json.tool _site/data/messages/latest.json >/dev/null
           python3 -m json.tool _site/data/messages/recent.json >/dev/null
           python3 -m json.tool _site/data/messages/status.json >/dev/null
@@ -66,9 +70,13 @@ jobs:
           grep -F 'observation-engine.js' _site/index.html
           grep -F 'mifg-engine.js?v=' _site/index.html
           grep -F 'fog-meteogram-overlay.js' _site/index.html
-          grep -F 'const legacyArchiveName = input =>' _site/message-archive-client.js
+          grep -F 'functions/v1/message-archive' _site/message-archive-client.js
+          grep -F 'search,stations' _site/message-archive-client.js
           grep -F 'MessageArchive legacy bridge' _site/message-archive-client.js
-          grep -F 'MessageArchive-live-first' _site/message-archive-client.js
+          grep -F 'message-archive-client.js?v=supabase-search-v2' _site/arch.html
+          grep -F 'id="modeAdvanced"' _site/arch.html
+          grep -F 'data-type="ALL"' _site/arch.html
+          grep -F 'TAF ↔ METAR/SPECI' _site/arch.html
           grep -F "v+'Z'" _site/fog-engine.js
           grep -F "+' UTC'" _site/fog-engine.js
           grep -F "+' UTC'" _site/mifg-engine.js
@@ -104,3 +112,24 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Verify live revision and ARCH UI
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          set -euo pipefail
+          base="${PAGE_URL%/}"
+          for attempt in $(seq 1 18); do
+            marker="$(curl -fsSL --max-time 15 "${base}/pages-build.json?v=${GITHUB_SHA}" 2>/dev/null || true)"
+            arch="$(curl -fsSL --max-time 15 "${base}/arch.html?v=${GITHUB_SHA}" 2>/dev/null || true)"
+            if printf '%s' "$marker" | grep -Fq "$GITHUB_SHA" \
+              && printf '%s' "$arch" | grep -Fq 'id="modeAdvanced"' \
+              && printf '%s' "$arch" | grep -Fq 'supabase-search-v2'; then
+              echo "GitHub Pages serves commit $GITHUB_SHA and the advanced ARCH UI."
+              exit 0
+            fi
+            echo "Waiting for Pages/CDN propagation (${attempt}/18)..."
+            sleep 10
+          done
+          echo "ERROR: live GitHub Pages is not serving the deployed revision or advanced ARCH UI." >&2
+          exit 1
