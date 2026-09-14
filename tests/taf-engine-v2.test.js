@@ -97,6 +97,15 @@ r=gen(rows);assert.ok(r.taf.includes('BECMG'),r.taf);assert.match(r.taf,/BECMG[^
 rows=Array.from({length:12},(_,i)=>row(i,{vis:9999,profile:i<4?[{agl:100,cc:35},{agl:900,cc:65},{agl:1600,cc:80}]:[{agl:120,cc:35},{agl:250,cc:65},{agl:900,cc:80}],ceiling:i<4?900:250}));
 r=gen(rows);const cloudG=r.groups.find(g=>g.fields.includes('clouds'));assert.ok(cloudG,r.taf);assert.match(cloudG.payload,/(?:FEW|SCT)\d{3}/);assert.match(cloudG.payload,/(?:BKN|OVC)\d{3}/);assert.ok(r.hourly[4].tafDisplay.ceilingM>=150&&r.hourly[4].tafDisplay.ceilingM<=300);assert.ok(r.hourly[4].tafDisplay.cloudLayers.every(c=>Number.isFinite(c.m)));
 
+// Issue-time integrity: a later observation must never leak backwards into an already-issued TAF.
+{
+  const cleanRows=Array.from({length:12},(_,i)=>row(i,{vis:9000,kt:6,dir:220}));
+  const futureObs={raw:'EPIR 140300Z AUTO 00000KT 0400 FG OVC001 13/13 Q1018',obs_time:new Date(start+3*H).toISOString()};
+  const q=gen(cleanRows,{observation:futureObs,rowsAlreadyAnchored:false});
+  assert.ok(!/\b(?:FG|FZFG)\b/.test(q.base.text),q.base.text);
+  assert.ok(!/\b0[0-9]{3}\b/.test(q.base.text),q.base.text);
+}
+
 // Recent METAR/SPECI must reject unsupported model-only thin cloud layers while retaining a supported ceiling.
 rows=Array.from({length:12},(_,i)=>row(i,{vis:9999,kt:6,dir:200,profile:[{agl:61,cc:6.25},{agl:457,cc:31.25},{agl:1067,cc:62.5},{agl:1500,cc:70}],ceiling:1067}));
 const obs={raw:'EPIR 132100Z AUTO 17008KT 9999 FEW028 BKN035 BKN042 18/14 Q1017',obs_time:new Date(start-3*H).toISOString()};
@@ -120,5 +129,5 @@ assert.equal(E.validateTaf('TAF EPIR 132300Z 1400/1412 22008KT 0500 MIFG NSC=',{
 const html=fs.readFileSync(path.join(__dirname,'..','taf.html'),'utf8'),app=fs.readFileSync(path.join(__dirname,'..','taf-app-v2.js'),'utf8');
 for(const legacy of ['taf-generator-policy.js','taf-cloud-policy.js','taf-weather-policy.js','taf-gust-policy.js','taf-cavok-nsc-policy.js','taf-instruction-guard.js','taf-output-sanitizer.js','taf-hybrid-adapter.js'])assert.ok(!html.includes(legacy),'legacy mutator loaded: '+legacy);
 assert.ok(html.includes('taf-engine-v2.js?v=2.3.0'));assert.ok(html.includes('taf-app-v2.js?v=2.3.0'));assert.ok(html.includes('Chmury (m AGL)'));assert.ok(html.includes('Pułap BKN/OVC (m AGL)'));
-assert.ok(app.includes('profile:Array.isArray(z.profile)'),'app must transfer vertical cloud profile into TAF engine');assert.ok(app.includes('cloudLayers'),'table must render engine cloud layers');assert.ok(app.includes('fgOperationalScore'),'FOG operational score must be separated from TAF probability');assert.ok(!app.includes('const fgRisk=Math.max(fogScore'),'raw FOG score must not be treated as literal percentage');
+assert.ok(app.includes('profile:Array.isArray(z.profile)'),'app must transfer vertical cloud profile into TAF engine');assert.ok(app.includes('newestAtOrBefore'),'app must select an issue-time-safe observation anchor');assert.ok(app.includes('observation:anchorObservation'),'app must pass the issue-time anchor, not the latest future METAR');assert.ok(app.includes('cloudLayers'),'table must render engine cloud layers');assert.ok(app.includes('fgOperationalScore'),'FOG operational score must be separated from TAF probability');assert.ok(!app.includes('const fgRisk=Math.max(fogScore'),'raw FOG score must not be treated as literal percentage');
 console.log('TAF Engine 2.3 tests: OK');
