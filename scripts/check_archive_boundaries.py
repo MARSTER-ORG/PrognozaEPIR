@@ -4,7 +4,7 @@
 Bulletin providers are allowed only in server-side source adapters under scripts/.
 Supabase is the primary archive read source. Railway and GitHub/static JSON are
 fallbacks owned only by message-archive-client.js. Frontend consumers use the
-public PrognozaEPIRMessageArchive API; no page may read bulletin files directly.
+public PrognozaEPIRMessageArchive API or its verified same-origin fetch bridge.
 """
 from __future__ import annotations
 
@@ -23,13 +23,17 @@ FORBIDDEN_PROVIDERS = {
 }
 RAILWAY_ARCHIVE = re.compile(r"central-ingestor-production\.up\.railway\.app/data/messages", re.I)
 SUPABASE_ARCHIVE = re.compile(r"qozgntzeormujmqzkkmd\.supabase\.co/functions/v1/message-archive", re.I)
-DIRECT_MESSAGE_FILES = re.compile(r"(?:^|[^A-Za-z0-9_-])data/messages(?:/|\\)", re.I)
+DIRECT_MESSAGE_FILES = re.compile(
+    r"data/messages/[^'\"`\s?#]+\.(?:json|jsonl)(?:[?#][^'\"`\s]*)?",
+    re.I,
+)
 LEGACY_BULLETIN_FILES = re.compile(
     r"data/observations/(?:metar|synop)|data/taf/(?:latest|neighbors)\.json|(?:^|['\"`])taf-neighbors\.json(?:['\"`]|$)",
     re.I,
 )
 SERVICE_ROLE_CREDENTIAL = re.compile(r"SUPABASE_SERVICE_ROLE_KEY|['\"]service_role['\"]\s*[:=]", re.I)
 CLIENT_SCRIPT = re.compile(r'<script\s+src=["\']message-archive-client\.js(?:\?[^"\']*)?["\']\s*></script>', re.I)
+BRIDGED_LEGACY_READERS = {"fog-engine.js", "mifg-engine.js"}
 
 TARGETS = [*ROOT.glob("*.html"), *ROOT.glob("*.js"), *ROOT.glob("api/*.js")]
 BULLETIN_PAGES = ("index.html", "arch.html", "taf.html")
@@ -52,8 +56,8 @@ def main() -> int:
             violations.append(f"{rel(path)}: direct Railway archive URL bypasses shared MessageArchive client")
         if path.resolve() != CLIENT.resolve() and SUPABASE_ARCHIVE.search(text):
             violations.append(f"{rel(path)}: direct Supabase archive URL bypasses shared MessageArchive client")
-        if path.resolve() != CLIENT.resolve() and DIRECT_MESSAGE_FILES.search(text):
-            violations.append(f"{rel(path)}: direct data/messages access bypasses shared MessageArchive client")
+        if path.resolve() != CLIENT.resolve() and DIRECT_MESSAGE_FILES.search(text) and path.name not in BRIDGED_LEGACY_READERS:
+            violations.append(f"{rel(path)}: direct bulletin JSON/JSONL access bypasses shared MessageArchive client")
         if path.resolve() != CLIENT.resolve() and LEGACY_BULLETIN_FILES.search(text):
             violations.append(f"{rel(path)}: legacy bulletin file/snapshot access bypasses MessageArchive")
 
@@ -70,6 +74,8 @@ def main() -> int:
             "getRange",
             "window.PrognozaEPIRMessageArchive=api",
             "Supabase-primary-MessageArchive",
+            "legacyArchiveRequest",
+            "window.fetch=async function(input,init)",
         ]
         for token in required:
             if token not in text:
@@ -82,8 +88,7 @@ def main() -> int:
             violations.append("message-archive-client.js: Supabase is not configured as primary read source")
 
     # Every page that consumes METAR/SPECI/TAF/SYNOP must load the one shared
-    # client. Radar, satellite and lightning pages use different data domains
-    # and are intentionally not forced to load the bulletin archive.
+    # client. Radar, satellite and lightning pages use other data domains.
     for name in BULLETIN_PAGES:
         page = ROOT / name
         if not page.exists():
@@ -92,6 +97,27 @@ def main() -> int:
         text = page.read_text(encoding="utf-8", errors="replace")
         if not CLIENT_SCRIPT.search(text):
             violations.append(f"{name}: shared MessageArchive client is not loaded")
+
+    # The two fog engines still call same-origin data/messages/latest.json for
+    # backward compatibility. This is allowed only because index loads the
+    # MessageArchive client first and its fetch bridge redirects that exact path
+    # to Supabase before any static fallback can be attempted.
+    index = ROOT / "index.html"
+    if index.exists():
+        text = index.read_text(encoding="utf-8", errors="replace")
+        client_pos = text.find("message-archive-client.js")
+        for script_name in sorted(BRIDGED_LEGACY_READERS):
+            script_pos = text.find(script_name)
+            if script_pos < 0:
+                violations.append(f"index.html: expected bridged consumer {script_name} is not loaded")
+            elif client_pos < 0 or client_pos > script_pos:
+                violations.append(f"index.html: {script_name} loads before MessageArchive fetch bridge")
+            module = ROOT / script_name
+            if module.exists():
+                module_text = module.read_text(encoding="utf-8", errors="replace")
+                refs = DIRECT_MESSAGE_FILES.findall(module_text)
+                if not refs or any(not ref.startswith("data/messages/latest.json") for ref in refs):
+                    violations.append(f"{script_name}: compatibility read is not limited to data/messages/latest.json")
 
     taf = ROOT / "taf.html"
     taf_app = ROOT / "taf-app-v2.js"
@@ -134,6 +160,11 @@ def main() -> int:
         if "taf-neighbors.json" in text:
             violations.append("neighbor-taf-context.js: legacy TAF snapshot bypass remains")
 
+    # The obsolete verifier used to own a GitHub RAW archive fallback. It must
+    # stay removed; verification is now part of the current TAF application path.
+    if (ROOT / "taf-verification.js").exists():
+        violations.append("taf-verification.js: obsolete private archive reader must not return")
+
     if violations:
         print("ARCHIVE BOUNDARY VIOLATIONS:")
         for item in violations:
@@ -141,8 +172,8 @@ def main() -> int:
         return 1
 
     print(
-        f"Archive boundary OK: checked {len(targets)} browser/API files; all bulletin consumers use "
-        "the shared Supabase-primary MessageArchive; Railway/GitHub/static are client-owned fallbacks only"
+        f"Archive boundary OK: checked {len(targets)} browser/API files; all METAR/SPECI/TAF/SYNOP consumers "
+        "are Supabase-primary through MessageArchive; Railway/GitHub/static are client-owned fallbacks only"
     )
     return 0
 
