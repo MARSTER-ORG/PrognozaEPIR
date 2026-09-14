@@ -13,15 +13,6 @@ def replace_once(path: str, old: str, new: str) -> None:
     p.write_text(s.replace(old, new, 1), encoding="utf-8")
 
 
-def replace_all_checked(path: str, old: str, new: str, expected: int) -> None:
-    p = ROOT / path
-    s = p.read_text(encoding="utf-8")
-    n = s.count(old)
-    if n != expected:
-        raise SystemExit(f"{path}: expected {expected} matches, got {n}: {old[:120]!r}")
-    p.write_text(s.replace(old, new), encoding="utf-8")
-
-
 # --- TAF Engine 2.3: only the first PROB30 may appear in one TAF. ---
 replace_once(
     "taf-engine-v2.js",
@@ -111,23 +102,6 @@ replace_once(
     "scripts/build_fog_event_learning.py",
     '            "fog": sum(1 for r in observations if r["_class"]["fog"]),\n            "br": sum(1 for r in observations if r["_class"]["br"]),',
     '            "fog": sum(1 for r in observations if r["_class"]["fog"]),\n            "fog_by_visibility": sum(1 for r in observations if r["_class"].get("visibility_fog")),\n            "br": sum(1 for r in observations if r["_class"]["br"]),',
-)
-
-# --- Keep the learning regression permanently in adaptive CI. ---
-replace_once(
-    ".github/workflows/adaptive-runtime-rollout.yml",
-    "      - 'scripts/build_fog_event_learning.py'\n      - 'scripts/build_model_snapshot.py'",
-    "      - 'scripts/build_fog_event_learning.py'\n      - 'tests/test_fog_event_learning.py'\n      - 'scripts/build_model_snapshot.py'",
-)
-replace_once(
-    ".github/workflows/adaptive-runtime-rollout.yml",
-    "            scripts/build_fog_event_learning.py \\\n            scripts/build_model_snapshot.py \\",
-    "            scripts/build_fog_event_learning.py \\\n            tests/test_fog_event_learning.py \\\n            scripts/build_model_snapshot.py \\",
-)
-replace_once(
-    ".github/workflows/adaptive-runtime-rollout.yml",
-    "      - name: Rebuild learning from archive\n        run: |\n          python3 scripts/model_verification.py",
-    "      - name: Validate fog event classification\n        run: python3 tests/test_fog_event_learning.py\n\n      - name: Rebuild learning from archive\n        run: |\n          python3 scripts/model_verification.py",
 )
 
 print("single-PROB30 + fog event learning patch applied")
