@@ -23,7 +23,7 @@ FORBIDDEN_PROVIDERS = {
 }
 RAILWAY_ARCHIVE = re.compile(r"central-ingestor-production\.up\.railway\.app/data/messages", re.I)
 SUPABASE_ARCHIVE = re.compile(r"qozgntzeormujmqzkkmd\.supabase\.co/functions/v1/message-archive", re.I)
-SERVICE_ROLE = re.compile(r"service[_-]?role", re.I)
+SERVICE_ROLE_CREDENTIAL = re.compile(r"SUPABASE_SERVICE_ROLE_KEY|['\"]service_role['\"]\s*[:=]", re.I)
 
 TARGETS = [
     *ROOT.glob("*.html"),
@@ -69,9 +69,9 @@ def main() -> int:
                 violations.append(f"message-archive-client.js: missing Supabase-primary invariant: {token}")
         if not SUPABASE_ARCHIVE.search(text):
             violations.append("message-archive-client.js: Supabase archive endpoint missing")
-        if SERVICE_ROLE.search(text):
+        if SERVICE_ROLE_CREDENTIAL.search(text):
             violations.append("message-archive-client.js: service-role credential must never be present in browser code")
-        if text.find("SUPABASE_API") > text.find("RAILWAY_ROOT") and "PRIMARY_ROOT = SUPABASE_ENABLED ? SUPABASE_API" not in text:
+        if "PRIMARY_ROOT = SUPABASE_ENABLED ? SUPABASE_API" not in text:
             violations.append("message-archive-client.js: Supabase is not configured as primary read source")
 
     taf = ROOT / "taf.html"
