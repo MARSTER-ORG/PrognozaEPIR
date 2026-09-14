@@ -1,7 +1,7 @@
 'use strict';
 (() => {
   const SUPABASE_API='https://qozgntzeormujmqzkkmd.supabase.co/functions/v1/message-archive';
-  const SUPABASE_ANON='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB...';
+  const SUPABASE_ANON='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFvemdudHplb3JtdWptcXpra21kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkzMjY1ODksImV4cCI6MjEwNDkwMjU4OX0.EV0cw-wlG8cQnFumLwsucxFfURHzlRRZdcusCZow-1o';
   const SUPABASE_ENABLED=window.PROGNOZAEPIR_SUPABASE_DISABLED!==true;
   const GITHUB_ROOT='https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/messages';
   const STATIC_ROOT='data/messages';
