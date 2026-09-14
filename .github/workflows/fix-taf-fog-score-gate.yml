@@ -1,0 +1,95 @@
+name: One-shot fix TAF FG score gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-taf-fog-score-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply FG >=60 gate without touching wind or cloud policy
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p=Path(path)
+              s=p.read_text(encoding='utf-8')
+              if old not in s:
+                  raise SystemExit(f'expected text not found in {path}: {old[:100]!r}')
+              if s.count(old) != 1:
+                  raise SystemExit(f'expected exactly one match in {path}, got {s.count(old)}')
+              p.write_text(s.replace(old,new,1),encoding='utf-8')
+
+          p=Path('taf-engine-v2.js')
+          s=p.read_text(encoding='utf-8')
+          s=s.replace("const VERSION='2.3.0';","const VERSION='2.3.1';",1)
+          s=s.replace("const NAME='TAF Engine 2.3 — Instruction First + EPIR Operational Policy';","const NAME='TAF Engine 2.3.1 — Instruction First + EPIR Operational Policy';",1)
+          old_rules="""    fogOperationalScoreMin:40,\n    fogOperationalScoreProbAt40:.30,\n    fogOperationalScoreProbAt60:.40,\n    fogOperationalScoreProbAt80:.50"""
+          new_rules="""    fogOperationalScoreMin:60,\n    fogOperationalScoreProbAt60:.30,\n    fogOperationalScoreProbAt70:.40,\n    fogOperationalScoreProbAt80:.50"""
+          if old_rules not in s: raise SystemExit('old fog rule block not found')
+          s=s.replace(old_rules,new_rules,1)
+          old_fn="""  const operationalFogProbability=v=>{\n    if(!num(v))return 0;\n    const score=clamp(+v,0,100);\n    if(score<RULES.fogOperationalScoreMin)return 0;\n    return clamp((30+(score-40)*.5)/100,.30,.60);\n  };"""
+          new_fn="""  const operationalFogProbability=v=>{\n    if(!num(v))return 0;\n    const score=clamp(+v,0,100),lo=RULES.fogOperationalScoreMin,hi=80;\n    if(score<lo)return 0;\n    if(score>=hi)return .50;\n    return clamp(.30+(score-lo)/(hi-lo)*.20,.30,.499);\n  };"""
+          if old_fn not in s: raise SystemExit('old operationalFogProbability not found')
+          s=s.replace(old_fn,new_fn,1)
+          old_gate="""    p.fog=Math.max(p.fog,fogEngine);\n    // Operational FOG scores are risk indices, not literal percentages. They are calibrated to TAF probability before this gate.\n    p.fg=Math.max(p.fg,explicitFg,legacyVis1000,explicitFg>0?0:fogEngine);\n    p.br=Math.max(p.br,explicitBr);"""
+          new_gate="""    p.fog=Math.max(p.fog,fogEngine);\n    // When the dedicated FG engine supplies an operational score, it is the authoritative TAF gate.\n    // Scores 40-59 remain diagnostic ('MOZLIWA') and must not be converted into PROB30 FG.\n    if(hasFgOperational||hasFogOperational){\n      const gateScore=hasFgOperational?+row.fgOperationalScore:+row.fogOperationalScore;\n      p.fg=operationalFogProbability(gateScore);\n    }else{\n      p.fg=Math.max(p.fg,explicitFg,legacyVis1000,explicitFg>0?0:fogEngine);\n    }\n    p.br=Math.max(p.br,explicitBr);"""
+          if old_gate not in s: raise SystemExit('old FG probability gate not found')
+          s=s.replace(old_gate,new_gate,1)
+          p.write_text(s,encoding='utf-8')
+
+          p=Path('tests/taf-engine-v2.test.js')
+          t=p.read_text(encoding='utf-8')
+          t=t.replace("assert.equal(E.ENGINE_VERSION,'2.3.0');","assert.equal(E.ENGINE_VERSION,'2.3.1');",1)
+          old="assert.equal(FOGP(39),0);assert.equal(FOGP(40),.30);assert.equal(FOGP(60),.40);assert.equal(FOGP(80),.50);assert.equal(FOGP(100),.60);"
+          new="assert.equal(FOGP(39),0);assert.equal(FOGP(40),0);assert.equal(FOGP(59),0);assert.equal(FOGP(60),.30);assert.equal(FOGP(70),.40);assert.equal(FOGP(79),.49);assert.equal(FOGP(80),.50);assert.equal(FOGP(100),.50);"
+          if old not in t: raise SystemExit('FOGP regression assertion not found')
+          t=t.replace(old,new,1)
+          old_block="""// Even separated 30–49% episodes may not create a second PROB30; keep the first one.\n{\n  const splitRows=Array.from({length:12},(_,i)=>row(i,{vis:6000,fogOperationalScore:(i===5||i===7)?52:0,fgOperationalScore:(i===5||i===7)?52:0,fogAltVisM:(i===5||i===7)?900:null,mv:[model({vis:6000}),model({vis:6500}),model({vis:7000})]}));\n  const q=gen(splitRows);\n  assert.match(q.taf,/PROB30\\s+1404\\/1406\\s+0900\\s+FG/,q.taf);\n  assert.equal((q.taf.match(/PROB30/g)||[]).length,1,q.taf);\n  assert.ok(!q.taf.includes('PROB30 1406/1408'),q.taf);\n}"""
+          new_block="""// Operational FG scores 40-59 are diagnostic only and must never create PROB30 FG.\n{\n  const splitRows=Array.from({length:12},(_,i)=>row(i,{vis:6000,fogOperationalScore:(i===5||i===7)?52:0,fgOperationalScore:(i===5||i===7)?52:0,fogAltVisM:(i===5||i===7)?900:null,mv:[model({vis:6000}),model({vis:6500}),model({vis:7000})]}));\n  const q=gen(splitRows);\n  assert.equal((q.taf.match(/PROB30/g)||[]).length,0,q.taf);\n  assert.ok(!/\\b(?:FG|FZFG)\\b/.test(q.taf),q.taf);\n}\n\n// The dedicated FG operational score is authoritative over raw model fog votes.\n{\n  const gateRows=Array.from({length:12},(_,i)=>row(i,{vis:7000}));\n  gateRows[5]=row(5,{vis:7000,fogOperationalScore:49,fgOperationalScore:49,fogAltVisM:700,mv:[model({vis:700,code:45,w:.40}),model({vis:7000,code:0,w:.60})]});\n  const q=gen(gateRows);\n  assert.equal((q.taf.match(/PROB30/g)||[]).length,0,q.taf);\n  assert.ok(!/\\b(?:FG|FZFG)\\b/.test(q.taf),q.taf);\n}"""
+          if old_block not in t: raise SystemExit('old operational score 52 test block not found')
+          t=t.replace(old_block,new_block,1)
+          p.write_text(t,encoding='utf-8')
+
+          p=Path('taf.html')
+          h=p.read_text(encoding='utf-8')
+          if h.count('2.3.0') < 4: raise SystemExit('unexpected taf.html version markers')
+          h=h.replace('2.3.0','2.3.1')
+          p.write_text(h,encoding='utf-8')
+
+          for wf in ['.github/workflows/pages-v2.yml','.github/workflows/taf-instruction-2023.yml']:
+              p=Path(wf); w=p.read_text(encoding='utf-8')
+              if '2.3.0' not in w: raise SystemExit(f'no 2.3.0 marker in {wf}')
+              p.write_text(w.replace('2.3.0','2.3.1'),encoding='utf-8')
+          PY
+
+      - name: Regression tests
+        run: |
+          node --check taf-engine-v2.js
+          node --check taf-app-v2.js
+          node --check tests/taf-engine-v2.test.js
+          node tests/taf-engine-v2.test.js
+          grep -F 'fogOperationalScoreMin:60' taf-engine-v2.js
+          grep -F "assert.equal(FOGP(59),0)" tests/taf-engine-v2.test.js
+          grep -F 'TAF ENGINE 2.3.1 · INSTRUCTION FIRST' taf.html
+          grep -F 'taf-engine-v2.js?v=2.3.1' taf.html
+
+      - name: Commit fix
+        run: |
+          git config user.name 'prognozaepir-taf-fix'
+          git config user.email 'taf-fix@prognozaepir.invalid'
+          git add taf-engine-v2.js tests/taf-engine-v2.test.js taf.html .github/workflows/pages-v2.yml .github/workflows/taf-instruction-2023.yml
+          git commit -m 'TAF: require FG score 60 for probability groups'
+          git push origin HEAD:main
