@@ -1,605 +1,378 @@
 'use strict';
 
-// PrognozaEPIR v0.11.3
-// Official POLRAD map layers + IMGW warning overlay + multi-model AIFS/ICON/GFS nowcast.
+// PrognozaEPIR v0.11.9
+// Runtime-verified POLRAD layers, reliable double-buffer animation and IMGW warnings.
 (() => {
   if (typeof L === 'undefined' || typeof map === 'undefined' || !map) return;
 
-  const byId = id => document.getElementById(id);
-  const clamp01 = (v, a, b) => Math.max(a, Math.min(b, v));
-  const fmt = (v, d = 1) => Number.isFinite(Number(v)) ? Number(v).toFixed(d) : '—';
-  const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({
-    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-  }[ch]));
+  const $ = id => document.getElementById(id);
+  const clamp = (v,a,b) => Math.max(a,Math.min(b,v));
+  const POLRAD_BOUNDS = L.latLngBounds([[48.5,13.5],[56.0,25.0]]);
+  const POLRAD_PANE = 'polradImagePane';
+  const FRAME_WINDOW = 18;
+  const FRAME_DELAY_MS = 850;
+  const LOAD_TIMEOUT_MS = 9000;
 
-  // CMAX composite geographic extent used by IMGW national products.
-  // Source images are published in EPSG:3857; Leaflet projects these corner bounds.
-  const POLRAD_BOUNDS = L.latLngBounds([[48.5, 13.5], [56.0, 25.0]]);
-  // Six visualisations exposed by the official IMGW radar viewer.
-  // API aliases are probed at runtime. If IMGW does not expose a list endpoint
-  // for a product, its button is disabled instead of showing a different field.
-  const POLRAD_PRODUCTS = {
-    cmax:  {label:'POLRAD CMAX', short:'CMAX', apiKeys:['cmax'], operaComparable:true},
-    cappi: {label:'POLRAD CAPPI 1 km', short:'CAPPI', apiKeys:['cappi','cappi1','cappi_1km'], operaComparable:true},
-    eht:   {label:'POLRAD EHT', short:'EHT', apiKeys:['eht','etop','echo_top'], operaComparable:false},
-    sri:   {label:'POLRAD SRI', short:'SRI', apiKeys:['sri'], operaComparable:false},
-    pac:   {label:'POLRAD PAC 1 h', short:'PAC', apiKeys:['pac'], operaComparable:false},
-    hail:  {label:'POLRAD grad', short:'GRAD', apiKeys:['hail','hails','hailprob','hail_prob','grad'], operaComparable:false}
+  // These are the official products we are willing to expose. A button is kept
+  // only after the list endpoint AND real image frames pass the runtime audit.
+  const PRODUCTS = {
+    cmax:  {label:'POLRAD CMAX', short:'CMAX', keys:['cmax'], comparableToOpera:true},
+    cappi: {label:'POLRAD CAPPI 1 km', short:'CAPPI', keys:['cappi','cappi1','cappi_1km'], comparableToOpera:true},
+    eht:   {label:'POLRAD EHT', short:'EHT', keys:['eht','etop','echo_top'], comparableToOpera:false},
+    sri:   {label:'POLRAD SRI', short:'SRI', keys:['sri'], comparableToOpera:false},
+    pac:   {label:'POLRAD PAC 1 h', short:'PAC', keys:['pac'], comparableToOpera:false},
+    hail:  {label:'POLRAD grad', short:'GRAD', keys:['hail','hails','hailprob','hail_prob','grad'], comparableToOpera:false}
   };
 
-  let polradProduct = 'cmax';
-  let polradFrames = [];
-  let polradIndex = 0;
-  let polradLayer = null;
-  let polradTimer = null;
-  let polradAvailable = false;
-  let polradFrameToken = 0;
-  const polradFrameCache = new Map();
-  const POLRAD_PANE = 'polradImagePane';
+  let product = 'cmax';
+  let frames = [];
+  let index = 0;
+  let layer = null;
+  let animationTimer = null;
+  let animationToken = 0;
+  let renderToken = 0;
+  let playing = false;
   let warningsLayer = null;
+  let warningsGeo = null;
   let warningRows = [];
-  let warningByCounty = new Map();
-  let powiatGeoJson = null;
-  let enhancedTimer = null;
+  let warningIndex = new Map();
+  const cache = new Map();
 
-  // Version badge.
   const version = document.querySelector('.brand small');
-  if (version) version.textContent = 'RADAR / SAT / AI v0.11.3';
-  const aiHeading = [...document.querySelectorAll('.card h2')].find(h => h.textContent.includes('Prognoza AI'));
-  if (aiHeading) aiHeading.textContent = 'Nowcast AI / ensemble 0–6 h';
+  if (version) version.textContent = 'RADAR / SAT / AI v0.11.9';
+
+  const mapbar = document.querySelector('.mapbar');
+  if (!mapbar) return;
 
   const style = document.createElement('style');
   style.textContent = `
     .polrad-note{font-size:9px;color:var(--muted);padding:4px 8px;border-top:1px solid var(--line)}
-    .ai-ensemble{line-height:1.5}.ai-ensemble .lead{display:block;margin-bottom:4px}
-    .ai-horizon{margin:4px 0;padding:5px 7px;background:var(--panel2);border-left:3px solid var(--blue2)}
-    .ai-conf{font-weight:700}.ai-low{color:var(--orange)}.ai-high{color:var(--green)}
     .hazard-legend{background:rgba(255,255,255,.93);color:#222;padding:6px 7px;border-radius:5px;font-size:9px;line-height:1.35;box-shadow:0 1px 5px rgba(0,0,0,.2)}
     .hazard-legend i{display:inline-block;width:11px;height:8px;margin-right:4px;vertical-align:middle;border:1px solid rgba(0,0,0,.25)}
   `;
   document.head.appendChild(style);
 
-  // Add a concise status line under the map controls.
-  const mapbar = document.querySelector('.mapbar');
-  let polradStatus = byId('polradStatus');
-  if (mapbar && !polradStatus) {
-    polradStatus = document.createElement('div');
-    polradStatus.id = 'polradStatus';
-    polradStatus.className = 'polrad-note';
-    polradStatus.textContent = 'POLRAD: łączenie z IMGW…';
-    mapbar.insertAdjacentElement('afterend', polradStatus);
+  // Remove legacy experiments which had no dependable browser-side source.
+  // This also cleans a cached/older DOM if a previous revision injected them.
+  const obsoleteIds = ['lightningToggle','blitzortungLive','mtgLiToggle','mtgIrToggle','mtgIr105Toggle','mtgGeoToggle'];
+  obsoleteIds.forEach(id => $(id)?.remove());
+  ['blitzortungWrap','mtgIrWrap','mtgGeoWrap'].forEach(id => $(id)?.remove());
+  [...mapbar.querySelectorAll('button')].forEach(b => {
+    if (/Wyładowania LFL|Blitzortung LIVE|MTG IR10\.5|MTG Geo/i.test(b.textContent || '')) b.remove();
+  });
+
+  let status = $('polradStatus');
+  if (!status) {
+    status = document.createElement('div');
+    status.id = 'polradStatus';
+    status.className = 'polrad-note';
+    mapbar.insertAdjacentElement('afterend',status);
   }
+  const setStatus = text => { if (status) status.textContent = text; };
+  const fmtUtc = sec => new Intl.DateTimeFormat('pl-PL',{
+    timeZone:'UTC',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'
+  }).format(new Date(Number(sec)*1000));
+  const normalizeUrl = url => String(url || '').replace(/^http:\/\//i,'https://');
 
-  const setPolradStatus = text => { if (polradStatus) polradStatus.textContent = text; };
-  const fmtRadarTime = sec => new Intl.DateTimeFormat('pl-PL', {
-    timeZone:'UTC', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'
-  }).format(new Date(Number(sec) * 1000));
-
-  // Existing "Radar" remains as a point-dBZ/fallback source, but is no longer the default map layer.
-  const rainButton = byId('radarToggle');
-  if (rainButton) {
-    rainButton.textContent = 'RainViewer';
-    rainButton.classList.remove('active');
-    try { if (typeof radarLayer !== 'undefined' && radarLayer && map.hasLayer(radarLayer)) map.removeLayer(radarLayer); } catch (_) {}
-  }
-
-  function makeMapButton(id, text, before) {
-    let b = byId(id);
-    if (b || !mapbar) return b;
-    b = document.createElement('button');
-    b.id = id;
-    b.type = 'button';
-    b.textContent = text;
-    before ? mapbar.insertBefore(b, before) : mapbar.appendChild(b);
-    return b;
-  }
-
-  const polradButtons = {};
-  const first = rainButton || mapbar?.firstChild || null;
-  for (const [product, meta] of Object.entries(POLRAD_PRODUCTS)) {
-    const b = makeMapButton('polrad_' + product, meta.label, first);
-    if (!b) continue;
-    polradButtons[product] = b;
-    b.addEventListener('click', async () => {
-      if (polradProduct === product && b.classList.contains('active')) {
-        b.classList.remove('active');
-        if (polradLayer && map.hasLayer(polradLayer)) map.removeLayer(polradLayer);
-        return;
-      }
-      await selectPolrad(product);
-    });
-  }
-
-  const hazardButton = makeMapButton('hazardsToggle', 'Zagrożenia IMGW', byId('playRadar'));
-  if (hazardButton) hazardButton.addEventListener('click', toggleHazards);
-
-  // Remove old RainViewer-only history/animation listeners by cloning those controls.
-  let historyRange = byId('radarFrame');
-  if (historyRange) {
-    const replacement = historyRange.cloneNode(true);
-    historyRange.replaceWith(replacement);
-    historyRange = replacement;
-    historyRange.min = 0;
-    historyRange.max = 0;
-    historyRange.value = 0;
-    historyRange.addEventListener('input', e => setPolradFrame(Number(e.target.value)));
-  }
-  let playButton = byId('playRadar');
-  if (playButton) {
-    const replacement = playButton.cloneNode(true);
-    playButton.replaceWith(replacement);
-    playButton = replacement;
-    playButton.addEventListener('click', togglePolradAnimation);
-  }
-
-  if (rainButton) {
-    // This runs after the original RainViewer handler. If RainViewer is enabled,
-    // hide POLRAD to keep the map readable; switching back to POLRAD is one tap.
-    rainButton.addEventListener('click', () => {
-      if (!rainButton.classList.contains('active')) return;
-      Object.values(polradButtons).forEach(b => b.classList.remove('active'));
-      if (polradLayer && map.hasLayer(polradLayer)) map.removeLayer(polradLayer);
-      stopPolradAnimation();
-      setPolradStatus('Mapa: RainViewer (fallback). Oficjalne produkty POLRAD pozostają dostępne przyciskami produktów POLRAD.');
-    });
-  }
-
-  function normalizeImgwUrl(url) {
-    // IMGW list API can still return http:// URLs. GitHub Pages is HTTPS,
-    // so upgrade the same IMGW resource to HTTPS to avoid mixed-content blocking.
-    return String(url || '').replace(/^http:\/\//i, 'https://');
-  }
-
-  async function fetchPolradFrames(product, {force=false}={}) {
-    if (!force && polradFrameCache.has(product)) return polradFrameCache.get(product).frames;
-    const meta = POLRAD_PRODUCTS[product] || {apiKeys:[product]};
-    let lastError = null;
-    for (const apiKey of (meta.apiKeys || [product])) {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 9000);
-      try {
-        const r = await fetch(`https://meteo.imgw.pl/api/radars/v1/list/${encodeURIComponent(apiKey)}`, {
-          cache:'no-cache', signal:controller.signal
-        });
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        const data = await r.json();
-        const direct = data?.[apiKey]?.list || data?.[product]?.list;
-        const fallback = direct || Object.values(data || {}).find(v => Array.isArray(v?.list))?.list;
-        if (!Array.isArray(fallback) || !fallback.length) throw new Error('brak klatek');
-        const frames = fallback
-          .filter(f => f && f.url && Number.isFinite(Number(f.date)))
-          .sort((a, b) => Number(a.date) - Number(b.date));
-        if (!frames.length) throw new Error('brak poprawnych klatek');
-        polradFrameCache.set(product,{frames,apiKey,checkedAt:Date.now()});
-        meta.resolvedApiKey = apiKey;
-        return frames;
-      } catch (e) {
-        lastError = e;
-      } finally {
-        clearTimeout(timeout);
-      }
-    }
-    throw lastError || new Error('produkt niedostępny w API listy');
-  }
-
-  async function auditPolradProducts() {
-    await Promise.all(Object.keys(POLRAD_PRODUCTS).map(async product => {
-      const b = polradButtons[product];
-      if (!b) return;
-      try {
-        const frames = await fetchPolradFrames(product);
-        b.disabled = false;
-        b.dataset.available = '1';
-        const key = POLRAD_PRODUCTS[product].resolvedApiKey || product;
-        b.title = `${POLRAD_PRODUCTS[product].short}: ${frames.length} klatek · IMGW / ${key}`;
-      } catch (_) {
-        b.dataset.available = '0';
-        b.disabled = product !== 'cmax';
-        b.title = `${POLRAD_PRODUCTS[product].short}: oficjalny produkt IMGW, ale brak działającego endpointu listy obrazów`;
-      }
-    }));
-  }
-
-  function ensurePolradPane() {
+  function ensurePane(){
     let pane = map.getPane(POLRAD_PANE);
     if (!pane) pane = map.createPane(POLRAD_PANE);
     pane.style.zIndex = '470';
     pane.style.pointerEvents = 'none';
     return pane;
   }
+  ensurePane();
 
-  function removePolradLayer() {
-    try {
-      map.eachLayer(layer => {
-        if (!L.ImageOverlay || !(layer instanceof L.ImageOverlay)) return;
-        if (layer === polradLayer || layer?.options?.attribution === 'IMGW-PIB / POLRAD') {
-          if (map.hasLayer(layer)) map.removeLayer(layer);
-        }
-      });
-    } catch (_) {}
-    polradLayer = null;
+  function makeButton(id,text,before){
+    let b=$(id);
+    if (b) return b;
+    b=document.createElement('button');b.id=id;b.type='button';b.textContent=text;
+    before ? mapbar.insertBefore(b,before) : mapbar.appendChild(b);
+    return b;
   }
 
-  function preloadPolradFrame(index) {
-    if (!polradFrames.length) return;
-    const i = clamp01(Math.round(Number(index) || 0), 0, polradFrames.length - 1);
-    const frame = polradFrames[i];
-    if (!frame?.url) return;
-    try {
-      const img = new Image();
-      img.decoding = 'async';
-      img.src = normalizeImgwUrl(frame.url);
-    } catch (_) {}
+  const rainButton = $('radarToggle');
+  if (rainButton) {
+    rainButton.textContent='RainViewer';
+    rainButton.classList.remove('active');
   }
 
-  function publishPolradFrame(frame) {
-    const meta = POLRAD_PRODUCTS[polradProduct] || {};
-    const detail = {
-      product:polradProduct,
-      short:meta.short || polradProduct,
-      timeSec:Number(frame.date),
-      timeMs:Number(frame.date) * 1000,
-      comparableToOpera:!!meta.operaComparable,
-      index:polradIndex,
-      count:polradFrames.length,
-      url:normalizeImgwUrl(frame.url)
-    };
-    window.PrognozaEPIRPolradState = detail;
+  const productButtons = {};
+  const first = rainButton || mapbar.firstChild;
+  for (const [key,meta] of Object.entries(PRODUCTS)) {
+    const b=makeButton('polrad_'+key,meta.label,first);
+    productButtons[key]=b;
+    b.disabled=true;
+    b.title='Test źródła…';
+    b.addEventListener('click',() => {
+      if (b.disabled) return;
+      if (product===key && b.classList.contains('active')) {
+        stopAnimation();
+        b.classList.remove('active');
+        removePolradLayer();
+        return;
+      }
+      selectProduct(key);
+    });
+  }
+
+  const hazardButton = makeButton('hazardsToggle','Zagrożenia IMGW',$('playRadar'));
+  hazardButton?.addEventListener('click',toggleHazards);
+
+  // Own the history controls. Cloning drops the old RainViewer timer listeners,
+  // preventing two animation engines from fighting over the same map.
+  let range=$('radarFrame');
+  if (range) {
+    const r=range.cloneNode(true);range.replaceWith(r);range=r;
+    range.min='0';range.max='0';range.value='0';
+    range.addEventListener('input',() => {
+      stopAnimation();
+      if (activeMode()==='rainviewer') showRainviewerFrame(Number(range.value));
+      else showPolradFrame(Number(range.value));
+    });
+  }
+  let play=$('playRadar');
+  if (play) {
+    const p=play.cloneNode(true);play.replaceWith(p);play=p;
+    play.textContent='▶ Animacja';
+    play.addEventListener('click',toggleAnimation);
+  }
+
+  function activeMode(){
+    if (rainButton?.classList.contains('active')) return 'rainviewer';
+    if (productButtons[product]?.classList.contains('active')) return 'polrad';
+    return 'none';
+  }
+
+  function imageProbe(url,timeout=LOAD_TIMEOUT_MS){
+    return new Promise(resolve => {
+      if (!url) { resolve(false); return; }
+      const img=new Image();
+      let done=false;
+      const finish=ok=>{if(done)return;done=true;clearTimeout(timer);img.onload=null;img.onerror=null;resolve(ok);};
+      const timer=setTimeout(()=>finish(false),timeout);
+      img.onload=()=>finish(img.naturalWidth>20&&img.naturalHeight>20);
+      img.onerror=()=>finish(false);
+      img.decoding='async';
+      img.src=normalizeUrl(url)+(String(url).includes('?')?'&':'?')+'_epir='+Date.now();
+    });
+  }
+
+  async function fetchProductFrames(key,{force=false}={}){
+    if (!force && cache.has(key)) return cache.get(key);
+    const meta=PRODUCTS[key];
+    let lastError=null;
+    for (const apiKey of meta.keys) {
+      const ctl=new AbortController();
+      const timer=setTimeout(()=>ctl.abort(),9000);
+      try {
+        const r=await fetch(`https://meteo.imgw.pl/api/radars/v1/list/${encodeURIComponent(apiKey)}`,{cache:'no-store',signal:ctl.signal});
+        if(!r.ok) throw new Error('HTTP '+r.status);
+        const j=await r.json();
+        const list=j?.[apiKey]?.list || j?.[key]?.list || Object.values(j||{}).find(v=>Array.isArray(v?.list))?.list;
+        if(!Array.isArray(list)||list.length<2) throw new Error('mniej niż 2 klatki');
+        const out=list.filter(f=>f?.url&&Number.isFinite(Number(f?.date))).sort((a,b)=>Number(a.date)-Number(b.date));
+        if(out.length<2) throw new Error('brak poprawnej historii');
+        // Test two real images, not just JSON. This is what decides whether the
+        // visualization exists in the UI.
+        const newest=out.at(-1),older=out.at(Math.max(0,out.length-4));
+        const [a,b]=await Promise.all([imageProbe(newest.url),imageProbe(older.url)]);
+        if(!a||!b) throw new Error('obraz produktu nie ładuje się');
+        const value={frames:out,apiKey,checkedAt:Date.now()};
+        cache.set(key,value);meta.resolvedKey=apiKey;return value;
+      } catch(e){lastError=e;} finally{clearTimeout(timer);}
+    }
+    throw lastError || new Error('źródło niedostępne');
+  }
+
+  async function auditProducts(){
+    setStatus('Testuję wszystkie zobrazowania POLRAD…');
+    const results=[];
+    for (const key of Object.keys(PRODUCTS)) {
+      const b=productButtons[key];
+      if(!b) continue;
+      try {
+        const data=await fetchProductFrames(key,{force:true});
+        b.disabled=false;b.dataset.available='1';
+        b.title=`${PRODUCTS[key].short}: ${data.frames.length} klatek · test JSON + 2 obrazy OK`;
+        results.push(key);
+      } catch(e) {
+        b.remove();delete productButtons[key];
+        results.push(null);
+      }
+    }
+    const ok=results.filter(Boolean);
+    setStatus(`Test zobrazowań zakończony: ${ok.length}/${Object.keys(PRODUCTS).length} produktów POLRAD działa. Niedziałające zostały usunięte.`);
+    return ok;
+  }
+
+  function removePolradLayer(){
+    renderToken++;
+    try{if(layer&&map.hasLayer(layer))map.removeLayer(layer);}catch(_){}
+    layer=null;
+  }
+
+  function publishFrame(frame){
+    const meta=PRODUCTS[product]||{};
+    const detail={product,short:meta.short||product,timeSec:Number(frame.date),timeMs:Number(frame.date)*1000,
+      comparableToOpera:!!meta.comparableToOpera,index,count:frames.length,url:normalizeUrl(frame.url)};
+    window.PrognozaEPIRPolradState=detail;
     window.dispatchEvent(new CustomEvent('prognozaepir:polrad-frame-changed',{detail}));
   }
 
-  function setPolradFrame(index) {
-    if (!polradFrames.length) return;
-    polradIndex = clamp01(Math.round(Number(index) || 0), 0, polradFrames.length - 1);
-    if (historyRange) historyRange.value = polradIndex;
-    const frame = polradFrames[polradIndex];
-    const url = normalizeImgwUrl(frame.url);
-    const active = !!polradButtons[polradProduct]?.classList.contains('active');
-    const token = ++polradFrameToken;
-    ensurePolradPane();
-
-    const onLoad = () => {
-      if (token !== polradFrameToken || !polradLayer) return;
-      if (active && map.hasLayer(polradLayer)) polradLayer.setOpacity(.70);
-      preloadPolradFrame(polradIndex + 1 < polradFrames.length ? polradIndex + 1 : Math.max(0,polradFrames.length - 18));
-    };
-    const onError = () => {
-      if (token !== polradFrameToken) return;
-      if (polradLayer) polradLayer.setOpacity(0);
-      setPolradStatus('POLRAD: błąd tej klatki — poprzedni obraz nie jest pozostawiany jako zamrożone tło.');
-    };
-
-    // Hard-swap frames. Never reuse the previous IMG element: on some browsers
-    // a setUrl() swap can keep the decoded previous bitmap visible while the next
-    // image is loading, which looks like a frozen first frame under the animation.
-    // Purging every POLRAD ImageOverlay guarantees exactly one radar frame on map.
-    removePolradLayer();
-    polradLayer = L.imageOverlay(url, POLRAD_BOUNDS, {
-      pane:POLRAD_PANE, opacity:.70, interactive:false, crossOrigin:true,
-      attribution:'IMGW-PIB / POLRAD'
-    });
-    polradLayer.once('load', onLoad);
-    polradLayer.once('error', onError);
-    if (active) polradLayer.addTo(map);
-
-    const timeEl = byId('radarTime');
-    if (timeEl) timeEl.textContent = `${POLRAD_PRODUCTS[polradProduct]?.short || polradProduct}: ${fmtRadarTime(frame.date)} UTC`;
-    setPolradStatus(`Mapa: IMGW/POLRAD ${POLRAD_PRODUCTS[polradProduct]?.short || polradProduct} · ${fmtRadarTime(frame.date)} UTC · jedna aktywna klatka.`);
-    publishPolradFrame(frame);
+  function preloadNext(i){
+    if(!frames.length)return;
+    const f=frames[clamp(i,0,frames.length-1)];
+    if(f?.url) imageProbe(f.url,6000).catch(()=>{});
   }
 
-  async function selectPolrad(product) {
-    stopPolradAnimation();
-    polradProduct = product;
-    Object.entries(polradButtons).forEach(([p, b]) => b.classList.toggle('active', p === product));
-    if (rainButton) {
-      rainButton.classList.remove('active');
-      try { if (typeof radarLayer !== 'undefined' && radarLayer && map.hasLayer(radarLayer)) map.removeLayer(radarLayer); } catch (_) {}
-    }
-    setPolradStatus(`POLRAD ${POLRAD_PRODUCTS[product]?.short || product}: pobieranie listy klatek z IMGW…`);
-    try {
-      polradFrames = await fetchPolradFrames(product,{force:true});
-      polradAvailable = true;
-      polradIndex = polradFrames.length - 1;
-      if (historyRange) {
-        historyRange.min = 0;
-        historyRange.max = Math.max(0, polradFrames.length - 1);
-        historyRange.value = polradIndex;
-      }
-      setPolradFrame(polradIndex);
-    } catch (e) {
-      polradAvailable = false;
-      Object.values(polradButtons).forEach(b => b.classList.remove('active'));
-      removePolradLayer();
-      setPolradStatus(`POLRAD chwilowo niedostępny (${e?.message || 'błąd/CORS'}). Automatyczny fallback: RainViewer.`);
-      if (rainButton && !rainButton.classList.contains('active')) rainButton.click();
-    }
-  }
+  function showPolradFrame(i){
+    if(!frames.length)return Promise.resolve(false);
+    const myToken=++renderToken;
+    index=clamp(Math.round(Number(i)||0),0,frames.length-1);
+    if(range)range.value=String(index);
+    const frame=frames[index],url=normalizeUrl(frame.url);
+    const active=productButtons[product]?.classList.contains('active');
+    if(!active)return Promise.resolve(false);
 
-  function stopPolradAnimation() {
-    if (polradTimer) clearInterval(polradTimer);
-    polradTimer = null;
-    if (playButton) playButton.textContent = '▶ Animacja';
-  }
-
-  function togglePolradAnimation() {
-    if (polradTimer) { stopPolradAnimation(); return; }
-    if (!polradAvailable || !polradFrames.length) return;
-    if (playButton) playButton.textContent = '■ Stop';
-    const start = Math.max(0, polradFrames.length - 18);
-    let i = start;
-    // Draw immediately, then reuse the SAME ImageOverlay via setUrl().
-    setPolradFrame(i);
-    i = i + 1 < polradFrames.length ? i + 1 : start;
-    preloadPolradFrame(i);
-    polradTimer = setInterval(() => {
-      setPolradFrame(i);
-      i++;
-      if (i >= polradFrames.length) i = start;
-      preloadPolradFrame(i);
-    }, 700);
-  }
-
-  // ---------- Official IMGW warning overlay (powiat boundaries) ----------
-  function terytList(warning) {
-    const raw = warning?.teryt;
-    if (Array.isArray(raw)) return raw.map(String);
-    if (typeof raw === 'string') return raw.split(/[;,\s]+/).filter(Boolean);
-    return [];
-  }
-
-  function warningLevel(w) {
-    return clamp01(Number(w?.stopien ?? w?.stopien_zagrozenia ?? w?.level ?? 0) || 0, 0, 3);
-  }
-
-  function rebuildWarningIndex() {
-    warningByCounty = new Map();
-    for (const w of warningRows) {
-      for (const raw of terytList(w)) {
-        const code = String(raw).padStart(4, '0').slice(0, 4);
-        const old = warningByCounty.get(code) || [];
-        old.push(w);
-        warningByCounty.set(code, old);
-      }
-    }
-  }
-
-  async function fetchWarnings() {
-    const r = await fetch('https://danepubliczne.imgw.pl/api/data/warningsmeteo', {cache:'no-cache'});
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const data = await r.json();
-    warningRows = Array.isArray(data) ? data : [];
-    rebuildWarningIndex();
-    return warningRows;
-  }
-
-  async function fetchPowiatGeoJson() {
-    if (powiatGeoJson) return powiatGeoJson;
-    const url = 'https://raw.githubusercontent.com/waszkiewiczja/GeoJSON-Polska-Wojewodztwa-Powiaty-Gminy/main/powiaty.json';
-    const r = await fetch(url, {cache:'force-cache'});
-    if (!r.ok) throw new Error('granice powiatów HTTP ' + r.status);
-    powiatGeoJson = await r.json();
-    return powiatGeoJson;
-  }
-
-  const hazardColor = level => level >= 3 ? '#c62828' : level === 2 ? '#ef6c00' : '#f9a825';
-
-  function renderWarningLayer(geo) {
-    if (warningsLayer) map.removeLayer(warningsLayer);
-    warningsLayer = L.geoJSON(geo, {
-      style: feature => {
-        const code = String(feature?.properties?.JPT_KOD_JE || '').padStart(4, '0').slice(0, 4);
-        const rows = warningByCounty.get(code) || [];
-        const level = rows.reduce((m, w) => Math.max(m, warningLevel(w)), 0);
-        return level ? {
-          color:hazardColor(level), weight:1.2, opacity:.9,
-          fillColor:hazardColor(level), fillOpacity:level >= 3 ? .40 : level === 2 ? .32 : .24
-        } : {color:'transparent', weight:0, fillColor:'transparent', fillOpacity:0};
-      },
-      onEachFeature: (feature, layer) => {
-        const code = String(feature?.properties?.JPT_KOD_JE || '').padStart(4, '0').slice(0, 4);
-        const rows = warningByCounty.get(code) || [];
-        if (!rows.length) return;
-        const name = feature?.properties?.JPT_NAZWA_ || ('powiat ' + code);
-        const items = rows.slice(0, 4).map(w => {
-          const event = esc(w.nazwa_zdarzenia || w.zdarzenie || w.event || w.nazwa || 'Ostrzeżenie');
-          const level = warningLevel(w);
-          const until = esc(w.obowiazuje_do || w.do || w.end || '');
-          return `${event} · st. ${level}${until ? '<br><small>do ' + until + '</small>' : ''}`;
-        }).join('<hr style="border:0;border-top:1px solid #bbb">');
-        layer.bindTooltip(`<b>${esc(name)}</b><br>${items}`, {sticky:true});
-      }
-    });
-    warningsLayer.addTo(map);
-  }
-
-  let hazardLegend = null;
-  function setHazardLegend(show) {
-    if (show && !hazardLegend) {
-      hazardLegend = L.control({position:'topright'});
-      hazardLegend.onAdd = () => {
-        const d = L.DomUtil.create('div', 'hazard-legend');
-        d.innerHTML = '<b>Zagrożenia IMGW</b><br><i style="background:#f9a825"></i>stopień 1<br><i style="background:#ef6c00"></i>stopień 2<br><i style="background:#c62828"></i>stopień 3';
-        return d;
+    return new Promise(resolve=>{
+      const next=L.imageOverlay(url,POLRAD_BOUNDS,{pane:POLRAD_PANE,opacity:0,interactive:false,attribution:'IMGW-PIB / POLRAD'});
+      let done=false;
+      const finish=(ok)=>{
+        if(done)return;done=true;clearTimeout(timer);
+        if(myToken!==renderToken){try{if(map.hasLayer(next))map.removeLayer(next);}catch(_){}resolve(false);return;}
+        if(!ok){try{if(map.hasLayer(next))map.removeLayer(next);}catch(_){}setStatus(`POLRAD ${PRODUCTS[product]?.short||product}: pominięto uszkodzoną klatkę.`);resolve(false);return;}
+        const old=layer;layer=next;next.setOpacity(.70);
+        if(old&&old!==next)try{if(map.hasLayer(old))map.removeLayer(old);}catch(_){}
+        const timeEl=$('radarTime');if(timeEl)timeEl.textContent=`${PRODUCTS[product]?.short||product}: ${fmtUtc(frame.date)} UTC`;
+        setStatus(`Mapa: IMGW/POLRAD ${PRODUCTS[product]?.short||product} · ${fmtUtc(frame.date)} UTC.`);
+        publishFrame(frame);preloadNext(index+1<frames.length?index+1:Math.max(0,frames.length-FRAME_WINDOW));
+        resolve(true);
       };
-      hazardLegend.addTo(map);
-    } else if (!show && hazardLegend) {
-      map.removeControl(hazardLegend);
-      hazardLegend = null;
-    }
+      const timer=setTimeout(()=>finish(false),LOAD_TIMEOUT_MS);
+      next.once('load',()=>finish(true));next.once('error',()=>finish(false));next.addTo(map);
+    });
   }
 
-  async function toggleHazards() {
-    if (!hazardButton) return;
-    if (hazardButton.classList.contains('active')) {
-      hazardButton.classList.remove('active');
-      if (warningsLayer && map.hasLayer(warningsLayer)) map.removeLayer(warningsLayer);
-      setHazardLegend(false);
-      return;
-    }
-    hazardButton.classList.add('active');
-    hazardButton.textContent = 'Zagrożenia…';
+  async function showRainviewerFrame(i){
     try {
-      const [_, geo] = await Promise.all([fetchWarnings(), fetchPowiatGeoJson()]);
-      renderWarningLayer(geo);
-      setHazardLegend(true);
-      hazardButton.textContent = 'Zagrożenia IMGW';
-    } catch (e) {
-      hazardButton.classList.remove('active');
-      hazardButton.textContent = 'Zagrożenia IMGW';
-      setHazardLegend(false);
-      if (typeof err === 'function') err('Nie udało się wczytać warstwy zagrożeń IMGW: ' + (e?.message || 'błąd'));
-    }
+      if(typeof radarFrames==='undefined'||typeof radarMeta==='undefined'||!radarMeta||!Array.isArray(radarFrames)||!radarFrames.length)return false;
+      const myToken=++renderToken;
+      const ri=clamp(Math.round(Number(i)||0),0,radarFrames.length-1),fr=radarFrames[ri];
+      if(range)range.value=String(ri);
+      const url=radarMeta.host+fr.path+'/256/{z}/{x}/{y}/2/0_0.png';
+      const next=L.tileLayer(url,{tileSize:256,opacity:0,maxNativeZoom:7,maxZoom:12,attribution:'Radar © RainViewer'});
+      const ok=await new Promise(resolve=>{
+        let done=false;const finish=v=>{if(done)return;done=true;clearTimeout(timer);resolve(v)};
+        const timer=setTimeout(()=>finish(false),LOAD_TIMEOUT_MS);next.once('load',()=>finish(true));next.once('tileerror',()=>finish(false));next.addTo(map);
+      });
+      if(myToken!==renderToken||!rainButton?.classList.contains('active')){try{map.removeLayer(next)}catch(_){}return false;}
+      if(!ok){try{map.removeLayer(next)}catch(_){}return false;}
+      const old=typeof radarLayer!=='undefined'?radarLayer:null;
+      next.setOpacity(.68);
+      try{if(old&&old!==next&&map.hasLayer(old))map.removeLayer(old);}catch(_){}
+      try{radarLayer=next;radarIndex=ri;}catch(_){}
+      const timeEl=$('radarTime');if(timeEl)timeEl.textContent='Radar: '+fmtUtc(fr.time)+' UTC';
+      setStatus(`Mapa: RainViewer · ${fmtUtc(fr.time)} UTC.`);return true;
+    } catch(_){return false;}
   }
 
-  // ---------- Multi-model AIFS + ICON + GFS nowcast ----------
-  function modelParams(extra = {}) {
-    return new URLSearchParams({
-      latitude:point.lat,
-      longitude:point.lon,
-      hourly:'temperature_2m,precipitation,weather_code,wind_gusts_10m',
-      timezone:'UTC', forecast_hours:'9', wind_speed_unit:'ms', ...extra
-    });
-  }
-
-  async function loadModelJson(url) {
-    const c = new AbortController();
-    const t = setTimeout(() => c.abort(), 12000);
+  async function selectProduct(key){
+    stopAnimation();
+    if(!productButtons[key])return;
+    product=key;
+    Object.entries(productButtons).forEach(([k,b])=>b.classList.toggle('active',k===key));
+    if(rainButton){rainButton.classList.remove('active');try{if(typeof radarLayer!=='undefined'&&radarLayer&&map.hasLayer(radarLayer))map.removeLayer(radarLayer)}catch(_){}}
+    setStatus(`POLRAD ${PRODUCTS[key].short}: odświeżam i sprawdzam źródło…`);
     try {
-      const r = await fetch(url, {cache:'no-cache', signal:c.signal});
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return await r.json();
-    } finally { clearTimeout(t); }
-  }
-
-  function nearestAt(data, targetMs) {
-    const h = data?.hourly;
-    if (!h?.time?.length) return null;
-    let best = 0, dist = Infinity;
-    h.time.forEach((s, i) => {
-      const ms = Date.parse(s + (String(s).endsWith('Z') ? '' : 'Z'));
-      const d = Math.abs(ms - targetMs);
-      if (d < dist) { dist = d; best = i; }
-    });
-    return {
-      temp:Number(h.temperature_2m?.[best]), rain:Number(h.precipitation?.[best]),
-      gust:Number(h.wind_gusts_10m?.[best]), code:Number(h.weather_code?.[best]),
-      time:h.time[best]
-    };
-  }
-
-  function mean(values) {
-    const a = values.filter(Number.isFinite);
-    return a.length ? a.reduce((s, v) => s + v, 0) / a.length : NaN;
-  }
-  function spread(values) {
-    const a = values.filter(Number.isFinite);
-    return a.length > 1 ? Math.max(...a) - Math.min(...a) : 0;
-  }
-  function agreementLabel(conf) {
-    return conf >= 80 ? ['wysoka','ai-high'] : conf >= 60 ? ['średnia',''] : ['niska','ai-low'];
-  }
-  function describeHour(rain, gust, storm) {
-    const parts = [];
-    if (rain >= 8) parts.push('silny opad');
-    else if (rain >= 3) parts.push('umiarkowany opad');
-    else if (rain >= .2) parts.push('słaby/przelotny opad');
-    else parts.push('bez istotnego opadu');
-    if (storm >= 60) parts.push('wysokie ryzyko burzy');
-    else if (storm >= 30) parts.push('możliwa burza');
-    if (gust >= 20) parts.push('bardzo silne porywy');
-    else if (gust >= 14) parts.push('silniejsze porywy');
-    return parts.join(', ');
-  }
-
-  async function loadEnhancedNowcast() {
-    const aiBox = byId('aiText');
-    if (!aiBox || typeof point === 'undefined') return;
-    const gfsQ = new URLSearchParams({
-      latitude:point.lat, longitude:point.lon,
-      hourly:'temperature_2m,precipitation,weather_code,wind_gusts_10m,cape,lifted_index,convective_inhibition,freezing_level_height,thunderstorm_probability',
-      timezone:'UTC', forecast_hours:'9', wind_speed_unit:'ms'
-    });
-    const urls = {
-      GFS:'https://api.open-meteo.com/v1/gfs?' + gfsQ,
-      AIFS:'https://api.open-meteo.com/v1/forecast?' + modelParams({models:'ecmwf_aifs025_single'}),
-      ICON:'https://api.open-meteo.com/v1/forecast?' + modelParams({models:'icon_seamless'})
-    };
-
-    const entries = await Promise.allSettled(Object.entries(urls).map(async ([name, url]) => [name, await loadModelJson(url)]));
-    const models = {};
-    entries.forEach(r => { if (r.status === 'fulfilled') models[r.value[0]] = r.value[1]; });
-    const names = Object.keys(models);
-    if (names.length < 2) return; // keep the base nowcast if ensemble cannot be built
-
-    const horizons = [0, 1, 3, 6];
-    const now = Date.now();
-    const rows = horizons.map(hour => {
-      const vals = names.map(name => ({name, data:nearestAt(models[name], now + hour * 3600e3)})).filter(x => x.data);
-      const rainVals = vals.map(x => x.data.rain);
-      const gustVals = vals.map(x => x.data.gust);
-      const tempVals = vals.map(x => x.data.temp);
-      const rain = mean(rainVals), gust = mean(gustVals), temp = mean(tempVals);
-      const g = vals.find(x => x.name === 'GFS')?.data;
-      // GFS thunderstorm probability is read separately below because nearestAt intentionally stays model-common.
-      const gh = models.GFS?.hourly;
-      let storm = 0;
-      if (gh?.time?.length) {
-        let bi = 0, bd = Infinity;
-        gh.time.forEach((s, i) => {
-          const d = Math.abs(Date.parse(s + (String(s).endsWith('Z') ? '' : 'Z')) - (now + hour * 3600e3));
-          if (d < bd) { bd = d; bi = i; }
-        });
-        storm = Number(gh.thunderstorm_probability?.[bi]) || 0;
-        const cape = Number(gh.cape?.[bi]) || 0;
-        const li = Number(gh.lifted_index?.[bi]);
-        storm = clamp01(storm * .72 + Math.min(22, cape / 70) + (Number.isFinite(li) && li <= -3 ? 8 : 0), 0, 99);
-      }
-      const rs = spread(rainVals), gs = spread(gustVals), ts = spread(tempVals);
-      const countPenalty = Math.max(0, 3 - vals.length) * 10;
-      const confidence = Math.round(clamp01(94 - rs * 10 - gs * 2.3 - ts * 2 - countPenalty, 35, 95));
-      return {hour, rain, gust, temp, storm, confidence, count:vals.length};
-    });
-
-    // Observation boost from the point dBZ sampler. It is still labeled as fallback until
-    // official POLRAD pixel decoding is added; the visible map itself is POLRAD.
-    const dbzText = byId('dbz')?.textContent || '';
-    const dbzMatch = dbzText.match(/(\d+(?:\.\d+)?)/);
-    const pointDbz = dbzMatch ? Number(dbzMatch[1]) : NaN;
-    if (Number.isFinite(pointDbz) && rows[0]) {
-      if (pointDbz >= 45) rows[0].storm = Math.max(rows[0].storm, 60);
-      else if (pointDbz >= 35) rows[0].storm = Math.max(rows[0].storm, 35);
+      const data=await fetchProductFrames(key,{force:true});frames=data.frames;index=frames.length-1;
+      if(range){range.min='0';range.max=String(frames.length-1);range.value=String(index);range.disabled=frames.length<2;}
+      if(play)play.disabled=frames.length<2;
+      await showPolradFrame(index);
+    } catch(e) {
+      productButtons[key]?.remove();delete productButtons[key];removePolradLayer();
+      setStatus(`POLRAD ${PRODUCTS[key]?.short||key} usunięty: źródło nie przeszło testu (${e?.message||'błąd'}).`);
+      const fallback=Object.keys(productButtons)[0];if(fallback)selectProduct(fallback);
     }
-
-    const headline = rows[0];
-    const [agree, cls] = agreementLabel(Math.round(mean(rows.map(r => r.confidence))));
-    const detail = rows.map(r => {
-      const when = r.hour === 0 ? 'teraz / ~1 h' : `+${r.hour} h`;
-      return `<div class="ai-horizon"><b>${when}:</b> ${esc(describeHour(r.rain, r.gust, r.storm))} · opad ${fmt(r.rain,1)} mm/h · porywy ${fmt(r.gust,1)} m/s · <span class="ai-conf">zgodność ${r.confidence}%</span></div>`;
-    }).join('');
-
-    aiBox.innerHTML = `<div class="ai-ensemble"><span class="lead"><b>Nowcast wielomodelowy:</b> ${names.join(' + ')}. Zgodność modeli: <span class="ai-conf ${cls}">${agree}</span>.</span>${detail}` +
-      `<small style="color:var(--muted)">Warstwa mapy: ${polradAvailable ? 'oficjalny IMGW/POLRAD ' + (POLRAD_PRODUCTS[polradProduct]?.short || '') : 'RainViewer fallback'}. AIFS jest modelem AI ECMWF; pozostałe wyniki są łączone jako ensemble. „Zgodność” mierzy rozrzut modeli i nie jest oficjalnym prawdopodobieństwem IMGW.</small></div>`;
   }
 
-  function scheduleEnhanced(delay = 900) {
-    if (enhancedTimer) clearTimeout(enhancedTimer);
-    enhancedTimer = setTimeout(() => loadEnhancedNowcast().catch(() => {}), delay);
+  if(rainButton){
+    rainButton.addEventListener('click',()=>{
+      if(!rainButton.classList.contains('active'))return;
+      stopAnimation();removePolradLayer();Object.values(productButtons).forEach(b=>b.classList.remove('active'));
+      try{
+        if(typeof radarFrames!=='undefined'&&Array.isArray(radarFrames)&&radarFrames.length){
+          if(range){range.min='0';range.max=String(radarFrames.length-1);range.value=String(radarFrames.length-1);range.disabled=radarFrames.length<2;}
+          if(play)play.disabled=radarFrames.length<2;
+          showRainviewerFrame(radarFrames.length-1);
+        } else {
+          rainButton.remove();setStatus('RainViewer usunięty: brak działających klatek.');
+        }
+      }catch(_){rainButton.remove();}
+    });
   }
 
-  // Re-run enhanced nowcast after every normal user refresh / point change.
-  byId('apply')?.addEventListener('click', () => scheduleEnhanced(1000));
-  byId('refresh')?.addEventListener('click', () => {
-    if (polradButtons[polradProduct]?.classList.contains('active')) selectPolrad(polradProduct).catch(() => {});
-    if (hazardButton?.classList.contains('active')) {
-      fetchWarnings().then(() => powiatGeoJson && renderWarningLayer(powiatGeoJson)).catch(() => {});
-    }
-    scheduleEnhanced(1000);
+  function stopAnimation(){
+    animationToken++;
+    if(animationTimer)clearTimeout(animationTimer);animationTimer=null;playing=false;
+    if(play)play.textContent='▶ Animacja';
+  }
+
+  async function animationStep(token,start,end,current,mode){
+    if(token!==animationToken||!playing)return;
+    let ok=false;
+    if(mode==='rainviewer')ok=await showRainviewerFrame(current);else ok=await showPolradFrame(current);
+    if(token!==animationToken||!playing)return;
+    const next=current>=end?start:current+1;
+    // Schedule only after the current frame actually loaded. Slow networks no
+    // longer cause a pile-up of pending swaps or a blank/frozen map.
+    animationTimer=setTimeout(()=>animationStep(token,start,end,next,mode),ok?FRAME_DELAY_MS:180);
+  }
+
+  function toggleAnimation(){
+    if(playing){stopAnimation();return;}
+    const mode=activeMode();if(mode==='none')return;
+    let count=0,end=0;
+    if(mode==='rainviewer'){
+      try{count=Array.isArray(radarFrames)?radarFrames.length:0;}catch(_){count=0;}
+    } else count=frames.length;
+    if(count<2){if(play)play.disabled=true;return;}
+    const start=Math.max(0,count-FRAME_WINDOW);end=count-1;
+    playing=true;const token=++animationToken;if(play)play.textContent='■ Stop';
+    animationStep(token,start,end,start,mode);
+  }
+
+  // ---------- official IMGW warnings ----------
+  function terytList(w){const raw=w?.teryt;if(Array.isArray(raw))return raw.map(String);if(typeof raw==='string')return raw.split(/[;,\s]+/).filter(Boolean);return[];}
+  function warningLevel(w){return clamp(Number(w?.stopien??w?.stopien_zagrozenia??w?.level??0)||0,0,3);}
+  async function fetchWarnings(){const r=await fetch('https://danepubliczne.imgw.pl/api/data/warningsmeteo',{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);warningRows=await r.json();if(!Array.isArray(warningRows))warningRows=[];warningIndex=new Map();for(const w of warningRows)for(const raw of terytList(w)){const code=String(raw).padStart(4,'0').slice(0,4),rows=warningIndex.get(code)||[];rows.push(w);warningIndex.set(code,rows);}return warningRows;}
+  async function fetchWarningGeo(){if(warningsGeo)return warningsGeo;const r=await fetch('https://raw.githubusercontent.com/waszkiewiczja/GeoJSON-Polska-Wojewodztwa-Powiaty-Gminy/main/powiaty.json',{cache:'force-cache'});if(!r.ok)throw new Error('granice HTTP '+r.status);warningsGeo=await r.json();return warningsGeo;}
+  const hazardColor=l=>l>=3?'#c62828':l===2?'#ef6c00':'#f9a825';
+  let hazardLegend=null;
+  function drawWarnings(geo){if(warningsLayer)try{map.removeLayer(warningsLayer)}catch(_){}warningsLayer=L.geoJSON(geo,{style:f=>{const code=String(f?.properties?.JPT_KOD_JE||'').padStart(4,'0').slice(0,4),rows=warningIndex.get(code)||[],level=rows.reduce((m,w)=>Math.max(m,warningLevel(w)),0);return level?{color:hazardColor(level),weight:1.2,fillColor:hazardColor(level),fillOpacity:level===3?.40:level===2?.32:.24}:{color:'transparent',weight:0,fillOpacity:0};},onEachFeature:(f,l)=>{const code=String(f?.properties?.JPT_KOD_JE||'').padStart(4,'0').slice(0,4),rows=warningIndex.get(code)||[];if(!rows.length)return;const name=f?.properties?.JPT_NAZWA_||('powiat '+code);l.bindTooltip('<b>'+name+'</b><br>'+rows.slice(0,3).map(w=>(w.nazwa_zdarzenia||w.zdarzenie||w.event||'Ostrzeżenie')+' · st. '+warningLevel(w)).join('<br>'),{sticky:true});}}).addTo(map);}
+  function legend(show){if(show&&!hazardLegend){hazardLegend=L.control({position:'topright'});hazardLegend.onAdd=()=>{const d=L.DomUtil.create('div','hazard-legend');d.innerHTML='<b>Zagrożenia IMGW</b><br><i style="background:#f9a825"></i>stopień 1<br><i style="background:#ef6c00"></i>stopień 2<br><i style="background:#c62828"></i>stopień 3';return d};hazardLegend.addTo(map);}else if(!show&&hazardLegend){map.removeControl(hazardLegend);hazardLegend=null;}}
+  async function toggleHazards(){if(!hazardButton)return;if(hazardButton.classList.contains('active')){hazardButton.classList.remove('active');if(warningsLayer&&map.hasLayer(warningsLayer))map.removeLayer(warningsLayer);legend(false);return;}hazardButton.textContent='Zagrożenia…';try{const [,geo]=await Promise.all([fetchWarnings(),fetchWarningGeo()]);drawWarnings(geo);legend(true);hazardButton.classList.add('active');hazardButton.textContent='Zagrożenia IMGW';}catch(e){hazardButton.classList.remove('active');hazardButton.textContent='Zagrożenia IMGW';hazardButton.remove();legend(false);setStatus('Zagrożenia IMGW usunięte: warstwa nie przeszła testu źródła.');}}
+
+  $('refresh')?.addEventListener('click',()=>{
+    cache.clear();
+    if(activeMode()==='polrad')selectProduct(product);
+    if(hazardButton?.classList.contains('active'))Promise.all([fetchWarnings(),fetchWarningGeo()]).then(([,g])=>drawWarnings(g)).catch(()=>{});
   });
-  byId('resetPoint')?.addEventListener('click', () => scheduleEnhanced(1000));
 
-  // Initial official layer and ensemble. Direct POLRAD is preferred; RainViewer is fallback only.
-  selectPolrad('cmax').catch(() => {});
-  setTimeout(() => auditPolradProducts().catch(() => {}), 700);
-  scheduleEnhanced(1400);
+  // First audit all products, remove failures, then activate the best available.
+  (async()=>{
+    const ok=await auditProducts();
+    const firstOk=ok.includes('cmax')?'cmax':ok[0];
+    if(firstOk)await selectProduct(firstOk);
+    else if(rainButton){
+      try{if(typeof radarFrames!=='undefined'&&radarFrames.length&&!rainButton.classList.contains('active'))rainButton.click();else rainButton.remove();}catch(_){rainButton.remove();}
+    }
+  })().catch(()=>{});
+
+  window.PrognozaEPIRRadarLayers={
+    audit:auditProducts,
+    select:selectProduct,
+    stop:stopAnimation,
+    state:()=>({product,frames:frames.length,index,playing})
+  };
 })();
