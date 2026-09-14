@@ -29,25 +29,27 @@ jobs:
           printf '{"commit":"%s","built_at":"%s"}\n' \
             "$GITHUB_SHA" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" > _site/pages-build.json
 
-      - name: Validate JavaScript and TAF 2.3
+      - name: Validate JavaScript and TAF 2.4
         run: |
           python3 -m py_compile scripts/prepare_pages.py scripts/wire_fog_mifg_utc_runtime.py
           for f in \
-            taf-engine-v2.js taf-app-v2.js message-archive-client.js neighbor-observation-context.js \
+            taf-engine-v2.js taf-engine-v24.js taf-app-v2.js message-archive-client.js neighbor-observation-context.js \
             fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js \
             radar-risk-policy.js lightning-alert-sw.js opera-nowcast.js opera-convection-bridge.js \
-            _site/taf-engine-v2.js _site/taf-app-v2.js _site/message-archive-client.js \
+            _site/taf-engine-v2.js _site/taf-engine-v24.js _site/taf-app-v2.js _site/message-archive-client.js \
             _site/fog-engine.js _site/observation-engine.js _site/mifg-engine.js \
             _site/radar-risk-policy.js _site/lightning-alert-sw.js; do
             node --check "$f"
           done
           node tests/taf-engine-v2.test.js
+          node tests/taf-engine-v24.test.js
 
       - name: Validate canonical artifact
         run: |
           test -s _site/index.html
           test -s _site/radar.html
           test -s _site/taf.html
+          test -s _site/taf-engine-v24.js
           test -s _site/sat-fog.html
           test -s _site/arch.html
           test -s _site/lightning-alerts.html
@@ -57,14 +59,23 @@ jobs:
           test -s _site/data/messages/latest.json
           test -s _site/data/messages/recent.json
           test -s _site/data/messages/status.json
+          test -s _site/data/learning/adaptive-weights.json
+          test -s _site/data/learning/fog-event-skill.json
+          test -s _site/data/learning/model-verification.json
           python3 -m json.tool _site/pages-build.json >/dev/null
           python3 -m json.tool _site/data/messages/latest.json >/dev/null
           python3 -m json.tool _site/data/messages/recent.json >/dev/null
           python3 -m json.tool _site/data/messages/status.json >/dev/null
-          grep -F 'TAF ENGINE 2.3.0 · INSTRUCTION FIRST' _site/taf.html
-          grep -F 'taf-engine-v2.js?v=2.3.0' _site/taf.html
-          grep -F 'taf-app-v2.js?v=2.3.0' _site/taf.html
+          python3 -m json.tool _site/data/learning/adaptive-weights.json >/dev/null
+          python3 -m json.tool _site/data/learning/fog-event-skill.json >/dev/null
+          python3 -m json.tool _site/data/learning/model-verification.json >/dev/null
+          grep -F 'TAF ENGINE 2.4.0 · CALIBRATED · INSTRUCTION FIRST' _site/taf.html
+          grep -F 'taf-engine-v2.js?v=2.3.0-kernel' _site/taf.html
+          grep -F 'taf-engine-v24.js?v=2.4.0' _site/taf.html
+          grep -F 'taf-app-v2.js?v=2.4.0-ui' _site/taf.html
           grep -F 'prognozaepir-taf-engine-v2' _site/taf.html
+          grep -F "const VERSION='2.4.0'" _site/taf-engine-v24.js
+          grep -F "postGenerationMutation:false" _site/taf-engine-v24.js
           grep -F 'radar-risk-policy.js?v=' _site/radar.html
           grep -F 'lightning-alerts.html' _site/radar.html
           grep -F 'observation-engine.js' _site/index.html
