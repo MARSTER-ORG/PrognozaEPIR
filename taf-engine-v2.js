@@ -98,8 +98,9 @@
     };
   }
 
-  function anchorRows(rows,observation,start){
+  function anchorRows(rows,observation,start,cutoff=start){
     const o=parseObservation(observation);if(!o)return rows.map(r=>({...r}));
+    if(finite(cutoff)&&o.t>cutoff)return rows.map(r=>({...r}));
     const age=Math.max(0,(start-o.t)/HOUR);if(age>6)return rows.map(r=>({...r}));
     const fresh=Math.exp(-age/3);
     return rows.map(r=>{
@@ -614,7 +615,7 @@
         const station=String(input.station||config.station||'EPIR').toUpperCase(),issue=+input.issue,start=+input.start,end=+input.end;
         if(!finite(issue)||!finite(start)||!finite(end)||Math.abs((end-start)/HOUR-12)>1e-6)throw Error('Instrukcja TAF: okres ważności musi wynosić 12 h');
         const raw=(input.rows||[]).filter(r=>num(r?.t)&&+r.t>=start&&+r.t<end).sort((a,b)=>+a.t-+b.t);if(raw.length<8)throw Error(`Za mało danych godzinowych: ${raw.length}`);
-        const anchored=input.rowsAlreadyAnchored?raw.map(r=>({...r})):anchorRows(raw,input.observation,start);
+        const anchored=input.rowsAlreadyAnchored?raw.map(r=>({...r})):anchorRows(raw,input.observation,start,issue);
         const msa=num(input.msaFt)&&+input.msaFt>0?+input.msaFt:null;
         let states=anchored.map(stateFromRow);states=applyWindPolicy(states);
         const base=baseState(states),cg=buildChangeGroups(states,base,start,end,msa);
@@ -631,7 +632,7 @@
           base:{state:base,text:encodeFullState(base,msa)},groups:cg.groups,hourly,
           checks:{...checks,noProb40:!taf.includes('PROB40'),oneProb30:(taf.match(/\bPROB30\b/g)||[]).length<=RULES.maxProb30Groups,noVV:!/\bVV/.test(taf),max5:cg.groups.length<=5,periodHours:12,instructionLocked:true},
           confidence:clamp(Math.round(70+Math.min(20,maxModels*2)+(checks.ok?10:0)),0,100),
-          diagnostics:{instructionLocked:true,authority:AUTH,reasons:cg.reasons,msaMode:msa?'explicit':'fallback',msaFt:msa||NSC_FT,cloudPipeline:'profile→METAR credibility gate→instruction layer order→ceiling→TAF/table',windPolicy:'VRB02: 75%/12h dominant or sustained >=3h hourly; weak-direction change alone never creates BECMG',fogProbabilityPolicy:'operational 40→30%, 60→40%, 80→50%; max one PROB30 per TAF, first qualifying event, 2h window',legacyMutators:false},
+          diagnostics:{instructionLocked:true,authority:AUTH,reasons:cg.reasons,msaMode:msa?'explicit':'fallback',msaFt:msa||NSC_FT,cloudPipeline:'profile→METAR credibility gate→instruction layer order→ceiling→TAF/table',windPolicy:'VRB02: 75%/12h dominant or sustained >=3h hourly; weak-direction change alone never creates BECMG',fogProbabilityPolicy:'operational 40→30%, 60→40%, 80→50%; max one PROB30 per TAF, first qualifying event, 2h window',observationPolicy:'METAR/SPECI anchor must be timestamp <= TAF issue time; future observations are rejected',legacyMutators:false},
           learning:{cells:0,note:'Uczenie może zmieniać estymację meteorologiczną, nigdy reguły instrukcji.'}
         };
       },
