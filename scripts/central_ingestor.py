@@ -5,9 +5,9 @@ All automatic acquisition of METAR/SPECI/TAF/SYNOP enters through this
 orchestrator. Source-specific scripts are internal adapters. Local JSONL remains
 the fallback/mirror format, while Supabase is the primary operational archive.
 
-Runtime is intentionally limited to acquisition, normalization, freshness gates
-and primary-archive synchronisation. Static architecture checks and the full
-archive scan belong to deployment validation, not the five-minute cycle.
+The five-minute cycle avoids spawning maintenance subprocesses when their input
+has not changed. Recovery and Supabase catch-up remain unconditional where they
+matter for correctness.
 """
 from __future__ import annotations
 
@@ -59,6 +59,13 @@ def atomic_json(path: Path, value: dict) -> None:
     os.replace(tmp, path)
 
 
+def read_json(path: Path, default=None):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
 def run_cmd(argv: list[str], *, timeout: int = 90, check: bool = False) -> subprocess.CompletedProcess[str]:
     proc = subprocess.run(
         argv,
@@ -103,6 +110,42 @@ def run_step(name: str, argv: list[str], *, attempts: int = 1, timeout: int = 90
         raise RuntimeError(f"critical step {name} failed: {last_error}")
     log(f"{name}: degraded ({last_error}); continuing with other sources")
     return result
+
+
+def _file_state(path: Path) -> tuple[str, int, int]:
+    try:
+        stat = path.stat()
+        return (path.as_posix(), stat.st_size, stat.st_mtime_ns)
+    except OSError:
+        return (path.as_posix(), 0, 0)
+
+
+def taf_cache_state() -> tuple:
+    return tuple(_file_state(ROOT / rel) for rel in (
+        "data/taf/neighbors.json",
+        "data/taf/latest.json",
+    ))
+
+
+def archive_payload_state() -> tuple:
+    """Cheap structural signature, not a full archive scan.
+
+    JSONL files are atomically rewritten only when records change. Including the
+    current neighbour TAF snapshots catches updates that intentionally do not
+    create historical neighbour TAF JSONL in the fallback tree.
+    """
+    root = ROOT / "data" / "messages"
+    items = []
+    if root.exists():
+        for path in sorted(root.rglob("*.jsonl")):
+            items.append(_file_state(path))
+    items.extend(taf_cache_state())
+    return tuple(items)
+
+
+def previous_cycle_needs_recovery(state_path: Path) -> bool:
+    state = read_json(state_path, {})
+    return not isinstance(state, dict) or not state or state.get("ok") is not True
 
 
 def cleanup_staging() -> None:
@@ -184,36 +227,52 @@ def cycle(*, publish: bool, state_path: Path) -> dict:
     results: list[StepResult] = []
     cycle_error: str | None = None
     published = False
+    recovery_cycle = previous_cycle_needs_recovery(state_path)
+    taf_changed = False
+    archive_changed = False
+    skipped: list[str] = []
+
     try:
-        # Acquisition adapters. collect_neighbor_tafs also captures the current
-        # EPBY/EPPW/EPKS METAR/SPECI context into the neighbour observation log.
         results.append(run_step("observations-primary", script("collect_epir_observations.py"), attempts=2, timeout=120))
         results.append(run_step("synop-supplement", script("supplement_synop_12342.py"), attempts=2, timeout=90))
 
-        # The 60-second fast path normally keeps EPIR METAR/SPECI fresh. The
-        # expensive multi-source armored repair is therefore conditional: it is
-        # invoked only if freshness/24 h continuity is not already satisfied.
         metar_precheck = run_step(
             "metar-precheck",
             script("check_epir_archive_freshness.py", "--metar-only"),
             attempts=1,
             timeout=30,
         )
+        results.append(metar_precheck)
+        metar_recovery_ran = not metar_precheck.ok
         if metar_precheck.ok:
-            results.append(metar_precheck)
             log("metar-armored-repair: skipped; archive is fresh and continuous")
+            skipped.append("metar-armored-repair")
         else:
             log("metar-armored-repair: freshness/continuity gate failed; running recovery")
             results.append(run_step("metar-armored-repair", script("metar_armored.py"), attempts=2, timeout=120))
 
+        taf_before = taf_cache_state()
         results.append(run_step("taf-and-neighbors", script("collect_neighbor_tafs.py"), attempts=3, timeout=120))
-        results.append(run_step("taf-sanitize", script("sanitize_neighbor_tafs.py"), attempts=1, timeout=60))
+        taf_changed = taf_before != taf_cache_state()
+        if taf_changed or recovery_cycle:
+            results.append(run_step("taf-sanitize", script("sanitize_neighbor_tafs.py"), attempts=1, timeout=60))
+        else:
+            log("taf-sanitize: skipped; TAF cache unchanged")
+            skipped.append("taf-sanitize")
 
-        # Normalize local fallback files, refresh current TAF compatibility
-        # snapshots, then synchronise the primary database. Supabase failure is
-        # critical because it is now the operational source of truth for reads.
+        before_normalize = archive_payload_state()
         results.append(run_step("archive-normalize", script("message_archive.py"), attempts=1, timeout=180, critical=True))
-        results.append(run_step("archive-finalize", script("finalize_central_message_architecture.py"), attempts=1, timeout=120, critical=True))
+        after_normalize = archive_payload_state()
+        archive_changed = before_normalize != after_normalize or taf_changed
+
+        if archive_changed or recovery_cycle:
+            results.append(run_step("archive-finalize", script("finalize_central_message_architecture.py"), attempts=1, timeout=120, critical=True))
+        else:
+            log("archive-finalize: skipped; operational archive unchanged")
+            skipped.append("archive-finalize")
+
+        # Keep one five-minute catch-up sync even when nothing changed. It is a
+        # cheap safety net for a failed one-minute fast sync or a service restart.
         results.append(run_step(
             "supabase-sync",
             script("supabase_message_mirror.py", "--lookback-days", os.environ.get("SUPABASE_INGEST_LOOKBACK_DAYS", "3")),
@@ -222,10 +281,15 @@ def cycle(*, publish: bool, state_path: Path) -> dict:
             critical=True,
         ))
 
-        # Final operational gates. Static code/architecture checks and the
-        # expensive whole-archive validation are deployment-time checks.
-        results.append(run_step("metar-freshness", script("check_epir_archive_freshness.py", "--metar-only"), attempts=1, timeout=60))
-        results.append(run_step("synop-archive-audit", script("check_synop_archive_freshness.py"), attempts=1, timeout=60))
+        if metar_recovery_ran:
+            results.append(run_step("metar-freshness", script("check_epir_archive_freshness.py", "--metar-only"), attempts=1, timeout=60))
+        else:
+            log("metar-freshness: skipped; precheck already passed and no repair was needed")
+            skipped.append("metar-freshness")
+
+        # SYNOP's former per-cycle audit was informational only and duplicated
+        # the acquisition/sync path. TAF freshness remains operationally useful.
+        skipped.append("synop-archive-audit")
         results.append(run_step("taf-freshness", script("check_epir_archive_freshness.py", "--taf-only", "--all-tafs"), attempts=1, timeout=60))
 
         cleanup_staging()
@@ -238,12 +302,16 @@ def cycle(*, publish: bool, state_path: Path) -> dict:
         cleanup_staging()
 
     state = {
-        "schema": "prognozaepir-central-ingestor-state-v2",
+        "schema": "prognozaepir-central-ingestor-state-v3-lean",
         "finished_at": utc_iso(),
         "duration_s": round(time.monotonic() - started, 3),
         "ok": cycle_error is None,
         "published": published,
         "error": cycle_error,
+        "recovery_cycle": recovery_cycle,
+        "taf_changed": taf_changed,
+        "archive_changed": archive_changed,
+        "skipped": skipped,
         "steps": [asdict(r) for r in results],
     }
     atomic_json(state_path, state)
