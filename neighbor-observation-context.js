@@ -1,10 +1,11 @@
 /* PrognozaEPIR neighbor observation context.
- * Reads only the GitHub MessageArchive context snapshot and applies a bounded,
- * short-range upwind observation anchor to the multimodel consensus.
+ * Reads neighbour METAR/SPECI only through the shared MessageArchive boundary.
+ * Supabase is primary; Railway/GitHub fallback policy belongs to that client.
  */
 'use strict';
 (() => {
   const EPIR={lat:52.7989,lon:18.2639};
+  const STATIONS=['EPBY','EPPW','EPKS'];
   const FALLBACK_META={
     EPBY:{name:'Bydgoszcz',lat:53.0968,lon:17.9777},
     EPPW:{name:'Powidz',lat:52.3792,lon:17.8539},
@@ -44,11 +45,19 @@
   async function refresh(force=false){
     if(!force&&snapshot&&Date.now()-lastLoaded<60e3)return snapshot;
     const A=window.PrognozaEPIRMessageArchive;
-    if(!A?.fetchText)throw new Error('MessageArchive nie udostępnia archiwum kontekstowego');
-    const text=await A.fetchText('neighbors/latest.json',force);
-    const value=JSON.parse(text);
-    if(value?.schema!=='prognozaepir-neighbor-observations-latest-v1')throw new Error('Nieprawidłowy snapshot METAR/SPECI sąsiadów');
-    snapshot=value;lastLoaded=Date.now();
+    if(!A?.getLatest)throw new Error('MessageArchive nie udostępnia odczytu najnowszych depesz');
+    const rows=await Promise.all(STATIONS.map(id=>A.getLatest('AVIATION',id,force).catch(()=>null)));
+    const stations={};
+    rows.forEach((row,i)=>{if(row)stations[STATIONS[i]]=row;});
+    const times=Object.values(stations).map(timeOf).filter(finite);
+    snapshot={
+      schema:'prognozaepir-neighbor-observations-latest-v2',
+      updated_at:times.length?new Date(Math.max(...times)).toISOString():new Date().toISOString(),
+      stations,
+      stations_meta:{...FALLBACK_META},
+      source:'MessageArchive/Supabase-primary'
+    };
+    lastLoaded=Date.now();
     return snapshot;
   }
   function candidate(row,z,now){
@@ -103,8 +112,7 @@
     return series.map(z=>{
       if(!records.length)return z;
       const candidates=records.map(r=>candidate(r,z,now)).filter(Boolean).sort((a,b)=>b.score-a.score);
-      const adjusted=candidates.length?applyOne(z,candidates[0]):z;
-      return adjusted;
+      return candidates.length?applyOne(z,candidates[0]):z;
     });
   }
   function latest(){return snapshot}
@@ -113,5 +121,5 @@
     const now=Date.now();
     return Object.values(snapshot.stations).map(r=>candidate(r,z,now)).filter(Boolean).sort((a,b)=>b.score-a.score);
   }
-  window.PrognozaEPIRNeighborObservations={refresh,applySeries,latest,contextFor,applySectorWindDirection,sectorWindDirectionRule:{...SECTOR_WIND_DIR},version:'1.4.0'};
+  window.PrognozaEPIRNeighborObservations={refresh,applySeries,latest,contextFor,applySectorWindDirection,sectorWindDirectionRule:{...SECTOR_WIND_DIR},version:'1.5.0'};
 })();
