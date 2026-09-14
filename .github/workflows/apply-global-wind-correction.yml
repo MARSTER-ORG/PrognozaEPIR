@@ -1,0 +1,72 @@
+name: Apply global EPIR wind correction
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-global-wind-correction.yml'
+permissions:
+  contents: write
+concurrency:
+  group: apply-global-wind-correction
+  cancel-in-progress: true
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply global -30 degree wind correction
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          targets = [
+              ('index.html', 'const EPIR_WIND_DIR_CORR={from:190,to:235,offset:-30,minSpeedMs:1.5};', 'const EPIR_WIND_DIR_CORR={from:0,to:360,offset:-30,minSpeedMs:1.5};'),
+              ('neighbor-observation-context.js', 'const SECTOR_WIND_DIR={from:190,to:235,offset:-30,minSpeedMs:1.5};', 'const SECTOR_WIND_DIR={from:0,to:360,offset:-30,minSpeedMs:1.5};'),
+          ]
+          for name, old, new in targets:
+              p=Path(name)
+              s=p.read_text(encoding='utf-8')
+              if old in s:
+                  s=s.replace(old,new,1)
+              elif new not in s:
+                  raise SystemExit(f'{name}: wind correction rule not found')
+              p.write_text(s,encoding='utf-8')
+
+          p=Path('neighbor-observation-context.js')
+          s=p.read_text(encoding='utf-8')
+          s=s.replace("version:'1.4.0'","version:'1.5.0'",1)
+          p.write_text(s,encoding='utf-8')
+          PY
+      - name: Validate correction
+        shell: bash
+        run: |
+          node --check neighbor-observation-context.js
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('index.html').read_text(encoding='utf-8')
+          n=Path('neighbor-observation-context.js').read_text(encoding='utf-8')
+          assert 'from:0,to:360,offset:-30' in s
+          assert 'from:0,to:360,offset:-30' in n
+          assert 'from:190,to:235,offset:-30' not in s
+          assert 'from:190,to:235,offset:-30' not in n
+          # Representative directions across the compass.
+          for raw in (0,45,90,180,226,270,359):
+              corrected=(raw-30)%360
+              print(raw,'->',corrected)
+          PY
+      - name: Commit engine change
+        shell: bash
+        run: |
+          git config user.name 'prognozaepir-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add index.html neighbor-observation-context.js
+          git diff --cached --quiet && exit 0
+          git commit -m 'Apply -30 wind direction correction to all directions'
+          for attempt in 1 2 3 4 5; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            sleep $((attempt*4))
+          done
+          exit 1
