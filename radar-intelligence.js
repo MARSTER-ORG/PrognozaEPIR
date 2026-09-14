@@ -1,6 +1,6 @@
 'use strict';
 
-// PrognozaEPIR v0.11.2
+// PrognozaEPIR v0.11.3
 // Official POLRAD map layers + IMGW warning overlay + multi-model AIFS/ICON/GFS nowcast.
 (() => {
   if (typeof L === 'undefined' || typeof map === 'undefined' || !map) return;
@@ -44,7 +44,7 @@
 
   // Version badge.
   const version = document.querySelector('.brand small');
-  if (version) version.textContent = 'RADAR / SAT / AI v0.11.2';
+  if (version) version.textContent = 'RADAR / SAT / AI v0.11.3';
   const aiHeading = [...document.querySelectorAll('.card h2')].find(h => h.textContent.includes('Prognoza AI'));
   if (aiHeading) aiHeading.textContent = 'Nowcast AI / ensemble 0–6 h';
 
@@ -269,22 +269,18 @@
       setPolradStatus('POLRAD: błąd tej klatki — poprzedni obraz nie jest pozostawiany jako zamrożone tło.');
     };
 
-    if (!polradLayer) {
-      polradLayer = L.imageOverlay(url, POLRAD_BOUNDS, {
-        pane:POLRAD_PANE, opacity:0, interactive:false, crossOrigin:true,
-        attribution:'IMGW-PIB / POLRAD'
-      });
-      polradLayer.once('load', onLoad);
-      polradLayer.once('error', onError);
-      if (active) polradLayer.addTo(map);
-    } else {
-      polradLayer.setOpacity(0);
-      polradLayer.setBounds(POLRAD_BOUNDS);
-      polradLayer.once('load', onLoad);
-      polradLayer.once('error', onError);
-      polradLayer.setUrl(url);
-      if (active && !map.hasLayer(polradLayer)) polradLayer.addTo(map);
-    }
+    // Hard-swap frames. Never reuse the previous IMG element: on some browsers
+    // a setUrl() swap can keep the decoded previous bitmap visible while the next
+    // image is loading, which looks like a frozen first frame under the animation.
+    // Purging every POLRAD ImageOverlay guarantees exactly one radar frame on map.
+    removePolradLayer();
+    polradLayer = L.imageOverlay(url, POLRAD_BOUNDS, {
+      pane:POLRAD_PANE, opacity:.70, interactive:false, crossOrigin:true,
+      attribution:'IMGW-PIB / POLRAD'
+    });
+    polradLayer.once('load', onLoad);
+    polradLayer.once('error', onError);
+    if (active) polradLayer.addTo(map);
 
     const timeEl = byId('radarTime');
     if (timeEl) timeEl.textContent = `${POLRAD_PRODUCTS[polradProduct]?.short || polradProduct}: ${fmtRadarTime(frame.date)} UTC`;
