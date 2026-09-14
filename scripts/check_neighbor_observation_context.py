@@ -2,9 +2,11 @@
 """Architecture guard for neighboring METAR/SPECI context.
 
 Neighbor observations are bounded context only. Railway acquires them while
-collecting neighboring TAF pages, mirrors them into MessageArchive, the main
-consensus applies the bounded upwind correction, and TAF Engine 2.3 preserves
-that provenance when it reads the consensus from the hidden meteogram iframe.
+collecting neighboring TAF pages and mirrors them into the central archive.
+The browser reads each neighbor exclusively through the shared MessageArchive
+API, the main consensus applies the bounded upwind correction, and TAF Engine
+2.4 preserves that provenance when it reads consensus from the hidden
+meteogram iframe.
 """
 from pathlib import Path
 import re
@@ -51,10 +53,19 @@ if 'PrognozaEPIRNeighborObservations?.refresh?.(true)' not in index:
     errors.append('main consensus must refresh neighboring observations before computing final context')
 if 'PrognozaEPIRNeighborObservations?.applySeries?.(consensus)' not in index:
     errors.append('main consensus must apply bounded neighboring observations')
-if 'fetchText(' not in context or "neighbors/latest.json" not in context:
-    errors.append('neighbor context module must read neighbors/latest.json through MessageArchive')
-if re.search(r'https?://[^\s"\']*(?:pilothub|imgw|railway)[^\s"\']*',context,re.I):
-    errors.append('browser neighbor context must not contact PilotHub/IMGW/Railway directly')
+
+# Browser neighbor context must use the central MessageArchive API. The older
+# neighbors/latest.json file remains an ingestion/mirror artifact, not a second
+# browser data source. getLatest('AVIATION', station) lets MessageArchive select
+# the newest METAR/SPECI consistently with every other consumer.
+if 'window.PrognozaEPIRMessageArchive' not in context:
+    errors.append('neighbor context module must use shared MessageArchive')
+if not re.search(r"\.getLatest\(\s*['\"]AVIATION['\"]\s*,\s*id\s*,\s*force\s*\)", context):
+    errors.append("neighbor context module must read each station through MessageArchive.getLatest('AVIATION', station)")
+if 'neighbors/latest.json' in context or re.search(r'fetchText\s*\(',context):
+    errors.append('browser neighbor context must not read the legacy neighbors/latest.json mirror directly')
+if re.search(r'https?://[^\s"\']*(?:pilothub|imgw|railway|supabase)[^\s"\']*',context,re.I):
+    errors.append('browser neighbor context must not contact PilotHub/IMGW/Railway/Supabase directly')
 if 'MAX_WEIGHT=.35' not in context:
     errors.append('neighbor observational correction must remain bounded to max 35%')
 if 'r.visibility_m<10000' not in context:
@@ -62,9 +73,9 @@ if 'r.visibility_m<10000' not in context:
 
 for field in ('neighborObsStation','neighborObsScore','neighborObsWeightPct','neighborObsLagH','neighborObsAgeMin','neighborObsWeather','neighborObsRaw'):
     if f'{field}:z.{field}' not in taf_app:
-        errors.append(f'TAF Engine 2.3 bridge must preserve {field}')
+        errors.append(f'TAF Engine 2.4 bridge must preserve {field}')
 if 'OBS sąsiednie' not in taf_app or 'neighborObsStation' not in taf_app:
-    errors.append('TAF Engine 2.3 UI must expose active neighbor observation signal')
+    errors.append('TAF Engine 2.4 UI must expose active neighbor observation signal')
 
 # Neighbor history is intentionally outside the four authoritative EPIR counts.
 count_folder_match=re.search(r"folders=\{(.*?)\n\s*\}",mirror,re.S)
@@ -76,4 +87,4 @@ if errors:
     for e in errors:
         print(' -',e)
     sys.exit(1)
-print('Neighbor observation architecture check OK: EPBY/EPPW/EPKS are server-acquired, MessageArchive-backed, bounded, applied to consensus and preserved in TAF 2.3 provenance.')
+print('Neighbor observation architecture check OK: EPBY/EPPW/EPKS are server-acquired, MessageArchive-backed, bounded, applied to consensus and preserved in TAF 2.4 provenance.')
