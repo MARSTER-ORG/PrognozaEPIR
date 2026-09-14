@@ -14,7 +14,7 @@ function row(i,o={}){
 const gen=(rows,opt={})=>E.createEngine().generate({station:'EPIR',issue,start,end,rows,rowsAlreadyAnchored:true,...opt});
 assert.equal(E.ENGINE_VERSION,'2.3.0');
 assert.equal(E.RULES.authority,'Instrukcja opracowywania prognoz TAF, Edycja (A), 11.2023');
-assert.equal(E.RULES.prob40,false);assert.equal(E.RULES.verticalVisibility,false);assert.equal(E.RULES.maxChangeGroups,5);
+assert.equal(E.RULES.prob40,false);assert.equal(E.RULES.verticalVisibility,false);assert.equal(E.RULES.maxChangeGroups,5);assert.equal(E.RULES.maxProb30Groups,1);
 assert.throws(()=>E.createEngine().generate({station:'EPIR',issue,start,end:start+10*H,rows:Array.from({length:10},(_,i)=>row(i)),rowsAlreadyAnchored:true}),/12 h/);
 
 // Operational FOG 0-100 is a risk index, not a literal percentage for TAF.
@@ -65,6 +65,16 @@ r=gen(rows);assert.ok(r.taf.includes('BECMG'),r.taf);assert.match(r.taf,/BECMG[^
   assert.ok(!q.taf.includes('1321/1401'),q.taf);
   assert.equal(Math.round(q.groups[0].probability*100),40,q.taf);
 }
+
+// Even separated 30–49% episodes may not create a second PROB30; keep the first one.
+{
+  const splitRows=Array.from({length:12},(_,i)=>row(i,{vis:6000,fogOperationalScore:(i===5||i===7)?52:0,fgOperationalScore:(i===5||i===7)?52:0,fogAltVisM:(i===5||i===7)?900:null,mv:[model({vis:6000}),model({vis:6500}),model({vis:7000})]}));
+  const q=gen(splitRows);
+  assert.match(q.taf,/PROB30\s+1404\/1406\s+0900\s+FG/,q.taf);
+  assert.equal((q.taf.match(/PROB30/g)||[]).length,1,q.taf);
+  assert.ok(!q.taf.includes('PROB30 1406/1408'),q.taf);
+}
+assert.equal(E.validateTaf('TAF EPIR 132300Z 1400/1412 22004KT 7000 NSC PROB30 1404/1406 0900 FG PROB30 1406/1408 0900 FG=',{issue,start,end}).ok,false);
 
 // Direct calibrated 30-49% probability must create PROB30 even with no deterministic threshold crossing.
 rows=Array.from({length:12},(_,i)=>row(i,{vis:8000,fogRisk:i===5?40:0,fgRisk:i===5?40:0,fogVis1000Risk:i===5?35:0,fogAltVisM:900}));

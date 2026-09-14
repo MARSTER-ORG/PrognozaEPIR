@@ -52,7 +52,11 @@ def classify(obs):
     tok = tokens(raw)
     fog_codes = sorted(tok & FOG_CODES)
     mist = bool(tok & MIST_CODES) or bool(obs.get("mist"))
-    fog = bool(fog_codes) or bool(obs.get("fog")) or bool(obs.get("freezing_fog"))
+    precip = any(fragment in raw for fragment in PRECIP_FRAGMENTS)
+    vis = obs.get("visibility_m")
+    explicit_fog = bool(fog_codes) or bool(obs.get("fog")) or bool(obs.get("freezing_fog"))
+    visibility_fog = mv.finite(vis) and float(vis) < 1000.0 and not precip
+    fog = explicit_fog or visibility_fog
     if "MIFG" in tok:
         kind = "MIFG"
     elif "FZFG" in tok:
@@ -67,10 +71,10 @@ def classify(obs):
         kind = "BR"
     else:
         kind = "NONE"
-    precip = any(fragment in raw for fragment in PRECIP_FRAGMENTS)
     return {
         "kind": kind,
         "fog": fog,
+        "visibility_fog": bool(visibility_fog),
         "br": mist and not fog,
         "obscuration": fog or mist,
         "precip": precip,
@@ -277,8 +281,8 @@ def main():
     out = {
         "schema": "prognozaepir-fog-event-skill-v1",
         "generated_at": mv.iso(now),
-        "method": "METAR+exact-minute SPECI fog/mist event calibration; same-case peer Brier loss, recency weighting, positive-event emphasis, capped SPECI bursts and shrinkage",
-        "codes": {"fog": sorted(FOG_CODES), "mist": sorted(MIST_CODES)},
+        "method": "METAR+exact-minute SPECI fog/mist event calibration; non-precip visibility <1000 m is fog evidence when AUTO omits FG; same-case peer Brier loss, recency weighting, positive-event emphasis, capped SPECI bursts and shrinkage",
+        "codes": {"fog": sorted(FOG_CODES), "mist": sorted(MIST_CODES), "visibility_fog_m": 1000},
         "window_minutes": WINDOW_MIN,
         "speci_multiplier": SPECI_MULT,
         "positive_event_multiplier": POSITIVE_MULT,
@@ -287,6 +291,7 @@ def main():
             "total": len(observations),
             "speci": sum(1 for r in observations if r["_source"] == "SPECI"),
             "fog": sum(1 for r in observations if r["_class"]["fog"]),
+            "fog_by_visibility": sum(1 for r in observations if r["_class"].get("visibility_fog")),
             "br": sum(1 for r in observations if r["_class"]["br"]),
             "mifg": sum(1 for r in observations if r["_class"]["kind"] == "MIFG"),
         },

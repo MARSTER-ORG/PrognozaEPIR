@@ -584,6 +584,8 @@
     if(o.freezingFog)return 'FZFG';
     if(o.fog)return 'FG';
     if(o.mist)return 'BR';
+    const raw=String(o.raw||'').toUpperCase(),precip=/\b(?:\+|-)?(?:RA|DZ|SN|SG|PL|GR|GS|TS|TSRA|SHRA|SHSN)\b/.test(raw);
+    if(o.automatic&&finite(o.visM)&&o.visM<1000&&!precip)return finite(o.T)&&o.T<=0?'FZFG':'FG';
     return o.automatic?'bez FG/BR':'manualna';
   }
   function obsScore(o){

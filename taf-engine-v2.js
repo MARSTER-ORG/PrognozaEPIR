@@ -21,6 +21,7 @@
     validityHours:12,
     issueLeadHours:1,
     maxChangeGroups:5,
+    maxProb30Groups:1,
     prob30:{min:.30,maxExclusive:.50},
     prob40:false,
     verticalVisibility:false,
@@ -500,7 +501,7 @@
   function conflicts(groups,g){return groups.some(x=>overlaps(x,g)&&x.fields.some(f=>g.fields.includes(f)));}
 
   function buildChangeGroups(states,base,start,end,msaFt){
-    const groups=[],reasons=[],skipped=[];let prevailing=base,activeProbFog='NONE';
+    const groups=[],reasons=[],skipped=[];let prevailing=base,prob30Used=false;
     for(let i=1;i<states.length&&groups.length<MAX_GROUPS;i++){
       let target=states[i],sig=significantFields(prevailing,target),fields=sig.fields;
       const prevFog=fogFamily(prevailing,.5),targetFog=fogFamily(target,.5);
@@ -508,14 +509,12 @@
       const altFogFamily=(target.prob?.fg||0)>=.30&&(target.prob?.fg||0)>=(target.prob?.br||0)?'FG':(target.prob?.br||0)>=.30?'BR':'NONE';
       const newFog=targetFog!=='NONE'&&targetFog!==prevFog;
       const newFogAlternative=altFogFamily!=='NONE'&&altFogFamily!==prevFog;
-      if(activeProbFog!=='NONE'&&(altFogFamily!==activeProbFog||fogAltProb>=.50))activeProbFog='NONE';
-
-      // FOG is an independent input. A continuous 30–49% onset is represented once by a 2 h PROB30 change window, not stretched by merging hourly windows.
+      // Operational policy: use PROB30 at most once in one TAF and keep the first qualifying event.
       if(newFogAlternative&&fogAltProb>=.30&&fogAltProb<.50){
-        if(activeProbFog===altFogFamily){skipped.push(`${code(target.t)} UTC: kontynuacja alternatywnego ${altFogFamily} 30–49% jest już objęta wcześniejszą grupą PROB30.`);continue;}
+        if(prob30Used){skipped.push(`${code(target.t)} UTC: pominięto kolejne PROB30 (${altFogFamily}) — w jednym TAF zachowujemy pierwszą kwalifikującą się grupę PROB30.`);continue;}
         target=alternativeFogState(prevailing,target);fields=[...new Set([...fields,'visibility'])];
         const w=twoHourWindow(target.t,start,end),g={kind:'PROB30',s:w.s,e:w.e,fields,payload:payload(prevailing,target,fields,'PROB30',msaFt),probability:fogAltProb};
-        if(g.payload&&!conflicts(groups,g)){g.text=`PROB30 ${period(g.s,g.e)} ${g.payload}`;groups.push(g);activeProbFog=altFogFamily;reasons.push(`${g.text}: alternatywne FG/BR ${Math.round(fogAltProb*100)}%; 2 h okno możliwej trwałej zmiany, bez TEMPO.`);}continue;
+        if(g.payload&&!conflicts(groups,g)){g.text=`PROB30 ${period(g.s,g.e)} ${g.payload}`;groups.push(g);prob30Used=true;reasons.push(`${g.text}: alternatywne FG/BR ${Math.round(fogAltProb*100)}%; pierwsza kwalifikująca się grupa PROB30, 2 h okno zmiany, bez TEMPO.`);}continue;
       }
 
       if(!fields.length)continue;
@@ -525,6 +524,7 @@
       const precise=target.sourceRow?.preciseTiming===true||target.sourceRow?.preciseFm===true;
 
       if(confidence<.50){
+        if(prob30Used){skipped.push(`${code(target.t)} UTC: pominięto kolejne PROB30 — w jednym TAF zachowujemy pierwszą kwalifikującą się grupę PROB30.`);continue;}
         kind='PROB30';const w=twoHourWindow(target.t,start,end);s=w.s;e=w.e;
       }else if(newFog){
         // Ordinary FG/BR onset/cessation must not be introduced by TEMPO.
@@ -547,6 +547,7 @@
       if(kind==='FM')g.text=`FM${code(s,true)} ${g.payload}`;else g.text=`${kind} ${period(s,e)} ${g.payload}`;
       if(conflicts(groups,g)){skipped.push(`${code(target.t)} UTC: pominięto nakładającą się grupę dla tego samego parametru.`);continue;}
       groups.push(g);reasons.push(`${g.text}: ${fields.join(', ')}; pewność ${Math.round(confidence*100)}%.`);
+      if(kind==='PROB30')prob30Used=true;
       if(kind==='BECMG'||kind==='FM')prevailing=mergePrevailing(prevailing,target,fields);
     }
 
@@ -574,6 +575,7 @@
     if(finite(start)&&finite(end)&&Math.abs((end-start)/HOUR-12)>1e-6)errors.push('Okres ważności nie wynosi 12 h.');
     if(finite(issue)&&finite(start)&&Math.abs((start-issue)/HOUR-1)>1/60)errors.push('Regularny TAF musi być wydany 1 h przed początkiem ważności.');
     const count=(text.match(/\b(?:BECMG|TEMPO|FM\d{6}|PROB30(?:\s+TEMPO)?)\b/g)||[]).length;if(count>MAX_GROUPS)errors.push(`Liczba grup zmian ${count} > ${MAX_GROUPS}.`);
+    const prob30Count=(text.match(/\bPROB30\b/g)||[]).length;if(prob30Count>RULES.maxProb30Groups)errors.push(`PROB30 może wystąpić maksymalnie ${RULES.maxProb30Groups} raz w jednym TAF (polityka operacyjna EPIR).`);
     const lines=raw.replace(/\s+(?=(?:BECMG|TEMPO|PROB30(?:\s+TEMPO)?|FM\d{6})\b)/g,'\n').split(/\n+/).map(x=>x.trim().replace(/=$/,''));
     let prevailingFog='NONE';
     for(let i=0;i<lines.length;i++){
@@ -627,9 +629,9 @@
         return {
           version:VERSION,name:NAME,authority:AUTH,taf,
           base:{state:base,text:encodeFullState(base,msa)},groups:cg.groups,hourly,
-          checks:{...checks,noProb40:!taf.includes('PROB40'),noVV:!/\bVV/.test(taf),max5:cg.groups.length<=5,periodHours:12,instructionLocked:true},
+          checks:{...checks,noProb40:!taf.includes('PROB40'),oneProb30:(taf.match(/\bPROB30\b/g)||[]).length<=RULES.maxProb30Groups,noVV:!/\bVV/.test(taf),max5:cg.groups.length<=5,periodHours:12,instructionLocked:true},
           confidence:clamp(Math.round(70+Math.min(20,maxModels*2)+(checks.ok?10:0)),0,100),
-          diagnostics:{instructionLocked:true,authority:AUTH,reasons:cg.reasons,msaMode:msa?'explicit':'fallback',msaFt:msa||NSC_FT,cloudPipeline:'profile→METAR credibility gate→instruction layer order→ceiling→TAF/table',windPolicy:'VRB02: 75%/12h dominant or sustained >=3h hourly; weak-direction change alone never creates BECMG',fogProbabilityPolicy:'operational 40→30%, 60→40%, 80→50%; continuous 30–49% FG/BR => one 2h PROB30 onset window',legacyMutators:false},
+          diagnostics:{instructionLocked:true,authority:AUTH,reasons:cg.reasons,msaMode:msa?'explicit':'fallback',msaFt:msa||NSC_FT,cloudPipeline:'profile→METAR credibility gate→instruction layer order→ceiling→TAF/table',windPolicy:'VRB02: 75%/12h dominant or sustained >=3h hourly; weak-direction change alone never creates BECMG',fogProbabilityPolicy:'operational 40→30%, 60→40%, 80→50%; max one PROB30 per TAF, first qualifying event, 2h window',legacyMutators:false},
           learning:{cells:0,note:'Uczenie może zmieniać estymację meteorologiczną, nigdy reguły instrukcji.'}
         };
       },
