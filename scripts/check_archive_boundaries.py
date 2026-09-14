@@ -4,7 +4,7 @@
 Bulletin providers are allowed only in server-side source adapters under scripts/.
 Supabase is the primary archive read source. Railway and GitHub/static JSON are
 fallbacks owned only by message-archive-client.js. Frontend consumers use the
-public PrognozaEPIRMessageArchive API or its same-origin compatibility bridge.
+public PrognozaEPIRMessageArchive API; no page may read bulletin files directly.
 """
 from __future__ import annotations
 
@@ -23,9 +23,16 @@ FORBIDDEN_PROVIDERS = {
 }
 RAILWAY_ARCHIVE = re.compile(r"central-ingestor-production\.up\.railway\.app/data/messages", re.I)
 SUPABASE_ARCHIVE = re.compile(r"qozgntzeormujmqzkkmd\.supabase\.co/functions/v1/message-archive", re.I)
+DIRECT_MESSAGE_FILES = re.compile(r"(?:^|[^A-Za-z0-9_-])data/messages(?:/|\\)", re.I)
+LEGACY_BULLETIN_FILES = re.compile(
+    r"data/observations/(?:metar|synop)|data/taf/(?:latest|neighbors)\.json|(?:^|['\"`])taf-neighbors\.json(?:['\"`]|$)",
+    re.I,
+)
 SERVICE_ROLE_CREDENTIAL = re.compile(r"SUPABASE_SERVICE_ROLE_KEY|['\"]service_role['\"]\s*[:=]", re.I)
+CLIENT_SCRIPT = re.compile(r'<script\s+src=["\']message-archive-client\.js(?:\?[^"\']*)?["\']\s*></script>', re.I)
 
 TARGETS = [*ROOT.glob("*.html"), *ROOT.glob("*.js"), *ROOT.glob("api/*.js")]
+BULLETIN_PAGES = ("index.html", "arch.html", "taf.html")
 
 
 def rel(path: Path) -> str:
@@ -45,6 +52,10 @@ def main() -> int:
             violations.append(f"{rel(path)}: direct Railway archive URL bypasses shared MessageArchive client")
         if path.resolve() != CLIENT.resolve() and SUPABASE_ARCHIVE.search(text):
             violations.append(f"{rel(path)}: direct Supabase archive URL bypasses shared MessageArchive client")
+        if path.resolve() != CLIENT.resolve() and DIRECT_MESSAGE_FILES.search(text):
+            violations.append(f"{rel(path)}: direct data/messages access bypasses shared MessageArchive client")
+        if path.resolve() != CLIENT.resolve() and LEGACY_BULLETIN_FILES.search(text):
+            violations.append(f"{rel(path)}: legacy bulletin file/snapshot access bypasses MessageArchive")
 
     if not CLIENT.exists():
         violations.append("message-archive-client.js: missing shared archive client")
@@ -70,12 +81,22 @@ def main() -> int:
         if "PRIMARY_ROOT = SUPABASE_ENABLED ? SUPABASE_API" not in text:
             violations.append("message-archive-client.js: Supabase is not configured as primary read source")
 
+    # Every page that consumes METAR/SPECI/TAF/SYNOP must load the one shared
+    # client. Radar, satellite and lightning pages use different data domains
+    # and are intentionally not forced to load the bulletin archive.
+    for name in BULLETIN_PAGES:
+        page = ROOT / name
+        if not page.exists():
+            violations.append(f"{name}: required bulletin-consuming page missing")
+            continue
+        text = page.read_text(encoding="utf-8", errors="replace")
+        if not CLIENT_SCRIPT.search(text):
+            violations.append(f"{name}: shared MessageArchive client is not loaded")
+
     taf = ROOT / "taf.html"
     taf_app = ROOT / "taf-app-v2.js"
     if taf.exists():
         text = taf.read_text(encoding="utf-8", errors="replace")
-        if not re.search(r'<script\s+src=["\']message-archive-client\.js(?:\?[^"\']*)?["\']\s*></script>', text, re.I):
-            violations.append("taf.html: shared archive client is not loaded")
         if not re.search(r'<script\s+src=["\']taf-app-v2\.js(?:\?[^"\']*)?["\']\s*></script>', text, re.I):
             violations.append("taf.html: TAF Engine 2.3 application bridge is not loaded")
     if not taf_app.exists():
@@ -86,16 +107,14 @@ def main() -> int:
             violations.append("taf-app-v2.js: generator bypasses shared archive API")
         if "A.getLatest?.('TAF',id,true)" not in text:
             violations.append("taf-app-v2.js: neighbour TAFs are not read through MessageArchive.getLatest")
-        if "data/taf/neighbors.json" in text or "data/messages/taf-neighbors.json" in text:
-            violations.append("taf-app-v2.js: direct neighbour TAF snapshot access is forbidden")
 
     observation = ROOT / "observation-engine.js"
     if observation.exists():
         text = observation.read_text(encoding="utf-8", errors="replace")
         if "PrognozaEPIRMessageArchive" not in text:
             violations.append("observation-engine.js: observations bypass shared archive API")
-        if "data/messages/latest.json" in text or "data/messages/recent.json" in text:
-            violations.append("observation-engine.js: direct archive URLs remain instead of shared client")
+        if "archiveLatest(" not in text or "archiveRecent(" not in text:
+            violations.append("observation-engine.js: shared latest/recent archive access is incomplete")
 
     neighbor = ROOT / "neighbor-observation-context.js"
     if not neighbor.exists():
@@ -107,6 +126,14 @@ def main() -> int:
         if "neighbors/latest.json" in text:
             violations.append("neighbor-observation-context.js: legacy neighbour snapshot bypass remains")
 
+    neighbor_taf = ROOT / "neighbor-taf-context.js"
+    if neighbor_taf.exists():
+        text = neighbor_taf.read_text(encoding="utf-8", errors="replace")
+        if "A.getLatest('TAF',id,force)" not in text:
+            violations.append("neighbor-taf-context.js: neighbour TAFs are not read through MessageArchive")
+        if "taf-neighbors.json" in text:
+            violations.append("neighbor-taf-context.js: legacy TAF snapshot bypass remains")
+
     if violations:
         print("ARCHIVE BOUNDARY VIOLATIONS:")
         for item in violations:
@@ -114,8 +141,8 @@ def main() -> int:
         return 1
 
     print(
-        f"Archive boundary OK: checked {len(targets)} browser/API files; Supabase is primary, "
-        "TAF/neighbor observations use MessageArchive, and fallbacks are client-owned"
+        f"Archive boundary OK: checked {len(targets)} browser/API files; all bulletin consumers use "
+        "the shared Supabase-primary MessageArchive; Railway/GitHub/static are client-owned fallbacks only"
     )
     return 0
 
