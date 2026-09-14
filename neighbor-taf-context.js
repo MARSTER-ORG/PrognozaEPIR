@@ -1,6 +1,6 @@
 /* PrognozaEPIR neighboring TAF context.
  * Positive-only, upwind and time-matched signal from EPBY/EPPW/EPKS.
- * It reads the central GitHub MessageArchive snapshot only; it never acquires TAFs itself.
+ * Bulletin data is read only through the shared MessageArchive API; Supabase is primary.
  */
 'use strict';
 (() => {
@@ -90,10 +90,20 @@
   }
   async function refresh(force=false){
     if(!force&&snapshot&&Date.now()-lastLoaded<60e3)return snapshot;
-    const A=window.PrognozaEPIRMessageArchive;if(!A?.fetchText)throw new Error('MessageArchive niedostępne dla TAF sąsiadów');
-    const text=await A.fetchText('taf-neighbors.json',force),value=JSON.parse(text);
-    if(!value?.stations)throw new Error('Nieprawidłowy snapshot TAF sąsiadów');
-    snapshot=value;lastLoaded=Date.now();return snapshot;
+    const A=window.PrognozaEPIRMessageArchive;
+    if(!A?.getLatest)throw new Error('MessageArchive niedostępne dla TAF sąsiadów');
+    const stations={};
+    await Promise.all(Object.keys(META).map(async id=>{
+      try{
+        const row=await A.getLatest('TAF',id,force);
+        if(row){
+          const raw=row.raw||row.canonical_raw||row.raw_text||'';
+          if(raw)stations[id]={...row,raw};
+        }
+      }catch(error){console.warn(`Neighbor TAF ${id}:`,error)}
+    }));
+    snapshot={schema:'prognozaepir-neighbor-taf-context-v2',stations,updated_at:new Date().toISOString()};
+    lastLoaded=Date.now();return snapshot;
   }
   function fogContext(z){
     if(!snapshot?.stations||!finite(z?.t)||!finite(z?.WD)||!finite(z?.WS))return null;
@@ -122,5 +132,5 @@
       return o;
     });
   }
-  window.PrognozaEPIRNeighborTafContext={refresh,fogContext,applySeries,latest:()=>snapshot,version:'1.0.0'};
+  window.PrognozaEPIRNeighborTafContext={refresh,fogContext,applySeries,latest:()=>snapshot,version:'1.1.0'};
 })();
