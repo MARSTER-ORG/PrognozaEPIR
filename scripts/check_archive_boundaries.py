@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail CI if browser/API code bypasses the central MessageArchive boundary.
+"""Fail deployment if browser/API code bypasses central MessageArchive.
 
 Bulletin providers are allowed only in server-side source adapters under scripts/.
 Supabase is the primary archive read source. Railway and GitHub/static JSON are
@@ -25,11 +25,7 @@ RAILWAY_ARCHIVE = re.compile(r"central-ingestor-production\.up\.railway\.app/dat
 SUPABASE_ARCHIVE = re.compile(r"qozgntzeormujmqzkkmd\.supabase\.co/functions/v1/message-archive", re.I)
 SERVICE_ROLE_CREDENTIAL = re.compile(r"SUPABASE_SERVICE_ROLE_KEY|['\"]service_role['\"]\s*[:=]", re.I)
 
-TARGETS = [
-    *ROOT.glob("*.html"),
-    *ROOT.glob("*.js"),
-    *ROOT.glob("api/*.js"),
-]
+TARGETS = [*ROOT.glob("*.html"), *ROOT.glob("*.js"), *ROOT.glob("api/*.js")]
 
 
 def rel(path: Path) -> str:
@@ -86,10 +82,12 @@ def main() -> int:
         violations.append("taf-app-v2.js: missing TAF Engine 2.3 application bridge")
     else:
         text = taf_app.read_text(encoding="utf-8", errors="replace")
-        if "window.PrognozaEPIRMessageArchive" not in text:
+        if "window.PrognozaEPIRMessageArchive" not in text or "loadArchive()" not in text:
             violations.append("taf-app-v2.js: generator bypasses shared archive API")
-        if "loadArchive()" not in text:
-            violations.append("taf-app-v2.js: shared archive load path missing")
+        if "A.getLatest?.('TAF',id,true)" not in text:
+            violations.append("taf-app-v2.js: neighbour TAFs are not read through MessageArchive.getLatest")
+        if "data/taf/neighbors.json" in text or "data/messages/taf-neighbors.json" in text:
+            violations.append("taf-app-v2.js: direct neighbour TAF snapshot access is forbidden")
 
     observation = ROOT / "observation-engine.js"
     if observation.exists():
@@ -99,13 +97,26 @@ def main() -> int:
         if "data/messages/latest.json" in text or "data/messages/recent.json" in text:
             violations.append("observation-engine.js: direct archive URLs remain instead of shared client")
 
+    neighbor = ROOT / "neighbor-observation-context.js"
+    if not neighbor.exists():
+        violations.append("neighbor-observation-context.js: missing neighbour observation consumer")
+    else:
+        text = neighbor.read_text(encoding="utf-8", errors="replace")
+        if "A.getLatest('AVIATION',id,force)" not in text:
+            violations.append("neighbor-observation-context.js: neighbour METAR/SPECI are not read through MessageArchive")
+        if "neighbors/latest.json" in text:
+            violations.append("neighbor-observation-context.js: legacy neighbour snapshot bypass remains")
+
     if violations:
         print("ARCHIVE BOUNDARY VIOLATIONS:")
         for item in violations:
             print(f" - {item}")
         return 1
 
-    print(f"Archive boundary OK: checked {len(targets)} browser/API files; Supabase is primary and fallbacks are owned by message-archive-client.js")
+    print(
+        f"Archive boundary OK: checked {len(targets)} browser/API files; Supabase is primary, "
+        "TAF/neighbor observations use MessageArchive, and fallbacks are client-owned"
+    )
     return 0
 
 
