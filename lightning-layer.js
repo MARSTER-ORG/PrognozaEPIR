@@ -105,6 +105,16 @@
     return overlayActive;
   }
   function toggleOverlay(){return setOverlay(!overlayActive);}
+  function syncMapButtonAvailability(){
+    const b=$('lightningToggle');if(!b)return;
+    const ok=features?.status==='ok'&&freshness(features);
+    b.disabled=!ok;
+    b.dataset.available=ok?'1':'0';
+    if(!ok&&overlayActive)setOverlay(false);
+    b.title=ok
+      ? `Rzeczywiste wyładowania EUMETSAT MTG LI LFL · dane ${formatUtc(features.updated_at)}`
+      : `Wyładowania LFL chwilowo niedostępne${features?.reason?': '+String(features.reason).slice(0,120):''}`;
+  }
   function ensureMapButton(){
     removeLegacyAfa();if($('lightningToggle'))return;
     const mapbar=document.querySelector('.mapbar');if(!mapbar)return;
@@ -176,11 +186,11 @@
     try{
       const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),10000),r=await fetch(`${ENDPOINT}?t=${Date.now()}`,{cache:'no-store',signal:ctrl.signal});clearTimeout(timer);
       if(!r.ok)throw new Error(`HTTP ${r.status}`);const j=await r.json();if(j?.schema!=='prognozaepir-lightning-features-v1')throw new Error('unexpected schema');
-      features=j;lastFetch=Date.now();window.PrognozaEPIRLightningFeatures=features;removeLegacyAfa();renderOverlay();renderPanel();updateConvectionTile(evidence(window.PrognozaEPIRConvectionNowcast||{}));
+      features=j;lastFetch=Date.now();window.PrognozaEPIRLightningFeatures=features;removeLegacyAfa();syncMapButtonAvailability();renderOverlay();renderPanel();updateConvectionTile(evidence(window.PrognozaEPIRConvectionNowcast||{}));
       if(window.PrognozaEPIRConvectionNowcast)applyToConvection(window.PrognozaEPIRConvectionNowcast);
       window.dispatchEvent(new CustomEvent('prognozaepir:lightning-features-updated',{detail:features}));window.dispatchEvent(new CustomEvent('prognozaepir:lightning',{detail:features}));return features;
     }catch(err){
-      features={schema:'prognozaepir-lightning-features-v1',status:'error',updated_at:new Date().toISOString(),reason:String(err)};window.PrognozaEPIRLightningFeatures=features;renderPanel();updateConvectionTile();return features;
+      features={schema:'prognozaepir-lightning-features-v1',status:'error',updated_at:new Date().toISOString(),reason:String(err)};window.PrognozaEPIRLightningFeatures=features;syncMapButtonAvailability();renderPanel();updateConvectionTile();return features;
     }finally{loading=false;}
   }
   function getPointsAround(center,radiusKm=100){

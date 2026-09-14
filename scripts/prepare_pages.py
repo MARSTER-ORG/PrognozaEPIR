@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "_site"
 ASSET_V = os.environ.get("GITHUB_SHA", "dev")[:12]
 APP = "v0.10.25 HTML"
-RADAR_VERSION = "RADAR / SAT / AI v0.12.3"
+RADAR_VERSION = "RADAR / SAT / AI v0.12.5"
 
 
 def rd(path: Path) -> str:
@@ -194,20 +194,20 @@ def patch_radar() -> None:
     for name in names:
         s = strip_script(s, name)
     addons = [
-        '<script src="radar-enhance.js"></script>',
-        '<script src="warnings-readable.js"></script>',
-        '<script src="radar-intelligence.js"></script>',
-        '<script src="echo-analysis.js"></script>',
-        '<script src="echo-fix.js"></script>',
-        '<script src="lightning-layer.js"></script>',
-        '<script src="ui-cleanup.js"></script>',
-        '<script src="map-extras.js"></script>',
-        '<script src="analysis-plus.js"></script>',
-        '<script src="range-rings-reset.js"></script>',
+        f'<script src="radar-enhance.js?v={ASSET_V}"></script>',
+        f'<script src="warnings-readable.js?v={ASSET_V}"></script>',
+        f'<script src="radar-intelligence.js?v={ASSET_V}"></script>',
+        f'<script src="echo-analysis.js?v={ASSET_V}"></script>',
+        f'<script src="echo-fix.js?v={ASSET_V}"></script>',
+        f'<script src="lightning-layer.js?v={ASSET_V}"></script>',
+        f'<script src="ui-cleanup.js?v={ASSET_V}"></script>',
+        f'<script src="map-extras.js?v={ASSET_V}"></script>',
+        f'<script src="analysis-plus.js?v={ASSET_V}"></script>',
+        f'<script src="range-rings-reset.js?v={ASSET_V}"></script>',
         f'<script src="opera-nowcast.js?v={ASSET_V}"></script>',
         f'<script src="opera-convection-bridge.js?v={ASSET_V}"></script>',
         f'<script src="radar-risk-policy.js?v={ASSET_V}"></script>',
-        '<script src="shortcut-mode.js"></script>',
+        f'<script src="shortcut-mode.js?v={ASSET_V}"></script>',
     ]
     s = s.replace("</body>", "\n".join(addons) + "\n</body>", 1)
     wr(p, s)
@@ -269,6 +269,12 @@ def validate() -> None:
     radar = rd(SITE / "radar.html")
     if "radar-risk-policy.js" not in radar or "lightning-alerts.html" not in radar:
         raise RuntimeError("radar risk policy or lightning alert page not wired")
+    for runtime in ("radar-intelligence.js", "map-extras.js", "lightning-layer.js", "range-rings-reset.js"):
+        if not re.search(rf'src="{re.escape(runtime)}\?v=[^"]+"', radar):
+            raise RuntimeError(f"radar runtime is not cache-busted: {runtime}")
+    map_extras = rd(SITE / "map-extras.js")
+    if "if ($('polrad_cappi')) return;" not in map_extras:
+        raise RuntimeError("legacy duplicate CAPPI renderer is not guarded")
 
 
 def main() -> int:

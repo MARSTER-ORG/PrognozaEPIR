@@ -201,6 +201,9 @@
 (() => {
   'use strict';
   if (!/\/radar\.html$/i.test(location.pathname)) return;
+  // opera-nowcast.js already owns the time-synchronized, reprojected OPERA map.
+  // Keep this legacy renderer disabled to avoid two layers/listeners fighting.
+  if (window.PrognozaEPIROperaNowcastEngine) return;
   if (window.__epirOperaMapLayerFixV2) return;
   window.__epirOperaMapLayerFixV2 = true;
 

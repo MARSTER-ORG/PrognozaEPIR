@@ -263,7 +263,7 @@
   // Layer hygiene: if no radar product button is active, no POLRAD/RainViewer
   // imagery may remain on the Leaflet map. This also catches a late async CAPPI
   // response that arrives after CAPPI has already been switched off.
-  const radarButtonIds = ['polrad_cmax','polrad_cappi','polrad_sri','polrad_pac','radarToggle'];
+  const radarButtonIds = ['polrad_cmax','polrad_cappi','polrad_eht','polrad_sri','polrad_pac','polrad_hail','radarToggle'];
   function anyRadarActive(){
     return radarButtonIds.some(id => $(id)?.classList.contains('active'));
   }

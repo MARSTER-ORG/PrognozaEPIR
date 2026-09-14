@@ -174,12 +174,17 @@
 (() => {
   if (typeof L === 'undefined' || typeof map === 'undefined' || !map) return;
   if (window.__PrognozaEPIRCappiInstalled) return;
-  window.__PrognozaEPIRCappiInstalled = true;
 
   const $ = id => document.getElementById(id);
   const mapEl = $('map');
   const mapbar = document.querySelector('.mapbar');
   if (!mapEl || !mapbar) return;
+
+  // radar-intelligence.js is the single owner of all official POLRAD product
+  // buttons and animation. If canonical CAPPI already exists, do not install
+  // this older diagnostic renderer (it used to create a second polrad_cappi id).
+  if ($('polrad_cappi')) return;
+  window.__PrognozaEPIRCappiInstalled = true;
 
   const style = document.createElement('style');
   style.textContent = `
