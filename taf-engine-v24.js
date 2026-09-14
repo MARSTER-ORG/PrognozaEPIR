@@ -71,6 +71,16 @@
     return finite(f)&&f>0?clamp(f,.70,1.30):1;
   }
 
+  function adaptiveRelativeFactor(model,targetMs,component,bucket=null){
+    const id=modelId(model);if(!id||!component)return 1;
+    const api=frameAdaptiveApi();
+    try{
+      if(api?.relativeFactor&&api.data){const f=Number(api.relativeFactor(id,targetMs,component==='wind'?'wind_speed_10m':component==='visibility'?'visibility':component==='precipitation'?'weather_code':component==='cloud'?'cloud_cover_925hPa':component==='temperature'?'temperature_2m':component==='dew_point'?'dew_point_2m':null));if(finite(f)&&f>0)return clamp(f,.70/1.30,1.30/.70);}
+    }catch(_){}
+    const overall=adaptiveFactor(model,targetMs,null,bucket),specific=adaptiveFactor(model,targetMs,component,bucket);
+    return overall>0?clamp(specific/overall,.70/1.30,1.30/.70):1;
+  }
+
   function fogSkillFactor(model,bucket){
     const id=modelId(model),row=bucket?learning.fog?.models?.[id]?.lead_buckets?.[bucket]:null;
     const f=Number(row?.weight_factor);
@@ -112,14 +122,14 @@
       m.taf24WeightFactor=overall;
     }
     out.mv=members;
-    const precip=weightedShare(members,m=>weatherCodeInfo(m.code).precip,m=>adaptiveFactor(m,+row.t,'precipitation',bucket));
-    const ts=weightedShare(members,m=>weatherCodeInfo(m.code).ts,m=>adaptiveFactor(m,+row.t,'precipitation',bucket));
+    const precip=weightedShare(members,m=>weatherCodeInfo(m.code).precip,m=>adaptiveRelativeFactor(m,+row.t,'precipitation',bucket));
+    const ts=weightedShare(members,m=>weatherCodeInfo(m.code).ts,m=>adaptiveRelativeFactor(m,+row.t,'precipitation',bucket));
     out.wet=Math.max(prob(out.wet),precip);
     out.storm=Math.max(prob(out.storm),ts);
 
     const hasOperational=num(out.fgOperationalScore)||num(out.fogOperationalScore);
     if(!hasOperational){
-      const eventWeight=m=>adaptiveFactor(m,+row.t,'visibility',bucket)*fogSkillFactor(m,bucket);
+      const eventWeight=m=>adaptiveRelativeFactor(m,+row.t,'visibility',bucket)*fogSkillFactor(m,bucket);
       const fg=weightedShare(members,m=>num(m.vis)&&+m.vis<1000,eventWeight);
       const br=weightedShare(members,m=>num(m.vis)&&+m.vis>=1000&&+m.vis<=5000,eventWeight);
       const fog=weightedShare(members,m=>weatherCodeInfo(m.code).fog,eventWeight);
@@ -195,17 +205,11 @@
         };
       },
       validate:(taf,meta)=>kernel.validate(taf,meta),
-      helpers:Object.freeze({...kernel.helpers,leadBucket,prepareRows,adaptiveFactor,fogSkillFactor})
+      helpers:Object.freeze({...kernel.helpers,leadBucket,prepareRows,adaptiveFactor,adaptiveRelativeFactor,fogSkillFactor})
     });
   }
 
-  function syncUiVersion(){
-    if(!root?.document)return;
-    const apply=()=>{const b=root.document.getElementById('badge');if(!b)return false;const fix=()=>{if(/TAF ENGINE 2\.3/.test(b.textContent||''))b.textContent=b.textContent.replace('TAF ENGINE 2.3','TAF ENGINE 2.4');};fix();new MutationObserver(fix).observe(b,{childList:true,subtree:true,characterData:true});return true;};
-    if(!apply())root.document.addEventListener('DOMContentLoaded',apply,{once:true});
-  }
+  if(root){root.__PROGNOZA_EPIR_TAF_ENGINE_V24__=true;loadLearning().catch(()=>{});}
 
-  if(root){root.__PROGNOZA_EPIR_TAF_ENGINE_V24__=true;loadLearning().catch(()=>{});syncUiVersion();}
-
-  return Object.freeze({ENGINE_VERSION:VERSION,ENGINE_NAME:NAME,INSTRUCTION:AUTH,RULES,FORMAL_KERNEL_VERSION:core.ENGINE_VERSION,createEngine,validateTaf:(taf,meta)=>core.validateTaf(taf,meta),ready:loadLearning,setLearningData,learningStatus,helpers:Object.freeze({leadBucket,prepareRows,adaptiveFactor,fogSkillFactor})});
+  return Object.freeze({ENGINE_VERSION:VERSION,ENGINE_NAME:NAME,INSTRUCTION:AUTH,RULES,FORMAL_KERNEL_VERSION:core.ENGINE_VERSION,createEngine,validateTaf:(taf,meta)=>core.validateTaf(taf,meta),ready:loadLearning,setLearningData,learningStatus,helpers:Object.freeze({leadBucket,prepareRows,adaptiveFactor,adaptiveRelativeFactor,fogSkillFactor})});
 });
