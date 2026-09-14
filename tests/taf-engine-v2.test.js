@@ -19,7 +19,7 @@ assert.throws(()=>E.createEngine().generate({station:'EPIR',issue,start,end:star
 
 // Operational FOG 0-100 is a risk index, not a literal percentage for TAF.
 const FOGP=E.helpers.operationalFogProbability;
-assert.equal(FOGP(39),0);assert.equal(FOGP(40),.30);assert.equal(FOGP(60),.40);assert.equal(FOGP(80),.50);assert.equal(FOGP(100),.60);
+assert.equal(FOGP(39),0);assert.equal(FOGP(40),0);assert.equal(FOGP(59),0);assert.equal(FOGP(60),.30);assert.equal(FOGP(70),.40);assert.equal(FOGP(79),.49);assert.equal(FOGP(80),.50);assert.equal(FOGP(100),.50);
 
 // Visibility encoding and wind encoding.
 const V=E.helpers.visibilityToken;assert.equal(V(799),'0750');assert.equal(V(1499),'1400');assert.equal(V(4999),'4900');assert.equal(V(5000),'5000');assert.equal(V(9999),'9000');assert.equal(V(10000),'9999');
@@ -63,16 +63,24 @@ r=gen(rows);assert.ok(r.taf.includes('BECMG'),r.taf);assert.match(r.taf,/BECMG[^
   assert.equal((q.taf.match(/PROB30/g)||[]).length,1,q.taf);
   assert.ok(!q.taf.includes('BECMG'),q.taf);
   assert.ok(!q.taf.includes('1321/1401'),q.taf);
-  assert.equal(Math.round(q.groups[0].probability*100),40,q.taf);
+  assert.equal(Math.round(q.groups[0].probability*100),30,q.taf);
 }
 
-// Even separated 30–49% episodes may not create a second PROB30; keep the first one.
+// Operational FG scores 40-59 are diagnostic only and must never create PROB30 FG.
 {
   const splitRows=Array.from({length:12},(_,i)=>row(i,{vis:6000,fogOperationalScore:(i===5||i===7)?52:0,fgOperationalScore:(i===5||i===7)?52:0,fogAltVisM:(i===5||i===7)?900:null,mv:[model({vis:6000}),model({vis:6500}),model({vis:7000})]}));
   const q=gen(splitRows);
-  assert.match(q.taf,/PROB30\s+1404\/1406\s+0900\s+FG/,q.taf);
-  assert.equal((q.taf.match(/PROB30/g)||[]).length,1,q.taf);
-  assert.ok(!q.taf.includes('PROB30 1406/1408'),q.taf);
+  assert.equal((q.taf.match(/PROB30/g)||[]).length,0,q.taf);
+  assert.ok(!/\b(?:FG|FZFG)\b/.test(q.taf),q.taf);
+}
+
+// Dedicated FG operational score is authoritative over raw model fog votes.
+{
+  const gateRows=Array.from({length:12},(_,i)=>row(i,{vis:7000}));
+  gateRows[5]=row(5,{vis:7000,fogOperationalScore:49,fgOperationalScore:49,fogAltVisM:700,mv:[model({vis:700,code:45,w:.40}),model({vis:7000,code:0,w:.60})]});
+  const q=gen(gateRows);
+  assert.equal((q.taf.match(/PROB30/g)||[]).length,0,q.taf);
+  assert.ok(!/\b(?:FG|FZFG)\b/.test(q.taf),q.taf);
 }
 assert.equal(E.validateTaf('TAF EPIR 132300Z 1400/1412 22004KT 7000 NSC PROB30 1404/1406 0900 FG PROB30 1406/1408 0900 FG=',{issue,start,end}).ok,false);
 assert.equal(E.validateTaf('TAF EPIR 132300Z 1400/1412 22004KT CAVOK PROB30 1404/1406 0900 FG PROB30 TEMPO 1407/1409 26018G28KT=',{issue,start,end}).ok,true);

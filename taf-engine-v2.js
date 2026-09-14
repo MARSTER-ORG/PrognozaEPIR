@@ -49,9 +49,9 @@
     lowWindRunMinHours:3,
     lowWindMaxOtherKt:10,
     baseFirstHoursEqualWeight:true,
-    fogOperationalScoreMin:40,
-    fogOperationalScoreProbAt40:.30,
-    fogOperationalScoreProbAt60:.40,
+    fogOperationalScoreMin:60,
+    fogOperationalScoreProbAt60:.30,
+    fogOperationalScoreProbAt70:.40,
     fogOperationalScoreProbAt80:.50
   });
 
@@ -64,9 +64,10 @@
   const prob=v=>!num(v)?0:(+v>1?clamp(+v/100,0,1):clamp(+v,0,1));
   const operationalFogProbability=v=>{
     if(!num(v))return 0;
-    const score=clamp(+v,0,100);
-    if(score<RULES.fogOperationalScoreMin)return 0;
-    return clamp((30+(score-40)*.5)/100,.30,.60);
+    const score=clamp(+v,0,100),lo=RULES.fogOperationalScoreMin,hi=80;
+    if(score<lo)return 0;
+    if(score>=hi)return .50;
+    return clamp(.30+(score-lo)/(hi-lo)*.20,.30,.499);
   };
   const band=(v,cuts,missingTop=false)=>{if(!finite(v))return missingTop?cuts.length:null;for(let i=0;i<cuts.length;i++)if(v<cuts[i])return i;return cuts.length;};
   const mean=a=>{const q=a.filter(finite);return q.length?q.reduce((s,v)=>s+v,0)/q.length:NaN;};
@@ -175,8 +176,14 @@
     const explicitBr=hasBrOperational?operationalFogProbability(row.brOperationalScore):prob(row?.brRisk);
     const legacyVis1000=hasFgOperational?0:prob(row?.fogVis1000Risk);
     p.fog=Math.max(p.fog,fogEngine);
-    // Operational FOG scores are risk indices, not literal percentages. They are calibrated to TAF probability before this gate.
-    p.fg=Math.max(p.fg,explicitFg,legacyVis1000,explicitFg>0?0:fogEngine);
+    // Dedicated FG operational score is authoritative for TAF fog groups.
+    // Scores 40-59 stay diagnostic only and must not become PROB30 FG.
+    if(hasFgOperational||hasFogOperational){
+      const gateScore=hasFgOperational?+row.fgOperationalScore:+row.fogOperationalScore;
+      p.fg=operationalFogProbability(gateScore);
+    }else{
+      p.fg=Math.max(p.fg,explicitFg,legacyVis1000,explicitFg>0?0:fogEngine);
+    }
     p.br=Math.max(p.br,explicitBr);
     // General fog score may support BR, but must never suppress a stronger FG signal.
     if(p.fog>=.30&&p.br<.30&&p.fg<.30&&num(row?.VIS)&&+row.VIS>=1000&&+row.VIS<=5000)p.br=Math.max(p.br,p.fog);
