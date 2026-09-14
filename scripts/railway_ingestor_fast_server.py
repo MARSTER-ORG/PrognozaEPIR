@@ -6,6 +6,10 @@ fast path probes only IMGW Aviation METAR/SPECI. Supabase synchronisation is
 spawned only when the probe actually changes today's/yesterday's central
 METAR/SPECI JSONL; unchanged one-minute probes therefore cost one short process,
 not two.
+
+The full bulletin cycle is routed through central_ingestor_tiered.py, which
+changes only TAF source scheduling: PilotHub/IMGW first, expensive/broken
+provider calls only as fallbacks for stations still missing a current TAF.
 """
 from __future__ import annotations
 
@@ -23,6 +27,23 @@ PROBE_INTERVAL_SECONDS = max(30, int(os.environ.get("IMGW_AVIATION_PROBE_INTERVA
 SCHEDULER_POLL_SECONDS = max(2, int(os.environ.get("METAR_FAST_SCHEDULER_POLL_SECONDS", "5")))
 FAST_TIMEOUT_SECONDS = max(20, int(os.environ.get("METAR_FAST_TIMEOUT_SECONDS", "75")))
 SUPABASE_FAST_SYNC_TIMEOUT_SECONDS = max(20, int(os.environ.get("SUPABASE_FAST_SYNC_TIMEOUT_SECONDS", "60")))
+
+# Keep the low-memory runtime intact and redirect only its central bulletin
+# subprocess to the compatibility entrypoint that installs tiered TAF sourcing.
+_ORIGINAL_RUN_CHILD = base.run_child
+
+
+def _run_child_with_tiered_taf(label: str, argv: list[str], timeout: int) -> dict:
+    if label == "central-messages":
+        argv = list(argv)
+        for idx, value in enumerate(argv):
+            if str(value).endswith("/central_ingestor.py") or str(value).endswith("\\central_ingestor.py"):
+                argv[idx] = str(base.SCRIPTS / "central_ingestor_tiered.py")
+                break
+    return _ORIGINAL_RUN_CHILD(label, argv, timeout)
+
+
+base.run_child = _run_child_with_tiered_taf
 
 
 def _fast_archive_signature(now: datetime) -> tuple:
