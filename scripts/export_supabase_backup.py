@@ -38,6 +38,7 @@ TABLES = (
     "forecast_verifications",
 )
 PAGE_SIZE = 1000
+# This file is watched by the daily-backup workflow; updates also exercise the backup path immediately.
 
 
 def public_anon_key() -> str:
