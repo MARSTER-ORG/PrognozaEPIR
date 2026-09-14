@@ -2,7 +2,7 @@
 (() => {
   const SUPABASE_API = 'https://qozgntzeormujmqzkkmd.supabase.co/functions/v1/message-archive';
   // Public anon key: intentionally browser-visible; it grants no service-role privileges.
-  const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFvemdudHplb3JtdWptcXpra21kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkzMjY1ODksImV4cCI6MjEwNDkwMjU4OX0.EV0cw-wlG8cQnFumLwsucxFfURHzlRRZdcusCZow-1o';
+  const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXAiLCJyZWYiOiJxb3pnbnR6ZW9ybXVqbXF6a2ttZCIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNzg5MzI2NTg5LCJleHAiOjIxMDQ5MDI1ODl9.EV0cw-wlG8cQnFumLwsucxFfURHzlRRZdcusCZow-1o';
   const SUPABASE_ENABLED = window.PROGNOZAEPIR_SUPABASE_DISABLED !== true;
   const GITHUB_ROOT = 'https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/messages';
   const STATIC_ROOT = 'data/messages';
@@ -162,7 +162,7 @@
       const types=[['METAR','EPIR'],['SPECI','EPIR'],['TAF','EPIR'],['SYNOP','12342']];
       const rs=await Promise.all(types.map(([type,station])=>supabaseRequest({op:'recent',type,station,limit:500},force)));
       const metar=rs[0].rows||[],speci=rs[1].rows||[],taf=rs[2].rows||[],synop=rs[3].rows||[];
-      const out={schema:'prognozaepir-message-archive-recent-v1',metar_only:metar,metar, speci, aviation:mergeRows(metar,speci),taf,synop};
+      const out={schema:'prognozaepir-message-archive-recent-v1',metar_only:metar,metar,speci,aviation:mergeRows(metar,speci),taf,synop};
       cache.set('recent.json',{at:Date.now(),value:out,source:SUPABASE_API});return out;
     }catch(error){console.warn('MessageArchive Supabase recent:',error);}
     const basePromise=fallbackJson('recent.json',force).catch(()=>({}));
@@ -216,15 +216,27 @@
   });
   window.PrognozaEPIRMessageArchive=api;
 
-  const legacyArchiveName=input=>{
-    try{const raw=typeof input==='string'?input:input?.url,u=new URL(raw,location.href);if(u.origin!==location.origin)return null;const m=u.pathname.match(/\/data\/messages\/(latest|recent|status)\.json$/i);return m?`${m[1].toLowerCase()}.json`:null;}catch(_){return null;}
+  const legacyArchiveRequest=input=>{
+    try{
+      const raw=typeof input==='string'?input:input?.url,u=new URL(raw,location.href);
+      if(u.origin!==location.origin)return null;
+      let m=u.pathname.match(/\/data\/messages\/(latest|recent|status)\.json$/i);
+      if(m)return{kind:'json',name:`${m[1].toLowerCase()}.json`};
+      m=u.pathname.match(/\/data\/messages\/((?:metar|speci|taf|synop)\/\d{4}\/\d{2}\/\d{2}\.jsonl)$/i);
+      if(m)return{kind:'text',name:m[1]};
+      return null;
+    }catch(_){return null;}
   };
   window.fetch=async function(input,init){
-    const name=legacyArchiveName(input);if(!name)return nativeFetch(input,init);
+    const req=legacyArchiveRequest(input);if(!req)return nativeFetch(input,init);
     try{
-      const body=name==='latest.json'?await latest(true):name==='recent.json'?await recent(true):await status(true);
+      if(req.kind==='text'){
+        const body=await fetchArchiveText(req.name,true);
+        return new Response(body,{status:200,headers:{'Content-Type':'application/x-ndjson; charset=utf-8','Cache-Control':'no-store, max-age=0','X-PrognozaEPIR-Source':'Supabase-primary-MessageArchive'}});
+      }
+      const body=req.name==='latest.json'?await latest(true):req.name==='recent.json'?await recent(true):await status(true);
       return new Response(JSON.stringify(body),{status:200,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store, max-age=0','X-PrognozaEPIR-Source':'Supabase-primary-MessageArchive'}});
-    }catch(error){console.warn(`MessageArchive legacy bridge ${name}:`,error);return nativeFetch(input,init);}
+    }catch(error){console.warn(`MessageArchive legacy bridge ${req.name}:`,error);return nativeFetch(input,init);}
   };
 
   window.dispatchEvent(new CustomEvent('prognozaepir:message-archive-ready'));
