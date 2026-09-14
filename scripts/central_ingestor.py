@@ -1,18 +1,13 @@
 #!/usr/bin/env python3
 """Single operational ingest entry point for PrognozaEPIR bulletins.
 
-All automatic acquisition of METAR/SPECI/TAF/SYNOP must enter through this
-orchestrator. Source-specific scripts are treated as internal adapters; only
-message_archive.py writes the authoritative data/messages archive.
+All automatic acquisition of METAR/SPECI/TAF/SYNOP enters through this
+orchestrator. Source-specific scripts are internal adapters. Local JSONL remains
+the fallback/mirror format, while Supabase is the primary operational archive.
 
-Modes:
-  --once                 run one complete ingest cycle (CI / manual)
-  --daemon               run continuously (systemd / VPS)
-  --publish-git          publish changed data/messages to origin/main
-
-The process is deliberately conservative: source failures are isolated, archive
-normalization/validation is critical, overlapping local runs are blocked, and
-no browser/frontend component is ever used for acquisition.
+Runtime is intentionally limited to acquisition, normalization, freshness gates
+and primary-archive synchronisation. Static architecture checks and the full
+archive scan belong to deployment validation, not the five-minute cycle.
 """
 from __future__ import annotations
 
@@ -91,12 +86,7 @@ def run_step(name: str, argv: list[str], *, attempts: int = 1, timeout: int = 90
     for attempt in range(1, attempts + 1):
         try:
             log(f"{name}: attempt {attempt}/{attempts}")
-            proc = subprocess.run(
-                argv,
-                cwd=ROOT,
-                timeout=timeout,
-                check=False,
-            )
+            proc = subprocess.run(argv, cwd=ROOT, timeout=timeout, check=False)
             if proc.returncode == 0:
                 return StepResult(name, True, attempt, round(time.monotonic() - started, 3))
             last_error = f"exit {proc.returncode}"
@@ -195,19 +185,29 @@ def cycle(*, publish: bool, state_path: Path) -> dict:
     cycle_error: str | None = None
     published = False
     try:
+        # Acquisition adapters. collect_neighbor_tafs also captures the current
+        # EPBY/EPPW/EPKS METAR/SPECI context into the neighbour observation log.
         results.append(run_step("observations-primary", script("collect_epir_observations.py"), attempts=2, timeout=120))
         results.append(run_step("synop-supplement", script("supplement_synop_12342.py"), attempts=2, timeout=90))
         results.append(run_step("metar-armored", script("metar_armored.py"), attempts=3, timeout=120))
-        results.append(run_step("taf-imgw-pilothub", script("collect_neighbor_tafs.py"), attempts=3, timeout=120))
-        results.append(run_step("taf-awc-repair", script("repair_awc_tafs.py"), attempts=2, timeout=90))
+        results.append(run_step("taf-and-neighbors", script("collect_neighbor_tafs.py"), attempts=3, timeout=120))
         results.append(run_step("taf-sanitize", script("sanitize_neighbor_tafs.py"), attempts=1, timeout=60))
 
+        # Normalize local fallback files, refresh current TAF compatibility
+        # snapshots, then synchronise the primary database. Supabase failure is
+        # critical because it is now the operational source of truth for reads.
         results.append(run_step("archive-normalize", script("message_archive.py"), attempts=1, timeout=180, critical=True))
-        results.append(run_step("taf-finalize", script("finalize_central_message_architecture.py"), attempts=1, timeout=120, critical=True))
-        results.append(run_step("taf-native-archive", script("ensure_taf_native_archive.py"), attempts=1, timeout=90, critical=True))
-        results.append(run_step("archive-validate", script("message_archive.py", "--validate-only"), attempts=1, timeout=120, critical=True))
-        results.append(run_step("architecture-boundary", script("check_archive_boundaries.py"), attempts=1, timeout=60, critical=True))
+        results.append(run_step("archive-finalize", script("finalize_central_message_architecture.py"), attempts=1, timeout=120, critical=True))
+        results.append(run_step(
+            "supabase-sync",
+            script("supabase_message_mirror.py", "--lookback-days", os.environ.get("SUPABASE_INGEST_LOOKBACK_DAYS", "3")),
+            attempts=2,
+            timeout=120,
+            critical=True,
+        ))
 
+        # Operational freshness gates only. Static code/architecture checks and
+        # the expensive whole-archive validation are deployment-time checks.
         results.append(run_step("metar-freshness", script("check_epir_archive_freshness.py", "--metar-only"), attempts=1, timeout=60))
         results.append(run_step("synop-archive-audit", script("check_synop_archive_freshness.py"), attempts=1, timeout=60))
         results.append(run_step("taf-freshness", script("check_epir_archive_freshness.py", "--taf-only", "--all-tafs"), attempts=1, timeout=60))
@@ -222,7 +222,7 @@ def cycle(*, publish: bool, state_path: Path) -> dict:
         cleanup_staging()
 
     state = {
-        "schema": "prognozaepir-central-ingestor-state-v1",
+        "schema": "prognozaepir-central-ingestor-state-v2",
         "finished_at": utc_iso(),
         "duration_s": round(time.monotonic() - started, 3),
         "ok": cycle_error is None,
@@ -263,8 +263,7 @@ def main() -> int:
         except RuntimeError as exc:
             log(f"cycle skipped: {exc}")
         elapsed = time.monotonic() - loop_started
-        sleep_for = max(1.0, interval - elapsed)
-        time.sleep(sleep_for)
+        time.sleep(max(1.0, interval - elapsed))
 
 
 if __name__ == "__main__":
