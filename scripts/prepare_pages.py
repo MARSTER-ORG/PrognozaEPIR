@@ -63,7 +63,7 @@ def patch_index() -> None:
     icm = '<a class="control-link" href="https://www.meteo.pl/um/php/meteorogram_id_um.php?ntype=0n&amp;id=2077" target="_blank" rel="noopener noreferrer">ICM UM meteogram ↗</a>'
     for link in reversed([
         '<a class="control-link" href="radar.html">RADAR / SAT / AI</a>',
-        '<a class="control-link" href="taf.html?v=2.3.0">GENERATOR TAF</a>',
+        '<a class="control-link" href="taf.html?v=2.4.0">GENERATOR TAF</a>',
         '<a class="control-link" href="sat-fog.html">SAT / FOG EUMETSAT</a>',
     ]):
         if link not in s and icm in s:
@@ -149,14 +149,15 @@ def patch_index() -> None:
 def patch_taf() -> None:
     p = SITE / "taf.html"
     s = rd(p)
-    meta = '<meta name="prognozaepir-taf-engine-v2" content="2.3.0">'
+    meta = '<meta name="prognozaepir-taf-engine-v2" content="2.4.0">'
     if "prognozaepir-taf-engine-v2" not in s:
         s = s.replace('<meta name="color-scheme" content="dark">', '<meta name="color-scheme" content="dark">\n  ' + meta, 1)
     else:
         s = re.sub(r'<meta name="prognozaepir-taf-engine-v2" content="[^"]+">', meta, s, count=1)
     s = re.sub(r'src="index\.html(?:\?v=[^"]*)?"', f'src="index.html?v={ASSET_V}"', s, count=1)
-    s = re.sub(r'taf-engine-v2\.js\?v=[^"]+', 'taf-engine-v2.js?v=2.3.0', s)
-    s = re.sub(r'taf-app-v2\.js\?v=[^"]+', 'taf-app-v2.js?v=2.3.0', s)
+    s = re.sub(r'taf-engine-v2\.js\?v=[^"]+', 'taf-engine-v2.js?v=2.3.0-kernel', s)
+    s = re.sub(r'taf-engine-v24\.js\?v=[^"]+', 'taf-engine-v24.js?v=2.4.0', s)
+    s = re.sub(r'taf-app-v2\.js\?v=[^"]+', 'taf-app-v2.js?v=2.4.0-ui', s)
     wr(p, s)
 
 
@@ -234,7 +235,7 @@ def patch_radar() -> None:
 def validate() -> None:
     required = [
         "index.html", "radar.html", "taf.html", "sat-fog.html", "arch.html",
-        "taf-engine-v2.js", "taf-app-v2.js", "message-archive-client.js",
+        "taf-engine-v2.js", "taf-engine-v24.js", "taf-app-v2.js", "message-archive-client.js",
         "fog-engine.js", "observation-engine.js", "mifg-engine.js",
         "radar-risk-policy.js", "lightning-alerts.html", "lightning-alert-sw.js",
     ]
@@ -250,9 +251,10 @@ def validate() -> None:
         if legacy in taf:
             raise RuntimeError(f"legacy TAF runtime in deployed taf.html: {legacy}")
     for marker in (
-        "TAF ENGINE 2.3.0 · INSTRUCTION FIRST",
-        "taf-engine-v2.js?v=2.3.0",
-        "taf-app-v2.js?v=2.3.0",
+        "TAF ENGINE 2.4.0 · CALIBRATED · INSTRUCTION FIRST",
+        "taf-engine-v2.js?v=2.3.0-kernel",
+        "taf-engine-v24.js?v=2.4.0",
+        "taf-app-v2.js?v=2.4.0-ui",
         "prognozaepir-taf-engine-v2",
     ):
         if marker not in taf:
