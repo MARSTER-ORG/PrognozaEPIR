@@ -189,7 +189,23 @@ def cycle(*, publish: bool, state_path: Path) -> dict:
         # EPBY/EPPW/EPKS METAR/SPECI context into the neighbour observation log.
         results.append(run_step("observations-primary", script("collect_epir_observations.py"), attempts=2, timeout=120))
         results.append(run_step("synop-supplement", script("supplement_synop_12342.py"), attempts=2, timeout=90))
-        results.append(run_step("metar-armored", script("metar_armored.py"), attempts=3, timeout=120))
+
+        # The 60-second fast path normally keeps EPIR METAR/SPECI fresh. The
+        # expensive multi-source armored repair is therefore conditional: it is
+        # invoked only if freshness/24 h continuity is not already satisfied.
+        metar_precheck = run_step(
+            "metar-precheck",
+            script("check_epir_archive_freshness.py", "--metar-only"),
+            attempts=1,
+            timeout=30,
+        )
+        if metar_precheck.ok:
+            results.append(metar_precheck)
+            log("metar-armored-repair: skipped; archive is fresh and continuous")
+        else:
+            log("metar-armored-repair: freshness/continuity gate failed; running recovery")
+            results.append(run_step("metar-armored-repair", script("metar_armored.py"), attempts=2, timeout=120))
+
         results.append(run_step("taf-and-neighbors", script("collect_neighbor_tafs.py"), attempts=3, timeout=120))
         results.append(run_step("taf-sanitize", script("sanitize_neighbor_tafs.py"), attempts=1, timeout=60))
 
@@ -206,8 +222,8 @@ def cycle(*, publish: bool, state_path: Path) -> dict:
             critical=True,
         ))
 
-        # Operational freshness gates only. Static code/architecture checks and
-        # the expensive whole-archive validation are deployment-time checks.
+        # Final operational gates. Static code/architecture checks and the
+        # expensive whole-archive validation are deployment-time checks.
         results.append(run_step("metar-freshness", script("check_epir_archive_freshness.py", "--metar-only"), attempts=1, timeout=60))
         results.append(run_step("synop-archive-audit", script("check_synop_archive_freshness.py"), attempts=1, timeout=60))
         results.append(run_step("taf-freshness", script("check_epir_archive_freshness.py", "--taf-only", "--all-tafs"), attempts=1, timeout=60))
