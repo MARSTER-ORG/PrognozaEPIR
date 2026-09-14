@@ -1,0 +1,47 @@
+name: One-shot single PROB30 and fog event fix
+
+on:
+  push:
+    branches:
+      - fix/single-prob30-fog-event-learning-2026-09-14
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-shot-single-prob30-fog-event-fix
+  cancel-in-progress: true
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Apply source patch
+        run: python3 scripts/apply_single_prob30_fog_event_fix.py
+
+      - name: Validate TAF and fog learning
+        run: |
+          node --check taf-engine-v2.js
+          node --check fog-engine.js
+          node tests/taf-engine-v2.test.js
+          python3 -m py_compile scripts/build_fog_event_learning.py tests/test_fog_event_learning.py
+          python3 tests/test_fog_event_learning.py
+
+      - name: Remove one-shot migration files
+        run: |
+          rm scripts/apply_single_prob30_fog_event_fix.py
+          rm .github/workflows/apply-single-prob30-fog-event-fix.yml
+
+      - name: Commit clean result
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: tylko pierwsze PROB30 i nauka nocnego epizodu mgły"
+          git push origin HEAD:${GITHUB_REF_NAME}
