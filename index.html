@@ -83,7 +83,7 @@ const _fmtCache=new Map();function fmt(ms,opt={}){const k=JSON.stringify(opt);le
 function f(v,d=1){return finite(v)?Number(v).toFixed(d):'—'}
 function uv(s,d){const r=d*Math.PI/180;return{u:-s*Math.sin(r),v:-s*Math.cos(r)}}
 function sd(u,v){return{speed:Math.hypot(u,v),dir:(Math.atan2(-u,-v)*180/Math.PI+360)%360}}
-const EPIR_WIND_DIR_CORR={from:190,to:235,offset:-30,minSpeedMs:1.5};
+const EPIR_WIND_DIR_CORR={from:0,to:360,offset:-30,minSpeedMs:1.5};
 function correctEpirWindDirection(z){if(!z||!finite(Number(z.WS))||!finite(Number(z.WD)))return z;const speed=Number(z.WS),raw=((Number(z.WD)%360)+360)%360;if(speed<EPIR_WIND_DIR_CORR.minSpeedMs||raw<EPIR_WIND_DIR_CORR.from||raw>EPIR_WIND_DIR_CORR.to)return{...z,WD:raw};return{...z,WD:(raw+EPIR_WIND_DIR_CORR.offset+360)%360,windDirRawDeg:raw,windDirSectorCorrectionDeg:EPIR_WIND_DIR_CORR.offset,windDirSectorCorrectionRule:`${EPIR_WIND_DIR_CORR.from}-${EPIR_WIND_DIR_CORR.to}:${EPIR_WIND_DIR_CORR.offset}`};}
 function toOkta(p){if(!finite(p))return null;let o=clamp(Math.round(p/12.5),0,8);if(o>=5&&p<62.5)o=4;return o}
 function build(rows){return rows.map(r=>({...r,_t:parseUTC(r.time)})).filter(r=>finite(r._t)).sort((a,b)=>a._t-b._t)}
