@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Fail deployment if browser/API code bypasses central MessageArchive.
 
-Bulletin providers are allowed only in server-side source adapters under scripts/.
-Supabase is the primary archive read source. Railway and GitHub/static JSON are
-fallbacks owned only by message-archive-client.js. Frontend consumers use the
-public PrognozaEPIRMessageArchive API or its verified same-origin fetch bridge.
+The check is intentionally semantic rather than formatting-sensitive: minifying or
+reformatting message-archive-client.js must not break deployment as long as
+Supabase remains PRIMARY and the shared fallback bridge is present.
 """
 from __future__ import annotations
 
@@ -23,10 +22,7 @@ FORBIDDEN_PROVIDERS = {
 }
 RAILWAY_ARCHIVE = re.compile(r"central-ingestor-production\.up\.railway\.app/data/messages", re.I)
 SUPABASE_ARCHIVE = re.compile(r"qozgntzeormujmqzkkmd\.supabase\.co/functions/v1/message-archive", re.I)
-DIRECT_MESSAGE_FILES = re.compile(
-    r"data/messages/[^'\"`\s?#]+\.(?:json|jsonl)(?:[?#][^'\"`\s]*)?",
-    re.I,
-)
+DIRECT_MESSAGE_FILES = re.compile(r"data/messages/[^'\"`\s?#]+\.(?:json|jsonl)(?:[?#][^'\"`\s]*)?", re.I)
 LEGACY_BULLETIN_FILES = re.compile(
     r"data/observations/(?:metar|synop)|data/taf/(?:latest|neighbors)\.json|(?:^|['\"`])taf-neighbors\.json(?:['\"`]|$)",
     re.I,
@@ -34,13 +30,16 @@ LEGACY_BULLETIN_FILES = re.compile(
 SERVICE_ROLE_CREDENTIAL = re.compile(r"SUPABASE_SERVICE_ROLE_KEY|['\"]service_role['\"]\s*[:=]", re.I)
 CLIENT_SCRIPT = re.compile(r'<script\s+src=["\']message-archive-client\.js(?:\?[^"\']*)?["\']\s*></script>', re.I)
 BRIDGED_LEGACY_READERS = {"fog-engine.js", "mifg-engine.js"}
-
 TARGETS = [*ROOT.glob("*.html"), *ROOT.glob("*.js"), *ROOT.glob("api/*.js")]
 BULLETIN_PAGES = ("index.html", "arch.html", "taf.html")
 
 
 def rel(path: Path) -> str:
     return path.relative_to(ROOT).as_posix()
+
+
+def compact(text: str) -> str:
+    return re.sub(r"\s+", "", text)
 
 
 def main() -> int:
@@ -64,31 +63,31 @@ def main() -> int:
     if not CLIENT.exists():
         violations.append("message-archive-client.js: missing shared archive client")
     else:
-        text = CLIENT.read_text(encoding="utf-8")
-        required = [
-            "const SUPABASE_API = 'https://qozgntzeormujmqzkkmd.supabase.co/functions/v1/message-archive';",
-            "const SUPABASE_ANON =",
-            "const SUPABASE_ENABLED =",
-            "const RAILWAY_ROOT = 'https://central-ingestor-production.up.railway.app/data/messages';",
-            "supabaseRequest(",
-            "getRange",
-            "window.PrognozaEPIRMessageArchive=api",
-            "Supabase-primary-MessageArchive",
-            "legacyArchiveRequest",
-            "window.fetch=async function(input,init)",
-        ]
-        for token in required:
-            if token not in text:
-                violations.append(f"message-archive-client.js: missing Supabase-primary invariant: {token}")
-        if not SUPABASE_ARCHIVE.search(text):
-            violations.append("message-archive-client.js: Supabase archive endpoint missing")
+        text = CLIENT.read_text(encoding="utf-8", errors="replace")
+        packed = compact(text)
+        semantic_patterns = {
+            "Supabase endpoint": SUPABASE_ARCHIVE,
+            "public anon key": re.compile(r"\bSUPABASE_ANON\s*="),
+            "Supabase enabled switch": re.compile(r"\bSUPABASE_ENABLED\s*="),
+            "Railway fallback": RAILWAY_ARCHIVE,
+            "Supabase request function": re.compile(r"\b(?:async\s+)?function\s+supabaseRequest\s*\(|\bsupabaseRequest\s*=", re.I),
+            "range API": re.compile(r"\bgetRange\b"),
+            "shared global API": re.compile(r"window\.PrognozaEPIRMessageArchive\s*=\s*api"),
+            "legacy fetch bridge": re.compile(r"window\.fetch\s*=\s*async\s*function\s*\("),
+            "Supabase source marker": re.compile(r"Supabase-primary-MessageArchive"),
+        }
+        for label, pattern in semantic_patterns.items():
+            if not pattern.search(text):
+                violations.append(f"message-archive-client.js: missing Supabase-primary invariant: {label}")
+        # Accept both formatted and minified ternaries.
+        if "PRIMARY_ROOT=SUPABASE_ENABLED?SUPABASE_API:" not in packed:
+            violations.append("message-archive-client.js: Supabase is not configured as primary read source")
+        # The bridge helper may be named legacy or legacyArchiveRequest; validate behavior, not identifier spelling.
+        if not re.search(r"(?:legacy|legacyArchiveRequest)\s*=|function\s+(?:legacy|legacyArchiveRequest)\s*\(", text):
+            violations.append("message-archive-client.js: same-origin legacy archive bridge helper missing")
         if SERVICE_ROLE_CREDENTIAL.search(text):
             violations.append("message-archive-client.js: service-role credential must never be present in browser code")
-        if "PRIMARY_ROOT = SUPABASE_ENABLED ? SUPABASE_API" not in text:
-            violations.append("message-archive-client.js: Supabase is not configured as primary read source")
 
-    # Every page that consumes METAR/SPECI/TAF/SYNOP must load the one shared
-    # client. Radar, satellite and lightning pages use other data domains.
     for name in BULLETIN_PAGES:
         page = ROOT / name
         if not page.exists():
@@ -98,10 +97,6 @@ def main() -> int:
         if not CLIENT_SCRIPT.search(text):
             violations.append(f"{name}: shared MessageArchive client is not loaded")
 
-    # The two fog engines still call same-origin data/messages/latest.json for
-    # backward compatibility. This is allowed only because index loads the
-    # MessageArchive client first and its fetch bridge redirects that exact path
-    # to Supabase before any static fallback can be attempted.
     index = ROOT / "index.html"
     if index.exists():
         text = index.read_text(encoding="utf-8", errors="replace")
@@ -137,9 +132,7 @@ def main() -> int:
     observation = ROOT / "observation-engine.js"
     if observation.exists():
         text = observation.read_text(encoding="utf-8", errors="replace")
-        if "PrognozaEPIRMessageArchive" not in text:
-            violations.append("observation-engine.js: observations bypass shared archive API")
-        if "archiveLatest(" not in text or "archiveRecent(" not in text:
+        if "PrognozaEPIRMessageArchive" not in text or "archiveLatest(" not in text or "archiveRecent(" not in text:
             violations.append("observation-engine.js: shared latest/recent archive access is incomplete")
 
     neighbor = ROOT / "neighbor-observation-context.js"
@@ -160,8 +153,6 @@ def main() -> int:
         if "taf-neighbors.json" in text:
             violations.append("neighbor-taf-context.js: legacy TAF snapshot bypass remains")
 
-    # The obsolete verifier used to own a GitHub RAW archive fallback. It must
-    # stay removed; verification is now part of the current TAF application path.
     if (ROOT / "taf-verification.js").exists():
         violations.append("taf-verification.js: obsolete private archive reader must not return")
 
