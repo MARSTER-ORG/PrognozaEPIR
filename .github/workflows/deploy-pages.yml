@@ -1,0 +1,86 @@
+name: Deploy current main to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'data/messages/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy and verify Pages
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Record exact deployed revision
+        shell: bash
+        run: |
+          printf '{"commit":"%s","built_at":"%s"}\n' \
+            "$GITHUB_SHA" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" > pages-build.json
+
+      - name: Ensure Pages uses GitHub Actions
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh api --method PUT "repos/${GITHUB_REPOSITORY}/pages" \
+            --raw-field build_type=workflow
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload exact repository snapshot
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+      - name: Deploy Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Verify that the live site is this revision
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${PAGE_URL%/}"
+          ok=0
+          for attempt in $(seq 1 18); do
+            marker="$(curl -fsSL --max-time 15 "${base}/pages-build.json?v=${GITHUB_SHA}" 2>/dev/null || true)"
+            arch="$(curl -fsSL --max-time 15 "${base}/arch.html?v=${GITHUB_SHA}" 2>/dev/null || true)"
+            if printf '%s' "$marker" | grep -Fq "$GITHUB_SHA" \
+              && printf '%s' "$arch" | grep -Fq 'id="modeAdvanced"' \
+              && printf '%s' "$arch" | grep -Fq 'supabase-search-v2'; then
+              echo "GitHub Pages serves commit $GITHUB_SHA and the advanced ARCH UI."
+              ok=1
+              break
+            fi
+            echo "Waiting for Pages/CDN propagation (${attempt}/18)..."
+            sleep 10
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "ERROR: live GitHub Pages does not serve the deployed revision or advanced ARCH UI." >&2
+            exit 1
+          fi
