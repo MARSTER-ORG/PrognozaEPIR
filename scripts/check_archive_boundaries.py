@@ -2,11 +2,9 @@
 """Fail CI if browser/API code bypasses the central MessageArchive boundary.
 
 Bulletin providers are allowed only in server-side source adapters under scripts/.
-The browser may know the Railway central archive URL only inside the shared
-``message-archive-client.js``. All other frontend/API consumers must use the
-public ``PrognozaEPIRMessageArchive`` API or the same-origin compatibility bridge
-owned by that client. Source priority is Railway live first, then GitHub/static
-fallbacks.
+Supabase is the primary archive read source. Railway and GitHub/static JSON are
+fallbacks owned only by message-archive-client.js. Frontend consumers use the
+public PrognozaEPIRMessageArchive API or its same-origin compatibility bridge.
 """
 from __future__ import annotations
 
@@ -24,6 +22,8 @@ FORBIDDEN_PROVIDERS = {
     "legacy TAF proxy": re.compile(r"/api/taf-proxy", re.I),
 }
 RAILWAY_ARCHIVE = re.compile(r"central-ingestor-production\.up\.railway\.app/data/messages", re.I)
+SUPABASE_ARCHIVE = re.compile(r"qozgntzeormujmqzkkmd\.supabase\.co/functions/v1/message-archive", re.I)
+SERVICE_ROLE = re.compile(r"service[_-]?role", re.I)
 
 TARGETS = [
     *ROOT.glob("*.html"),
@@ -47,21 +47,32 @@ def main() -> int:
                 violations.append(f"{rel(path)}: forbidden direct bulletin source: {label}")
         if path.resolve() != CLIENT.resolve() and RAILWAY_ARCHIVE.search(text):
             violations.append(f"{rel(path)}: direct Railway archive URL bypasses shared MessageArchive client")
+        if path.resolve() != CLIENT.resolve() and SUPABASE_ARCHIVE.search(text):
+            violations.append(f"{rel(path)}: direct Supabase archive URL bypasses shared MessageArchive client")
 
     if not CLIENT.exists():
         violations.append("message-archive-client.js: missing shared archive client")
     else:
         text = CLIENT.read_text(encoding="utf-8")
         required = [
+            "const SUPABASE_API = 'https://qozgntzeormujmqzkkmd.supabase.co/functions/v1/message-archive';",
+            "const SUPABASE_ANON =",
+            "const SUPABASE_ENABLED =",
             "const RAILWAY_ROOT = 'https://central-ingestor-production.up.railway.app/data/messages';",
-            "[CUSTOM_ROOT, RAILWAY_ROOT, GITHUB_ROOT, STATIC_ROOT]",
-            "window.PrognozaEPIRMessageArchive = api",
-            "const legacyArchiveName = input =>",
-            "MessageArchive-live-first",
+            "supabaseRequest(",
+            "getRange",
+            "window.PrognozaEPIRMessageArchive=api",
+            "Supabase-primary-MessageArchive",
         ]
         for token in required:
             if token not in text:
-                violations.append(f"message-archive-client.js: missing archive boundary invariant: {token}")
+                violations.append(f"message-archive-client.js: missing Supabase-primary invariant: {token}")
+        if not SUPABASE_ARCHIVE.search(text):
+            violations.append("message-archive-client.js: Supabase archive endpoint missing")
+        if SERVICE_ROLE.search(text):
+            violations.append("message-archive-client.js: service-role credential must never be present in browser code")
+        if text.find("SUPABASE_API") > text.find("RAILWAY_ROOT") and "PRIMARY_ROOT = SUPABASE_ENABLED ? SUPABASE_API" not in text:
+            violations.append("message-archive-client.js: Supabase is not configured as primary read source")
 
     taf = ROOT / "taf.html"
     taf_app = ROOT / "taf-app-v2.js"
@@ -94,7 +105,7 @@ def main() -> int:
             print(f" - {item}")
         return 1
 
-    print(f"Archive boundary OK: checked {len(targets)} browser/API files; Railway is owned only by message-archive-client.js")
+    print(f"Archive boundary OK: checked {len(targets)} browser/API files; Supabase is primary and fallbacks are owned by message-archive-client.js")
     return 0
 
 
