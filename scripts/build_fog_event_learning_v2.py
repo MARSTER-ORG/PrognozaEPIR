@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 import model_verification as mv
+import metar_wind_index
 import build_fog_event_learning as legacy
 
 EXTRA_MODELS = [
@@ -98,6 +99,7 @@ def postprocess_output():
 
 def main():
     install_extra_models()
+    metar_wind_index.install(mv)
     legacy.FOG_CODES = set(FOG_CODES)
     legacy.MIST_CODES = set(MIST_CODES)
     legacy.classify = classify
