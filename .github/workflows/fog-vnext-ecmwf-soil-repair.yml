@@ -1,0 +1,70 @@
+name: Fog vNext ECMWF soil repair
+
+on:
+  push:
+    branches:
+      - fog-vnext-physics-20260915
+    paths:
+      - 'scripts/fog_vnext_ecmwf_soil_repair.py'
+      - '.github/workflows/fog-vnext-ecmwf-soil-repair.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fog-vnext-ecmwf-soil-repair-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Validate repair code
+        run: |
+          python3 -m py_compile scripts/fog_vnext_ecmwf_soil_repair.py
+          python3 scripts/fog_vnext_ecmwf_soil_repair.py --max-batches 8 --dry-run
+
+      - name: Repair same-issued-run ECMWF soil moisture
+        run: python3 scripts/fog_vnext_ecmwf_soil_repair.py --max-batches 8
+
+      - name: Validate repaired rows
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          full=0
+          repaired=0
+          values=[]
+          for p in Path('data/learning/fog-vnext-forecasts').glob('*.jsonl'):
+              for line in p.read_text(encoding='utf-8').splitlines():
+                  if not line.strip(): continue
+                  r=json.loads(line)
+                  if r.get('model')!='ecmwf_ifs' or not r.get('historical_backfill'): continue
+                  full+=1
+                  v=r.get('soil_moisture_0_to_7cm')
+                  if isinstance(v,(int,float)):
+                      repaired+=1
+                      values.append(float(v))
+          assert repaired>0, 'no actual ECMWF soil moisture repaired'
+          assert all(0.0 <= v <= 1.0 for v in values), (min(values), max(values))
+          print(json.dumps({'historical_ecmwf_rows':full,'soil_rows':repaired,'coverage':round(repaired/full,4) if full else 0,'min':min(values),'max':max(values)}))
+          PY
+
+      - name: Commit repaired forecast archive
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/learning/fog-vnext-forecasts data/learning/model-forecasts/fog-vnext-*.jsonl
+          if git diff --cached --quiet; then
+            echo 'No ECMWF soil archive changes'
+          else
+            git commit -m 'weather: repair ECMWF soil moisture in issued-run archive'
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin HEAD:"${GITHUB_REF_NAME}"
+          fi
