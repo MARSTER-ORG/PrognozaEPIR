@@ -8,6 +8,7 @@ extends the model inventory; it intentionally preserves those safeguards.
 from __future__ import annotations
 
 import model_verification as mv
+import metar_wind_index
 
 EXTRA_MODELS = [
     ("dmi_harmonie_arome_europe", "DMI HARMONIE-AROME Europe 2 km", 0.10),
@@ -25,6 +26,7 @@ def install_extra_models():
 
 def main():
     install_extra_models()
+    metar_wind_index.install(mv)
     import build_adaptive_weights as legacy
     legacy.main()
 
