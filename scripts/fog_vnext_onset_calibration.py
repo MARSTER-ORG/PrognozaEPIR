@@ -41,11 +41,11 @@ def logistic(x):
 
 
 def score01(case, key):
+    """Read verifier probability fields under the explicit 0..1 contract."""
     v = (case.get("vnext") or {}).get(key)
     if not finite(v):
         return None
-    x = float(v)
-    return x / 100.0 if x > 1.0 else x
+    return clamp(float(v), 0.0, 1.0)
 
 
 def candidate_score(case, global_prior, prior_lambda, evidence_beta):
@@ -158,6 +158,7 @@ def main():
             "untouched_test_year": 2026,
             "forecast_safe": True,
             "truth_not_used_as_predictor": True,
+            "probability_unit_contract": "0..1",
             "ranking_anchor": "P_physics",
         },
         "global_onset_prior": global_prior,
