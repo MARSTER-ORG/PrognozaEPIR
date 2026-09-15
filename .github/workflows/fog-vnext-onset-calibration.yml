@@ -1,0 +1,71 @@
+name: Fog vNext onset calibration
+
+on:
+  push:
+    branches:
+      - fog-vnext-physics-20260915
+    paths:
+      - 'fog-vnext-transition-risk.js'
+      - 'scripts/fog_vnext_onset_calibration.py'
+      - 'tests/test_fog_vnext_onset_calibration.py'
+      - '.github/workflows/fog-vnext-onset-calibration.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  calibrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Attach canonical EPIR history 2020-2026
+        run: |
+          git fetch origin main
+          git checkout origin/main -- data/import/epir-history
+          test -f data/import/epir-history/fog_training_2020_2024_corrected_v2.zip
+          git fetch origin fix/supabase-message-mirror-2025
+          git restore --source=origin/fix/supabase-message-mirror-2025 --worktree -- data/messages
+          test -d data/messages/metar/2025
+          for y in 2020 2021 2022 2023 2024 2025 2026; do test -d "data/messages/synop/$y"; done
+
+      - name: Materialize canonical aviation truth 2020-2024
+        run: python3 scripts/fog_vnext_materialize_truth.py
+
+      - name: Calibration syntax and unit tests
+        run: |
+          python3 -m py_compile scripts/fog_vnext_onset_calibration.py
+          python3 tests/test_fog_vnext_onset_calibration.py
+
+      - name: Build canonical transition priors
+        run: python3 scripts/build_fog_transition_priors_vnext.py
+
+      - name: Build censor-aware verification cases
+        run: python3 scripts/fog_vnext_verification_censored.py
+
+      - name: Select on 2025 and test on 2026
+        run: |
+          python3 scripts/fog_vnext_onset_calibration.py
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('data/learning/fog-vnext-onset-calibration.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['schema']=='prognozaepir-fog-vnext-onset-calibration-v1'
+          assert x['policy']['selection_year']==2025
+          assert x['policy']['untouched_test_year']==2026
+          assert x['policy']['truth_not_used_as_predictor'] is True
+          print('ONSET_CALIBRATION='+json.dumps(x, ensure_ascii=False))
+          PY
+
+      - name: Upload onset calibration report
+        uses: actions/upload-artifact@v4
+        with:
+          name: fog-vnext-onset-calibration-${{ github.sha }}
+          retention-days: 30
+          if-no-files-found: error
+          path: data/learning/fog-vnext-onset-calibration.json
