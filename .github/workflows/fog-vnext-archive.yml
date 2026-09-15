@@ -1,0 +1,79 @@
+name: Fog vNext archive and shadow learning
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 */3 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fog-vnext-archive
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    if: github.ref_name == 'main' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate vNext code
+        run: |
+          node --check fog-physics-vnext.js
+          node tests/fog-physics-vnext.test.js
+          python3 tests/test_fog_event_learning.py
+          python3 tests/test_fog_event_learning_v2.py
+          python3 -m py_compile scripts/fog_vnext_model_archive.py scripts/fog_vnext_verification.py
+
+      - name: Archive explicit model runs
+        run: python3 scripts/fog_vnext_model_archive.py
+
+      - name: Build shadow adaptive and fog-event weights
+        run: |
+          cp data/learning/adaptive-weights.json /tmp/adaptive-weights.production.json
+          cp data/learning/fog-event-skill.json /tmp/fog-event-skill.production.json
+          python3 scripts/build_adaptive_weights_v2.py
+          cp data/learning/adaptive-weights.json data/learning/adaptive-weights-vnext-shadow.json
+          python3 scripts/build_fog_event_learning_v2.py
+          cp data/learning/fog-event-skill.json data/learning/fog-event-skill-vnext-shadow.json
+          cp /tmp/adaptive-weights.production.json data/learning/adaptive-weights.json
+          cp /tmp/fog-event-skill.production.json data/learning/fog-event-skill.json
+
+      - name: Build forecast-to-truth verification
+        run: python3 scripts/fog_vnext_verification.py
+
+      - name: Validate shadow artifacts
+        run: |
+          python3 -m json.tool data/learning/adaptive-weights-vnext-shadow.json >/dev/null
+          python3 -m json.tool data/learning/fog-event-skill-vnext-shadow.json >/dev/null
+          python3 -m json.tool data/learning/fog-vnext-verification/summary.json >/dev/null
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          aw=json.loads(Path('data/learning/adaptive-weights-vnext-shadow.json').read_text(encoding='utf-8'))
+          fg=json.loads(Path('data/learning/fog-event-skill-vnext-shadow.json').read_text(encoding='utf-8'))
+          for m in ('dmi_harmonie_arome_europe','knmi_harmonie_arome_europe'):
+              assert m in aw['models']
+              assert m in fg['models']
+          assert fg['target_policy']['mifg_separate'] is True
+          print('shadow models:', len(aw['models']), len(fg['models']))
+          PY
+
+      - name: Commit archive and shadow learning
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/learning/fog-vnext-forecasts data/learning/model-forecasts/fog-vnext-*.jsonl \
+            data/learning/adaptive-weights-vnext-shadow.json data/learning/fog-event-skill-vnext-shadow.json \
+            data/learning/fog-vnext-verification
+          if git diff --cached --quiet; then
+            echo 'No vNext archive changes'
+          else
+            git commit -m 'weather: archive Fog vNext forecast truth cases'
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin HEAD:"${GITHUB_REF_NAME}"
+          fi
