@@ -1,0 +1,113 @@
+name: Fix wind arrows final layer
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-wind-arrow-final-layer.yml'
+permissions:
+  contents: write
+concurrency:
+  group: fix-wind-arrow-final-layer
+  cancel-in-progress: true
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Make wind arrows the true final canvas layer
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # 1) Export the canonical wind foreground redraw from the cleanup layer.
+          p=Path('meteogram-visfog-cleanup.js')
+          s=p.read_text(encoding='utf-8')
+          marker='  function installFogHoverTooltip() {'
+          export="  window.PrognozaEPIRRedrawWindForeground = redrawWindPanelForeground;\n\n"
+          if export not in s:
+              if marker not in s:
+                  raise SystemExit('cleanup export marker missing')
+              s=s.replace(marker, export+marker, 1)
+          p.write_text(s,encoding='utf-8')
+
+          # 2) The fog overlay is the last renderer that wraps draw(). Repaint the
+          # wind panel foreground after every other post-draw overlay.
+          p=Path('fog-meteogram-overlay.js')
+          s=p.read_text(encoding='utf-8')
+          old="""      draw = function() {
+        baseDraw();
+        drawPressureFill();
+        drawFogBars();
+      };"""
+          new="""      draw = function() {
+        baseDraw();
+        drawPressureFill();
+        drawFogBars();
+        try { window.PrognozaEPIRRedrawWindForeground?.(); } catch (_) { }
+      };"""
+          if old in s:
+              s=s.replace(old,new,1)
+          elif 'window.PrognozaEPIRRedrawWindForeground?.();' not in s:
+              raise SystemExit('fog overlay draw wrapper marker missing')
+          p.write_text(s,encoding='utf-8')
+
+          # 3) Cache-bust every meteogram runtime addon so phones cannot retain
+          # an older renderer after a Pages deployment.
+          p=Path('scripts/prepare_pages.py')
+          s=p.read_text(encoding='utf-8')
+          replacements={
+            "'<script src=\"index-fixes.js\"></script>'":"f'<script src=\"index-fixes.js?v={ASSET_V}\"></script>'",
+            "'<script src=\"axis-layout-fix.js\"></script>'":"f'<script src=\"axis-layout-fix.js?v={ASSET_V}\"></script>'",
+            "'<script src=\"visual-style-fix.js\"></script>'":"f'<script src=\"visual-style-fix.js?v={ASSET_V}\"></script>'",
+            "'<script src=\"meteogram-layout-v2.js\"></script>'":"f'<script src=\"meteogram-layout-v2.js?v={ASSET_V}\"></script>'",
+            "'<script src=\"meteogram-visfog-split.js\"></script>'":"f'<script src=\"meteogram-visfog-split.js?v={ASSET_V}\"></script>'",
+            "'<script src=\"rh-axis-fix.js\"></script>'":"f'<script src=\"rh-axis-fix.js?v={ASSET_V}\"></script>'",
+            "'<script src=\"meteogram-visfog-cleanup.js\"></script>'":"f'<script src=\"meteogram-visfog-cleanup.js?v={ASSET_V}\"></script>'",
+            "'<script src=\"day-night-fix.js\"></script>'":"f'<script src=\"day-night-fix.js?v={ASSET_V}\"></script>'",
+            "'<script src=\"observation-engine.js\"></script>'":"f'<script src=\"observation-engine.js?v={ASSET_V}\"></script>'",
+            "'<script src=\"fog-meteogram-overlay.js\"></script>'":"f'<script src=\"fog-meteogram-overlay.js?v={ASSET_V}\"></script>'",
+            "'<script src=\"shortcut-mode.js\"></script>'":"f'<script src=\"shortcut-mode.js?v={ASSET_V}\"></script>'",
+          }
+          changed=0
+          for old,new in replacements.items():
+              if old in s:
+                  s=s.replace(old,new)
+                  changed+=1
+          if 'meteogram-visfog-cleanup.js?v={ASSET_V}' not in s or 'fog-meteogram-overlay.js?v={ASSET_V}' not in s:
+              raise SystemExit('cache-busting patch incomplete')
+          p.write_text(s,encoding='utf-8')
+          print('cache-busted addon entries:',changed)
+          PY
+      - name: Validate final render order
+        shell: bash
+        run: |
+          node --check meteogram-visfog-cleanup.js
+          node --check fog-meteogram-overlay.js
+          python3 -m py_compile scripts/prepare_pages.py
+          python3 - <<'PY'
+          from pathlib import Path
+          a=Path('meteogram-visfog-cleanup.js').read_text(encoding='utf-8')
+          b=Path('fog-meteogram-overlay.js').read_text(encoding='utf-8')
+          c=Path('scripts/prepare_pages.py').read_text(encoding='utf-8')
+          assert 'window.PrognozaEPIRRedrawWindForeground = redrawWindPanelForeground;' in a
+          assert b.index('window.PrognozaEPIRRedrawWindForeground?.();') > b.index('drawFogBars();')
+          assert 'meteogram-visfog-cleanup.js?v={ASSET_V}' in c
+          assert 'fog-meteogram-overlay.js?v={ASSET_V}' in c
+          print('OK: wind foreground is repainted after all post-draw overlays')
+          PY
+      - name: Commit production fix
+        shell: bash
+        run: |
+          git config user.name 'prognozaepir-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add meteogram-visfog-cleanup.js fog-meteogram-overlay.js scripts/prepare_pages.py
+          git diff --cached --quiet && exit 0
+          git commit -m 'Render wind arrows as final meteogram layer'
+          for attempt in 1 2 3 4 5; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            sleep $((attempt*4))
+          done
+          exit 1
