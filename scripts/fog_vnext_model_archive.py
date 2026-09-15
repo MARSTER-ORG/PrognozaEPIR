@@ -32,7 +32,7 @@ CORE = (
     "temperature_2m", "dew_point_2m", "relative_humidity_2m", "precipitation",
     "pressure_msl", "visibility", "wind_speed_10m", "wind_direction_10m",
     "wind_gusts_10m", "weather_code", "cloud_cover", "cloud_cover_low",
-    "cloud_cover_mid", "cloud_cover_high", "surface_temperature", "is_day",
+    "cloud_cover_mid", "cloud_cover_high", "surface_temperature", "shortwave_radiation", "is_day",
 )
 
 MODEL_TIERS = {
@@ -141,6 +141,7 @@ def rows_from(model, model_run, batch, data):
             "cloud_base_m": at(h, "cloud_base", i),
             "cloud_cover_2m_pct": at(h, "cloud_cover_2m", i),
             "surface_temperature_c": at(h, "surface_temperature", i),
+            "shortwave_radiation_wm2": at(h, "shortwave_radiation", i),
             "is_day": at(h, "is_day", i),
             "boundary_layer_height_m": at(h, "boundary_layer_height", i),
             "soil_moisture_0_to_1cm": at(h, "soil_moisture_0_to_1cm", i),
