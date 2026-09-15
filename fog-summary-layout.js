@@ -42,7 +42,7 @@
         row.soilT0=num(h.soil_temperature_0cm?.[i]);row.soilT6=num(h.soil_temperature_6cm?.[i]);row.Ts=num(h.surface_temperature?.[i]);
       }else{
         row.pbl=num(h.boundary_layer_height?.[i]);row.soil07=num(h.soil_moisture_0_to_7cm?.[i]);
-        row.soilT07=num(h.soil_temperature_0_7cm?.[i]??h.soil_temperature_0_to_7cm?.[i]);row.Ts=num(h.surface_temperature?.[i]);row.T2=num(h.temperature_2m?.[i]);row.isDay=num(h.is_day?.[i]);
+        row.soilT07=num(h.soil_temperature_0_7cm?.[i]??h.soil_temperature_0_to_7cm?.[i]);row.Ts=num(h.surface_temperature?.[i]);row.T2=num(h.temperature_2m?.[i]);row.isDay=num(h.is_day?.[i]);row.sw=num(h.shortwave_radiation?.[i]);
       }
       return row;
     }).filter(x=>finite(x.t)).sort((a,b)=>a.t-b.t);
@@ -57,9 +57,9 @@
   }
   async function fetchEcmwf(){
     const tiers=[
-      ['boundary_layer_height','soil_moisture_0_to_7cm','soil_temperature_0_7cm','surface_temperature','temperature_2m','is_day'],
-      ['boundary_layer_height','soil_moisture_0_to_7cm','surface_temperature','temperature_2m','is_day'],
-      ['boundary_layer_height','surface_temperature','temperature_2m','is_day']
+      ['boundary_layer_height','soil_moisture_0_to_7cm','soil_temperature_0_7cm','surface_temperature','temperature_2m','shortwave_radiation','is_day'],
+      ['boundary_layer_height','soil_moisture_0_to_7cm','surface_temperature','temperature_2m','shortwave_radiation','is_day'],
+      ['boundary_layer_height','surface_temperature','temperature_2m','shortwave_radiation','is_day']
     ];
     let err=null;for(const vars of tiers)try{return rowsFrom(await fetchJson(apiUrl('ecmwf_ifs',vars)),'ecmwf');}catch(e){err=e;}throw err||new Error('ECMWF vNext unavailable');
   }
@@ -99,7 +99,7 @@
       pbl:num(e?.pbl),deltaPbl1:diff(num(e?.pbl),num(e1?.pbl)),deltaPbl3:diff(num(e?.pbl),num(e3?.pbl)),
       tsurface:Ts,deltaSurfaceCooling1:diff(sc,sc1),deltaSurfaceCooling3:diff(sc,sc3),deltaTsurface3:diff(Ts,Ts3),
       deltaSpread3:finite(T)&&finite(Td)&&finite(T3)&&finite(Td3)?(T-Td)-(T3-Td3):null,deltaRh3:diff(RH,RH3),
-      inversion:modelMean(hour,'inv200'),shear:null,isDay:num(e?.isDay),shortwave:modelMean(hour,'SW'),cloudCover:modelMean(hour,'TCC'),lowCloud:modelMean(hour,'LOW'),
+      inversion:modelMean(hour,'inv200'),shear:null,isDay:num(e?.isDay),shortwave:num(e?.sw)??modelMean(hour,'SW'),cloudCover:modelMean(hour,'TCC'),lowCloud:modelMean(hour,'LOW'),
       cloud2m:num(dmi?.directFog),cbh,cbhDrop3:finite(cbh)&&finite(cbh3)?cbh3-cbh:null,precip:modelMean(hour,'RR'),verticalRh:modelMean(hour,'rhLow'),
       moistAdvection:modelComponentMean(hour,'SMADV'),surfaceContrast:modelComponentMean(hour,'SCOLD'),soilTemperature0:num(i?.soilT0),soilTemperature6:num(i?.soilT6),soilTemperatureEcmwf07:num(e?.soilT07),
       t5cmObs:num(t5?.temperature_c),t5cmObsTime:t5?.obs_time||null,t5cmObsSource:t5?.source||null,t5cmObsAgeHours:num(t5?.ageHours)
