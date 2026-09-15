@@ -9,9 +9,12 @@ on:
       - 'scripts/fog_vnext_event_backfill.py'
       - 'scripts/backfill_fog_vnext_history.py'
       - 'scripts/fog_vnext_verification.py'
+      - 'scripts/build_fog_transition_priors_vnext.py'
       - 'scripts/build_fog_event_learning_v2.py'
       - 'scripts/build_adaptive_weights_v2.py'
       - 'fog-physics-vnext.js'
+      - 'fog-vnext-probability-layer.js'
+      - 'fog-vnext-transition-risk.js'
       - '.github/workflows/fog-vnext-archive.yml'
   workflow_dispatch:
   schedule:
@@ -33,17 +36,31 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Attach canonical EPIR history from main
+        run: |
+          git fetch origin main
+          git restore --source=origin/main --worktree -- data/import/epir-history
+          test -f data/import/epir-history/fog_training_2020_2024_corrected_v2.zip
+
       - name: Validate vNext code
         run: |
           node --check fog-physics-vnext.js
+          node --check fog-vnext-probability-layer.js
+          node --check fog-vnext-transition-risk.js
           node tests/fog-physics-vnext.test.js
+          node tests/fog-vnext-transition-risk.test.js
           python3 tests/test_fog_event_learning.py
           python3 tests/test_fog_event_learning_v2.py
+          python3 tests/test_fog_transition_priors_vnext.py
           python3 -m py_compile \
             scripts/fog_vnext_model_archive.py \
             scripts/fog_vnext_event_backfill.py \
             scripts/backfill_fog_vnext_history.py \
-            scripts/fog_vnext_verification.py
+            scripts/fog_vnext_verification.py \
+            scripts/build_fog_transition_priors_vnext.py
+
+      - name: Build canonical transition priors
+        run: python3 scripts/build_fog_transition_priors_vnext.py
 
       - name: Event-stratified explicit-run backfill
         run: |
@@ -74,6 +91,7 @@ jobs:
         run: |
           python3 -m json.tool data/learning/adaptive-weights-vnext-shadow.json >/dev/null
           python3 -m json.tool data/learning/fog-event-skill-vnext-shadow.json >/dev/null
+          python3 -m json.tool data/learning/fog-transition-priors-vnext.json >/dev/null
           python3 -m json.tool data/learning/fog-vnext-verification/summary.json >/dev/null
           python3 -m json.tool data/learning/fog-vnext-activation.json >/dev/null
           python3 - <<'PY'
@@ -81,19 +99,26 @@ jobs:
           from pathlib import Path
           aw=json.loads(Path('data/learning/adaptive-weights-vnext-shadow.json').read_text(encoding='utf-8'))
           fg=json.loads(Path('data/learning/fog-event-skill-vnext-shadow.json').read_text(encoding='utf-8'))
+          tp=json.loads(Path('data/learning/fog-transition-priors-vnext.json').read_text(encoding='utf-8'))
           summary=json.loads(Path('data/learning/fog-vnext-verification/summary.json').read_text(encoding='utf-8'))
           gate=json.loads(Path('data/learning/fog-vnext-activation.json').read_text(encoding='utf-8'))
           for m in ('dmi_harmonie_arome_europe','knmi_harmonie_arome_europe'):
               assert m in aw['models']
               assert m in fg['models']
           assert fg['target_policy']['mifg_separate'] is True
+          assert tp['schema']=='prognozaepir-fog-transition-priors-v1'
+          assert tp['adjacent_known_transitions'] > 0
           assert summary['schema']=='prognozaepir-fog-vnext-verification-summary-v2'
           assert gate['schema']=='prognozaepir-fog-vnext-activation-v1'
           if gate['operational_activation_ready']:
               assert gate['statistical_ready'] and gate['promotion_approved']
           print('shadow models:', len(aw['models']), len(fg['models']))
+          print('transition priors:', tp['adjacent_known_transitions'], tp['rates'])
           print('activation:', gate['mode'], gate['blockers'])
           PY
+
+      - name: Remove temporary history working copy
+        run: git clean -fd data/import/epir-history || true
 
       - name: Commit archive, verification and shadow learning
         run: |
@@ -101,6 +126,7 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add data/learning/fog-vnext-forecasts data/learning/model-forecasts/fog-vnext-*.jsonl \
             data/learning/adaptive-weights-vnext-shadow.json data/learning/fog-event-skill-vnext-shadow.json \
+            data/learning/fog-transition-priors-vnext.json \
             data/learning/fog-vnext-verification data/learning/fog-vnext-activation.json \
             data/learning/fog-vnext-backfill-state.json
           if git diff --cached --quiet; then
