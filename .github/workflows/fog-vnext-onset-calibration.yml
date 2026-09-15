@@ -6,8 +6,10 @@ on:
       - fog-vnext-physics-20260915
     paths:
       - 'fog-vnext-transition-risk.js'
+      - 'scripts/fog_vnext_eval.js'
       - 'scripts/fog_vnext_onset_calibration.py'
       - 'tests/test_fog_vnext_onset_calibration.py'
+      - 'tests/test_fog_vnext_probability_units.py'
       - '.github/workflows/fog-vnext-onset-calibration.yml'
   workflow_dispatch:
 
@@ -38,7 +40,9 @@ jobs:
 
       - name: Calibration syntax and unit tests
         run: |
-          python3 -m py_compile scripts/fog_vnext_onset_calibration.py
+          python3 -m py_compile scripts/fog_vnext_onset_calibration.py tests/test_fog_vnext_probability_units.py
+          node --check scripts/fog_vnext_eval.js
+          python3 tests/test_fog_vnext_probability_units.py
           python3 tests/test_fog_vnext_onset_calibration.py
 
       - name: Build canonical transition priors
@@ -59,6 +63,7 @@ jobs:
           assert x['policy']['selection_year']==2025
           assert x['policy']['untouched_test_year']==2026
           assert x['policy']['truth_not_used_as_predictor'] is True
+          assert x['policy']['probability_unit_contract']=='0..1'
           print('ONSET_CALIBRATION='+json.dumps(x, ensure_ascii=False))
           PY
 
