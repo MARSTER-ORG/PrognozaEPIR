@@ -83,6 +83,7 @@ jobs:
             scripts/fog_vnext_materialize_truth.py \
             scripts/fog_vnext_historical_backfill.py \
             scripts/fog_vnext_historical_validation.py \
+            scripts/fog_vnext_ssfc_diagnostics.py \
             scripts/fog_vnext_verification.py \
             scripts/fog_vnext_verification_censored.py \
             scripts/build_fog_transition_priors_vnext.py \
@@ -109,6 +110,9 @@ jobs:
 
       - name: Canonical censored-event tests
         run: python3 tests/test_fog_vnext_censored_events.py
+
+      - name: SSFC_COOL diagnostics tests
+        run: python3 tests/test_fog_vnext_ssfc_diagnostics.py
 
       - name: Transition-prior censoring tests
         run: python3 tests/test_fog_transition_priors_vnext.py
@@ -177,21 +181,25 @@ jobs:
           print('learning wrappers: OK')
           PY
 
-      - name: Verification builder smoke test 2020-2026 truth
+      - name: Verification builder and SSFC diagnostics 2020-2026
         run: |
           python3 scripts/fog_vnext_verification_censored.py
           python3 scripts/fog_vnext_historical_validation.py
+          python3 scripts/fog_vnext_ssfc_diagnostics.py
           python3 - <<'PY'
           import json
           from pathlib import Path
           s=json.loads(Path('data/learning/fog-vnext-verification/summary.json').read_text(encoding='utf-8'))
           h=json.loads(Path('data/learning/fog-vnext-historical-validation.json').read_text(encoding='utf-8'))
+          x=json.loads(Path('data/learning/fog-vnext-ssfc-diagnostics.json').read_text(encoding='utf-8'))
           g=json.loads(Path('data/learning/fog-vnext-activation.json').read_text(encoding='utf-8'))
           p=json.loads(Path('data/learning/fog-vnext-promotion.json').read_text(encoding='utf-8'))
           assert s['schema']=='prognozaepir-fog-vnext-verification-summary-v3'
           assert s['censoring_policy']['canonical_2020_2024_event_boundaries'] is True
           assert s['censoring_policy']['unknown_transition_targets_excluded_not_negative'] is True
           assert h['schema']=='prognozaepir-fog-vnext-historical-validation-v1'
+          assert x['schema']=='prognozaepir-fog-vnext-ssfc-diagnostics-v1'
+          assert x['policy']['diagnostic_only'] is True
           assert set(h['years']) == {str(y) for y in range(2020, 2027)}
           assert h['years']['2025']['truth']['aviation_observations'] > 0
           for y in range(2020, 2027):
@@ -205,4 +213,14 @@ jobs:
           print('censoring:', s['censoring_policy'])
           print('historical tiers:', {y:r['cohort']['tier'] for y,r in h['years'].items()})
           print('rolling:', [(r['test_year'],r['forecast_evaluable']) for r in h['rolling_origin']])
+          print('metrics:', json.dumps(s['metrics'], ensure_ascii=False))
+          print('per_lead:', json.dumps(s.get('per_lead_fog_truth',{}), ensure_ascii=False))
+          print('SSFC overall:', json.dumps(x['overall'], ensure_ascii=False))
+          print('SSFC worst:', json.dumps(x['worst_event_auc_groups'], ensure_ascii=False))
+          print('SSFC by lead:', json.dumps(x['by_lead'], ensure_ascii=False))
+          print('SSFC by mechanism:', json.dumps(x['by_mechanism'], ensure_ascii=False))
+          print('SSFC by truth phase:', json.dumps(x['by_truth_phase'], ensure_ascii=False))
+          print('SSFC by coverage:', json.dumps(x['by_coverage'], ensure_ascii=False))
+          print('SSFC components:', json.dumps(x['components'], ensure_ascii=False))
+          print('activation:', json.dumps(g, ensure_ascii=False))
           PY
