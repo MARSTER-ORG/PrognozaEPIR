@@ -20,7 +20,7 @@ from pathlib import Path
 import model_verification as mv
 
 API = "https://single-runs-api.open-meteo.com/v1/forecast"
-USER_AGENT = "PrognozaEPIR-FogVNextArchive/1.1"
+USER_AGENT = "PrognozaEPIR-FogVNextArchive/1.2"
 FULL_DIR = mv.LEARNING / "fog-vnext-forecasts"
 
 EXTRA_MODELS = {
@@ -51,7 +51,12 @@ MODEL_TIERS = {
         CORE,
     ],
     "ecmwf_ifs": [
+        # Soil moisture is a primary Fog vNext field. Keep a moisture-only tier
+        # between the full soil bundle and PBL-only fallback so one unavailable
+        # diagnostic soil-temperature variable cannot silently discard actual
+        # volumetric soil moisture from an otherwise valid issued run.
         CORE + ("boundary_layer_height", "soil_moisture_0_to_7cm", "soil_temperature_0_7cm"),
+        CORE + ("boundary_layer_height", "soil_moisture_0_to_7cm"),
         CORE + ("boundary_layer_height",),
         CORE,
     ],
