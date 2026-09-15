@@ -1,0 +1,183 @@
+name: Fog vNext validation
+
+on:
+  push:
+    branches:
+      - fog-vnext-physics-20260915
+    paths:
+      - 'fog-physics-vnext.js'
+      - 'fog-vnext-probability-layer.js'
+      - 'fog-vnext-transition-risk.js'
+      - 'fog-summary-layout.js'
+      - 'scripts/fog_vnext_*.py'
+      - 'scripts/fog_vnext_*.js'
+      - 'scripts/build_fog_transition_priors_vnext.py'
+      - 'scripts/build_fog_event_learning_v2.py'
+      - 'scripts/build_adaptive_weights_v2.py'
+      - 'tests/fog-physics-vnext.test.js'
+      - 'tests/fog-vnext-transition-risk.test.js'
+      - 'tests/test_fog_event_learning*.py'
+      - 'tests/test_fog_vnext_*.py'
+      - 'tests/test_fog_transition_priors_vnext.py'
+      - 'data/learning/fog-vnext-promotion.json'
+      - '.github/workflows/fog-vnext-validation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Attach canonical EPIR history 2020-2026
+        run: |
+          git fetch origin main
+          git checkout origin/main -- data/import/epir-history
+          test -f data/import/epir-history/fog_training_2020_2024_corrected_v2.zip
+          git fetch origin fix/supabase-message-mirror-2025
+          git restore --source=origin/fix/supabase-message-mirror-2025 --worktree -- data/messages
+          test -d data/messages/metar/2025
+          for y in 2020 2021 2022 2023 2024 2025 2026; do test -d "data/messages/synop/$y"; done
+
+      - name: Materialize canonical aviation truth 2020-2024
+        run: |
+          python3 scripts/fog_vnext_materialize_truth.py
+          for y in 2020 2021 2022 2023 2024 2025 2026; do
+            if [ "$y" -le 2024 ]; then test -d "data/messages/metar/$y"; fi
+          done
+
+      - name: Syntax checks
+        run: |
+          node --check fog-physics-vnext.js
+          node --check fog-vnext-probability-layer.js
+          node --check fog-vnext-transition-risk.js
+          node --check fog-summary-layout.js
+          node --check scripts/fog_vnext_eval.js
+          python3 -m py_compile \
+            scripts/fog_vnext_model_archive.py \
+            scripts/fog_vnext_event_backfill.py \
+            scripts/fog_vnext_materialize_truth.py \
+            scripts/fog_vnext_historical_backfill.py \
+            scripts/fog_vnext_historical_validation.py \
+            scripts/fog_vnext_verification.py \
+            scripts/build_fog_transition_priors_vnext.py \
+            scripts/build_fog_event_learning_v2.py \
+            scripts/build_adaptive_weights_v2.py
+          python3 -m json.tool data/learning/fog-vnext-promotion.json >/dev/null
+
+      - name: Physics and probability-separation scenarios
+        run: node tests/fog-physics-vnext.test.js
+
+      - name: Shadow onset and dissipation risk scenarios
+        run: node tests/fog-vnext-transition-risk.test.js
+
+      - name: Fog truth policy
+        run: |
+          python3 tests/test_fog_event_learning.py
+          python3 tests/test_fog_event_learning_v2.py
+
+      - name: Stage2 event and activation tests
+        run: python3 tests/test_fog_vnext_stage2.py
+
+      - name: Historical 2020-2026 cohort and rolling-origin tests
+        run: python3 tests/test_fog_vnext_historical_validation.py
+
+      - name: Transition-prior censoring tests
+        run: python3 tests/test_fog_transition_priors_vnext.py
+
+      - name: Build canonical 2020-2024 transition priors
+        run: |
+          python3 scripts/build_fog_transition_priors_vnext.py
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('data/learning/fog-transition-priors-vnext.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['schema']=='prognozaepir-fog-transition-priors-v1'
+          assert x['adjacent_known_transitions'] > 0
+          assert 'BR_to_FG' in x['rates']
+          assert 'MIFG_to_FG' in x['rates']
+          assert 'FG_to_CLEAR' in x['rates']
+          print('transition priors:', x['adjacent_known_transitions'], x['rates'])
+          PY
+
+      - name: Event selector dry run on full history
+        run: python3 scripts/fog_vnext_event_backfill.py --max-batches 4 --dry-run
+
+      - name: Historical ECMWF 2024-2025 backfill plan without network
+        run: python3 scripts/fog_vnext_historical_backfill.py --years 2024,2025 --max-batches 6 --dry-run
+
+      - name: Archive mapping without network
+        run: |
+          python3 - <<'PY'
+          import sys
+          from datetime import datetime, timezone
+          sys.path.insert(0,'scripts')
+          import fog_vnext_model_archive as a
+          batch=datetime(2026,9,15,12,tzinfo=timezone.utc)
+          run=datetime(2026,9,15,9,tzinfo=timezone.utc)
+          data={'hourly':{
+            'time':['2026-09-15T13:00','2026-09-15T14:00'],
+            'temperature_2m':[10,9], 'dew_point_2m':[9,8.5], 'relative_humidity_2m':[94,96],
+            'precipitation':[0,0], 'visibility':[8000,5000], 'wind_speed_10m':[1.5,1.0],
+            'soil_moisture_0_to_1cm':[.31,.32], 'soil_moisture_1_to_3cm':[.30,.31],
+            'soil_temperature_0cm':[8,7.5], 'soil_temperature_6cm':[9,8.7],
+            'surface_temperature':[7.5,7.0], 'shortwave_radiation':[0,0], 'is_day':[0,0]}}
+          rows=a.rows_from('icon_d2',run,batch,data)
+          assert len(rows)==2
+          assert rows[0]['model_run_time']=='2026-09-15T09:00:00Z'
+          assert rows[0]['soil_moisture_0_to_1cm']==.31
+          assert rows[0]['shortwave_radiation_wm2']==0
+          assert rows[0]['lead_hours']==4.0
+          print('archive mapping: OK')
+          PY
+
+      - name: Learning wrappers
+        run: |
+          python3 scripts/build_adaptive_weights_v2.py
+          python3 scripts/build_fog_event_learning_v2.py
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          aw=json.loads(Path('data/learning/adaptive-weights.json').read_text(encoding='utf-8'))
+          fg=json.loads(Path('data/learning/fog-event-skill.json').read_text(encoding='utf-8'))
+          for model in ('dmi_harmonie_arome_europe','knmi_harmonie_arome_europe'):
+              assert model in aw['models'], model
+              assert model in fg['models'], model
+          assert 'MIFG' not in fg['codes']['fog']
+          assert fg['target_policy']['mifg_separate'] is True
+          print('learning wrappers: OK')
+          PY
+
+      - name: Verification builder smoke test 2020-2026 truth
+        run: |
+          python3 scripts/fog_vnext_verification.py
+          python3 scripts/fog_vnext_historical_validation.py
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('data/learning/fog-vnext-verification/summary.json').read_text(encoding='utf-8'))
+          h=json.loads(Path('data/learning/fog-vnext-historical-validation.json').read_text(encoding='utf-8'))
+          g=json.loads(Path('data/learning/fog-vnext-activation.json').read_text(encoding='utf-8'))
+          p=json.loads(Path('data/learning/fog-vnext-promotion.json').read_text(encoding='utf-8'))
+          assert s['schema']=='prognozaepir-fog-vnext-verification-summary-v3'
+          assert h['schema']=='prognozaepir-fog-vnext-historical-validation-v1'
+          assert set(h['years']) == {str(y) for y in range(2020, 2027)}
+          assert h['years']['2025']['truth']['aviation_observations'] > 0
+          for y in range(2020, 2027):
+              assert h['years'][str(y)]['truth']['synop_teacher'] > 0, y
+          for key in ('fog_truth_physics','fog_truth_direct','fog_truth_blend','onset_next_1h','dissipation_next_1h'):
+              assert key in s['metrics'], key
+          assert p['schema']=='prognozaepir-fog-vnext-promotion-v1'
+          assert p['approved'] is False
+          assert g['mode']=='shadow'
+          assert g['operational_activation_ready'] is False
+          print('historical tiers:', {y:r['cohort']['tier'] for y,r in h['years'].items()})
+          print('rolling:', [(r['test_year'],r['forecast_evaluable']) for r in h['rolling_origin']])
+          PY
