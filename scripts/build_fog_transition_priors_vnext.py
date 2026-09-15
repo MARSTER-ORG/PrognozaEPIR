@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import sys
 from collections import Counter, defaultdict
+from datetime import timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,10 +51,7 @@ def smoothed(success, total, global_rate):
 def transition_rows(states):
     out = []
     for dt in sorted(states):
-        nxt_dt = dt + mv.timedelta(hours=1) if hasattr(mv, "timedelta") else None
-        if nxt_dt is None:
-            from datetime import timedelta
-            nxt_dt = dt + timedelta(hours=1)
+        nxt_dt = dt + timedelta(hours=1)
         a = states.get(dt)
         b = states.get(nxt_dt)
         if a not in KNOWN or b not in KNOWN:
