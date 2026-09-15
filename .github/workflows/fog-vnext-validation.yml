@@ -6,14 +6,17 @@ on:
       - fog-vnext-physics-20260915
     paths:
       - 'fog-physics-vnext.js'
+      - 'fog-vnext-probability-layer.js'
       - 'fog-summary-layout.js'
       - 'scripts/fog_vnext_*.py'
       - 'scripts/fog_vnext_*.js'
+      - 'scripts/build_fog_transition_priors_vnext.py'
       - 'scripts/build_fog_event_learning_v2.py'
       - 'scripts/build_adaptive_weights_v2.py'
       - 'tests/fog-physics-vnext.test.js'
       - 'tests/test_fog_event_learning*.py'
       - 'tests/test_fog_vnext_stage2.py'
+      - 'tests/test_fog_transition_priors_vnext.py'
       - 'data/learning/fog-vnext-promotion.json'
       - '.github/workflows/fog-vnext-validation.yml'
   workflow_dispatch:
@@ -28,21 +31,30 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Attach canonical EPIR history from main
+        run: |
+          git fetch origin main
+          git checkout origin/main -- data/import/epir-history
+          test -f data/import/epir-history/fog_training_2020_2024_corrected_v2.zip
 
       - name: Syntax checks
         run: |
           node --check fog-physics-vnext.js
+          node --check fog-vnext-probability-layer.js
           node --check fog-summary-layout.js
           node --check scripts/fog_vnext_eval.js
           python3 -m py_compile \
             scripts/fog_vnext_model_archive.py \
             scripts/fog_vnext_event_backfill.py \
             scripts/fog_vnext_verification.py \
+            scripts/build_fog_transition_priors_vnext.py \
             scripts/build_fog_event_learning_v2.py \
             scripts/build_adaptive_weights_v2.py
           python3 -m json.tool data/learning/fog-vnext-promotion.json >/dev/null
 
-      - name: Physics scenarios and double-counting guards
+      - name: Physics and probability-separation scenarios
         run: node tests/fog-physics-vnext.test.js
 
       - name: Fog truth policy
@@ -53,7 +65,26 @@ jobs:
       - name: Stage2 event and activation tests
         run: python3 tests/test_fog_vnext_stage2.py
 
-      - name: Event selector dry run
+      - name: Transition-prior censoring tests
+        run: python3 tests/test_fog_transition_priors_vnext.py
+
+      - name: Build canonical 2020-2024 transition priors
+        run: |
+          python3 scripts/build_fog_transition_priors_vnext.py
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('data/learning/fog-transition-priors-vnext.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['schema']=='prognozaepir-fog-transition-priors-v1'
+          assert x['adjacent_known_transitions'] > 0
+          assert 'BR_to_FG' in x['rates']
+          assert 'MIFG_to_FG' in x['rates']
+          assert 'FG_to_CLEAR' in x['rates']
+          print('transition priors:', x['adjacent_known_transitions'], x['rates'])
+          PY
+
+      - name: Event selector dry run on full history
         run: python3 scripts/fog_vnext_event_backfill.py --max-batches 4 --dry-run
 
       - name: Archive mapping without network
