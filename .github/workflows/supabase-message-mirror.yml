@@ -20,7 +20,9 @@ on:
     paths:
       - '.github/workflows/supabase-message-mirror.yml'
       - 'scripts/sync_supabase_messages_to_git.py'
+      - 'scripts/import_historical_synop_teacher.py'
       - 'tests/test_sync_supabase_messages_to_git.py'
+      - 'tests/test_import_historical_synop_teacher.py'
 
 permissions:
   contents: write
@@ -41,8 +43,15 @@ jobs:
 
       - name: Verify mirror code
         run: |
-          python3 -m py_compile scripts/sync_supabase_messages_to_git.py scripts/message_archive.py scripts/collect_epir_observations.py
+          python3 -m py_compile scripts/sync_supabase_messages_to_git.py scripts/import_historical_synop_teacher.py scripts/message_archive.py scripts/collect_epir_observations.py
           python3 tests/test_sync_supabase_messages_to_git.py
+          python3 tests/test_import_historical_synop_teacher.py
+
+      - name: Import historical SYNOP teacher
+        if: github.event_name == 'push' && github.ref_name == 'fix/supabase-message-mirror-2025'
+        run: |
+          set -euo pipefail
+          python3 scripts/import_historical_synop_teacher.py | tee /tmp/historical-synop-import.json
 
       - name: Mirror canonical messages
         id: mirror
@@ -74,6 +83,15 @@ jobs:
           if report['checked_records'] < report['normalized']:
               raise SystemExit('archive validation checked fewer rows than this mirror normalized')
           print('Mirror validation OK:', report['fetched_by_type'])
+
+          h=Path('/tmp/historical-synop-import.json')
+          if h.exists():
+              hist=json.loads(h.read_text(encoding='utf-8'))
+              if hist['source_rows'] != hist['normalized']:
+                  raise SystemExit(f"historical SYNOP normalized {hist['normalized']} of {hist['source_rows']} source rows")
+              if sorted(hist['rows_by_year']) != ['2020','2021','2022','2023','2024']:
+                  raise SystemExit(f"historical SYNOP year coverage invalid: {hist['rows_by_year']}")
+              print('Historical SYNOP validation OK:', hist['rows_by_year'])
           PY
 
       - name: Commit mirrored archive
@@ -85,7 +103,7 @@ jobs:
           git config user.name 'prognozaepir-message-mirror'
           git config user.email 'message-mirror@prognozaepir.invalid'
           git add data/messages
-          git commit -m 'archive: mirror Supabase messages into canonical GitHub history'
+          git commit -m 'archive: mirror Supabase and historical SYNOP into canonical history'
           for n in 1 2 3 4 5; do
             if git pull --rebase origin '${{ github.ref_name }}' && git push origin HEAD:'${{ github.ref_name }}'; then
               exit 0
