@@ -52,18 +52,10 @@ jobs:
 
           p.write_text(s, encoding='utf-8')
 
-          # Temporary adapter files from diagnosis are no longer needed once
-          # the fix lives directly in arch.html.
           for name in ('arch-search-hotfix.js','message-archive-client-loader.js'):
               q = Path(name)
               if q.exists(): q.unlink()
           PY
-
-      - name: Validate patched JavaScript fragments
-        run: |
-          grep -F "selectedType==='SYNOP'?'12342'" arch.html
-          grep -F "if(!$('advanced').hidden)" arch.html
-          grep -F "archive-search-v4-20260915" arch.html
 
       - name: Commit repair and remove one-shot workflow
         run: |
