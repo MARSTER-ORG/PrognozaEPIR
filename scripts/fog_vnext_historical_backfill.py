@@ -10,7 +10,7 @@ Policy:
   issued-forecast archive is added later.
 
 The historical ECMWF path probes only the real 00/06/12/18 UTC synoptic cycles
-instead of walking hour-by-hour.  This keeps archive CI bounded and preserves
+instead of walking hour-by-hour. This keeps archive CI bounded and preserves
 the rule that the selected forecast run must not be newer than the simulated
 forecast issuance time (batch).
 """
@@ -57,7 +57,6 @@ def write_state(state):
 
 
 def archived_batches_ecmwf():
-    """Load the archive index once instead of rescanning files per event."""
     found = set()
     if not archive.FULL_DIR.exists():
         return found
@@ -87,7 +86,6 @@ def candidate_batches(years, state):
                 continue
             seen.add(key)
             out.append((lead, -event.start.timestamp(), event, batch))
-    # 3 h first, then recent events; later invocations naturally expand coverage.
     out.sort(key=lambda x: (x[0], x[1]))
     return out
 
@@ -98,11 +96,8 @@ def cycle_at_or_before(batch):
 
 
 def latest_ecmwf_run(batch):
-    """Find the latest usable ECMWF synoptic cycle not newer than batch."""
     errors = []
     first = cycle_at_or_before(batch)
-    # Two previous cycles provide a 12 h fallback, matching the generic
-    # archive policy without issuing thirteen hourly probes.
     for cycles_back in range(3):
         run = first - timedelta(hours=6 * cycles_back)
         if run < ECMWF_AVAILABLE_FROM:
@@ -165,6 +160,7 @@ def main():
     if args.dry_run:
         return
 
+    successful = 0
     for lead, _neg, event, batch in selected:
         key = mv.iso(batch)
         rec = {
@@ -178,10 +174,13 @@ def main():
             rec.update(archive_ecmwf(batch))
         except Exception as exc:
             rec.update({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+        successful += int(bool(rec.get("ok")))
         state["batches"][key] = rec
         write_state(state)
         print(json.dumps({"batch": key, **rec}, ensure_ascii=False))
     write_state(state)
+    if selected and successful == 0:
+        raise RuntimeError("historical ECMWF backfill selected batches but produced no usable issued forecast run")
 
 
 if __name__ == "__main__":
