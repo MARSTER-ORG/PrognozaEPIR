@@ -1,6 +1,16 @@
 name: Fog vNext archive and shadow learning
 
 on:
+  push:
+    branches:
+      - fog-vnext-physics-20260915
+    paths:
+      - 'scripts/fog_vnext_model_archive.py'
+      - 'scripts/fog_vnext_verification.py'
+      - 'scripts/build_fog_event_learning_v2.py'
+      - 'scripts/build_adaptive_weights_v2.py'
+      - 'fog-physics-vnext.js'
+      - '.github/workflows/fog-vnext-archive.yml'
   workflow_dispatch:
   schedule:
     - cron: '17 */3 * * *'
@@ -9,12 +19,12 @@ permissions:
   contents: write
 
 concurrency:
-  group: fog-vnext-archive
+  group: fog-vnext-archive-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   archive:
-    if: github.ref_name == 'main' || github.event_name == 'workflow_dispatch'
+    if: github.event_name != 'schedule' || github.ref_name == 'main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
