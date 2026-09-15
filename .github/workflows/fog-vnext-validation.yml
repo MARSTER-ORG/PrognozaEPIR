@@ -144,12 +144,14 @@ jobs:
           s=json.loads(Path('data/learning/fog-vnext-verification/summary.json').read_text(encoding='utf-8'))
           g=json.loads(Path('data/learning/fog-vnext-activation.json').read_text(encoding='utf-8'))
           p=json.loads(Path('data/learning/fog-vnext-promotion.json').read_text(encoding='utf-8'))
-          assert s['schema']=='prognozaepir-fog-vnext-verification-summary-v2'
+          assert s['schema']=='prognozaepir-fog-vnext-verification-summary-v3'
+          for key in ('fog_truth_physics','fog_truth_direct','fog_truth_blend','onset_next_1h','dissipation_next_1h'):
+              assert key in s['metrics'], key
           assert 'onset_next_1h' in s['target_counts']
           assert 'dissipation_next_1h' in s['target_counts']
           assert p['schema']=='prognozaepir-fog-vnext-promotion-v1'
           assert p['approved'] is False
           assert g['mode']=='shadow'
           assert g['operational_activation_ready'] is False
-          print('stage2 verification + promotion lock: OK')
+          print('stage2 v3 verification + promotion lock: OK')
           PY
