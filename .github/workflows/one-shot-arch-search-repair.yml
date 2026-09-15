@@ -1,0 +1,75 @@
+name: One-shot ARCH search repair
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/one-shot-arch-search-repair.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Patch ARCH search logic
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('arch.html')
+          s = p.read_text(encoding='utf-8')
+
+          old = "<script src=\"message-archive-client.js?v=supabase-search-v2\"></script>"
+          new = "<script src=\"message-archive-client.js?v=archive-search-v4-20260915\"></script>"
+          if old not in s:
+              raise SystemExit('ARCH client cache marker not found')
+          s = s.replace(old, new, 1)
+
+          old = "function setMode(advanced){$('advanced').hidden=!advanced;$('modeBasic').classList.toggle('active',!advanced);$('modeAdvanced').classList.toggle('active',advanced)}"
+          new = "function setMode(advanced){$('advanced').hidden=!advanced;$('modeBasic').classList.toggle('active',!advanced);$('modeAdvanced').classList.toggle('active',advanced);if(!advanced)clearAdvanced()}"
+          if old not in s:
+              raise SystemExit('setMode marker not found')
+          s = s.replace(old, new, 1)
+
+          old = "if(val('station'))o.station=val('station').toUpperCase();if(val('textSearch'))o.text=val('textSearch');\n    addIf(o,'visibility_min','visibilityMin');addIf(o,'visibility_max','visibilityMax');addIf(o,'ceiling_min_ft','ceilingMin');addIf(o,'ceiling_max_ft','ceilingMax');addIf(o,'wind_speed_min_kt','windMin');addIf(o,'wind_speed_max_kt','windMax');addIf(o,'gust_min_kt','gustMin');addIf(o,'gust_max_kt','gustMax');addIf(o,'wind_dir_from','dirFrom');addIf(o,'wind_dir_to','dirTo');addIf(o,'temp_min_c','tempMin');addIf(o,'temp_max_c','tempMax');addIf(o,'qnh_min','qnhMin');addIf(o,'qnh_max','qnhMax');\n    const flags=[...document.querySelectorAll('#flagBox input:checked')].map(x=>x.value);if(flags.length)o.flags=flags.join(',');return o;"
+          new = "if(val('station'))o.station=selectedType==='SYNOP'?'12342':val('station').toUpperCase();\n    if(!$('advanced').hidden){if(val('textSearch'))o.text=val('textSearch');addIf(o,'visibility_min','visibilityMin');addIf(o,'visibility_max','visibilityMax');addIf(o,'ceiling_min_ft','ceilingMin');addIf(o,'ceiling_max_ft','ceilingMax');addIf(o,'wind_speed_min_kt','windMin');addIf(o,'wind_speed_max_kt','windMax');addIf(o,'gust_min_kt','gustMin');addIf(o,'gust_max_kt','gustMax');addIf(o,'wind_dir_from','dirFrom');addIf(o,'wind_dir_to','dirTo');addIf(o,'temp_min_c','tempMin');addIf(o,'temp_max_c','tempMax');addIf(o,'qnh_min','qnhMin');addIf(o,'qnh_max','qnhMax');const flags=[...document.querySelectorAll('#flagBox input:checked')].map(x=>x.value);if(flags.length)o.flags=flags.join(',')}return o;"
+          if old not in s:
+              raise SystemExit('buildFilters marker not found')
+          s = s.replace(old, new, 1)
+
+          old = "for(const type of f.types||TYPES){try{rows.push(...await archive.getRange(type,f.station||'',f.from,f.to,5000,true))}"
+          new = "for(const type of f.types||TYPES){try{const station=type==='SYNOP'?'12342':(f.station||'');rows.push(...await archive.getRange(type,station,f.from,f.to,5000,true))}"
+          if old not in s:
+              raise SystemExit('fallbackSearch marker not found')
+          s = s.replace(old, new, 1)
+
+          p.write_text(s, encoding='utf-8')
+
+          # Temporary adapter files from diagnosis are no longer needed once
+          # the fix lives directly in arch.html.
+          for name in ('arch-search-hotfix.js','message-archive-client-loader.js'):
+              q = Path(name)
+              if q.exists(): q.unlink()
+          PY
+
+      - name: Validate patched JavaScript fragments
+        run: |
+          grep -F "selectedType==='SYNOP'?'12342'" arch.html
+          grep -F "if(!$('advanced').hidden)" arch.html
+          grep -F "archive-search-v4-20260915" arch.html
+
+      - name: Commit repair and remove one-shot workflow
+        run: |
+          rm -f .github/workflows/one-shot-arch-search-repair.yml
+          git config user.name "prognozaepir-maintenance"
+          git config user.email "maintenance@prognozaepir.invalid"
+          git add -A arch.html arch-search-hotfix.js message-archive-client-loader.js .github/workflows/one-shot-arch-search-repair.yml
+          git commit -m "ARCH: fix TAF SPECI SYNOP search"
+          git push origin HEAD:main
