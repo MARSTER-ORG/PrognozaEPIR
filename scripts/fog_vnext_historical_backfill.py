@@ -9,10 +9,10 @@ Policy:
 - 2020-2023 therefore remain truth/event-learning years unless another genuine
   issued-forecast archive is added later.
 
-The historical ECMWF path probes only the real 00/06/12/18 UTC synoptic cycles
-instead of walking hour-by-hour. This keeps archive CI bounded and preserves
-the rule that the selected forecast run must not be newer than the simulated
-forecast issuance time (batch).
+For 2024, event boundaries/censoring come from the corrected canonical event
+table. 2025 events use the rolling observation timeline. The historical ECMWF
+path probes only real 00/06/12/18 UTC synoptic cycles and never selects a run
+newer than the simulated forecast issuance time (batch).
 """
 from __future__ import annotations
 
@@ -50,6 +50,7 @@ def write_state(state):
         "ecmwf_ifs_single_runs_from": mv.iso(ECMWF_AVAILABLE_FROM),
         "dmi_knmi_icon_d2_single_runs_from": mv.iso(OTHER_SINGLE_RUNS_AVAILABLE_FROM),
         "ecmwf_synoptic_cycles_utc": list(ECMWF_CYCLE_HOURS),
+        "canonical_censored_events_2020_2024": True,
         "no_reanalysis": True,
     }
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -68,8 +69,7 @@ def archived_batches_ecmwf():
 
 
 def candidate_batches(years, state):
-    rows, _inventory = events_mod.load_observation_rows()
-    events = events_mod.build_events(events_mod.points_from_rows(rows))
+    events, _points, _inventory = events_mod.load_events()
     archived = archived_batches_ecmwf()
     out = []
     seen = set()
@@ -153,7 +153,14 @@ def main():
         "years": sorted(years),
         "candidate_batches": len(candidates),
         "selected": [
-            {"event_id": e.event_id, "event_start": mv.iso(e.start), "lead_target_h": lead, "batch": mv.iso(batch)}
+            {
+                "event_id": e.event_id,
+                "event_start": mv.iso(e.start),
+                "lead_target_h": lead,
+                "batch": mv.iso(batch),
+                "left_censored_onset": e.left_censored_onset,
+                "exact_onset": e.exact_onset,
+            }
             for lead, _neg, e, batch in selected
         ],
     }, ensure_ascii=False))
@@ -167,6 +174,9 @@ def main():
             "event_id": event.event_id,
             "event_start": mv.iso(event.start),
             "event_end": mv.iso(event.end),
+            "left_censored_onset": event.left_censored_onset,
+            "right_censored_end": event.right_censored_end,
+            "exact_onset": event.exact_onset,
             "lead_target_h": lead,
             "attempted_at": mv.iso(mv.utcnow()),
         }
