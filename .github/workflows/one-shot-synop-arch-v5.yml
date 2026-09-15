@@ -1,0 +1,52 @@
+name: One-shot SYNOP ARCH v5
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/one-shot-synop-arch-v5.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Patch SYNOP search path
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('arch.html')
+          s=p.read_text(encoding='utf-8')
+
+          s=s.replace('message-archive-client.js?v=archive-search-v4-20260915','message-archive-client.js?v=archive-search-v5-20260915')
+
+          old="if(val('station'))o.station=selectedType==='SYNOP'?'12342':val('station').toUpperCase();"
+          new="if(val('station')&&selectedType!=='SYNOP')o.station=val('station').toUpperCase();"
+          if old not in s:
+              raise SystemExit('station filter marker not found')
+          s=s.replace(old,new,1)
+
+          old="try{let result;try{result=await archive.search(f,true)}catch(e){console.warn('ARCH Supabase search fallback:',e);result=await fallbackSearch(f)}if(serial!==requestSerial)return;visibleRows=dedupeSort(result.rows||[]);"
+          new="try{let result;try{result=await archive.search(f,true)}catch(e){console.warn('ARCH Supabase search fallback:',e);result=await fallbackSearch(f)}if(selectedType==='SYNOP'&&!(result.rows||[]).length){const synopRows=await archive.getRange('SYNOP','12342',f.from,f.to,5000,true);if(synopRows.length)result={ok:true,rows:synopRows,count:synopRows.length,offset:0,limit:5000,fallback:true}}if(serial!==requestSerial)return;visibleRows=dedupeSort(result.rows||[]);"
+          if old not in s:
+              raise SystemExit('searchNow marker not found')
+          s=s.replace(old,new,1)
+
+          p.write_text(s,encoding='utf-8')
+          PY
+
+      - name: Commit and remove one-shot workflow
+        run: |
+          rm -f .github/workflows/one-shot-synop-arch-v5.yml
+          git config user.name "prognozaepir-maintenance"
+          git config user.email "maintenance@prognozaepir.invalid"
+          git add arch.html .github/workflows/one-shot-synop-arch-v5.yml
+          git commit -m "ARCH: harden SYNOP search path"
+          git push origin HEAD:main
