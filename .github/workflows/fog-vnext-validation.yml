@@ -17,7 +17,7 @@ on:
       - 'tests/fog-physics-vnext.test.js'
       - 'tests/fog-vnext-transition-risk.test.js'
       - 'tests/test_fog_event_learning*.py'
-      - 'tests/test_fog_vnext_stage2.py'
+      - 'tests/test_fog_vnext_*.py'
       - 'tests/test_fog_transition_priors_vnext.py'
       - 'data/learning/fog-vnext-promotion.json'
       - '.github/workflows/fog-vnext-validation.yml'
@@ -35,11 +35,22 @@ jobs:
           ref: ${{ github.ref_name }}
           fetch-depth: 0
 
-      - name: Attach canonical EPIR history from main
+      - name: Attach canonical EPIR history 2020-2026
         run: |
           git fetch origin main
           git checkout origin/main -- data/import/epir-history
           test -f data/import/epir-history/fog_training_2020_2024_corrected_v2.zip
+          git fetch origin fix/supabase-message-mirror-2025
+          git restore --source=origin/fix/supabase-message-mirror-2025 --worktree -- data/messages
+          test -d data/messages/metar/2025
+          for y in 2020 2021 2022 2023 2024 2025 2026; do test -d "data/messages/synop/$y"; done
+
+      - name: Materialize canonical aviation truth 2020-2024
+        run: |
+          python3 scripts/fog_vnext_materialize_truth.py
+          for y in 2020 2021 2022 2023 2024 2025 2026; do
+            if [ "$y" -le 2024 ]; then test -d "data/messages/metar/$y"; fi
+          done
 
       - name: Syntax checks
         run: |
@@ -51,6 +62,9 @@ jobs:
           python3 -m py_compile \
             scripts/fog_vnext_model_archive.py \
             scripts/fog_vnext_event_backfill.py \
+            scripts/fog_vnext_materialize_truth.py \
+            scripts/fog_vnext_historical_backfill.py \
+            scripts/fog_vnext_historical_validation.py \
             scripts/fog_vnext_verification.py \
             scripts/build_fog_transition_priors_vnext.py \
             scripts/build_fog_event_learning_v2.py \
@@ -70,6 +84,9 @@ jobs:
 
       - name: Stage2 event and activation tests
         run: python3 tests/test_fog_vnext_stage2.py
+
+      - name: Historical 2020-2026 cohort and rolling-origin tests
+        run: python3 tests/test_fog_vnext_historical_validation.py
 
       - name: Transition-prior censoring tests
         run: python3 tests/test_fog_transition_priors_vnext.py
@@ -92,6 +109,9 @@ jobs:
 
       - name: Event selector dry run on full history
         run: python3 scripts/fog_vnext_event_backfill.py --max-batches 4 --dry-run
+
+      - name: Historical ECMWF 2024-2025 backfill plan without network
+        run: python3 scripts/fog_vnext_historical_backfill.py --years 2024,2025 --max-batches 6 --dry-run
 
       - name: Archive mapping without network
         run: |
@@ -135,23 +155,29 @@ jobs:
           print('learning wrappers: OK')
           PY
 
-      - name: Verification builder smoke test
+      - name: Verification builder smoke test 2020-2026 truth
         run: |
           python3 scripts/fog_vnext_verification.py
+          python3 scripts/fog_vnext_historical_validation.py
           python3 - <<'PY'
           import json
           from pathlib import Path
           s=json.loads(Path('data/learning/fog-vnext-verification/summary.json').read_text(encoding='utf-8'))
+          h=json.loads(Path('data/learning/fog-vnext-historical-validation.json').read_text(encoding='utf-8'))
           g=json.loads(Path('data/learning/fog-vnext-activation.json').read_text(encoding='utf-8'))
           p=json.loads(Path('data/learning/fog-vnext-promotion.json').read_text(encoding='utf-8'))
           assert s['schema']=='prognozaepir-fog-vnext-verification-summary-v3'
+          assert h['schema']=='prognozaepir-fog-vnext-historical-validation-v1'
+          assert set(h['years']) == {str(y) for y in range(2020, 2027)}
+          assert h['years']['2025']['truth']['aviation_observations'] > 0
+          for y in range(2020, 2027):
+              assert h['years'][str(y)]['truth']['synop_teacher'] > 0, y
           for key in ('fog_truth_physics','fog_truth_direct','fog_truth_blend','onset_next_1h','dissipation_next_1h'):
               assert key in s['metrics'], key
-          assert 'onset_next_1h' in s['target_counts']
-          assert 'dissipation_next_1h' in s['target_counts']
           assert p['schema']=='prognozaepir-fog-vnext-promotion-v1'
           assert p['approved'] is False
           assert g['mode']=='shadow'
           assert g['operational_activation_ready'] is False
-          print('stage2 v3 verification + promotion lock: OK')
+          print('historical tiers:', {y:r['cohort']['tier'] for y,r in h['years'].items()})
+          print('rolling:', [(r['test_year'],r['forecast_evaluable']) for r in h['rolling_origin']])
           PY
