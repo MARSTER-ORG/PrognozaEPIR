@@ -3,8 +3,13 @@
 
 The heavy EUMETSAT/netCDF stack lives only for the duration of this child
 process. A compact Europe-only cache is persisted in /tmp so consecutive
-5-minute runs preserve the 20-minute LFL history without re-downloading the
-whole bootstrap window every time.
+5-minute runs preserve the LFL history without re-downloading the whole
+bootstrap window every time.
+
+A temporary EUMETSAT catalogue/index gap must not replace the last valid
+Europe-wide snapshot with an empty error document. The previous snapshot is
+kept with its original flash timestamps, so downstream 50 km alert logic never
+mistakes cached flashes for new flashes.
 """
 from __future__ import annotations
 
@@ -19,6 +24,11 @@ SCRIPTS = ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import collect_lightning_features as core  # noqa: E402
+
+# EUMETSAT product publication/catalogue indexing can lag the nominal cadence.
+# Keep the geographical scope Europe-wide; only widen the source discovery
+# window. The individual flash age filters in the core collector remain intact.
+core.LOOKBACK_MIN = int(os.environ.get("LFL_LOOKBACK_MIN", "45"))
 
 CACHE_PATH = Path(os.environ.get("LFL_PERSIST_CACHE", "/tmp/prognozaepir-lfl-cache.json"))
 
@@ -97,11 +107,37 @@ def save_cache() -> None:
     os.replace(tmp, CACHE_PATH)
 
 
+def load_previous_snapshot() -> dict | None:
+    try:
+        payload = json.loads(core.OUT.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if payload.get("schema") != "prognozaepir-lightning-features-v1":
+        return None
+    if payload.get("status") not in {"ok", "stale"}:
+        return None
+    return payload
+
+
 def main() -> int:
     load_cache()
+    previous = load_previous_snapshot()
     payload = core.collect_and_write()
+
+    if payload.get("status") == "error" and previous is not None:
+        failure_reason = payload.get("reason") or "temporary EUMETSAT LFL collector failure"
+        payload = dict(previous)
+        payload["collector_health"] = {
+            "status": "degraded",
+            "reason": failure_reason,
+            "checked_at": core.iso(core.utc_now()),
+            "fallback": "last-valid-Europe-wide-snapshot",
+        }
+        core.atomic_json(core.OUT, payload)
+
     if payload.get("status") in {"ok", "stale"}:
         save_cache()
+
     print(json.dumps({
         "status": payload.get("status"),
         "updated_at": payload.get("updated_at"),
@@ -109,6 +145,7 @@ def main() -> int:
         "points": len(payload.get("points") or []),
         "downloaded_products_this_cycle": (payload.get("source") or {}).get("downloaded_products_this_cycle"),
         "persisted_cache": str(CACHE_PATH),
+        "collector_health": payload.get("collector_health"),
         "reason": payload.get("reason"),
     }, ensure_ascii=False), flush=True)
     return 0 if payload.get("status") in {"ok", "stale", "disabled"} else 1
