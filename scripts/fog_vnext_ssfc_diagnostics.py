@@ -3,9 +3,13 @@
 
 The report is diagnostic only. It compares the full shadow blend with the
 existing no_surface_cooling ablation and stratifies the result by lead,
-dominant mechanism, truth-derived event phase, SSFC data completeness and raw
-surface-cooling components. Truth-derived phases are used only after scoring
-for analysis; they are never fed back into the forecast physics.
+dominant mechanism, truth-derived event phase, SSFC data completeness, raw
+surface-cooling components and forecast-time saturation/physics state.
+
+Truth-derived phases are used only after scoring for analysis; they are never
+fed back into forecast physics. Forecast-time groups use only signals available
+inside the issued forecast case and are therefore safe candidates for later
+stage-aware SSFC modulation.
 """
 from __future__ import annotations
 
@@ -65,6 +69,11 @@ def mechanism(case):
     return (case.get("vnext") or {}).get("mechanism1") or "unknown"
 
 
+def forecast_phase(case):
+    # This is the phase produced by the forecast physics itself, not truth.
+    return (case.get("vnext") or {}).get("phase") or "unknown"
+
+
 def metric_block(rows):
     rows = list(rows)
     full = verify.target_metrics(rows, score_full, "fog_truth")
@@ -110,6 +119,22 @@ def numeric_bin(value, cuts, labels):
     return labels[-1]
 
 
+def saturation_bin(case):
+    return numeric_bin(
+        (case.get("vnext") or {}).get("SATURATION"),
+        [45.0, 65.0, 80.0, float("inf")],
+        ["<45", "45-65", "65-80", ">=80"],
+    )
+
+
+def physics_score_bin(case):
+    return numeric_bin(
+        (case.get("vnext") or {}).get("physics_score"),
+        [45.0, 65.0, 80.0, float("inf")],
+        ["<45", "45-65", "65-80", ">=80"],
+    )
+
+
 def component_groups(cases):
     return {
         "t2_minus_tsurface_c": grouped(
@@ -145,13 +170,16 @@ def compact_findings(report):
     d = overall.get("delta_event_auc_full_minus_no_ssfc")
     if d is not None:
         findings.append({"scope": "overall", "delta_event_auc": d})
-    for family in ("by_lead", "by_mechanism", "by_truth_phase", "by_coverage"):
+    for family in (
+        "by_lead", "by_mechanism", "by_truth_phase", "by_forecast_phase",
+        "by_saturation", "by_physics_score", "by_coverage",
+    ):
         for key, row in report[family].items():
             delta = row.get("delta_event_auc_full_minus_no_ssfc")
             if delta is not None:
                 findings.append({"scope": family, "group": key, "delta_event_auc": delta, "cases": row["cases"]})
     findings.sort(key=lambda x: (x.get("delta_event_auc", 0.0), -x.get("cases", 0)))
-    return findings[:12]
+    return findings[:16]
 
 
 def main():
@@ -163,6 +191,7 @@ def main():
         "policy": {
             "diagnostic_only": True,
             "truth_phase_is_posthoc_not_forecast_input": True,
+            "forecast_signal_groups_are_truth_independent": True,
             "comparison": "full shadow blend vs existing no_surface_cooling ablation",
             "positive_brier_delta_means_full_is_better": True,
         },
@@ -170,6 +199,9 @@ def main():
         "by_lead": grouped(cases, lambda c: c.get("lead_bucket") or "unknown"),
         "by_mechanism": grouped(cases, mechanism),
         "by_truth_phase": grouped(cases, truth_phase),
+        "by_forecast_phase": grouped(cases, forecast_phase),
+        "by_saturation": grouped(cases, saturation_bin),
+        "by_physics_score": grouped(cases, physics_score_bin),
         "by_coverage": grouped(cases, ssfc_coverage),
         "components": component_groups(cases),
     }
@@ -180,7 +212,7 @@ def main():
         "schema": report["schema"],
         "cases": report["cases"],
         "overall_delta_event_auc": report["overall"]["delta_event_auc_full_minus_no_ssfc"],
-        "worst": report["worst_event_auc_groups"][:6],
+        "worst": report["worst_event_auc_groups"][:8],
     }, ensure_ascii=False))
     return report
 
