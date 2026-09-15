@@ -45,6 +45,25 @@ jobs:
           test -d data/messages/metar/2025
           for y in 2020 2021 2022 2023 2024 2025 2026; do test -d "data/messages/synop/$y"; done
 
+      - name: Audit canonical censored-event schema
+        run: |
+          python3 - <<'PY'
+          import csv, io, json, zipfile
+          from pathlib import Path
+          p=Path('data/import/epir-history/fog_training_2020_2024_corrected_v2.zip')
+          with zipfile.ZipFile(p) as z:
+              names=[n for n in z.namelist() if n.endswith('fog_events_censored_2020_2024.csv')]
+              assert len(names)==1, names
+              text=z.read(names[0]).decode('utf-8-sig')
+          r=csv.DictReader(io.StringIO(text))
+          rows=[]
+          for i,row in enumerate(r):
+              rows.append(row)
+              if i>=1: break
+          print('CENSORED_EVENT_FIELDS='+json.dumps(r.fieldnames,ensure_ascii=False))
+          print('CENSORED_EVENT_SAMPLE='+json.dumps(rows,ensure_ascii=False))
+          PY
+
       - name: Materialize canonical aviation truth 2020-2024
         run: |
           python3 scripts/fog_vnext_materialize_truth.py
