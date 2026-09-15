@@ -28,10 +28,10 @@ jobs:
       - name: Validate repair code
         run: |
           python3 -m py_compile scripts/fog_vnext_ecmwf_soil_repair.py
-          python3 scripts/fog_vnext_ecmwf_soil_repair.py --max-batches 8 --dry-run
+          python3 scripts/fog_vnext_ecmwf_soil_repair.py --max-batches 32 --dry-run
 
       - name: Repair same-issued-run ECMWF soil moisture
-        run: python3 scripts/fog_vnext_ecmwf_soil_repair.py --max-batches 8
+        run: python3 scripts/fog_vnext_ecmwf_soil_repair.py --max-batches 32
 
       - name: Validate repaired rows
         run: |
@@ -64,7 +64,7 @@ jobs:
           if git diff --cached --quiet; then
             echo 'No ECMWF soil archive changes'
           else
-            git commit -m 'weather: repair ECMWF soil moisture in issued-run archive'
+            git commit -m 'weather: repair remaining ECMWF soil moisture in issued-run archive'
             git pull --rebase origin "${GITHUB_REF_NAME}"
             git push origin HEAD:"${GITHUB_REF_NAME}"
           fi
