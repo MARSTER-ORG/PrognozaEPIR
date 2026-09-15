@@ -1,0 +1,127 @@
+name: One-shot ARCH ALL grouping fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/one-shot-arch-all-group.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-shot-arch-all-group
+  cancel-in-progress: false
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch ARCH ALL search and grouping
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('arch.html')
+          s=p.read_text(encoding='utf-8')
+
+          def rep(old,new,label):
+              global s
+              if old not in s:
+                  raise SystemExit(f'Missing patch anchor: {label}')
+              s=s.replace(old,new,1)
+
+          rep(
+            "tr.selected td{outline:2px solid var(--blue);outline-offset:-2px}.empty{",
+            "tr.selected td{outline:2px solid var(--blue);outline-offset:-2px}.type-group-row td{background:var(--surface2);font-family:Arial,Helvetica,sans-serif;font-weight:700;letter-spacing:.04em;border-top:2px solid var(--blue);padding:7px 8px}.type-group-row:first-child td{border-top-width:1px}.type-group-count{color:var(--muted);font-weight:400;letter-spacing:0}.empty{",
+            'group css')
+
+          rep(
+            "const TYPES=['METAR','SPECI','SYNOP','TAF'], $=id=>document.getElementById(id), archive=window.PrognozaEPIRMessageArchive;\n  let selectedType='METAR',visibleRows=[],totalCount=0,pageOffset=0,lastFilters=null,requestSerial=0,selectedTaf=null,activeTooltipRow=null;",
+            "const TYPES=['METAR','SPECI','SYNOP','TAF'], $=id=>document.getElementById(id), archive=window.PrognozaEPIRMessageArchive;\n  let selectedType='METAR',visibleRows=[],totalCount=0,pageOffset=0,lastFilters=null,requestSerial=0,selectedTaf=null,activeTooltipRow=null,allTypeCounts={},allRowsCache=null,allCacheKey='';",
+            'state')
+
+          rep(
+            "if(val('station')&&selectedType!=='SYNOP')o.station=val('station').toUpperCase();",
+            "if(val('station')&&selectedType!=='SYNOP'&&selectedType!=='ALL')o.station=val('station').toUpperCase();if(selectedType==='ALL'&&val('station'))o.aviation_station=val('station').toUpperCase();",
+            'ALL station filter')
+
+          anchor="  async function searchNow(reset=true){\n"
+          if anchor not in s:
+              raise SystemExit('Missing patch anchor: searchNow')
+          helper=r'''  function groupSort(rows){
+    const order=new Map(TYPES.map((t,i)=>[t,i]));return dedupeSort(rows).sort((a,b)=>{const ta=order.has(a._type)?order.get(a._type):999,tb=order.has(b._type)?order.get(b._type):999;if(ta!==tb)return ta-tb;return (b._time||0)-(a._time||0)})
+  }
+  function allSearchKey(f){const x={...f};delete x.offset;delete x.limit;return JSON.stringify(x)}
+  async function fetchAllOfType(type,station,f){
+    const base={...f,types:[type],station,offset:0};delete base.aviation_station;const out=[];let offset=0,total=Infinity;
+    while(out.length<Math.min(total,50000)){
+      const limit=Math.min(5000,50000-out.length);let r;
+      try{r=await archive.search({...base,offset,limit},offset===0)}catch(e){console.warn(`ARCH ALL ${type} fallback:`,e);const fb=await fallbackSearch({...base,offset:0,limit:5000});return dedupeSort(fb.rows||[])}
+      const batch=r.rows||[];out.push(...batch);total=Number(r.count)||out.length;if(!batch.length||out.length>=total||batch.length<limit)break;offset+=batch.length;
+    }
+    return dedupeSort(out)
+  }
+  async function searchAllTypes(f){
+    const key=allSearchKey(f),offset=Math.max(0,Number(f.offset)||0),limit=Math.max(1,Number(f.limit)||500);
+    if(allRowsCache&&allCacheKey===key)return{ok:true,rows:allRowsCache.slice(offset,offset+limit),allRows:allRowsCache,count:allRowsCache.length,offset,limit,grouped:true,cached:true};
+    const aviation=String(f.aviation_station||val('station')||'EPIR').toUpperCase();
+    const groups=await Promise.all(TYPES.map(type=>fetchAllOfType(type,type==='SYNOP'?'12342':aviation,f)));
+    allTypeCounts=Object.fromEntries(TYPES.map((t,i)=>[t,groups[i].length]));allRowsCache=groupSort(groups.flat());allCacheKey=key;
+    return{ok:true,rows:allRowsCache.slice(offset,offset+limit),allRows:allRowsCache,count:allRowsCache.length,offset,limit,grouped:true}
+  }
+'''
+          s=s.replace(anchor,helper+anchor,1)
+
+          old="""    if(!archive?.search){$('status').className='error';$('status').textContent='Brak klienta archiwum.';return}if(reset)pageOffset=0;let f;try{f=buildFilters(pageOffset)}catch(e){showError(e.message);return}lastFilters={...f};const serial=++requestSerial;setBusy(true);$('errorBox').style.display='none';$('status').className='';$('status').textContent='Wyszukiwanie…';$('summary').textContent=`${selectedType==='ALL'?'WSZYSTKIE':selectedType} · ${val('dateFrom')} — ${val('dateTo')} · UTC`;
+    try{let result;try{result=await archive.search(f,true)}catch(e){console.warn('ARCH Supabase search fallback:',e);result=await fallbackSearch(f)}if(selectedType==='SYNOP'&&!(result.rows||[]).length){const synopRows=await archive.getRange('SYNOP','12342',f.from,f.to,5000,true);if(synopRows.length)result={ok:true,rows:synopRows,count:synopRows.length,offset:0,limit:5000,fallback:true}}if(serial!==requestSerial)return;visibleRows=dedupeSort(result.rows||[]);totalCount=Number(result.count)||visibleRows.length;selectedTaf=null;renderRows();renderStats(visibleRows,totalCount>visibleRows.length?'strona':'wynik');$('status').className=result.fallback?'warn':'ok';$('status').textContent=`Znaleziono: ${totalCount}${result.fallback?' · tryb zapasowy':''}`;updatePager();if(!result.fallback&&totalCount>visibleRows.length&&totalCount<=5000)loadCompleteStats(serial,f)}catch(e){if(serial!==requestSerial)return;visibleRows=[];totalCount=0;renderRows('Brak wczytanych komunikatów.');showError(e?.message||String(e))}finally{if(serial===requestSerial)setBusy(false)}}
+"""
+          new="""    if(!archive?.search){$('status').className='error';$('status').textContent='Brak klienta archiwum.';return}if(reset){pageOffset=0;if(selectedType==='ALL'){allRowsCache=null;allCacheKey='';allTypeCounts={}}}let f;try{f=buildFilters(pageOffset)}catch(e){showError(e.message);return}lastFilters={...f};const serial=++requestSerial;setBusy(true);$('errorBox').style.display='none';$('status').className='';$('status').textContent='Wyszukiwanie…';$('summary').textContent=`${selectedType==='ALL'?'WSZYSTKIE':selectedType} · ${val('dateFrom')} — ${val('dateTo')} · UTC`;
+    try{let result;if(selectedType==='ALL'){result=await searchAllTypes(f)}else{allTypeCounts={};try{result=await archive.search(f,true)}catch(e){console.warn('ARCH Supabase search fallback:',e);result=await fallbackSearch(f)}if(selectedType==='SYNOP'&&!(result.rows||[]).length){const synopRows=await archive.getRange('SYNOP','12342',f.from,f.to,5000,true);if(synopRows.length)result={ok:true,rows:synopRows,count:synopRows.length,offset:0,limit:5000,fallback:true}}}if(serial!==requestSerial)return;visibleRows=selectedType==='ALL'?groupSort(result.rows||[]):dedupeSort(result.rows||[]);totalCount=Number(result.count)||visibleRows.length;selectedTaf=null;renderRows();renderStats(selectedType==='ALL'&&result.allRows?result.allRows:visibleRows,selectedType==='ALL'?'cały wynik':(totalCount>visibleRows.length?'strona':'wynik'));$('status').className=result.fallback?'warn':'ok';$('status').textContent=`Znaleziono: ${totalCount}${result.fallback?' · tryb zapasowy':''}`;updatePager();if(selectedType!=='ALL'&&!result.fallback&&totalCount>visibleRows.length&&totalCount<=5000)loadCompleteStats(serial,f)}catch(e){if(serial!==requestSerial)return;visibleRows=[];totalCount=0;renderRows('Brak wczytanych komunikatów.');showError(e?.message||String(e))}finally{if(serial===requestSerial)setBusy(false)}}
+"""
+          rep(old,new,'searchNow ALL branch')
+
+          old="""    hideTooltip();const tbody=$('archiveTable').tBodies[0];tbody.replaceChildren();const frag=document.createDocumentFragment();visibleRows.forEach((row,index)=>{const tr=document.createElement('tr'),a=document.createElement('td'),b=document.createElement('td');a.className='time';b.className='message';a.textContent=formatUtc(row._time);b.textContent=row._raw;if(row._type==='TAF'){tr.classList.add('taf-row');tr.title='Kliknij, aby wybrać TAF do porównania';tr.dataset.index=String(index)}if(row._type==='SYNOP'){tr.classList.add('synop-row');tr.dataset.index=String(index)}tr.append(a,b);frag.appendChild(tr)});tbody.appendChild(frag);$('tableWrap').hidden=!visibleRows.length;$('empty').hidden=!!visibleRows.length;$('empty').textContent=emptyText;updateButtons()}
+"""
+          new="""    hideTooltip();const tbody=$('archiveTable').tBodies[0];tbody.replaceChildren();const frag=document.createDocumentFragment();let currentType='';visibleRows.forEach((row,index)=>{if(selectedType==='ALL'&&row._type!==currentType){currentType=row._type;const gh=document.createElement('tr'),gc=document.createElement('td');gh.className='type-group-row';gc.colSpan=2;const total=Number(allTypeCounts[currentType])||visibleRows.filter(x=>x._type===currentType).length;gc.innerHTML=`${escapeHtml(currentType)} <span class=\"type-group-count\">· ${total} rekordów</span>`;gh.appendChild(gc);frag.appendChild(gh)}const tr=document.createElement('tr'),a=document.createElement('td'),b=document.createElement('td');a.className='time';b.className='message';a.textContent=formatUtc(row._time);b.textContent=row._raw;if(row._type==='TAF'){tr.classList.add('taf-row');tr.title='Kliknij, aby wybrać TAF do porównania';tr.dataset.index=String(index)}if(row._type==='SYNOP'){tr.classList.add('synop-row');tr.dataset.index=String(index)}tr.append(a,b);frag.appendChild(tr)});tbody.appendChild(frag);$('tableWrap').hidden=!visibleRows.length;$('empty').hidden=!!visibleRows.length;$('empty').textContent=emptyText;updateButtons()}
+"""
+          rep(old,new,'render group headers')
+
+          rep(
+            "async function allForExport(){if(!lastFilters)return visibleRows;const total=Math.min(totalCount,50000);if(total<=visibleRows.length&&pageOffset===0)return visibleRows;const out=[];for(let offset=0;offset<total;offset+=5000){$('copyResult').textContent=`Eksport: pobieranie ${Math.min(offset+5000,total)} / ${total}…`;const r=await archive.search({...lastFilters,offset,limit:Math.min(5000,total-offset)},false);out.push(...(r.rows||[]));if(!(r.rows||[]).length)break}return dedupeSort(out)}",
+            "async function allForExport(){if(!lastFilters)return visibleRows;if(selectedType==='ALL'){const r=await searchAllTypes({...lastFilters,offset:0,limit:50000});return groupSort(r.allRows||r.rows||[]).slice(0,50000)}const total=Math.min(totalCount,50000);if(total<=visibleRows.length&&pageOffset===0)return visibleRows;const out=[];for(let offset=0;offset<total;offset+=5000){$('copyResult').textContent=`Eksport: pobieranie ${Math.min(offset+5000,total)} / ${total}…`;const r=await archive.search({...lastFilters,offset,limit:Math.min(5000,total-offset)},false);out.push(...(r.rows||[]));if(!(r.rows||[]).length)break}return dedupeSort(out)}",
+            'ALL export')
+
+          rep(
+            "Wszystkie prezentowane czasy są w UTC. Tabela główna pozostaje dwukolumnowa: data i godzina UTC | depesza.",
+            "Wszystkie prezentowane czasy są w UTC. Dla „WSZYSTKIE” wynik obejmuje METAR, SPECI, SYNOP i TAF oraz jest grupowany według typu; w każdej grupie depesze są uporządkowane datą. Tabela główna pozostaje dwukolumnowa: data i godzina UTC | depesza.",
+            'note')
+
+          p.write_text(s,encoding='utf-8')
+          PY
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          s=Path('arch.html').read_text(encoding='utf-8')
+          checks=['searchAllTypes','type-group-row',"type==='SYNOP'?'12342':aviation",'aviation_station',"selectedType==='ALL'?groupSort"]
+          missing=[x for x in checks if x not in s]
+          if missing: raise SystemExit('Missing expected patches: '+repr(missing))
+          scripts=re.findall(r'<script>(.*?)</script>',s,re.S)
+          if not scripts: raise SystemExit('Inline script not found')
+          Path('/tmp/arch-inline.js').write_text(scripts[-1],encoding='utf-8')
+          PY
+          node --check /tmp/arch-inline.js
+
+      - name: Commit patch and remove one-shot workflow
+        shell: bash
+        run: |
+          rm -f .github/workflows/one-shot-arch-all-group.yml
+          git config user.name 'prognozaepir-maintenance'
+          git config user.email 'actions@users.noreply.github.com'
+          git add arch.html .github/workflows/one-shot-arch-all-group.yml
+          git commit -m 'ARCH: include SYNOP and group ALL results'
+          git push origin HEAD:main
