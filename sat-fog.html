@@ -17,7 +17,7 @@
 <body>
 <div class="app">
   <div class="top">
-    <div><div class="brand"><a href="index.html">PrognozaEPIR</a> <small>SAT / FOG EUMETSAT v1.4</small></div><div class="place">MTG / FCI · Fog / Low Clouds RGB · EPIR / Inowrocław</div></div>
+    <div><div class="brand"><a href="index.html">PrognozaEPIR</a> <small>SAT / FOG EUMETSAT v1.5</small></div><div class="place">MTG / FCI · Fog / Low Clouds RGB · EPIR / Inowrocław</div></div>
     <div class="status"><span id="badge" class="badge">ŁADOWANIE</span><div id="statusText">WMS EUMETSAT</div></div>
   </div>
   <div class="controls">
@@ -93,20 +93,22 @@
   function isoLabel(s){ if(!s)return 'czas automatyczny'; const d=new Date(s); if(Number.isNaN(+d))return s; return d.toLocaleString('pl-PL',{timeZone:'UTC',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+' UTC'; }
   function hex(r,g,b){return '#'+[r,g,b].map(v=>Math.max(0,Math.min(255,Math.round(v))).toString(16).padStart(2,'0')).join('').toUpperCase();}
   function parseIsoDuration(s){ const m=String(s||'').match(/^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/); if(!m)return 10*60e3; return ((+m[1]||0)*86400+(+m[2]||0)*3600+(+m[3]||0)*60+(+m[4]||0))*1000 || 10*60e3; }
-  function parseTimes(raw){
+  function parseTimes(raw,maxItems=192){
     raw=(raw||'').trim(); if(!raw)return [];
-    const out=[];
+    const out=[],limit=Math.max(1,Number(maxItems)||192);
     for(const part0 of raw.split(',')){
       const part=part0.trim(); if(!part)continue;
       const a=part.split('/');
       if(a.length===3){
         const start=Date.parse(a[0]),end=Date.parse(a[1]),step=parseIsoDuration(a[2]);
-        if(Number.isFinite(start)&&Number.isFinite(end)&&step>0){
-          let n=0;for(let t=start;t<=end+1000&&n<2500;t+=step,n++)out.push(new Date(t).toISOString());
+        if(Number.isFinite(start)&&Number.isFinite(end)&&step>0&&end>=start){
+          const count=Math.floor((end-start)/step)+1;
+          const first=Math.max(0,count-limit);
+          for(let i=first;i<count;i++)out.push(new Date(start+i*step).toISOString());
         }
       }else if(Number.isFinite(Date.parse(part)))out.push(new Date(part).toISOString());
     }
-    return [...new Set(out)].sort((a,b)=>Date.parse(a)-Date.parse(b));
+    return [...new Set(out)].sort((a,b)=>Date.parse(a)-Date.parse(b)).slice(-limit);
   }
   function directChild(el,name){return [...el.children].find(x=>x.localName===name)||null;}
   function findFogLayer(xml){
@@ -115,9 +117,10 @@
       const title=directChild(l,'Title')?.textContent?.trim()||'',name=directChild(l,'Name')?.textContent?.trim()||'';
       if(!name||!TITLE_RE.test(title))continue;
       let score=0;if(/MTG/i.test(title))score+=4;if(/0\s*degree|0°|0 deg/i.test(title))score+=3;if(/FCI/i.test(title))score+=2;
-      scored.push({l,title,name,score});
+      const layerTimes=parseTimes(inheritedTime(l),1),newest=layerTimes.length?Date.parse(layerTimes[layerTimes.length-1]):-Infinity;
+      scored.push({l,title,name,score,newest});
     }
-    scored.sort((a,b)=>b.score-a.score);return scored[0]||null;
+    scored.sort((a,b)=>b.score-a.score||b.newest-a.newest||a.title.localeCompare(b.title));return scored[0]||null;
   }
   function inheritedTime(layerEl){
     let el=layerEl;
@@ -132,7 +135,7 @@
     const r=await fetch(u,{cache:'no-store'});if(!r.ok)throw Error('GetCapabilities HTTP '+r.status);
     const txt=await r.text(),xml=new DOMParser().parseFromString(txt,'text/xml');if(xml.querySelector('parsererror'))throw Error('Niepoprawny XML GetCapabilities');
     const found=findFogLayer(xml);if(!found)throw Error('Nie znaleziono warstwy Fog / Low Clouds RGB – MTG');
-    layerName=found.name;times=parseTimes(inheritedTime(found.l));return found.title;
+    layerName=found.name;times=parseTimes(inheritedTime(found.l),192);return found.title;
   }
   function fillTimes(){
     const sel=$('timeSelect');sel.innerHTML='';const recent=times.slice(-48);
