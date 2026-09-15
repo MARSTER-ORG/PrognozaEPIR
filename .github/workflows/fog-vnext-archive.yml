@@ -6,15 +6,18 @@ on:
       - fog-vnext-physics-20260915
     paths:
       - 'scripts/fog_vnext_model_archive.py'
+      - 'scripts/fog_vnext_censored_events.py'
       - 'scripts/fog_vnext_event_backfill.py'
       - 'scripts/fog_vnext_materialize_truth.py'
       - 'scripts/fog_vnext_historical_backfill.py'
       - 'scripts/fog_vnext_historical_validation.py'
       - 'scripts/backfill_fog_vnext_history.py'
       - 'scripts/fog_vnext_verification.py'
+      - 'scripts/fog_vnext_verification_censored.py'
       - 'scripts/build_fog_transition_priors_vnext.py'
       - 'scripts/build_fog_event_learning_v2.py'
       - 'scripts/build_adaptive_weights_v2.py'
+      - 'tests/test_fog_vnext_censored_events.py'
       - 'fog-physics-vnext.js'
       - 'fog-vnext-probability-layer.js'
       - 'fog-vnext-transition-risk.js'
@@ -63,14 +66,17 @@ jobs:
           python3 tests/test_fog_event_learning_v2.py
           python3 tests/test_fog_transition_priors_vnext.py
           python3 tests/test_fog_vnext_historical_validation.py
+          python3 tests/test_fog_vnext_censored_events.py
           python3 -m py_compile \
             scripts/fog_vnext_model_archive.py \
+            scripts/fog_vnext_censored_events.py \
             scripts/fog_vnext_event_backfill.py \
             scripts/fog_vnext_materialize_truth.py \
             scripts/fog_vnext_historical_backfill.py \
             scripts/fog_vnext_historical_validation.py \
             scripts/backfill_fog_vnext_history.py \
             scripts/fog_vnext_verification.py \
+            scripts/fog_vnext_verification_censored.py \
             scripts/build_fog_transition_priors_vnext.py
 
       - name: Build canonical transition priors
@@ -96,9 +102,9 @@ jobs:
           cp /tmp/adaptive-weights.production.json data/learning/adaptive-weights.json
           cp /tmp/fog-event-skill.production.json data/learning/fog-event-skill.json
 
-      - name: Build forecast-to-truth verification and 2020-2026 historical report
+      - name: Build censor-aware forecast-to-truth verification and 2020-2026 historical report
         run: |
-          python3 scripts/fog_vnext_verification.py
+          python3 scripts/fog_vnext_verification_censored.py
           python3 scripts/fog_vnext_historical_validation.py
 
       - name: Validate shadow artifacts and activation gate
@@ -125,6 +131,8 @@ jobs:
           assert tp['schema']=='prognozaepir-fog-transition-priors-v1'
           assert tp['adjacent_known_transitions'] > 0
           assert summary['schema']=='prognozaepir-fog-vnext-verification-summary-v3'
+          assert summary['censoring_policy']['canonical_2020_2024_event_boundaries'] is True
+          assert summary['censoring_policy']['unknown_transition_targets_excluded_not_negative'] is True
           assert history['schema']=='prognozaepir-fog-vnext-historical-validation-v1'
           assert set(history['years']) == {str(y) for y in range(2020, 2027)}
           assert history['years']['2025']['truth']['aviation_observations'] > 0
@@ -135,6 +143,7 @@ jobs:
           assert gate['schema']=='prognozaepir-fog-vnext-activation-v1'
           if gate['operational_activation_ready']:
               assert gate['statistical_ready'] and gate['promotion_approved']
+          print('censoring:', summary['censoring_policy'])
           print('historical tiers:', {y:r['cohort']['tier'] for y,r in history['years'].items()})
           print('rolling:', [(r['test_year'],r['forecast_evaluable']) for r in history['rolling_origin']])
           print('activation:', gate['mode'], gate['blockers'])
