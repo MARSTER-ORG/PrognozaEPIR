@@ -93,12 +93,20 @@ assert tr2['fog_exit_next_1h'] is True
 assert tr2['fog_to_low_st_next_1h'] is True
 assert tr2['dissipation_next_1h'] is False
 
-# Sparse evidence must never unlock production.
+# Sparse evidence must never unlock production. v3 per-lead metrics expose
+# blend, physics and direct channels separately; activation is based on blend.
 empty_metrics = {
     'fog_truth': {'hourly': {'positive': 0}, 'event_balanced': {'auc': None}},
     'direct_visibility_baseline': {'event_balanced': {'auc': None}},
 }
-lead = {name: {'event_balanced': {'positive': 0, 'negative': 0}} for _a, _b, name, _t in mv.LEAD_BUCKETS}
+lead = {
+    name: {
+        'blend': {'event_balanced': {'positive': 0, 'negative': 0}},
+        'physics': {'event_balanced': {'positive': 0, 'negative': 0}},
+        'direct': {'event_balanced': {'positive': 0, 'negative': 0}},
+    }
+    for _a, _b, name, _t in mv.LEAD_BUCKETS
+}
 gate = verify.activation_gate([], empty_metrics, {}, lead)
 assert gate['statistical_ready'] is False
 assert gate['operational_activation_ready'] is False
