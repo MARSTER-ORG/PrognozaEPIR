@@ -77,20 +77,10 @@ jobs:
         run: python3 scripts/build_fog_transition_priors_vnext.py
 
       - name: Backfill genuine ECMWF issued runs for 2024-2025
-        run: |
-          if [ "${GITHUB_REF_NAME}" = "main" ] && [ "${{ github.event_name }}" = "schedule" ]; then
-            python3 scripts/fog_vnext_historical_backfill.py --years 2024,2025 --max-batches 1
-          else
-            python3 scripts/fog_vnext_historical_backfill.py --years 2024,2025 --max-batches 4
-          fi
+        run: python3 scripts/fog_vnext_historical_backfill.py --years 2024,2025 --max-batches 1
 
       - name: Event-stratified explicit-run backfill 2026 multimodel
-        run: |
-          if [ "${GITHUB_REF_NAME}" = "main" ] && [ "${{ github.event_name }}" = "schedule" ]; then
-            python3 scripts/fog_vnext_event_backfill.py --max-batches 1
-          else
-            python3 scripts/fog_vnext_event_backfill.py --max-batches 4
-          fi
+        run: python3 scripts/fog_vnext_event_backfill.py --max-batches 1
 
       - name: Archive current explicit model runs
         run: python3 scripts/fog_vnext_model_archive.py
