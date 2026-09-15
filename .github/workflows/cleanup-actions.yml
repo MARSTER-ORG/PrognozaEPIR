@@ -29,16 +29,19 @@ jobs:
             const repo = context.repo.repo;
             const cutoff = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
 
-            // Delete in bounded batches so the cleanup does not exhaust the
-            // repository's GitHub REST API budget in a single run.
+            // Keep enough REST API budget for pagination and GitHub housekeeping.
             const maxDeletes = 850;
 
+            // GitHub limits filtered workflow-run searches to a finite result window.
+            // Filtering by creation time here is essential: otherwise only the newest
+            // runs are returned and old runs can be missed entirely.
             const runs = await github.paginate(
               github.rest.actions.listWorkflowRunsForRepo,
               {
                 owner,
                 repo,
                 status: 'completed',
+                created: `<${cutoff.toISOString()}`,
                 per_page: 100,
               }
             );
@@ -75,19 +78,19 @@ jobs:
               }
             }
 
-            const remainingOld = Math.max(0, oldRuns.length - deleted);
+            const visibleRemaining = Math.max(0, oldRuns.length - deleted);
 
             await core.summary
               .addHeading('GitHub Actions cleanup')
               .addTable([
                 [{data: 'Cutoff', header: true}, cutoff.toISOString()],
-                [{data: 'Old completed runs found', header: true}, String(oldRuns.length)],
+                [{data: 'Old completed runs returned by API', header: true}, String(oldRuns.length)],
                 [{data: 'Deleted in this run', header: true}, String(deleted)],
-                [{data: 'Remaining old runs', header: true}, String(remainingOld)],
+                [{data: 'Old runs left in this API batch', header: true}, String(visibleRemaining)],
                 [{data: 'Delete failures', header: true}, String(failed)],
                 [{data: 'Stopped for rate limit', header: true}, String(stoppedForRateLimit)],
               ])
               .write();
 
-            core.info(`Found ${oldRuns.length} completed runs older than ${cutoff.toISOString()}.`);
-            core.info(`Deleted ${deleted}; remaining old runs: ${remainingOld}; failures: ${failed}.`);
+            core.info(`API returned ${oldRuns.length} completed runs older than ${cutoff.toISOString()}.`);
+            core.info(`Deleted ${deleted}; visible batch remaining: ${visibleRemaining}; failures: ${failed}.`);
