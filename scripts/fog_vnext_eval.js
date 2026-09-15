@@ -1,29 +1,39 @@
 'use strict';
 const fs=require('fs');
 const F=require('../fog-physics-vnext.js');
+const P=require('../fog-vnext-probability-layer.js');
 
 function main(){
   const raw=fs.readFileSync(0,'utf8').trim();
   const rows=raw?JSON.parse(raw):[];
   const out=rows.map(input=>{
     const v=F.evaluateHour(input||{});
-    const ranked=[['RAD',v.RAD],['ADV',v.ADV],['CBL',v.CBL],['PCP',v.PCP]]
-      .filter(x=>Number.isFinite(x[1])).sort((a,b)=>b[1]-a[1]);
-    const physics=ranked.length?100*(.8*ranked[0][1]+.2*(ranked[1]?.[1]??ranked[0][1])):null;
+    const p=P.evaluate(input||{},v);
     return {
       RAD:Number.isFinite(v.RAD)?v.RAD*100:null,
       ADV:Number.isFinite(v.ADV)?v.ADV*100:null,
       CBL:Number.isFinite(v.CBL)?v.CBL*100:null,
       PCP:Number.isFinite(v.PCP)?v.PCP*100:null,
-      physics_score:Number.isFinite(physics)?physics:null,
-      mechanism1:ranked[0]?.[0]||null,
-      mechanism2:ranked[1]?.[0]||null,
+      physics_score:Number.isFinite(p.P_physics)?p.P_physics*100:null,
+      direct_score:Number.isFinite(p.P_direct)?p.P_direct*100:null,
+      model_final_shadow:Number.isFinite(p.P_model_final_shadow)?p.P_model_final_shadow*100:null,
+      P_physics:p.P_physics,
+      P_direct:p.P_direct,
+      P_model_final_shadow:p.P_model_final_shadow,
+      probability_calibrated:p.calibrated,
+      probability_calibration_status:p.calibrationStatus,
+      mechanism1:p.mechanism1,
+      mechanism2:p.mechanism2,
+      blend_weights:p.blendWeights,
+      lead_bucket_shadow:p.leadBucket,
       SSOIL:Number.isFinite(v.SSOIL)?v.SSOIL*100:null,
       SPBL:Number.isFinite(v.SPBL)?v.SPBL*100:null,
       SSFC_COOL:Number.isFinite(v.SSFC_COOL)?v.SSFC_COOL*100:null,
       dissipation:Number.isFinite(v.dissipationRisk)?v.dissipationRisk*100:null,
       phase:v.phase,
       data_quality:v.dataQuality,
+      physics_coverage:p.physicsCoverage,
+      direct_coverage:p.directCoverage,
       soil_source:v.soilMoistureSource,
       missing:v.missing,
       fallbacks:v.fallbacks,
