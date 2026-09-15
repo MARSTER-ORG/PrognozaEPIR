@@ -7,11 +7,14 @@ keeps the existing v3 probability/ablation implementation intact while:
 - using reconstructed event IDs for 2025-2026;
 - excluding left-censored onset and right-censored event-end transitions from
   exact next-hour scoring instead of treating UNKNOWN as a negative;
-- excluding any None transition target from hourly/event-balanced metrics.
+- excluding any None transition target from hourly/event-balanced metrics;
+- indexing the long METAR wind-reference series so full-history verification
+  preserves the same +/-31 minute reference policy without an O(N^2) scan.
 """
 from __future__ import annotations
 
 import json
+from bisect import bisect_left, bisect_right
 from datetime import timedelta
 
 import fog_vnext_event_backfill as event_source
@@ -21,6 +24,37 @@ import model_verification as mv
 LEFT_CENSORED_IDS = set()
 RIGHT_CENSORED_END_HOURS = set()
 EVENTS = []
+
+_ORIGINAL_WIND_REFERENCE = mv.metar_wind_reference
+_WIND_REFERENCE_INDEX = {}
+
+
+def indexed_metar_wind_reference(target_dt, regular_wind_points):
+    """Exact metar_wind_reference semantics with a bisected time window.
+
+    model_verification.build_observation_maps() calls the reference helper once
+    for every verification hour. Its legacy helper scans the complete METAR
+    series on every call. With 2020-2026 materialized truth that becomes nearly
+    quadratic. The points are already sorted by time, so cache their timestamps
+    once and pass only the exact +/-31 minute slice to the unchanged reference
+    implementation.
+    """
+    if not target_dt or not regular_wind_points:
+        return _ORIGINAL_WIND_REFERENCE(target_dt, regular_wind_points)
+
+    key = id(regular_wind_points)
+    cached = _WIND_REFERENCE_INDEX.get(key)
+    if cached is None or cached[0] is not regular_wind_points:
+        seconds = [dt.timestamp() for dt, _row in regular_wind_points]
+        cached = (regular_wind_points, seconds)
+        _WIND_REFERENCE_INDEX[key] = cached
+    seconds = cached[1]
+
+    center = target_dt.timestamp()
+    half = float(mv.WIND_REFERENCE_HALF_WINDOW_SECONDS)
+    lo = bisect_left(seconds, center - half)
+    hi = bisect_right(seconds, center + half)
+    return _ORIGINAL_WIND_REFERENCE(target_dt, regular_wind_points[lo:hi])
 
 
 def load_event_policy():
@@ -140,6 +174,7 @@ ORIGINAL_ATTACH = base.attach_transition_truth
 
 def main():
     inventory = load_event_policy()
+    mv.metar_wind_reference = indexed_metar_wind_reference
     base.build_truth_timeline = build_truth_timeline
     base.attach_transition_truth = attach_transition_truth
     base.event_balanced_pairs = event_balanced_pairs
@@ -152,6 +187,7 @@ def main():
         "canonical_event_rows": inventory.get("canonical_event_rows", 0),
         "left_censored_events": len(LEFT_CENSORED_IDS),
         "right_censored_events": len(RIGHT_CENSORED_END_HOURS),
+        "indexed_metar_wind_reference": True,
     }, ensure_ascii=False))
 
 
