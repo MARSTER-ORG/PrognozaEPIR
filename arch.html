@@ -6,7 +6,7 @@
 <meta name="color-scheme" content="light dark">
 <title>ARCH — archiwum depesz PrognozaEPIR</title>
 <script src="utc-ui-guard.js"></script>
-<script src="message-archive-client.js?v=supabase-search-v2"></script>
+<script src="message-archive-client.js?v=archive-search-v4-20260915"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
 :root{--bg:#f4f4f2;--ink:#232323;--muted:#6e6e6e;--surface:#fff;--surface2:#f7f7f7;--border:#9a9a9a;--blue:#1f2a75;--ok:#2c7a3f;--warn:#8a5a00;--error:#8a2d2d;--errorBg:#fff4f4;--hover:#edf1ff}
@@ -79,7 +79,7 @@
   function normalizeRow(r){return {...r,_raw:rawOf(r),_time:timeOf(r),_type:String(r?.type||r?.report_type||'').toUpperCase(),_station:String(r?.station||'').toUpperCase()}}
   function dedupeSort(rows,asc=false){const seen=new Set(),out=[];for(const x of rows||[]){const r=normalizeRow(x);if(!r._raw)continue;const key=String(r.message_id||`${r._type}|${r._station}|${r._time}|${r._raw}`);if(seen.has(key))continue;seen.add(key);out.push(r)}out.sort((a,b)=>(asc?1:-1)*((a._time||0)-(b._time||0)));return out}
   function initTheme(){const saved=localStorage.getItem('prognozaepir-theme');if(saved==='dark'||saved==='light')document.documentElement.dataset.theme=saved}
-  function setMode(advanced){$('advanced').hidden=!advanced;$('modeBasic').classList.toggle('active',!advanced);$('modeAdvanced').classList.toggle('active',advanced)}
+  function setMode(advanced){$('advanced').hidden=!advanced;$('modeBasic').classList.toggle('active',!advanced);$('modeAdvanced').classList.toggle('active',advanced);if(!advanced)clearAdvanced()}
   function setType(type,search=true){selectedType=type;document.querySelectorAll('[data-type]').forEach(b=>b.classList.toggle('active',b.dataset.type===type));if(search)searchNow(true)}
   function val(id){return $(id).value.trim()}
   function addIf(o,key,id){const v=val(id);if(v!=='')o[key]=v}
@@ -87,16 +87,15 @@
     const from=val('dateFrom'),to=val('dateTo');if(!from||!to)throw new Error('Podaj prawidłowy zakres dat.');if(from>to)throw new Error('Data OD nie może być późniejsza niż DO.');
     const o={from:`${from}T00:00:00Z`,to:`${to}T23:59:59.999Z`,limit:limitOverride||Number($('pageSize').value)||500,offset,sort:'desc'};
     if(selectedType!=='ALL')o.types=[selectedType];else o.types=TYPES;
-    if(val('station'))o.station=val('station').toUpperCase();if(val('textSearch'))o.text=val('textSearch');
-    addIf(o,'visibility_min','visibilityMin');addIf(o,'visibility_max','visibilityMax');addIf(o,'ceiling_min_ft','ceilingMin');addIf(o,'ceiling_max_ft','ceilingMax');addIf(o,'wind_speed_min_kt','windMin');addIf(o,'wind_speed_max_kt','windMax');addIf(o,'gust_min_kt','gustMin');addIf(o,'gust_max_kt','gustMax');addIf(o,'wind_dir_from','dirFrom');addIf(o,'wind_dir_to','dirTo');addIf(o,'temp_min_c','tempMin');addIf(o,'temp_max_c','tempMax');addIf(o,'qnh_min','qnhMin');addIf(o,'qnh_max','qnhMax');
-    const flags=[...document.querySelectorAll('#flagBox input:checked')].map(x=>x.value);if(flags.length)o.flags=flags.join(',');return o;
+    if(val('station'))o.station=selectedType==='SYNOP'?'12342':val('station').toUpperCase();
+    if(!$('advanced').hidden){if(val('textSearch'))o.text=val('textSearch');addIf(o,'visibility_min','visibilityMin');addIf(o,'visibility_max','visibilityMax');addIf(o,'ceiling_min_ft','ceilingMin');addIf(o,'ceiling_max_ft','ceilingMax');addIf(o,'wind_speed_min_kt','windMin');addIf(o,'wind_speed_max_kt','windMax');addIf(o,'gust_min_kt','gustMin');addIf(o,'gust_max_kt','gustMax');addIf(o,'wind_dir_from','dirFrom');addIf(o,'wind_dir_to','dirTo');addIf(o,'temp_min_c','tempMin');addIf(o,'temp_max_c','tempMax');addIf(o,'qnh_min','qnhMin');addIf(o,'qnh_max','qnhMax');const flags=[...document.querySelectorAll('#flagBox input:checked')].map(x=>x.value);if(flags.length)o.flags=flags.join(',')}return o;
   }
   function setBusy(b){document.querySelectorAll('button,input,select').forEach(el=>{if(el.id!=='modeBasic'&&el.id!=='modeAdvanced')el.disabled=b});if(!b)updateButtons()}
   function updateButtons(){const has=visibleRows.length>0;['copyRaw','copyTable','exportTxt','exportCsv','exportXlsx'].forEach(id=>$(id).disabled=!has);$('compareTaf').disabled=!selectedTaf;$('prevPage').disabled=pageOffset<=0;$('nextPage').disabled=pageOffset+visibleRows.length>=totalCount||!visibleRows.length}
   function localMatches(r,f){
     const raw=r._raw.toUpperCase();if(f.station&&r._station!==f.station)return false;if(f.text){const toks=String(f.text).toUpperCase().split(/\s*\+\s*|\s+/).filter(Boolean);if(toks.some(t=>!raw.includes(t)))return false}const map=[['visibility_min','visibility_m','min'],['visibility_max','visibility_m','max'],['ceiling_min_ft','ceiling_ft','min'],['ceiling_max_ft','ceiling_ft','max'],['wind_speed_min_kt','wind_speed_kt','min'],['wind_speed_max_kt','wind_speed_kt','max'],['gust_min_kt','gust_kt','min'],['gust_max_kt','gust_kt','max'],['temp_min_c','temperature_c','min'],['temp_max_c','temperature_c','max'],['qnh_min','pressure_hpa','min'],['qnh_max','pressure_hpa','max']];for(const[p,k,kind]of map){if(f[p]===undefined)continue;const x=num(r[k]),v=num(f[p]);if(x===null||v===null||(kind==='min'?x<v:x>v))return false}if(f.flags){const codes=weatherCodes(r);for(const code of String(f.flags).split(','))if(!codes.includes(code))return false}return true;
   }
-  async function fallbackSearch(f){const rows=[];for(const type of f.types||TYPES){try{rows.push(...await archive.getRange(type,f.station||'',f.from,f.to,5000,true))}catch(e){console.warn('ARCH fallback range',type,e)}}const all=dedupeSort(rows).filter(r=>localMatches(r,f));return{rows:all.slice(f.offset,f.offset+f.limit),count:all.length,limit:f.limit,offset:f.offset,fallback:true}}
+  async function fallbackSearch(f){const rows=[];for(const type of f.types||TYPES){try{const station=type==='SYNOP'?'12342':(f.station||'');rows.push(...await archive.getRange(type,station,f.from,f.to,5000,true))}catch(e){console.warn('ARCH fallback range',type,e)}}const all=dedupeSort(rows).filter(r=>localMatches(r,f));return{rows:all.slice(f.offset,f.offset+f.limit),count:all.length,limit:f.limit,offset:f.offset,fallback:true}}
   async function searchNow(reset=true){
     if(!archive?.search){$('status').className='error';$('status').textContent='Brak klienta archiwum.';return}if(reset)pageOffset=0;let f;try{f=buildFilters(pageOffset)}catch(e){showError(e.message);return}lastFilters={...f};const serial=++requestSerial;setBusy(true);$('errorBox').style.display='none';$('status').className='';$('status').textContent='Wyszukiwanie…';$('summary').textContent=`${selectedType==='ALL'?'WSZYSTKIE':selectedType} · ${val('dateFrom')} — ${val('dateTo')} · UTC`;
     try{let result;try{result=await archive.search(f,true)}catch(e){console.warn('ARCH Supabase search fallback:',e);result=await fallbackSearch(f)}if(serial!==requestSerial)return;visibleRows=dedupeSort(result.rows||[]);totalCount=Number(result.count)||visibleRows.length;selectedTaf=null;renderRows();renderStats(visibleRows,totalCount>visibleRows.length?'strona':'wynik');$('status').className=result.fallback?'warn':'ok';$('status').textContent=`Znaleziono: ${totalCount}${result.fallback?' · tryb zapasowy':''}`;updatePager();if(!result.fallback&&totalCount>visibleRows.length&&totalCount<=5000)loadCompleteStats(serial,f)}catch(e){if(serial!==requestSerial)return;visibleRows=[];totalCount=0;renderRows('Brak wczytanych komunikatów.');showError(e?.message||String(e))}finally{if(serial===requestSerial)setBusy(false)}}
