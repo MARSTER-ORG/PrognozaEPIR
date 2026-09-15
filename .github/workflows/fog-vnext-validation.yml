@@ -67,9 +67,7 @@ jobs:
       - name: Materialize canonical aviation truth 2020-2024
         run: |
           python3 scripts/fog_vnext_materialize_truth.py
-          for y in 2020 2021 2022 2023 2024 2025 2026; do
-            if [ "$y" -le 2024 ]; then test -d "data/messages/metar/$y"; fi
-          done
+          for y in 2020 2021 2022 2023 2024; do test -d "data/messages/metar/$y"; done
 
       - name: Syntax checks
         run: |
@@ -80,11 +78,13 @@ jobs:
           node --check scripts/fog_vnext_eval.js
           python3 -m py_compile \
             scripts/fog_vnext_model_archive.py \
+            scripts/fog_vnext_censored_events.py \
             scripts/fog_vnext_event_backfill.py \
             scripts/fog_vnext_materialize_truth.py \
             scripts/fog_vnext_historical_backfill.py \
             scripts/fog_vnext_historical_validation.py \
             scripts/fog_vnext_verification.py \
+            scripts/fog_vnext_verification_censored.py \
             scripts/build_fog_transition_priors_vnext.py \
             scripts/build_fog_event_learning_v2.py \
             scripts/build_adaptive_weights_v2.py
@@ -107,6 +107,9 @@ jobs:
       - name: Historical 2020-2026 cohort and rolling-origin tests
         run: python3 tests/test_fog_vnext_historical_validation.py
 
+      - name: Canonical censored-event tests
+        run: python3 tests/test_fog_vnext_censored_events.py
+
       - name: Transition-prior censoring tests
         run: python3 tests/test_fog_transition_priors_vnext.py
 
@@ -126,7 +129,7 @@ jobs:
           print('transition priors:', x['adjacent_known_transitions'], x['rates'])
           PY
 
-      - name: Event selector dry run on full history
+      - name: Event selector dry run on canonical censored history
         run: python3 scripts/fog_vnext_event_backfill.py --max-batches 4 --dry-run
 
       - name: Historical ECMWF 2024-2025 backfill plan without network
@@ -176,7 +179,7 @@ jobs:
 
       - name: Verification builder smoke test 2020-2026 truth
         run: |
-          python3 scripts/fog_vnext_verification.py
+          python3 scripts/fog_vnext_verification_censored.py
           python3 scripts/fog_vnext_historical_validation.py
           python3 - <<'PY'
           import json
@@ -186,6 +189,8 @@ jobs:
           g=json.loads(Path('data/learning/fog-vnext-activation.json').read_text(encoding='utf-8'))
           p=json.loads(Path('data/learning/fog-vnext-promotion.json').read_text(encoding='utf-8'))
           assert s['schema']=='prognozaepir-fog-vnext-verification-summary-v3'
+          assert s['censoring_policy']['canonical_2020_2024_event_boundaries'] is True
+          assert s['censoring_policy']['unknown_transition_targets_excluded_not_negative'] is True
           assert h['schema']=='prognozaepir-fog-vnext-historical-validation-v1'
           assert set(h['years']) == {str(y) for y in range(2020, 2027)}
           assert h['years']['2025']['truth']['aviation_observations'] > 0
@@ -197,6 +202,7 @@ jobs:
           assert p['approved'] is False
           assert g['mode']=='shadow'
           assert g['operational_activation_ready'] is False
+          print('censoring:', s['censoring_policy'])
           print('historical tiers:', {y:r['cohort']['tier'] for y,r in h['years'].items()})
           print('rolling:', [(r['test_year'],r['forecast_evaluable']) for r in h['rolling_origin']])
           PY
