@@ -6,6 +6,7 @@ on:
       - fog-vnext-physics-20260915
     paths:
       - 'scripts/fog_vnext_model_archive.py'
+      - 'scripts/backfill_fog_vnext_history.py'
       - 'scripts/fog_vnext_verification.py'
       - 'scripts/build_fog_event_learning_v2.py'
       - 'scripts/build_adaptive_weights_v2.py'
@@ -37,7 +38,16 @@ jobs:
           node tests/fog-physics-vnext.test.js
           python3 tests/test_fog_event_learning.py
           python3 tests/test_fog_event_learning_v2.py
-          python3 -m py_compile scripts/fog_vnext_model_archive.py scripts/fog_vnext_verification.py
+          python3 -m py_compile scripts/fog_vnext_model_archive.py scripts/backfill_fog_vnext_history.py scripts/fog_vnext_verification.py
+
+      - name: Seed explicit historical fog case on feature branch
+        if: github.ref_name != 'main'
+        run: |
+          if [ ! -f data/learning/fog-vnext-forecasts/2026-09-13.jsonl ]; then
+            python3 scripts/backfill_fog_vnext_history.py --start 2026-09-13T19:00Z
+          else
+            echo 'Historical vNext seed already present'
+          fi
 
       - name: Archive explicit model runs
         run: python3 scripts/fog_vnext_model_archive.py
