@@ -11,6 +11,7 @@ on:
       - 'fog-summary-layout.js'
       - 'scripts/fog_vnext_*.py'
       - 'scripts/fog_vnext_*.js'
+      - 'scripts/metar_wind_index.py'
       - 'scripts/build_fog_transition_priors_vnext.py'
       - 'scripts/build_fog_event_learning_v2.py'
       - 'scripts/build_adaptive_weights_v2.py'
@@ -86,6 +87,7 @@ jobs:
             scripts/fog_vnext_ssfc_diagnostics.py \
             scripts/fog_vnext_verification.py \
             scripts/fog_vnext_verification_censored.py \
+            scripts/metar_wind_index.py \
             scripts/build_fog_transition_priors_vnext.py \
             scripts/build_fog_event_learning_v2.py \
             scripts/build_adaptive_weights_v2.py
@@ -183,6 +185,7 @@ jobs:
           assert h['schema']=='prognozaepir-fog-vnext-historical-validation-v1'
           assert x['schema']=='prognozaepir-fog-vnext-ssfc-diagnostics-v1'
           assert x['policy']['diagnostic_only'] is True
+          assert x['policy']['forecast_signal_groups_are_truth_independent'] is True
           assert set(h['years']) == {str(y) for y in range(2020, 2027)}
           assert h['years']['2025']['truth']['aviation_observations'] > 0
           for y in range(2020, 2027):
@@ -203,10 +206,25 @@ jobs:
           print('SSFC by lead:', json.dumps(x['by_lead'], ensure_ascii=False))
           print('SSFC by mechanism:', json.dumps(x['by_mechanism'], ensure_ascii=False))
           print('SSFC by truth phase:', json.dumps(x['by_truth_phase'], ensure_ascii=False))
+          print('SSFC by forecast phase:', json.dumps(x['by_forecast_phase'], ensure_ascii=False))
+          print('SSFC by saturation:', json.dumps(x['by_saturation'], ensure_ascii=False))
+          print('SSFC by physics score:', json.dumps(x['by_physics_score'], ensure_ascii=False))
           print('SSFC by coverage:', json.dumps(x['by_coverage'], ensure_ascii=False))
           print('SSFC components:', json.dumps(x['components'], ensure_ascii=False))
           print('activation:', json.dumps(g, ensure_ascii=False))
           PY
+
+      - name: Upload Fog vNext verification diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: fog-vnext-verification-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            data/learning/fog-vnext-verification/summary.json
+            data/learning/fog-vnext-historical-validation.json
+            data/learning/fog-vnext-ssfc-diagnostics.json
+            data/learning/fog-vnext-activation.json
 
       - name: Learning wrappers
         run: |
