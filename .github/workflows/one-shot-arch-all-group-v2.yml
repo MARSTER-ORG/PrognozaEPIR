@@ -1,0 +1,101 @@
+name: One-shot ARCH ALL grouping v2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/one-shot-arch-all-group-v2.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Patch ALL archive mode
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p=Path('arch.html')
+          s=p.read_text(encoding='utf-8')
+
+          def once(old,new,label):
+              global s
+              if old not in s:
+                  raise SystemExit(f'{label}: marker not found')
+              s=s.replace(old,new,1)
+
+          once(
+            'tr.selected td{outline:2px solid var(--blue);outline-offset:-2px}.empty{',
+            'tr.selected td{outline:2px solid var(--blue);outline-offset:-2px}.type-group-row td{background:var(--surface2);font-family:Arial,Helvetica,sans-serif;font-weight:700;letter-spacing:.04em;border-top:2px solid var(--blue);padding:7px 8px}.type-group-count{color:var(--muted);font-weight:400;letter-spacing:0}.empty{',
+            'css')
+
+          once(
+            "let selectedType='METAR',visibleRows=[],totalCount=0,pageOffset=0,lastFilters=null,requestSerial=0,selectedTaf=null,activeTooltipRow=null;",
+            "let selectedType='METAR',visibleRows=[],totalCount=0,pageOffset=0,lastFilters=null,requestSerial=0,selectedTaf=null,activeTooltipRow=null,allTypeCounts={},allRowsCache=null,allCacheKey='';",
+            'state')
+
+          once(
+            "if(val('station')&&selectedType!=='SYNOP')o.station=val('station').toUpperCase();",
+            "if(val('station')&&selectedType!=='SYNOP'&&selectedType!=='ALL')o.station=val('station').toUpperCase();if(selectedType==='ALL'&&val('station'))o.aviation_station=val('station').toUpperCase();",
+            'station')
+
+          anchor='  async function searchNow(reset=true){\n'
+          helper='''  function groupSort(rows){\n    const order=new Map(TYPES.map((t,i)=>[t,i]));return dedupeSort(rows).sort((a,b)=>{const ta=order.has(a._type)?order.get(a._type):999,tb=order.has(b._type)?order.get(b._type):999;if(ta!==tb)return ta-tb;return (b._time||0)-(a._time||0)})\n  }\n  function allSearchKey(f){const x={...f};delete x.offset;delete x.limit;return JSON.stringify(x)}\n  async function fetchAllOfType(type,station,f){\n    const base={...f,types:[type],station,offset:0};delete base.aviation_station;const out=[];let offset=0,total=Infinity;\n    while(out.length<Math.min(total,50000)){\n      const limit=Math.min(5000,50000-out.length);let r;\n      try{r=await archive.search({...base,offset,limit},offset===0)}catch(e){console.warn(`ARCH ALL ${type} fallback:`,e);const fb=await fallbackSearch({...base,offset:0,limit:5000});return dedupeSort(fb.rows||[])}\n      const batch=r.rows||[];out.push(...batch);total=Number(r.count)||out.length;if(!batch.length||out.length>=total||batch.length<limit)break;offset+=batch.length;\n    }\n    return dedupeSort(out)\n  }\n  async function searchAllTypes(f){\n    const key=allSearchKey(f),offset=Math.max(0,Number(f.offset)||0),limit=Math.max(1,Number(f.limit)||500);\n    if(!allRowsCache||allCacheKey!==key){\n      const aviation=String(f.aviation_station||val('station')||'EPIR').toUpperCase();\n      const groups=await Promise.all(TYPES.map(type=>fetchAllOfType(type,type==='SYNOP'?'12342':aviation,f)));\n      allTypeCounts=Object.fromEntries(TYPES.map((t,i)=>[t,groups[i].length]));allRowsCache=dedupeSort(groups.flat());allCacheKey=key;\n    }\n    const page=allRowsCache.slice(offset,offset+limit);return{ok:true,rows:groupSort(page),allRows:allRowsCache,count:allRowsCache.length,offset,limit,grouped:true}\n  }\n'''
+          if anchor not in s: raise SystemExit('search anchor not found')
+          s=s.replace(anchor,helper+anchor,1)
+
+          once('if(reset)pageOffset=0;let f;',"if(reset){pageOffset=0;if(selectedType==='ALL'){allRowsCache=null;allCacheKey='';allTypeCounts={}}}let f;",'reset')
+
+          old="try{let result;try{result=await archive.search(f,true)}catch(e){console.warn('ARCH Supabase search fallback:',e);result=await fallbackSearch(f)}if(selectedType==='SYNOP'&&!(result.rows||[]).length){const synopRows=await archive.getRange('SYNOP','12342',f.from,f.to,5000,true);if(synopRows.length)result={ok:true,rows:synopRows,count:synopRows.length,offset:0,limit:5000,fallback:true}}if(serial!==requestSerial)return;"
+          new="try{let result;if(selectedType==='ALL'){result=await searchAllTypes(f)}else{try{result=await archive.search(f,true)}catch(e){console.warn('ARCH Supabase search fallback:',e);result=await fallbackSearch(f)}if(selectedType==='SYNOP'&&!(result.rows||[]).length){const synopRows=await archive.getRange('SYNOP','12342',f.from,f.to,5000,true);if(synopRows.length)result={ok:true,rows:synopRows,count:synopRows.length,offset:0,limit:5000,fallback:true}}}if(serial!==requestSerial)return;"
+          once(old,new,'search branch')
+
+          once('visibleRows=dedupeSort(result.rows||[]);totalCount=',"visibleRows=selectedType==='ALL'?groupSort(result.rows||[]):dedupeSort(result.rows||[]);totalCount=",'visible rows')
+          once("renderStats(visibleRows,totalCount>visibleRows.length?'strona':'wynik');","renderStats(selectedType==='ALL'&&result.allRows?result.allRows:visibleRows,selectedType==='ALL'?'cały wynik':(totalCount>visibleRows.length?'strona':'wynik'));",'stats')
+          once("if(!result.fallback&&totalCount>visibleRows.length&&totalCount<=5000)loadCompleteStats(serial,f)","if(selectedType!=='ALL'&&!result.fallback&&totalCount>visibleRows.length&&totalCount<=5000)loadCompleteStats(serial,f)",'complete stats')
+
+          old="hideTooltip();const tbody=$('archiveTable').tBodies[0];tbody.replaceChildren();const frag=document.createDocumentFragment();visibleRows.forEach((row,index)=>{"
+          new="hideTooltip();const tbody=$('archiveTable').tBodies[0];tbody.replaceChildren();const frag=document.createDocumentFragment();let currentType='';visibleRows.forEach((row,index)=>{if(selectedType==='ALL'&&row._type!==currentType){currentType=row._type;const gh=document.createElement('tr'),gc=document.createElement('td');gh.className='type-group-row';gc.colSpan=2;const total=Number(allTypeCounts[currentType])||visibleRows.filter(x=>x._type===currentType).length;gc.innerHTML=`${escapeHtml(currentType)} <span class=\"type-group-count\">· ${total} rekordów w okresie</span>`;gh.appendChild(gc);frag.appendChild(gh)}"
+          once(old,new,'group render')
+
+          pattern=r"async function allForExport\(\)\{.*?return dedupeSort\(out\)\}"
+          repl="async function allForExport(){if(!lastFilters)return visibleRows;if(selectedType==='ALL'){const r=await searchAllTypes({...lastFilters,offset:0,limit:5000});return groupSort(r.allRows||[]).slice(0,50000)}const total=Math.min(totalCount,50000);if(total<=visibleRows.length&&pageOffset===0)return visibleRows;const out=[];for(let offset=0;offset<total;offset+=5000){$('copyResult').textContent=`Eksport: pobieranie ${Math.min(offset+5000,total)} / ${total}…`;const r=await archive.search({...lastFilters,offset,limit:Math.min(5000,total-offset)},false);out.push(...(r.rows||[]));if(!(r.rows||[]).length)break}return dedupeSort(out)}"
+          s,n=re.subn(pattern,lambda m:repl,s,count=1,flags=re.S)
+          if n!=1: raise SystemExit('export function marker not found')
+
+          once('Wszystkie prezentowane czasy są w UTC. Tabela główna pozostaje dwukolumnowa: data i godzina UTC | depesza.','Wszystkie prezentowane czasy są w UTC. Dla „WSZYSTKIE” wynik obejmuje METAR, SPECI, SYNOP i TAF; SYNOP jest pobierany dla WMO 12342, a typy są rozdzielone nagłówkami i uporządkowane datami. Tabela główna pozostaje dwukolumnowa: data i godzina UTC | depesza.','note')
+
+          p.write_text(s,encoding='utf-8')
+          PY
+
+      - name: Validate JavaScript
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          s=Path('arch.html').read_text(encoding='utf-8')
+          for marker in ['searchAllTypes','type-group-row',"type==='SYNOP'?'12342':aviation",'aviation_station']:
+              if marker not in s: raise SystemExit('missing '+marker)
+          blocks=re.findall(r'<script>(.*?)</script>',s,re.S)
+          Path('/tmp/arch-inline.js').write_text(blocks[-1],encoding='utf-8')
+          PY
+          node --check /tmp/arch-inline.js
+
+      - name: Commit and remove one-shot workflows
+        run: |
+          rm -f .github/workflows/one-shot-arch-all-group.yml
+          rm -f .github/workflows/one-shot-arch-all-group-v2.yml
+          git config user.name "prognozaepir-maintenance"
+          git config user.email "maintenance@prognozaepir.invalid"
+          git add arch.html .github/workflows/one-shot-arch-all-group.yml .github/workflows/one-shot-arch-all-group-v2.yml
+          git commit -m "ARCH: include SYNOP and group ALL results"
+          git push origin HEAD:main
