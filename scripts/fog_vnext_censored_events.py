@@ -2,11 +2,13 @@
 """Canonical censored-event reader for Fog Engine vNext.
 
 The corrected 2020-2024 package is authoritative for historical event
-boundaries.  Header matching is semantic rather than position-based so the
+boundaries. Header matching is semantic rather than position-based so the
 loader can audit the real CSV schema in CI without duplicating the dataset in
-the repository.  Start/end fields are mandatory.  At least one censoring field
-must be identifiable; otherwise the load fails loudly instead of silently
-turning censored onset/exit into exact timestamps.
+the repository. The canonical positive-event bounds are ``onset`` and
+``last_positive``; censoring intervals are metadata around those bounds and
+must never be substituted for them. At least one censoring field must be
+identifiable; otherwise the load fails loudly instead of silently turning
+censored onset/exit into exact timestamps.
 """
 from __future__ import annotations
 
@@ -71,17 +73,29 @@ def resolve_schema(fields):
     fields = list(fields or [])
     if not fields:
         raise RuntimeError("censored-event CSV has no header")
+
+    # The canonical corrected-v2 table uses onset/last_positive as the actual
+    # positive-event bounds. Interval fields such as
+    # onset_interval_start_reliable_clear and
+    # dissipation_interval_end_reliable_clear describe uncertainty outside the
+    # positive event; they may legitimately be blank when censored.
     start = _pick(
         fields,
-        exact=("event_start", "start", "start_time", "event_start_utc", "start_utc", "start_dt"),
+        exact=(
+            "onset", "event_start", "start", "start_time", "event_start_utc",
+            "start_utc", "start_dt",
+        ),
         all_tokens=("start",),
-        forbidden=("censor", "hour", "month", "state"),
+        forbidden=("censor", "interval", "reliable", "hour", "month", "state"),
     )
     end = _pick(
         fields,
-        exact=("event_end", "end", "end_time", "event_end_utc", "end_utc", "end_dt"),
+        exact=(
+            "last_positive", "event_end", "end", "end_time", "event_end_utc",
+            "end_utc", "end_dt",
+        ),
         all_tokens=("end",),
-        forbidden=("censor", "hour", "month", "state"),
+        forbidden=("censor", "interval", "reliable", "hour", "month", "state"),
     )
     event_id = _pick(
         fields,
@@ -112,6 +126,7 @@ def resolve_schema(fields):
         exact=(
             "right_censored", "right_censored_end", "end_right_censored",
             "fog_end_right_censored", "right_censor", "dissipation_censored",
+            "dissipation_right_censored",
         ),
         all_tokens=("right", "censor"),
         required=False,
