@@ -44,6 +44,43 @@ def main():
         assert rows[0]["left_censored"] is True
         assert rows[0]["right_censored"] is False
 
+    # Regression for the real corrected-v2 schema: a left-censored event may
+    # have no reliable clear timestamp before onset. The event itself still
+    # starts at onset and ends at last_positive.
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "real-schema.zip"
+        headers = [
+            "event_id", "onset", "last_positive",
+            "onset_interval_start_reliable_clear",
+            "onset_interval_end_first_positive",
+            "onset_left_censored",
+            "dissipation_interval_start_last_positive",
+            "dissipation_interval_end_reliable_clear",
+            "dissipation_right_censored",
+        ]
+        make_zip(
+            p,
+            headers,
+            [{
+                "event_id": "2",
+                "onset": "2020-05-04T04:30:00Z",
+                "last_positive": "2020-05-04T05:00:00Z",
+                "onset_interval_start_reliable_clear": "",
+                "onset_interval_end_first_positive": "2020-05-04T04:30:00Z",
+                "onset_left_censored": "True",
+                "dissipation_interval_start_last_positive": "2020-05-04T05:00:00Z",
+                "dissipation_interval_end_reliable_clear": "2020-05-04T05:30:00Z",
+                "dissipation_right_censored": "False",
+            }],
+        )
+        rows, schema = ce.load(p)
+        assert schema["start"] == "onset"
+        assert schema["end"] == "last_positive"
+        assert rows[0]["start"].isoformat() == "2020-05-04T04:30:00+00:00"
+        assert rows[0]["end"].isoformat() == "2020-05-04T05:00:00+00:00"
+        assert rows[0]["left_censored"] is True
+        assert rows[0]["right_censored"] is False
+
     # Unknown/censored transition target must not be converted into a negative.
     cases = [
         {"truth": {"event_id": "A", "x": True}, "lead_bucket": "3-6h", "s": 0.9},
