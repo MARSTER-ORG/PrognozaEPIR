@@ -153,6 +153,38 @@
     });
   }
 
+  function ddhh(t){
+    const d=new Date(+t);
+    return String(d.getUTCDate()).padStart(2,'0')+String(d.getUTCHours()).padStart(2,'0');
+  }
+
+  function tafPeriod(s,e){
+    const d=new Date(+e);
+    let endCode=ddhh(e);
+    if(d.getUTCHours()===0&&d.getUTCMinutes()===0&&d.getUTCSeconds()===0&&d.getUTCMilliseconds()===0){
+      const previous=new Date(+e-1);
+      endCode=String(previous.getUTCDate()).padStart(2,'0')+'24';
+    }
+    return ddhh(s)+'/'+endCode;
+  }
+
+  function canonicalizeTimeGroups(result,input,kernel){
+    if(!result?.taf)return result;
+    let taf=String(result.taf);
+    const mainPeriod=tafPeriod(+input.start,+input.end);
+    taf=taf.replace(/\b\d{4}\/\d{4}\b/,mainPeriod);
+    const groups=(result.groups||[]).map(g=>{
+      if(g?.kind==='FM'||!finite(+g?.s)||!finite(+g?.e))return{...g};
+      const oldText=String(g.text||'');
+      const text=oldText.replace(/\b\d{4}\/\d{4}\b/,tafPeriod(+g.s,+g.e));
+      if(oldText&&text!==oldText)taf=taf.replace(oldText,text);
+      return{...g,text};
+    });
+    const checks=kernel.validate(taf,{issue:+input.issue,start:+input.start,end:+input.end,msaFt:input.msaFt});
+    if(!checks.ok){const e=Error('TAF odrzucony po kanonicznym zapisie grup czasowych: '+checks.errors.join(' | '));e.validation=checks;throw e;}
+    return{...result,taf,groups,checks:{...result.checks,...checks}};
+  }
+
   function setLearningData(data={}){
     if(Object.prototype.hasOwnProperty.call(data,'adaptive'))learning.adaptive=data.adaptive;
     if(Object.prototype.hasOwnProperty.call(data,'fog'))learning.fog=data.fog;
@@ -196,20 +228,21 @@
       version:VERSION,rules:RULES,
       generate(input={}){
         const prepared=prepareRows(input);
-        const result=kernel.generate({...input,rows:prepared});
+        const rawResult=kernel.generate({...input,rows:prepared});
+        const result=canonicalizeTimeGroups(rawResult,input,kernel);
         const status=learningStatus();
         return{
           ...result,version:VERSION,name:NAME,
-          diagnostics:{...result.diagnostics,probabilisticLayer:'EPIR adaptive per-model/per-lead skill + verified MOS bias correction before Instruction kernel',mosPolicy:'T/Td/wind-speed bias only; no raw visibility correction because METAR 9999 is censored; direction bias diagnostic only',nowcastPolicy:'existing issue-time-safe METAR/SPECI anchor + neighbor observation context; no second observation anchor in v2.4',formalKernelVersion:core.ENGINE_VERSION,postGenerationMutation:false},
+          diagnostics:{...result.diagnostics,probabilisticLayer:'EPIR adaptive per-model/per-lead skill + verified MOS bias correction before Instruction kernel',mosPolicy:'T/Td/wind-speed bias only; no raw visibility correction because METAR 9999 is censored; direction bias diagnostic only',nowcastPolicy:'existing issue-time-safe METAR/SPECI anchor + neighbor observation context; no second observation anchor in v2.4',formalKernelVersion:core.ENGINE_VERSION,postGenerationMutation:false,timeGroupFormat:'UTC midnight at period end is encoded as DD24 and the final TAF is revalidated by the formal kernel'},
           learning:{...result.learning,active:status.loaded,sources:status,ruleMutation:false,note:'Uczenie i kalibracja modyfikują wyłącznie materiał meteorologiczny przed generacją. Instrukcja 11.2023 i końcowa walidacja pozostają w jednym formalnym kernelu.'}
         };
       },
       validate:(taf,meta)=>kernel.validate(taf,meta),
-      helpers:Object.freeze({...kernel.helpers,leadBucket,prepareRows,adaptiveFactor,adaptiveRelativeFactor,fogSkillFactor})
+      helpers:Object.freeze({...kernel.helpers,leadBucket,prepareRows,adaptiveFactor,adaptiveRelativeFactor,fogSkillFactor,tafPeriod})
     });
   }
 
   if(root){root.__PROGNOZA_EPIR_TAF_ENGINE_V24__=true;loadLearning().catch(()=>{});}
 
-  return Object.freeze({ENGINE_VERSION:VERSION,ENGINE_NAME:NAME,INSTRUCTION:AUTH,RULES,FORMAL_KERNEL_VERSION:core.ENGINE_VERSION,createEngine,validateTaf:(taf,meta)=>core.validateTaf(taf,meta),ready:loadLearning,setLearningData,learningStatus,helpers:Object.freeze({leadBucket,prepareRows,adaptiveFactor,adaptiveRelativeFactor,fogSkillFactor})});
+  return Object.freeze({ENGINE_VERSION:VERSION,ENGINE_NAME:NAME,INSTRUCTION:AUTH,RULES,FORMAL_KERNEL_VERSION:core.ENGINE_VERSION,createEngine,validateTaf:(taf,meta)=>core.validateTaf(taf,meta),ready:loadLearning,setLearningData,learningStatus,helpers:Object.freeze({leadBucket,prepareRows,adaptiveFactor,adaptiveRelativeFactor,fogSkillFactor,tafPeriod})});
 });
