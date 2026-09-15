@@ -14,6 +14,7 @@ on:
       - 'tests/fog-physics-vnext.test.js'
       - 'tests/test_fog_event_learning*.py'
       - 'tests/test_fog_vnext_stage2.py'
+      - 'data/learning/fog-vnext-promotion.json'
       - '.github/workflows/fog-vnext-validation.yml'
   workflow_dispatch:
 
@@ -39,6 +40,7 @@ jobs:
             scripts/fog_vnext_verification.py \
             scripts/build_fog_event_learning_v2.py \
             scripts/build_adaptive_weights_v2.py
+          python3 -m json.tool data/learning/fog-vnext-promotion.json >/dev/null
 
       - name: Physics scenarios and double-counting guards
         run: node tests/fog-physics-vnext.test.js
@@ -104,10 +106,13 @@ jobs:
           from pathlib import Path
           s=json.loads(Path('data/learning/fog-vnext-verification/summary.json').read_text(encoding='utf-8'))
           g=json.loads(Path('data/learning/fog-vnext-activation.json').read_text(encoding='utf-8'))
+          p=json.loads(Path('data/learning/fog-vnext-promotion.json').read_text(encoding='utf-8'))
           assert s['schema']=='prognozaepir-fog-vnext-verification-summary-v2'
           assert 'onset_next_1h' in s['target_counts']
           assert 'dissipation_next_1h' in s['target_counts']
-          assert g['mode'] in ('shadow','operational')
-          assert not g['operational_activation_ready'] or (g['statistical_ready'] and g['promotion_approved'])
-          print('stage2 verification smoke: OK')
+          assert p['schema']=='prognozaepir-fog-vnext-promotion-v1'
+          assert p['approved'] is False
+          assert g['mode']=='shadow'
+          assert g['operational_activation_ready'] is False
+          print('stage2 verification + promotion lock: OK')
           PY
