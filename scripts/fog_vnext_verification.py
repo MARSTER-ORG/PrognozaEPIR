@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
-"""Build forecast->truth verification cases for Fog Engine vNext.
+"""Event-aware forecast->truth verification for Fog Engine vNext.
 
-Only forecasts archived before their valid time are used. Physical inputs from
-one archive batch are fused similarly to the browser layer: ICON-D2 supplies
-shallow soil moisture, ECMWF supplies PBL and secondary soil moisture, while
-DMI/KNMI and the other available rows contribute atmospheric state. The script
-runs the canonical JS physics module through Node and calculates simple AUC
-ablations for soil moisture, PBL and surface cooling.
+Rules:
+- only explicit forecast runs archived before valid time are evaluated;
+- METAR/SPECI is primary truth, SYNOP only fallback/teacher;
+- hours from one fog episode are never treated as independent events in the
+  event-balanced metrics;
+- FG/fog_truth, BR, MIFG, VIS thresholds, onset and dissipation are separate
+  verification targets;
+- ablations quantify the incremental skill of soil moisture, PBL and surface
+  cooling;
+- activation is blocked until both statistical gates and explicit promotion
+  are satisfied.
 """
 from __future__ import annotations
 
 import json
-import math
 import subprocess
 from collections import defaultdict
 from datetime import timedelta
@@ -24,11 +28,18 @@ import fog_vnext_model_archive as archive
 OUT_DIR = mv.LEARNING / "fog-vnext-verification"
 CASES_PATH = OUT_DIR / "cases.jsonl"
 SUMMARY_PATH = OUT_DIR / "summary.json"
+ACTIVATION_PATH = mv.LEARNING / "fog-vnext-activation.json"
+PROMOTION_PATH = mv.LEARNING / "fog-vnext-promotion.json"
 NODE_EVAL = Path(__file__).with_name("fog_vnext_eval.js")
+LOW_ST_BASE_M = 300.0
 
 
 def finite(v):
     return mv.finite(v)
+
+
+def clamp(v, a=0.0, b=1.0):
+    return max(a, min(b, v))
 
 
 def weighted(rows, key):
@@ -40,13 +51,6 @@ def weighted(rows, key):
             s += float(v) * float(bw)
             w += float(bw)
     return s / w if w else None
-
-
-def first_finite(rows, key):
-    for r in rows:
-        if finite(r.get(key)):
-            return r.get(key)
-    return None
 
 
 def load_full_rows():
@@ -70,8 +74,7 @@ def precip12(rows_by_time, valid):
     total = 0.0
     n = 0
     for h in range(12):
-        k = mv.iso(valid - timedelta(hours=h))
-        r = rows_by_time.get(k)
+        r = rows_by_time.get(mv.iso(valid - timedelta(hours=h)))
         if r and finite(r.get("precipitation_mm")):
             total += max(0.0, float(r["precipitation_mm"]))
             n += 1
@@ -94,9 +97,12 @@ def consensus_hour(rows):
 def case_inputs(batch_rows):
     by_valid = defaultdict(list)
     for r in batch_rows:
-        by_valid[r.get("valid_time")].append(r)
-    consensus = {k: consensus_hour(v) for k, v in by_valid.items() if k}
-    consensus_maps = row_time_map([{"valid_time": k, **v} for k, v in consensus.items()])
+        if r.get("valid_time"):
+            by_valid[r["valid_time"]].append(r)
+    consensus = {k: consensus_hour(v) for k, v in by_valid.items()}
+    consensus_map = row_time_map([{"valid_time": k, **v} for k, v in consensus.items()])
+    ecmwf_batch = {r.get("valid_time"): r for r in batch_rows if r.get("model") == "ecmwf_ifs"}
+    icon_batch = {r.get("valid_time"): r for r in batch_rows if r.get("model") == "icon_d2"}
     out = []
 
     for valid_s, rows in sorted(by_valid.items()):
@@ -105,26 +111,21 @@ def case_inputs(batch_rows):
         if not valid or not archive_time or archive_time >= valid or valid > mv.utcnow():
             continue
         c = consensus.get(valid_s) or {}
-        c1 = consensus_maps.get(mv.iso(valid - timedelta(hours=1)))
-        c3 = consensus_maps.get(mv.iso(valid - timedelta(hours=3)))
+        c1 = consensus_map.get(mv.iso(valid - timedelta(hours=1)))
+        c3 = consensus_map.get(mv.iso(valid - timedelta(hours=3)))
         icon = next((r for r in rows if r.get("model") == "icon_d2"), None)
         ecmwf = next((r for r in rows if r.get("model") == "ecmwf_ifs"), None)
         dmi = next((r for r in rows if r.get("model") == "dmi_harmonie_arome_europe"), None)
 
-        t, td, rh, ws = c.get("temperature_c"), c.get("dew_point_c"), c.get("relative_humidity_pct"), c.get("wind_speed_ms")
+        t, td = c.get("temperature_c"), c.get("dew_point_c")
+        rh, ws = c.get("relative_humidity_pct"), c.get("wind_speed_ms")
         ts = (ecmwf or {}).get("surface_temperature_c")
         if not finite(ts):
             ts = (icon or {}).get("surface_temperature_c")
-        ts1 = None
-        ts3 = None
-        ecmwf_batch = {r.get("valid_time"): r for r in batch_rows if r.get("model") == "ecmwf_ifs"}
-        icon_batch = {r.get("valid_time"): r for r in batch_rows if r.get("model") == "icon_d2"}
-        for delta, target in ((1, "ts1"), (3, "ts3")):
-            k = mv.iso(valid - timedelta(hours=delta))
-            rr = ecmwf_batch.get(k) or icon_batch.get(k)
-            val = rr.get("surface_temperature_c") if rr else None
-            if target == "ts1": ts1 = val
-            else: ts3 = val
+        ts1row = ecmwf_batch.get(mv.iso(valid - timedelta(hours=1))) or icon_batch.get(mv.iso(valid - timedelta(hours=1)))
+        ts3row = ecmwf_batch.get(mv.iso(valid - timedelta(hours=3))) or icon_batch.get(mv.iso(valid - timedelta(hours=3)))
+        ts1 = ts1row.get("surface_temperature_c") if ts1row else None
+        ts3 = ts3row.get("surface_temperature_c") if ts3row else None
 
         sc = t - ts if finite(t) and finite(ts) else None
         sc1 = c1.get("temperature_c") - ts1 if c1 and finite(c1.get("temperature_c")) and finite(ts1) else None
@@ -151,7 +152,7 @@ def case_inputs(batch_rows):
             "soilIcon01": (icon or {}).get("soil_moisture_0_to_1cm"),
             "soilIcon13": (icon or {}).get("soil_moisture_1_to_3cm"),
             "soilEcmwf07": (ecmwf or {}).get("soil_moisture_0_to_7cm"),
-            "precip12": precip12(consensus_maps, valid),
+            "precip12": precip12(consensus_map, valid),
             "pbl": pbl,
             "deltaPbl1": pbl - pbl1 if finite(pbl) and finite(pbl1) else None,
             "deltaPbl3": pbl - pbl3 if finite(pbl) and finite(pbl3) else None,
@@ -174,8 +175,19 @@ def case_inputs(batch_rows):
     return out
 
 
+def lowest_cloud_base(obs):
+    vals = []
+    for c in (obs or {}).get("clouds") or []:
+        v = c.get("base_m_agl")
+        if finite(v):
+            vals.append(float(v))
+    return min(vals) if vals else None
+
+
 def obs_truth(valid_s, metar_by_hour, synop_by_hour):
     valid = mv.parse_dt(valid_s)
+    if not valid:
+        return None
     key = mv.iso(valid.replace(minute=0, second=0, microsecond=0))
     m = metar_by_hour.get(key)
     s = synop_by_hour.get(key)
@@ -185,20 +197,91 @@ def obs_truth(valid_s, metar_by_hour, synop_by_hour):
     cls = truth.classify(obs)
     vis = obs.get("visibility_m")
     known_vis = finite(vis)
-    br_vis = known_vis and 1000 <= float(vis) <= 5000 and not cls["fog"]
-    clear = known_vis and float(vis) > 5000 and not cls["fog"] and not cls["br"] and not cls["mifg"]
+    mifg = bool(cls["mifg"])
+    fog = bool(cls["fog"])
+    br_vis = known_vis and 1000 <= float(vis) <= 5000 and not fog and not mifg
+    br = bool((cls["br"] or br_vis) and not fog and not mifg)
+    cbh = lowest_cloud_base(obs)
+    low_st = bool(not fog and finite(cbh) and cbh <= LOW_ST_BASE_M)
+    fog_free = bool(known_vis and float(vis) > 5000 and not fog and not br and not mifg)
+    true_clear = bool(fog_free and not low_st)
+    if fog:
+        state = "FG"
+    elif mifg:
+        state = "MIFG"
+    elif br:
+        state = "BR"
+    elif low_st:
+        state = "LOW_ST"
+    elif true_clear:
+        state = "CLEAR"
+    else:
+        state = "UNKNOWN"
     return {
         "source": "SPECI" if m and str(m.get("type") or "").upper() == "SPECI" else ("METAR" if m else "SYNOP"),
         "raw": obs.get("canonical_raw") or obs.get("raw"),
         "visibility_m": vis,
-        "fog_truth": bool(cls["fog"]),
-        "mifg_truth": bool(cls["mifg"]),
-        "br_truth": bool(cls["br"] or br_vis),
+        "lowest_cloud_base_m": cbh,
+        "state": state,
+        "fog_truth": fog,
+        "mifg_truth": mifg,
+        "br_truth": br,
+        "vis_lt_1000": bool(known_vis and float(vis) < 1000),
         "vis_lt_500": bool(known_vis and float(vis) < 500),
         "vis_lt_200": bool(known_vis and float(vis) < 200),
-        "clear_truth": bool(clear),
-        "truth_known": bool(known_vis or cls["fog"] or cls["br"] or cls["mifg"]),
+        "low_st_truth": low_st,
+        "fog_free_truth": fog_free,
+        "clear_truth": true_clear,
+        "truth_known": bool(known_vis or fog or br or mifg),
     }
+
+
+def build_truth_timeline(metar_by_hour, synop_by_hour):
+    keys = sorted(set(metar_by_hour) | set(synop_by_hour))
+    timeline = {}
+    for k in keys:
+        tr = obs_truth(k, metar_by_hour, synop_by_hour)
+        if tr:
+            timeline[k] = tr
+
+    event_map = {}
+    current_id = None
+    current_last = None
+    serial = 0
+    for k in keys:
+        dt = mv.parse_dt(k)
+        tr = timeline.get(k)
+        if not dt or not tr:
+            continue
+        obscured = tr["state"] in {"FG", "MIFG", "BR"}
+        if obscured:
+            if current_id is None or current_last is None or dt - current_last > timedelta(hours=2):
+                serial += 1
+                current_id = f"OBS-{dt:%Y%m%dT%HZ}-{serial:03d}"
+            event_map[k] = current_id
+            current_last = dt
+        elif tr["state"] in {"CLEAR", "LOW_ST"}:
+            current_id = None
+            current_last = None
+    return timeline, event_map
+
+
+def attach_transition_truth(valid_s, tr, timeline, event_map):
+    valid = mv.parse_dt(valid_s)
+    if not valid:
+        return tr
+    next_key = mv.iso(valid + timedelta(hours=1))
+    nxt = timeline.get(next_key)
+    current_fog = bool(tr.get("fog_truth"))
+    current_known = bool(tr.get("truth_known"))
+    next_known = bool(nxt and nxt.get("truth_known"))
+    tr = dict(tr)
+    tr["event_id"] = event_map.get(valid_s) or (f"CONTROL-{valid:%Y%m%d}" if tr.get("state") in {"CLEAR", "LOW_ST"} else None)
+    tr["onset_next_1h"] = bool(current_known and not current_fog and next_known and nxt.get("fog_truth"))
+    tr["fog_exit_next_1h"] = bool(current_fog and next_known and not nxt.get("fog_truth"))
+    tr["dissipation_next_1h"] = bool(current_fog and next_known and nxt.get("clear_truth"))
+    tr["fog_to_low_st_next_1h"] = bool(current_fog and next_known and nxt.get("low_st_truth") and not nxt.get("fog_truth"))
+    return tr
 
 
 def evaluate_variants(inputs):
@@ -216,16 +299,160 @@ def evaluate_variants(inputs):
 
 
 def auc(pairs):
-    pos = [s for s, y in pairs if y and finite(s)]
-    neg = [s for s, y in pairs if not y and finite(s)]
+    pos = [float(s) for s, y in pairs if y and finite(s)]
+    neg = [float(s) for s, y in pairs if not y and finite(s)]
     if not pos or not neg:
         return None
     wins = ties = 0
     for p in pos:
         for n in neg:
-            if p > n: wins += 1
-            elif p == n: ties += 1
+            if p > n:
+                wins += 1
+            elif p == n:
+                ties += 1
     return (wins + 0.5 * ties) / (len(pos) * len(neg))
+
+
+def brier(pairs):
+    vals = [(clamp(float(s)), 1.0 if y else 0.0) for s, y in pairs if finite(s)]
+    if not vals:
+        return None
+    return sum((p - y) ** 2 for p, y in vals) / len(vals)
+
+
+def binary_metrics(pairs):
+    valid = [(float(s), bool(y)) for s, y in pairs if finite(s)]
+    pos = sum(1 for _s, y in valid if y)
+    neg = len(valid) - pos
+    av = auc(valid)
+    br = brier(valid)
+    return {
+        "n": len(valid),
+        "positive": pos,
+        "negative": neg,
+        "auc": round(av, 4) if av is not None else None,
+        "brier": round(br, 4) if br is not None else None,
+        "mean_positive_score": round(sum(s for s, y in valid if y) / pos, 4) if pos else None,
+        "mean_negative_score": round(sum(s for s, y in valid if not y) / neg, 4) if neg else None,
+    }
+
+
+def direct_visibility_risk(vis):
+    if not finite(vis):
+        return None
+    return 1.0 - clamp((float(vis) - 700.0) / 9300.0)
+
+
+def event_balanced_pairs(cases, score_getter, truth_key):
+    grouped = defaultdict(list)
+    for c in cases:
+        event_id = c["truth"].get("event_id")
+        if not event_id:
+            continue
+        grouped[(event_id, c.get("lead_bucket"))].append(c)
+    out = []
+    for rows in grouped.values():
+        scores = [score_getter(c) for c in rows]
+        scores = [s for s in scores if finite(s)]
+        if not scores:
+            continue
+        y = any(bool(c["truth"].get(truth_key)) for c in rows)
+        out.append((max(scores), y))
+    return out
+
+
+def target_metrics(cases, score_getter, truth_key):
+    hourly = [(score_getter(c), c["truth"].get(truth_key)) for c in cases]
+    event_pairs = event_balanced_pairs(cases, score_getter, truth_key)
+    return {"hourly": binary_metrics(hourly), "event_balanced": binary_metrics(event_pairs)}
+
+
+def per_lead_metrics(cases):
+    out = {}
+    for bucket in [x[2] for x in mv.LEAD_BUCKETS]:
+        rows = [c for c in cases if c.get("lead_bucket") == bucket]
+        out[bucket] = target_metrics(rows, lambda c: c["vnext"].get("physics_score", 0) / 100.0, "fog_truth")
+    return out
+
+
+def field_coverage(cases, key):
+    if not cases:
+        return 0.0
+    return sum(1 for c in cases if finite(c["forecast"].get(key))) / len(cases)
+
+
+def read_promotion():
+    if not PROMOTION_PATH.exists():
+        return {"approved": False, "reason": "promotion file missing"}
+    try:
+        data = json.loads(PROMOTION_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {"approved": False}
+    except Exception:
+        return {"approved": False, "reason": "promotion file invalid"}
+
+
+def activation_gate(cases, metrics, ablation, lead_metrics):
+    fog_event_ids = {c["truth"].get("event_id") for c in cases if c["truth"].get("fog_truth") and c["truth"].get("event_id")}
+    onset_event_ids = {c["truth"].get("event_id") for c in cases if c["truth"].get("onset_next_1h") and c["truth"].get("event_id")}
+    good_leads = 0
+    for row in lead_metrics.values():
+        m = row["event_balanced"]
+        if m["positive"] >= 3 and m["negative"] >= 5:
+            good_leads += 1
+
+    full_auc = metrics["fog_truth"]["event_balanced"]["auc"]
+    baseline_auc = metrics["direct_visibility_baseline"]["event_balanced"]["auc"]
+    blockers = []
+    if len(cases) < 300:
+        blockers.append(f"cases {len(cases)}/300")
+    fog_hours = metrics["fog_truth"]["hourly"]["positive"]
+    if fog_hours < 30:
+        blockers.append(f"fog-positive hours {fog_hours}/30")
+    if len(fog_event_ids) < 8:
+        blockers.append(f"independent fog events {len(fog_event_ids)}/8")
+    if len(onset_event_ids) < 5:
+        blockers.append(f"onset events {len(onset_event_ids)}/5")
+    if good_leads < 3:
+        blockers.append(f"lead buckets with positive+negative events {good_leads}/3")
+    if full_auc is None or full_auc < 0.60:
+        blockers.append(f"event-balanced fog AUC {full_auc} < 0.60")
+    if full_auc is not None and baseline_auc is not None and full_auc + 0.02 < baseline_auc:
+        blockers.append(f"vNext AUC {full_auc} trails direct-VIS baseline {baseline_auc}")
+
+    for name, row in ablation.items():
+        delta = row.get("delta_event_auc")
+        if delta is not None and delta < -0.03:
+            blockers.append(f"{name} degrades event AUC by {abs(delta):.3f}")
+
+    coverage = {
+        "soil": round(max(field_coverage(cases, "soil_moisture_icon_0_1"), field_coverage(cases, "soil_moisture_ecmwf_0_7")), 3),
+        "pbl": round(field_coverage(cases, "pbl_m"), 3),
+        "surface_temperature": round(field_coverage(cases, "surface_temperature_c"), 3),
+    }
+    for name, value in coverage.items():
+        if value < 0.50:
+            blockers.append(f"{name} coverage {value:.1%} < 50%")
+
+    statistical_ready = not blockers
+    promotion = read_promotion()
+    approved = bool(promotion.get("approved"))
+    operational_ready = bool(statistical_ready and approved)
+    if statistical_ready and not approved:
+        blockers.append("explicit promotion approval missing")
+
+    return {
+        "schema": "prognozaepir-fog-vnext-activation-v1",
+        "generated_at": mv.iso(mv.utcnow()),
+        "mode": "operational" if operational_ready else "shadow",
+        "statistical_ready": statistical_ready,
+        "operational_activation_ready": operational_ready,
+        "promotion_approved": approved,
+        "independent_fog_events": len(fog_event_ids),
+        "independent_onset_events": len(onset_event_ids),
+        "lead_buckets_ready": good_leads,
+        "field_coverage": coverage,
+        "blockers": blockers,
+    }
 
 
 def main():
@@ -234,26 +461,32 @@ def main():
     for r in rows:
         if r.get("archive_time") and r.get("valid_time"):
             by_batch[r["archive_time"]].append(r)
-    metar_by_hour, synop_by_hour = mv.build_observation_maps()
 
-    meta = []
-    inputs = []
+    metar_by_hour, synop_by_hour = mv.build_observation_maps()
+    timeline, event_map = build_truth_timeline(metar_by_hour, synop_by_hour)
+    meta, inputs = [], []
     for batch_rows in by_batch.values():
         for valid_s, archive_time, source_rows, base in case_inputs(batch_rows):
-            truth_row = obs_truth(valid_s, metar_by_hour, synop_by_hour)
-            if not truth_row or not truth_row["truth_known"]:
+            tr = obs_truth(valid_s, metar_by_hour, synop_by_hour)
+            if not tr or not tr["truth_known"]:
                 continue
-            meta.append((valid_s, archive_time, source_rows, base, truth_row))
+            tr = attach_transition_truth(valid_s, tr, timeline, event_map)
+            meta.append((valid_s, archive_time, source_rows, base, tr))
             inputs.append(base)
 
     evaluated = evaluate_variants(inputs) if inputs else []
     cases = []
     for (valid_s, archive_time, source_rows, base, tr), ev in zip(meta, evaluated):
         full, no_soil, no_pbl, no_sfc = ev
+        valid = mv.parse_dt(valid_s)
+        lead_h = (valid - archive_time).total_seconds() / 3600.0 if valid else None
+        lead_bucket = mv.lead_bucket(lead_h) if finite(lead_h) else None
         case = {
-            "schema": "prognozaepir-fog-vnext-verification-v1",
+            "schema": "prognozaepir-fog-vnext-verification-v2",
             "archive_time": mv.iso(archive_time),
             "valid_time": valid_s,
+            "archive_lead_hours": round(lead_h, 2) if finite(lead_h) else None,
+            "lead_bucket": lead_bucket,
             "models": sorted({r.get("model") for r in source_rows if r.get("model")}),
             "model_runs": {r.get("model"): r.get("model_run_time") for r in source_rows if r.get("model")},
             "forecast": {
@@ -263,38 +496,70 @@ def main():
                 "soil_moisture_ecmwf_0_7": base.get("soilEcmwf07"), "pbl_m": base.get("pbl"), "surface_temperature_c": base.get("tsurface"),
             },
             "vnext": full,
+            "direct_visibility_baseline": direct_visibility_risk(base.get("visibility")),
             "ablation": {"no_soil": no_soil, "no_pbl": no_pbl, "no_surface_cooling": no_sfc},
             "truth": tr,
         }
         cases.append(case)
 
-    pairs = {
-        "full": [(c["vnext"].get("physics_score"), c["truth"]["fog_truth"]) for c in cases],
-        "no_soil": [(c["ablation"]["no_soil"].get("physics_score"), c["truth"]["fog_truth"]) for c in cases],
-        "no_pbl": [(c["ablation"]["no_pbl"].get("physics_score"), c["truth"]["fog_truth"]) for c in cases],
-        "no_surface_cooling": [(c["ablation"]["no_surface_cooling"].get("physics_score"), c["truth"]["fog_truth"]) for c in cases],
+    def physics(c):
+        v = c["vnext"].get("physics_score")
+        return v / 100.0 if finite(v) else None
+
+    def dissipation(c):
+        v = c["vnext"].get("dissipation")
+        return v / 100.0 if finite(v) else None
+
+    def baseline(c):
+        return c.get("direct_visibility_baseline")
+
+    metrics = {
+        "fog_truth": target_metrics(cases, physics, "fog_truth"),
+        "vis_lt_1000": target_metrics(cases, physics, "vis_lt_1000"),
+        "vis_lt_500": target_metrics(cases, physics, "vis_lt_500"),
+        "vis_lt_200": target_metrics(cases, physics, "vis_lt_200"),
+        "onset_next_1h": target_metrics(cases, physics, "onset_next_1h"),
+        "dissipation_next_1h": target_metrics([c for c in cases if c["truth"].get("fog_truth")], dissipation, "dissipation_next_1h"),
+        "direct_visibility_baseline": target_metrics(cases, baseline, "fog_truth"),
     }
-    aucs = {k: auc(v) for k, v in pairs.items()}
-    positives = sum(1 for c in cases if c["truth"]["fog_truth"])
+    target_counts = {
+        k: sum(1 for c in cases if c["truth"].get(k))
+        for k in ("fog_truth", "br_truth", "mifg_truth", "vis_lt_1000", "vis_lt_500", "vis_lt_200", "onset_next_1h", "fog_exit_next_1h", "dissipation_next_1h", "fog_to_low_st_next_1h")
+    }
+
+    full_auc = metrics["fog_truth"]["event_balanced"]["auc"]
+    ablation = {}
+    for name, field in (("soil", "no_soil"), ("pbl", "no_pbl"), ("surface_cooling", "no_surface_cooling")):
+        def getter(c, f=field):
+            v = c["ablation"][f].get("physics_score")
+            return v / 100.0 if finite(v) else None
+        m = target_metrics(cases, getter, "fog_truth")
+        a = m["event_balanced"]["auc"]
+        ablation[name] = {
+            "metrics": m,
+            "delta_event_auc": round(full_auc - a, 4) if full_auc is not None and a is not None else None,
+        }
+
+    lead_metrics = per_lead_metrics(cases)
+    activation = activation_gate(cases, metrics, ablation, lead_metrics)
     summary = {
-        "schema": "prognozaepir-fog-vnext-verification-summary-v1",
+        "schema": "prognozaepir-fog-vnext-verification-summary-v2",
         "generated_at": mv.iso(mv.utcnow()),
         "cases": len(cases),
-        "fog_positive": positives,
-        "fog_negative": len(cases) - positives,
-        "auc": {k: round(v, 4) if v is not None else None for k, v in aucs.items()},
-        "incremental_auc": {
-            "soil": round(aucs["full"] - aucs["no_soil"], 4) if aucs["full"] is not None and aucs["no_soil"] is not None else None,
-            "pbl": round(aucs["full"] - aucs["no_pbl"], 4) if aucs["full"] is not None and aucs["no_pbl"] is not None else None,
-            "surface_cooling": round(aucs["full"] - aucs["no_surface_cooling"], 4) if aucs["full"] is not None and aucs["no_surface_cooling"] is not None else None,
-        },
-        "operational_activation_ready": bool(len(cases) >= 200 and positives >= 20 and aucs["full"] is not None),
-        "note": "AUC is diagnostic only; activation additionally requires stable lead-time/event verification and no regression in VIS/TAF outcomes.",
+        "batches": len(by_batch),
+        "target_counts": target_counts,
+        "metrics": metrics,
+        "per_lead_fog_truth": lead_metrics,
+        "ablation": ablation,
+        "activation": activation,
+        "method": "explicit forecast-run -> later METAR/SPECI truth; SYNOP fallback; event-balanced metrics prevent one long fog episode from dominating",
     }
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     CASES_PATH.write_text("".join(json.dumps(c, ensure_ascii=False, separators=(",", ":")) + "\n" for c in cases), encoding="utf-8")
     SUMMARY_PATH.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps(summary, ensure_ascii=False))
+    ACTIVATION_PATH.write_text(json.dumps(activation, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps({"cases": len(cases), "targets": target_counts, "activation": activation}, ensure_ascii=False))
 
 
 if __name__ == "__main__":
