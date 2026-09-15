@@ -10,7 +10,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import fog_vnext_ssfc_diagnostics as d
 
 
-def case(event_id, fog, full_score, no_score, *, phase_truth=None, vis=10000, mechanism="RAD", ssfc=70, complete=True, saturation=72, physics=68, forecast_phase="pre-onset"):
+def case(event_id, fog, full_score, no_score, *, phase_truth=None, vis=10000, mechanism="RAD", ssfc=70, complete=True, saturation=72, physics=0.68, forecast_phase="pre-onset"):
     tr = {
         "event_id": event_id,
         "fog_truth": fog,
@@ -20,7 +20,7 @@ def case(event_id, fog, full_score, no_score, *, phase_truth=None, vis=10000, me
         "fog_exit_next_1h": False,
     }
     v = {
-        "model_final_shadow": full_score * 100,
+        "model_final_shadow": full_score,
         "mechanism1": mechanism,
         "SSFC_COOL": ssfc,
         "SATURATION": saturation,
@@ -34,17 +34,17 @@ def case(event_id, fog, full_score, no_score, *, phase_truth=None, vis=10000, me
     return {
         "lead_bucket": "3-12h",
         "vnext": v,
-        "ablation": {"no_surface_cooling": {"model_final_shadow": no_score * 100}},
+        "ablation": {"no_surface_cooling": {"model_final_shadow": no_score}},
         "truth": tr,
     }
 
 
 def main():
     rows = [
-        case("F1", True, 0.85, 0.65, vis=300, saturation=84, physics=83),
-        case("F2", True, 0.75, 0.55, vis=800, saturation=71, physics=74),
-        case("C1", False, 0.15, 0.25, saturation=41, physics=39),
-        case("C2", False, 0.25, 0.35, complete=False, saturation=58, physics=52),
+        case("F1", True, 0.85, 0.65, vis=300, saturation=84, physics=0.83),
+        case("F2", True, 0.75, 0.55, vis=800, saturation=71, physics=0.74),
+        case("C1", False, 0.15, 0.25, saturation=41, physics=0.39),
+        case("C2", False, 0.25, 0.35, complete=False, saturation=58, physics=0.52),
     ]
     m = d.metric_block(rows)
     assert m["cases"] == 4
