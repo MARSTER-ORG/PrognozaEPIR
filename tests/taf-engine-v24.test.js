@@ -24,8 +24,7 @@ assert.equal(E.FORMAL_KERNEL_VERSION,'2.3.0');
 assert.strictEqual(E.RULES,Core.RULES);
 assert.equal(E.INSTRUCTION,'Instrukcja opracowywania prognoz TAF, Edycja (A), 11.2023');
 
-// Neutral learning must not alter the TAF text. 2.4 is a pre-processing facade,
-// never a post-generation text mutator.
+// Neutral learning must not alter the TAF text when no midnight DD24 canonicalization is needed.
 E.setLearningData({adaptive:null,fog:null,verification:null});
 const coreNeutral=generate(Core);
 const v24Neutral=generate(E);
@@ -85,6 +84,16 @@ assert.equal((gatedResult.taf.match(/PROB30/g)||[]).length,0,gatedResult.taf);
 assert.ok(!/\b(?:FG|FZFG)\b/.test(gatedResult.taf),gatedResult.taf);
 assert.equal(gatedResult.checks.ok,true);
 assert.equal(gatedResult.learning.ruleMutation,false);
+
+// EPIR 11Z issue: 12-24Z validity must be encoded as 1512/1524, not 1512/1600.
+{
+  const s=Date.UTC(2026,8,15,12),e=s+12*H,iss=s-H;
+  const rows=baseRows().map((r,i)=>({...r,t:s+i*H}));
+  const q=E.createEngine().generate({station:'EPIR',issue:iss,start:s,end:e,rows,rowsAlreadyAnchored:true});
+  assert.match(q.taf,/^TAF EPIR 151100Z 1512\/1524\s/);
+  assert.ok(!q.taf.includes('1512/1600'),q.taf);
+  assert.equal(E.validateTaf(q.taf,{issue:iss,start:s,end:e}).ok,true);
+}
 
 // The formal validator remains the single Instruction 11/2023 gate.
 assert.equal(E.validateTaf('TAF EPIR 132300Z 1400/1412 22004KT CAVOK=',{issue,start,end}).ok,true);
