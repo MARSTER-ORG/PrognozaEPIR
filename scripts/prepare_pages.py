@@ -114,18 +114,18 @@ def patch_index() -> None:
     for name in names:
         s = strip_script(s, name)
     addons = [
-        '<script src="index-fixes.js"></script>',
-        '<script src="axis-layout-fix.js"></script>',
-        '<script src="visual-style-fix.js"></script>',
-        '<script src="meteogram-layout-v2.js"></script>',
-        '<script src="meteogram-visfog-split.js"></script>',
-        '<script src="rh-axis-fix.js"></script>',
-        '<script src="meteogram-visfog-cleanup.js"></script>',
-        '<script src="day-night-fix.js"></script>',
-        '<script src="observation-engine.js"></script>',
+        f'<script src="index-fixes.js?v={ASSET_V}"></script>',
+        f'<script src="axis-layout-fix.js?v={ASSET_V}"></script>',
+        f'<script src="visual-style-fix.js?v={ASSET_V}"></script>',
+        f'<script src="meteogram-layout-v2.js?v={ASSET_V}"></script>',
+        f'<script src="meteogram-visfog-split.js?v={ASSET_V}"></script>',
+        f'<script src="rh-axis-fix.js?v={ASSET_V}"></script>',
+        f'<script src="meteogram-visfog-cleanup.js?v={ASSET_V}"></script>',
+        f'<script src="day-night-fix.js?v={ASSET_V}"></script>',
+        f'<script src="observation-engine.js?v={ASSET_V}"></script>',
         f'<script src="mifg-engine.js?v={ASSET_V}"></script>',
-        '<script src="fog-meteogram-overlay.js"></script>',
-        '<script src="shortcut-mode.js"></script>',
+        f'<script src="fog-meteogram-overlay.js?v={ASSET_V}"></script>',
+        f'<script src="shortcut-mode.js?v={ASSET_V}"></script>',
     ]
     s = s.replace("</body>", "\n".join(addons) + "\n</body>", 1)
     wr(p, s)

@@ -568,6 +568,11 @@
         baseDraw();
         drawPressureFill();
         drawFogBars();
+        try {
+          if (typeof window.PrognozaEPIRRedrawWindForeground === 'function') {
+            window.PrognozaEPIRRedrawWindForeground();
+          }
+        } catch (_) { }
       };
       window.__epirFogMeteogramDrawWrapped = true;
     }

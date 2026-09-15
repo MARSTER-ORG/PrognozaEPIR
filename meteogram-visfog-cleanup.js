@@ -176,6 +176,8 @@
     ctx.restore();
   }
 
+  window.PrognozaEPIRRedrawWindForeground = redrawWindPanelForeground;
+
   function installFogHoverTooltip() {
     const canvas = document.getElementById('meteo');
     if (!canvas || canvas.dataset.epirFogHoverInstalled === '1') return;
