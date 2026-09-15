@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
+import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -28,6 +31,41 @@ assert len(events) == 2, events
 assert events[0].first_state == 'BR'
 assert events[0].br and events[0].mifg and events[0].fog
 assert not events[1].fog and events[1].br
+
+# Canonical historical ZIP loader: locate the JSONL even when the handoff ZIP
+# contains it in a nested directory, preserve fog_truth and keep missing AUTO
+# visibility UNKNOWN rather than CLEAR.
+with tempfile.TemporaryDirectory() as td:
+    archive_path = Path(td) / 'fog_training_2020_2024_corrected_v2.zip'
+    historical = [
+        {
+            'obs_time': '2024-10-01T03:00:00Z',
+            'canonical_raw': 'METAR EPIR 010300Z AUTO 00000KT 0800 FG VV001 08/08 Q1018=',
+            'visibility_m': 800,
+            'fog_truth': True,
+        },
+        {
+            'obs_time': '2024-10-01T04:00:00Z',
+            'canonical_raw': 'METAR EPIR 010400Z AUTO 00000KT 5000 MIFG NSC 08/08 Q1018=',
+            'visibility_m': 5000,
+            'fog_truth': False,
+        },
+        {
+            'obs_time': '2024-10-01T05:00:00Z',
+            'canonical_raw': 'METAR EPIR 010500Z AUTO 00000KT NCD 08/08 Q1018=',
+            'visibility_m': None,
+            'fog_truth': False,
+        },
+    ]
+    payload = ''.join(json.dumps(row) + '\n' for row in historical)
+    with zipfile.ZipFile(archive_path, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr('FogEngine_vNext_training/aviation_observations_2020_2024.jsonl', payload)
+
+    loaded = backfill.load_historical_training_rows(archive_path)
+    assert len(loaded) == 3
+    assert loaded[0]['raw'] == historical[0]['canonical_raw']
+    classified = backfill.points_from_rows(loaded)
+    assert [x[2] for x in classified] == ['FG', 'MIFG', 'UNKNOWN'], classified
 
 # A clearly separated score must give perfect discrimination.
 m = verify.binary_metrics([(0.95, True), (0.8, True), (0.2, False), (0.05, False)])
