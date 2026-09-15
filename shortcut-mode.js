@@ -243,6 +243,13 @@
       normalizeWindPanels();
       const out = baseDraw.apply(this,arguments);
       drawContrastSeries();
+      // shortcut-mode.js is loaded last. Repaint the canonical wind panel once
+      // more so WS/G lines can never cover the direction arrows.
+      try {
+        if (typeof window.PrognozaEPIRRedrawWindForeground === 'function') {
+          window.PrognozaEPIRRedrawWindForeground();
+        }
+      } catch (_) { }
       return out;
     };
     window.__epirContrastSeriesWrapped = true;
