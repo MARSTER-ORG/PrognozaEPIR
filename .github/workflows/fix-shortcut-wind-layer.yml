@@ -1,0 +1,70 @@
+name: Fix final shortcut wind layer
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-shortcut-wind-layer.yml'
+permissions:
+  contents: write
+concurrency:
+  group: fix-shortcut-wind-layer
+  cancel-in-progress: true
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Make wind arrows the absolute final shortcut layer
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('shortcut-mode.js')
+          s=p.read_text(encoding='utf-8')
+          old="""      const out = baseDraw.apply(this,arguments);
+      drawContrastSeries();
+      return out;"""
+          new="""      const out = baseDraw.apply(this,arguments);
+      drawContrastSeries();
+      // shortcut-mode.js is loaded last. Repaint the canonical wind panel once
+      // more so WS/G lines can never cover the direction arrows.
+      try {
+        if (typeof window.PrognozaEPIRRedrawWindForeground === 'function') {
+          window.PrognozaEPIRRedrawWindForeground();
+        }
+      } catch (_) { }
+      return out;"""
+          if old in s:
+              s=s.replace(old,new,1)
+          elif 'WS/G lines can never cover the direction arrows' not in s:
+              raise SystemExit('shortcut draw wrapper marker missing')
+          p.write_text(s,encoding='utf-8')
+          PY
+      - name: Validate patch
+        shell: bash
+        run: |
+          node --check shortcut-mode.js
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('shortcut-mode.js').read_text(encoding='utf-8')
+          marker="drawContrastSeries();"
+          final="window.PrognozaEPIRRedrawWindForeground();"
+          assert marker in s and final in s
+          assert s.index(final, s.index(marker)) > s.index(marker)
+          print('OK: canonical wind foreground runs after shortcut contrast series')
+          PY
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name 'prognozaepir-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add shortcut-mode.js
+          git diff --cached --quiet && exit 0
+          git commit -m 'Keep wind arrows above shortcut contrast line'
+          for attempt in 1 2 3 4 5; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            sleep $((attempt*4))
+          done
+          exit 1
