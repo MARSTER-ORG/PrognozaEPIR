@@ -38,7 +38,7 @@ jobs:
             scripts/build_fog_event_learning_v2.py \
             scripts/build_adaptive_weights_v2.py
 
-      - name: Physics scenarios
+      - name: Physics scenarios and double-counting guards
         run: node tests/fog-physics-vnext.test.js
 
       - name: Fog truth policy
@@ -61,11 +61,12 @@ jobs:
             'precipitation':[0,0], 'visibility':[8000,5000], 'wind_speed_10m':[1.5,1.0],
             'soil_moisture_0_to_1cm':[.31,.32], 'soil_moisture_1_to_3cm':[.30,.31],
             'soil_temperature_0cm':[8,7.5], 'soil_temperature_6cm':[9,8.7],
-            'surface_temperature':[7.5,7.0], 'is_day':[0,0]}}
+            'surface_temperature':[7.5,7.0], 'shortwave_radiation':[0,0], 'is_day':[0,0]}}
           rows=a.rows_from('icon_d2',run,batch,data)
           assert len(rows)==2
           assert rows[0]['model_run_time']=='2026-09-15T09:00:00Z'
           assert rows[0]['soil_moisture_0_to_1cm']==.31
+          assert rows[0]['shortwave_radiation_wm2']==0
           assert rows[0]['lead_hours']==4.0
           print('archive mapping: OK')
           PY
