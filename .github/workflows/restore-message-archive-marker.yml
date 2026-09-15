@@ -1,0 +1,49 @@
+name: Restore MessageArchive deployment marker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/restore-message-archive-marker.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Restore semantic source marker
+        shell: bash
+        run: |
+          git pull --rebase origin main
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('message-archive-client.js')
+          s = p.read_text(encoding='utf-8')
+          marker = '// Supabase-primary-MessageArchive\n'
+          if 'Supabase-primary-MessageArchive' not in s:
+              anchor = "'use strict';\n"
+              if anchor not in s:
+                  raise SystemExit('message-archive-client.js strict-mode anchor missing')
+              s = s.replace(anchor, anchor + marker, 1)
+              p.write_text(s, encoding='utf-8')
+          PY
+          git diff --check
+          if git diff --quiet -- message-archive-client.js; then
+            echo 'marker already present'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add message-archive-client.js
+          git commit -m 'Restore Supabase-primary MessageArchive marker'
+          for n in 1 2 3; do
+            git pull --rebase origin main && git push && exit 0
+            sleep 2
+          done
+          exit 1
