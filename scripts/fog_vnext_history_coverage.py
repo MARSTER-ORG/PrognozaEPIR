@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Audit year coverage inside canonical EPIR history archives.
 
-This is a diagnostic only. It never changes training labels or production data.
-It inspects ZIP member names plus textual/nested ZIP content so that a year can
-be discovered even when it is not present in the outer archive filename.
-For DOCX members whose filename says 2025 it also extracts Word metadata and
-EPIR METAR/SPECI report tokens to distinguish real 2025 material from a typo.
+Diagnostic only; it never changes training labels or production data.
+Besides member names and raw token hits, it opens every DOCX and looks for
+explicit calendar dates containing 2025. This avoids false positives such as
+SYNOP groups like 52025 or Word rsid values.
 """
 from __future__ import annotations
 
@@ -27,6 +26,7 @@ TEXT_EXT = {
 NESTED_ZIP_EXT = {".zip", ".docx", ".xlsx", ".xlsm", ".ods"}
 MAX_NESTED_BYTES = 80 * 1024 * 1024
 MAX_HITS_PER_YEAR = 5
+DATE_2025_RE = re.compile(r"(?:\b2025[-./]\d{1,2}[-./]\d{1,2}\b|\b\d{1,2}[-./]\d{1,2}[-./]2025\b)")
 
 
 def years_in_bytes(data: bytes) -> set[str]:
@@ -73,7 +73,7 @@ def docx_core_dates(dz: zipfile.ZipFile) -> dict:
     return out
 
 
-def inspect_2025_docx(data: bytes, outer_info: zipfile.ZipInfo, member_name: str) -> dict | None:
+def inspect_docx(data: bytes, outer_info: zipfile.ZipInfo, member_name: str) -> dict | None:
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as dz:
             text = docx_text(dz)
@@ -83,12 +83,12 @@ def inspect_2025_docx(data: bytes, outer_info: zipfile.ZipInfo, member_name: str
 
     reports = re.findall(r"\b(?:METAR|SPECI)\s+EPIR\s+\d{6}Z(?:\s+[^=]{0,500})?=", text, flags=re.I)
     times = re.findall(r"\b(?:METAR|SPECI)\s+EPIR\s+(\d{6}Z)\b", text, flags=re.I)
-    years_in_text = sorted({year for year in YEARS if year in text})
+    explicit_dates = sorted(set(DATE_2025_RE.findall(text)))
     return {
         "member": member_name,
         "zip_member_timestamp": "%04d-%02d-%02dT%02d:%02d:%02d" % outer_info.date_time,
         "core_dates": core,
-        "years_in_document_text": years_in_text,
+        "explicit_2025_dates": explicit_dates,
         "epir_report_count": len(times),
         "first_report_time": times[0] if times else None,
         "last_report_time": times[-1] if times else None,
@@ -106,7 +106,8 @@ def scan_zip(zf: zipfile.ZipFile, label: str, depth: int = 0) -> dict:
         "year_content_hits": Counter(),
         "examples": {year: [] for year in YEARS},
         "member_names": [],
-        "docx_2025_details": [],
+        "docx_named_2025": [],
+        "docx_explicit_2025_dates": [],
     }
 
     for info in zf.infolist():
@@ -131,17 +132,19 @@ def scan_zip(zf: zipfile.ZipFile, label: str, depth: int = 0) -> dict:
             print(f"WARN cannot read {label}!{name}: {exc}", file=sys.stderr)
             continue
 
-        if ext == ".docx" and "2025" in name:
-            details = inspect_2025_docx(data, info, name)
+        if ext == ".docx":
+            details = inspect_docx(data, info, name)
             if details:
-                result["docx_2025_details"].append(details)
+                if "2025" in name:
+                    result["docx_named_2025"].append(details)
+                if details.get("explicit_2025_dates"):
+                    result["docx_explicit_2025_dates"].append(details)
 
         found = years_in_bytes(data)
         for year in found:
             result["year_content_hits"][year] += 1
             if len(result["examples"][year]) < MAX_HITS_PER_YEAR:
-                snippet = safe_snippet(data, year)
-                result["examples"][year].append(f"content:{name}:{snippet}")
+                result["examples"][year].append(f"content:{name}:{safe_snippet(data, year)}")
 
         if depth < 2 and ext in NESTED_ZIP_EXT and len(data) <= MAX_NESTED_BYTES:
             try:
@@ -151,7 +154,8 @@ def scan_zip(zf: zipfile.ZipFile, label: str, depth: int = 0) -> dict:
                     result["year_member_hits"][year] += count
                 for year, count in nested_result["year_content_hits"].items():
                     result["year_content_hits"][year] += count
-                result["docx_2025_details"].extend(nested_result.get("docx_2025_details", []))
+                result["docx_named_2025"].extend(nested_result.get("docx_named_2025", []))
+                result["docx_explicit_2025_dates"].extend(nested_result.get("docx_explicit_2025_dates", []))
                 for year in YEARS:
                     room = MAX_HITS_PER_YEAR - len(result["examples"][year])
                     if room > 0:
@@ -163,6 +167,21 @@ def scan_zip(zf: zipfile.ZipFile, label: str, depth: int = 0) -> dict:
     result["year_content_hits"] = dict(sorted(result["year_content_hits"].items()))
     result["examples"] = {y: xs for y, xs in result["examples"].items() if xs}
     return result
+
+
+def compact_doc(d: dict) -> dict:
+    return {
+        "member": d.get("member"),
+        "zip_member_timestamp": d.get("zip_member_timestamp"),
+        "core_dates": d.get("core_dates"),
+        "explicit_2025_dates": d.get("explicit_2025_dates"),
+        "epir_report_count": d.get("epir_report_count"),
+        "first_report_time": d.get("first_report_time"),
+        "last_report_time": d.get("last_report_time"),
+        "first_report": d.get("first_report"),
+        "last_report": d.get("last_report"),
+        "text_preview": d.get("text_preview"),
+    }
 
 
 def main() -> int:
@@ -179,18 +198,19 @@ def main() -> int:
         except zipfile.BadZipFile as exc:
             summaries.append({"label": str(path), "error": f"BadZipFile: {exc}"})
 
-    print(json.dumps({"archives": summaries}, ensure_ascii=False, indent=2))
+    # Full scan remains useful for debugging, but concise markers below are the
+    # authoritative human-readable audit outputs.
+    named = []
+    dated = []
+    for s in summaries:
+        for d in s.get("docx_named_2025", []):
+            named.append({"archive": s["label"], **compact_doc(d)})
+        for d in s.get("docx_explicit_2025_dates", []):
+            dated.append({"archive": s["label"], **compact_doc(d)})
 
-    hits_2025 = [
-        s for s in summaries
-        if s.get("year_member_hits", {}).get("2025", 0) or s.get("year_content_hits", {}).get("2025", 0)
-    ]
-    print("YEAR_2025_ARCHIVES=" + json.dumps([s["label"] for s in hits_2025], ensure_ascii=False))
-    details_2025 = [
-        {"archive": s["label"], "documents": s.get("docx_2025_details", [])}
-        for s in summaries if s.get("docx_2025_details")
-    ]
-    print("YEAR_2025_DOCX_DETAILS=" + json.dumps(details_2025, ensure_ascii=False))
+    print("YEAR_2025_NAMED_DOCX=" + json.dumps(named, ensure_ascii=False))
+    print("YEAR_2025_EXPLICIT_DATE_DOCX=" + json.dumps(dated, ensure_ascii=False))
+    print("YEAR_2025_EXPLICIT_DATE_DOCX_COUNT=" + str(len(dated)))
     return 0
 
 
