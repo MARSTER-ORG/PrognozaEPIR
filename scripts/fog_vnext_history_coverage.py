@@ -155,7 +155,7 @@ def scan_zip(zf: zipfile.ZipFile, label: str, depth: int = 0) -> dict:
                 for year in YEARS:
                     room = MAX_HITS_PER_YEAR - len(result["examples"][year])
                     if room > 0:
-                        result["examples"][year].extend(nested_result["examples"][year][:room])
+                        result["examples"][year].extend(nested_result.get("examples", {}).get(year, [])[:room])
             except zipfile.BadZipFile:
                 pass
 
