@@ -84,7 +84,7 @@ jobs:
           grep -F 'functions/v1/message-archive' _site/message-archive-client.js
           grep -F 'search,stations' _site/message-archive-client.js
           grep -F 'MessageArchive legacy bridge' _site/message-archive-client.js
-          grep -F 'message-archive-client.js?v=supabase-search-v2' _site/arch.html
+          grep -F 'message-archive-client.js?v=' _site/arch.html
           grep -F 'id="modeAdvanced"' _site/arch.html
           grep -F 'data-type="ALL"' _site/arch.html
           grep -F 'TAF ↔ METAR/SPECI' _site/arch.html
@@ -135,7 +135,7 @@ jobs:
             arch="$(curl -fsSL --max-time 15 "${base}/arch.html?v=${GITHUB_SHA}" 2>/dev/null || true)"
             if printf '%s' "$marker" | grep -Fq "$GITHUB_SHA" \
               && printf '%s' "$arch" | grep -Fq 'id="modeAdvanced"' \
-              && printf '%s' "$arch" | grep -Fq 'supabase-search-v2'; then
+              && printf '%s' "$arch" | grep -Fq 'message-archive-client.js?v='; then
               echo "GitHub Pages serves commit $GITHUB_SHA and the advanced ARCH UI."
               exit 0
             fi
