@@ -8,6 +8,7 @@ Rules:
   event-balanced metrics;
 - FG/fog_truth, BR, MIFG, VIS thresholds, onset and dissipation are separate
   verification targets;
+- P_physics, P_direct and their late shadow blend are scored separately;
 - ablations quantify the incremental skill of soil moisture, PBL and surface
   cooling;
 - activation is blocked until both statistical gates and explicit promotion
@@ -146,7 +147,10 @@ def case_inputs(batch_rows):
         if dmi and finite(dmi.get("temperature_100m_c")) and finite(t):
             inv = dmi["temperature_100m_c"] - t
 
+        lead_h = (valid - archive_time).total_seconds() / 3600.0
         base = {
+            "time": valid_s,
+            "leadHours": lead_h,
             "t": t, "td": td, "rh": rh, "ws": ws,
             "visibility": c.get("visibility_m"),
             "soilIcon01": (icon or {}).get("soil_moisture_0_to_1cm"),
@@ -367,11 +371,22 @@ def target_metrics(cases, score_getter, truth_key):
     return {"hourly": binary_metrics(hourly), "event_balanced": binary_metrics(event_pairs)}
 
 
+def score01(c, key):
+    v = c["vnext"].get(key)
+    if not finite(v):
+        return None
+    return float(v) / 100.0 if float(v) > 1.0 else float(v)
+
+
 def per_lead_metrics(cases):
     out = {}
     for bucket in [x[2] for x in mv.LEAD_BUCKETS]:
         rows = [c for c in cases if c.get("lead_bucket") == bucket]
-        out[bucket] = target_metrics(rows, lambda c: c["vnext"].get("physics_score", 0) / 100.0, "fog_truth")
+        out[bucket] = {
+            "blend": target_metrics(rows, lambda c: score01(c, "model_final_shadow"), "fog_truth"),
+            "physics": target_metrics(rows, lambda c: score01(c, "physics_score"), "fog_truth"),
+            "direct": target_metrics(rows, lambda c: score01(c, "direct_score"), "fog_truth"),
+        }
     return out
 
 
@@ -396,7 +411,7 @@ def activation_gate(cases, metrics, ablation, lead_metrics):
     onset_event_ids = {c["truth"].get("event_id") for c in cases if c["truth"].get("onset_next_1h") and c["truth"].get("event_id")}
     good_leads = 0
     for row in lead_metrics.values():
-        m = row["event_balanced"]
+        m = row["blend"]["event_balanced"]
         if m["positive"] >= 3 and m["negative"] >= 5:
             good_leads += 1
 
@@ -417,7 +432,7 @@ def activation_gate(cases, metrics, ablation, lead_metrics):
     if full_auc is None or full_auc < 0.60:
         blockers.append(f"event-balanced fog AUC {full_auc} < 0.60")
     if full_auc is not None and baseline_auc is not None and full_auc + 0.02 < baseline_auc:
-        blockers.append(f"vNext AUC {full_auc} trails direct-VIS baseline {baseline_auc}")
+        blockers.append(f"vNext blend AUC {full_auc} trails direct-VIS baseline {baseline_auc}")
 
     for name, row in ablation.items():
         delta = row.get("delta_event_auc")
@@ -471,6 +486,15 @@ def main():
             if not tr or not tr["truth_known"]:
                 continue
             tr = attach_transition_truth(valid_s, tr, timeline, event_map)
+            # Current observation is allowed only for the transition-nowcast
+            # layer whose target is the following hour. Physics/direct forecast
+            # channels ignore these fields, so no future target leaks into them.
+            base = {
+                **base,
+                "state": tr.get("state"),
+                "obsUsed": True,
+                "obsVisM": tr.get("visibility_m"),
+            }
             meta.append((valid_s, archive_time, source_rows, base, tr))
             inputs.append(base)
 
@@ -482,7 +506,7 @@ def main():
         lead_h = (valid - archive_time).total_seconds() / 3600.0 if valid else None
         lead_bucket = mv.lead_bucket(lead_h) if finite(lead_h) else None
         case = {
-            "schema": "prognozaepir-fog-vnext-verification-v2",
+            "schema": "prognozaepir-fog-vnext-verification-v3",
             "archive_time": mv.iso(archive_time),
             "valid_time": valid_s,
             "archive_lead_hours": round(lead_h, 2) if finite(lead_h) else None,
@@ -502,24 +526,27 @@ def main():
         }
         cases.append(case)
 
-    def physics(c):
-        v = c["vnext"].get("physics_score")
-        return v / 100.0 if finite(v) else None
-
-    def dissipation(c):
-        v = c["vnext"].get("dissipation")
-        return v / 100.0 if finite(v) else None
-
-    def baseline(c):
-        return c.get("direct_visibility_baseline")
+    physics = lambda c: score01(c, "physics_score")
+    direct = lambda c: score01(c, "direct_score")
+    blend = lambda c: score01(c, "model_final_shadow")
+    onset = lambda c: score01(c, "onset_risk_shadow")
+    transition_diss = lambda c: score01(c, "dissipation_risk_shadow")
+    raw_diss = lambda c: score01(c, "dissipation")
+    baseline = lambda c: c.get("direct_visibility_baseline")
 
     metrics = {
-        "fog_truth": target_metrics(cases, physics, "fog_truth"),
-        "vis_lt_1000": target_metrics(cases, physics, "vis_lt_1000"),
-        "vis_lt_500": target_metrics(cases, physics, "vis_lt_500"),
-        "vis_lt_200": target_metrics(cases, physics, "vis_lt_200"),
-        "onset_next_1h": target_metrics(cases, physics, "onset_next_1h"),
-        "dissipation_next_1h": target_metrics([c for c in cases if c["truth"].get("fog_truth")], dissipation, "dissipation_next_1h"),
+        # Canonical vNext activation target is the late physics+direct blend.
+        "fog_truth": target_metrics(cases, blend, "fog_truth"),
+        "fog_truth_physics": target_metrics(cases, physics, "fog_truth"),
+        "fog_truth_direct": target_metrics(cases, direct, "fog_truth"),
+        "fog_truth_blend": target_metrics(cases, blend, "fog_truth"),
+        "vis_lt_1000": target_metrics(cases, blend, "vis_lt_1000"),
+        "vis_lt_500": target_metrics(cases, blend, "vis_lt_500"),
+        "vis_lt_200": target_metrics(cases, blend, "vis_lt_200"),
+        "onset_next_1h": target_metrics([c for c in cases if not c["truth"].get("fog_truth")], onset, "onset_next_1h"),
+        "onset_next_1h_physics": target_metrics([c for c in cases if not c["truth"].get("fog_truth")], physics, "onset_next_1h"),
+        "dissipation_next_1h": target_metrics([c for c in cases if c["truth"].get("fog_truth")], transition_diss, "dissipation_next_1h"),
+        "dissipation_next_1h_physics": target_metrics([c for c in cases if c["truth"].get("fog_truth")], raw_diss, "dissipation_next_1h"),
         "direct_visibility_baseline": target_metrics(cases, baseline, "fog_truth"),
     }
     target_counts = {
@@ -531,7 +558,7 @@ def main():
     ablation = {}
     for name, field in (("soil", "no_soil"), ("pbl", "no_pbl"), ("surface_cooling", "no_surface_cooling")):
         def getter(c, f=field):
-            v = c["ablation"][f].get("physics_score")
+            v = c["ablation"][f].get("model_final_shadow")
             return v / 100.0 if finite(v) else None
         m = target_metrics(cases, getter, "fog_truth")
         a = m["event_balanced"]["auc"]
@@ -543,7 +570,7 @@ def main():
     lead_metrics = per_lead_metrics(cases)
     activation = activation_gate(cases, metrics, ablation, lead_metrics)
     summary = {
-        "schema": "prognozaepir-fog-vnext-verification-summary-v2",
+        "schema": "prognozaepir-fog-vnext-verification-summary-v3",
         "generated_at": mv.iso(mv.utcnow()),
         "cases": len(cases),
         "batches": len(by_batch),
@@ -552,6 +579,12 @@ def main():
         "per_lead_fog_truth": lead_metrics,
         "ablation": ablation,
         "activation": activation,
+        "probability_channels": {
+            "physics": "mechanism-only shadow signal",
+            "direct": "direct NWP visibility/cloud guidance only",
+            "blend": "late lead-dependent physics+direct blend; uncalibrated shadow",
+        },
+        "transition_method": "current observation state + forecast physical support -> next-hour onset/dissipation shadow risk; target is the following observation hour",
         "method": "explicit forecast-run -> later METAR/SPECI truth; SYNOP fallback; event-balanced metrics prevent one long fog episode from dominating",
     }
 
@@ -559,7 +592,7 @@ def main():
     CASES_PATH.write_text("".join(json.dumps(c, ensure_ascii=False, separators=(",", ":")) + "\n" for c in cases), encoding="utf-8")
     SUMMARY_PATH.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     ACTIVATION_PATH.write_text(json.dumps(activation, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({"cases": len(cases), "targets": target_counts, "activation": activation}, ensure_ascii=False))
+    print(json.dumps({"cases": len(cases), "targets": target_counts, "metrics": {k: v["event_balanced"] for k, v in metrics.items()}, "activation": activation}, ensure_ascii=False))
 
 
 if __name__ == "__main__":
