@@ -6,6 +6,7 @@ on:
       - fog-vnext-physics-20260915
     paths:
       - 'scripts/fog_vnext_model_archive.py'
+      - 'scripts/fog_vnext_event_backfill.py'
       - 'scripts/backfill_fog_vnext_history.py'
       - 'scripts/fog_vnext_verification.py'
       - 'scripts/build_fog_event_learning_v2.py'
@@ -38,18 +39,21 @@ jobs:
           node tests/fog-physics-vnext.test.js
           python3 tests/test_fog_event_learning.py
           python3 tests/test_fog_event_learning_v2.py
-          python3 -m py_compile scripts/fog_vnext_model_archive.py scripts/backfill_fog_vnext_history.py scripts/fog_vnext_verification.py
+          python3 -m py_compile \
+            scripts/fog_vnext_model_archive.py \
+            scripts/fog_vnext_event_backfill.py \
+            scripts/backfill_fog_vnext_history.py \
+            scripts/fog_vnext_verification.py
 
-      - name: Seed explicit historical fog case on feature branch
-        if: github.ref_name != 'main'
+      - name: Event-stratified explicit-run backfill
         run: |
-          if [ ! -f data/learning/fog-vnext-forecasts/2026-09-13.jsonl ]; then
-            python3 scripts/backfill_fog_vnext_history.py --start 2026-09-13T19:00Z
+          if [ "${GITHUB_REF_NAME}" = "main" ] && [ "${{ github.event_name }}" = "schedule" ]; then
+            python3 scripts/fog_vnext_event_backfill.py --max-batches 1
           else
-            echo 'Historical vNext seed already present'
+            python3 scripts/fog_vnext_event_backfill.py --max-batches 6
           fi
 
-      - name: Archive explicit model runs
+      - name: Archive current explicit model runs
         run: python3 scripts/fog_vnext_model_archive.py
 
       - name: Build shadow adaptive and fog-event weights
@@ -63,37 +67,46 @@ jobs:
           cp /tmp/adaptive-weights.production.json data/learning/adaptive-weights.json
           cp /tmp/fog-event-skill.production.json data/learning/fog-event-skill.json
 
-      - name: Build forecast-to-truth verification
+      - name: Build event-aware forecast-to-truth verification
         run: python3 scripts/fog_vnext_verification.py
 
-      - name: Validate shadow artifacts
+      - name: Validate shadow artifacts and activation gate
         run: |
           python3 -m json.tool data/learning/adaptive-weights-vnext-shadow.json >/dev/null
           python3 -m json.tool data/learning/fog-event-skill-vnext-shadow.json >/dev/null
           python3 -m json.tool data/learning/fog-vnext-verification/summary.json >/dev/null
+          python3 -m json.tool data/learning/fog-vnext-activation.json >/dev/null
           python3 - <<'PY'
           import json
           from pathlib import Path
           aw=json.loads(Path('data/learning/adaptive-weights-vnext-shadow.json').read_text(encoding='utf-8'))
           fg=json.loads(Path('data/learning/fog-event-skill-vnext-shadow.json').read_text(encoding='utf-8'))
+          summary=json.loads(Path('data/learning/fog-vnext-verification/summary.json').read_text(encoding='utf-8'))
+          gate=json.loads(Path('data/learning/fog-vnext-activation.json').read_text(encoding='utf-8'))
           for m in ('dmi_harmonie_arome_europe','knmi_harmonie_arome_europe'):
               assert m in aw['models']
               assert m in fg['models']
           assert fg['target_policy']['mifg_separate'] is True
+          assert summary['schema']=='prognozaepir-fog-vnext-verification-summary-v2'
+          assert gate['schema']=='prognozaepir-fog-vnext-activation-v1'
+          if gate['operational_activation_ready']:
+              assert gate['statistical_ready'] and gate['promotion_approved']
           print('shadow models:', len(aw['models']), len(fg['models']))
+          print('activation:', gate['mode'], gate['blockers'])
           PY
 
-      - name: Commit archive and shadow learning
+      - name: Commit archive, verification and shadow learning
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add data/learning/fog-vnext-forecasts data/learning/model-forecasts/fog-vnext-*.jsonl \
             data/learning/adaptive-weights-vnext-shadow.json data/learning/fog-event-skill-vnext-shadow.json \
-            data/learning/fog-vnext-verification
+            data/learning/fog-vnext-verification data/learning/fog-vnext-activation.json \
+            data/learning/fog-vnext-backfill-state.json
           if git diff --cached --quiet; then
             echo 'No vNext archive changes'
           else
-            git commit -m 'weather: archive Fog vNext forecast truth cases'
+            git commit -m 'weather: accumulate event-stratified Fog vNext validation'
             git pull --rebase origin "${GITHUB_REF_NAME}"
             git push origin HEAD:"${GITHUB_REF_NAME}"
           fi
