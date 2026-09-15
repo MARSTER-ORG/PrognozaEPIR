@@ -13,9 +13,9 @@ import fog_vnext_onset_calibration as c
 def row(physics, prior=0.02):
     return {
         "vnext": {
-            "physics_score": physics * 100,
-            "onset_historical_prior": prior * 100,
-            "onset_risk_shadow": 5.0,
+            "physics_score": physics,
+            "onset_historical_prior": prior,
+            "onset_risk_shadow": 0.05,
         },
         "truth": {"fog_truth": False, "onset_next_1h": False},
     }
