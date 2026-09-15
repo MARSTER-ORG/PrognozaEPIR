@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from pathlib import Path
 
 import fog_vnext_verification as verify
 import model_verification as mv
@@ -29,12 +28,12 @@ def finite(v):
 
 def score_full(case):
     v = (case.get("vnext") or {}).get("model_final_shadow")
-    return float(v) / 100.0 if finite(v) else None
+    return float(v) if finite(v) else None
 
 
 def score_no_ssfc(case):
     v = ((case.get("ablation") or {}).get("no_surface_cooling") or {}).get("model_final_shadow")
-    return float(v) / 100.0 if finite(v) else None
+    return float(v) if finite(v) else None
 
 
 def truth_phase(case):
@@ -130,7 +129,7 @@ def saturation_bin(case):
 def physics_score_bin(case):
     return numeric_bin(
         (case.get("vnext") or {}).get("physics_score"),
-        [45.0, 65.0, 80.0, float("inf")],
+        [0.45, 0.65, 0.80, float("inf")],
         ["<45", "45-65", "65-80", ">=80"],
     )
 
@@ -192,6 +191,7 @@ def main():
             "diagnostic_only": True,
             "truth_phase_is_posthoc_not_forecast_input": True,
             "forecast_signal_groups_are_truth_independent": True,
+            "probability_unit_contract": "0..1",
             "comparison": "full shadow blend vs existing no_surface_cooling ablation",
             "positive_brier_delta_means_full_is_better": True,
         },
