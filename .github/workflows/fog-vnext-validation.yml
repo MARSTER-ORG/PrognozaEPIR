@@ -1,0 +1,91 @@
+name: Fog vNext validation
+
+on:
+  push:
+    branches:
+      - fog-vnext-physics-20260915
+    paths:
+      - 'fog-physics-vnext.js'
+      - 'fog-summary-layout.js'
+      - 'scripts/fog_vnext_*.py'
+      - 'scripts/fog_vnext_*.js'
+      - 'scripts/build_fog_event_learning_v2.py'
+      - 'scripts/build_adaptive_weights_v2.py'
+      - 'tests/fog-physics-vnext.test.js'
+      - 'tests/test_fog_event_learning*.py'
+      - '.github/workflows/fog-vnext-validation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Syntax checks
+        run: |
+          node --check fog-physics-vnext.js
+          node --check fog-summary-layout.js
+          node --check scripts/fog_vnext_eval.js
+          python3 -m py_compile \
+            scripts/fog_vnext_model_archive.py \
+            scripts/fog_vnext_verification.py \
+            scripts/build_fog_event_learning_v2.py \
+            scripts/build_adaptive_weights_v2.py
+
+      - name: Physics scenarios
+        run: node tests/fog-physics-vnext.test.js
+
+      - name: Fog truth policy
+        run: |
+          python3 tests/test_fog_event_learning.py
+          python3 tests/test_fog_event_learning_v2.py
+
+      - name: Archive mapping without network
+        run: |
+          python3 - <<'PY'
+          import sys
+          from datetime import datetime, timezone
+          sys.path.insert(0,'scripts')
+          import fog_vnext_model_archive as a
+          batch=datetime(2026,9,15,12,tzinfo=timezone.utc)
+          run=datetime(2026,9,15,9,tzinfo=timezone.utc)
+          data={'hourly':{
+            'time':['2026-09-15T13:00','2026-09-15T14:00'],
+            'temperature_2m':[10,9], 'dew_point_2m':[9,8.5], 'relative_humidity_2m':[94,96],
+            'precipitation':[0,0], 'visibility':[8000,5000], 'wind_speed_10m':[1.5,1.0],
+            'soil_moisture_0_to_1cm':[.31,.32], 'soil_moisture_1_to_3cm':[.30,.31],
+            'soil_temperature_0cm':[8,7.5], 'soil_temperature_6cm':[9,8.7],
+            'surface_temperature':[7.5,7.0], 'is_day':[0,0]}}
+          rows=a.rows_from('icon_d2',run,batch,data)
+          assert len(rows)==2
+          assert rows[0]['model_run_time']=='2026-09-15T09:00:00Z'
+          assert rows[0]['soil_moisture_0_to_1cm']==.31
+          assert rows[0]['lead_hours']==4.0
+          print('archive mapping: OK')
+          PY
+
+      - name: Learning wrappers
+        run: |
+          python3 scripts/build_adaptive_weights_v2.py
+          python3 scripts/build_fog_event_learning_v2.py
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          aw=json.loads(Path('data/learning/adaptive-weights.json').read_text(encoding='utf-8'))
+          fg=json.loads(Path('data/learning/fog-event-skill.json').read_text(encoding='utf-8'))
+          for model in ('dmi_harmonie_arome_europe','knmi_harmonie_arome_europe'):
+              assert model in aw['models'], model
+              assert model in fg['models'], model
+          assert 'MIFG' not in fg['codes']['fog']
+          assert fg['target_policy']['mifg_separate'] is True
+          print('learning wrappers: OK')
+          PY
+
+      - name: Verification builder smoke test
+        run: python3 scripts/fog_vnext_verification.py
