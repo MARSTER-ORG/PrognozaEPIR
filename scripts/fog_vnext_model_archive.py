@@ -20,7 +20,7 @@ from pathlib import Path
 import model_verification as mv
 
 API = "https://single-runs-api.open-meteo.com/v1/forecast"
-USER_AGENT = "PrognozaEPIR-FogVNextArchive/1.0"
+USER_AGENT = "PrognozaEPIR-FogVNextArchive/1.1"
 FULL_DIR = mv.LEARNING / "fog-vnext-forecasts"
 
 EXTRA_MODELS = {
@@ -68,39 +68,58 @@ def get_json(url, timeout=45):
         return json.load(r)
 
 
-def request_run(model, run, variables):
+def request_run(model, run, variables, forecast_hours=72):
     params = {
         "latitude": mv.LAT,
         "longitude": mv.LON,
         "hourly": ",".join(variables),
         "models": model,
         "timezone": "UTC",
-        "forecast_hours": 72,
+        "forecast_hours": forecast_hours,
         "wind_speed_unit": "ms",
         "run": run.strftime("%Y-%m-%dT%H:%M"),
     }
     return get_json(API + "?" + urllib.parse.urlencode(params))
 
 
+def probe_run(model, run):
+    """Cheaply test one explicit model cycle before requesting large bundles."""
+    data = request_run(model, run, ("temperature_2m",), forecast_hours=2)
+    return bool((data.get("hourly") or {}).get("time"))
+
+
+def fetch_run_bundle(model, run):
+    errors = []
+    for variables in MODEL_TIERS[model]:
+        try:
+            data = request_run(model, run, variables)
+            if (data.get("hourly") or {}).get("time"):
+                return variables, data
+        except urllib.error.HTTPError as exc:
+            errors.append(f"{len(variables)}v HTTP{exc.code}")
+            if exc.code not in (400, 404, 422):
+                time.sleep(0.4)
+        except Exception as exc:
+            errors.append(f"{len(variables)}v {type(exc).__name__}")
+    raise RuntimeError(f"cycle {run:%Y-%m-%d %H}Z found but no usable variable tier: {'; '.join(errors)}")
+
+
 def latest_available_run(model, batch):
     errors = []
-    # Trying actual UTC hours avoids hard-coding provider cycle schedules. The
-    # first accepted Single Runs request is an explicit archived model cycle.
+    # Cycle discovery is intentionally cheap: probe one field first. Only after
+    # a real archived cycle is confirmed do we request the full physical bundle.
     for hours_back in range(0, 13):
         run = batch - timedelta(hours=hours_back)
-        for variables in MODEL_TIERS[model]:
-            try:
-                data = request_run(model, run, variables)
-                times = (data.get("hourly") or {}).get("time") or []
-                if times:
-                    return run, variables, data
-            except urllib.error.HTTPError as exc:
-                errors.append(f"{run:%H}Z/{len(variables)}v HTTP{exc.code}")
-                if exc.code not in (400, 404, 422):
-                    time.sleep(0.5)
-            except Exception as exc:
-                errors.append(f"{run:%H}Z/{len(variables)}v {type(exc).__name__}")
-        time.sleep(0.1)
+        try:
+            if not probe_run(model, run):
+                continue
+            variables, data = fetch_run_bundle(model, run)
+            return run, variables, data
+        except urllib.error.HTTPError as exc:
+            errors.append(f"{run:%H}Z probe HTTP{exc.code}")
+        except Exception as exc:
+            errors.append(f"{run:%H}Z {type(exc).__name__}: {exc}")
+        time.sleep(0.05)
     raise RuntimeError(f"no archived run for {model}: {'; '.join(errors[-8:])}")
 
 
