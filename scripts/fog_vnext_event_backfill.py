@@ -3,9 +3,10 @@
 
 The selector uses the canonical EPIR historical training archive when it is
 present under ``data/import/epir-history`` and supplements it with the rolling
-METAR/SPECI repository archive. It groups BR/MIFG/FG-family observations into
-independent events and requests explicit historical model runs before those
-events. This avoids random hour sampling and preserves the no-lookahead rule.
+METAR/SPECI repository archive. For 2020-2024 the corrected package's
+``fog_events_censored_2020_2024.csv`` supplies authoritative event boundaries
+and censoring flags. Newer 2025-2026 events are reconstructed from the rolling
+observation timeline.
 
 The canonical 2020-2024 package remains the source of truth for historical
 ``fog_truth`` labels, including UNKNOWN handling for night AUTO reports without
@@ -28,6 +29,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import build_fog_event_learning_v2 as truth
+import fog_vnext_censored_events as censored
 import fog_vnext_model_archive as archive
 import model_verification as mv
 
@@ -51,6 +53,9 @@ class Event:
     mifg: bool
     br: bool
     obs_count: int
+    left_censored_onset: bool = False
+    right_censored_end: bool = False
+    canonical_boundary: bool = False
 
     @property
     def priority(self):
@@ -59,6 +64,10 @@ class Event:
         if self.mifg:
             return 1
         return 2
+
+    @property
+    def exact_onset(self):
+        return not self.left_censored_onset
 
 
 def _bool_or_none(value):
@@ -97,13 +106,7 @@ def _normalize_history_row(row):
 
 
 def load_historical_training_rows(path=HISTORY_ARCHIVE):
-    """Load canonical 2020-2024 aviation observations directly from the v2 ZIP.
-
-    Missing archive is allowed so the feature branch can still run before it is
-    rebased/merged with the main branch containing the historical data. If the
-    archive exists but is malformed, fail loudly rather than silently training
-    on an incomplete fallback dataset.
-    """
+    """Load canonical 2020-2024 aviation observations directly from the v2 ZIP."""
     path = Path(path)
     if not path.exists():
         return []
@@ -115,9 +118,7 @@ def load_historical_training_rows(path=HISTORY_ARCHIVE):
                 None,
             )
             if not member:
-                raise RuntimeError(
-                    f"{path} does not contain {HISTORY_OBS_BASENAME}"
-                )
+                raise RuntimeError(f"{path} does not contain {HISTORY_OBS_BASENAME}")
             rows = []
             with zf.open(member, "r") as raw:
                 with io.TextIOWrapper(raw, encoding="utf-8-sig") as text:
@@ -185,10 +186,6 @@ def points_from_rows(rows):
             continue
 
         cls = truth.classify(row)
-
-        # The corrected v2 package already carries the canonical label. Use it
-        # when present; for newer rolling observations, derive exactly the same
-        # policy through build_fog_event_learning_v2.classify().
         canonical_fog = _bool_or_none(row.get("fog_truth"))
         fog = cls["fog"] if canonical_fog is None else canonical_fog
 
@@ -205,8 +202,6 @@ def points_from_rows(rows):
         elif known_vis and float(vis) > 5000:
             state = "CLEAR"
         else:
-            # Important for night AUTO reports with missing visibility:
-            # missing data is UNKNOWN, never forced CLEAR.
             state = "UNKNOWN"
 
         out.append((dt, row, state))
@@ -256,6 +251,93 @@ def finalize_event(points):
     )
 
 
+def canonical_events_from_points(points, path=HISTORY_ARCHIVE):
+    """Create Event objects using authoritative 2020-2024 CSV boundaries."""
+    bounds, schema = censored.load(path)
+    if not bounds:
+        return [], None
+    historical = [p for p in points if 2020 <= p[0].year <= 2024]
+    events = []
+    for bound in bounds:
+        inside = [p for p in historical if bound["start"] <= p[0] <= bound["end"]]
+        obscured = [p for p in inside if p[2] in {"FG", "MIFG", "BR"}]
+        if not obscured:
+            raise RuntimeError(
+                f"canonical event {bound['event_id']} {mv.iso(bound['start'])}..{mv.iso(bound['end'])} "
+                "does not overlap an obscured canonical observation"
+            )
+        states = [p[2] for p in obscured]
+        events.append(Event(
+            event_id=bound["event_id"],
+            start=bound["start"],
+            end=bound["end"],
+            first_state=states[0],
+            fog="FG" in states,
+            mifg="MIFG" in states,
+            br="BR" in states,
+            obs_count=len(inside) if inside else len(obscured),
+            left_censored_onset=bool(bound["left_censored"]),
+            right_censored_end=bool(bound["right_censored"]),
+            canonical_boundary=True,
+        ))
+    return events, schema
+
+
+def _overlaps(a, b):
+    return a.start <= b.end and b.start <= a.end
+
+
+def build_canonical_aware_events(points, path=HISTORY_ARCHIVE):
+    """Canonical boundaries override reconstructed 2020-2024 events.
+
+    If the canonical table contains only a subset of obscuration episodes,
+    reconstructed historical events that do not overlap any canonical boundary
+    are retained. This prevents losing BR/MIFG-only episodes while ensuring all
+    canonical events keep their exact censor metadata.
+    """
+    reconstructed = build_events(points)
+    canonical, schema = canonical_events_from_points(points, path)
+    if not canonical:
+        return reconstructed, {
+            "canonical_event_rows": 0,
+            "left_censored_events": 0,
+            "right_censored_events": 0,
+            "canonical_headers": None,
+        }
+
+    kept = []
+    for event in reconstructed:
+        if event.start.year >= 2025:
+            kept.append(event)
+            continue
+        if event.end.year < 2020:
+            kept.append(event)
+            continue
+        if any(_overlaps(event, c) for c in canonical):
+            continue
+        kept.append(event)
+
+    events = sorted(canonical + kept, key=lambda e: e.start)
+    audit = {
+        "canonical_event_rows": len(canonical),
+        "left_censored_events": sum(1 for e in canonical if e.left_censored_onset),
+        "right_censored_events": sum(1 for e in canonical if e.right_censored_end),
+        "canonical_headers": schema.get("headers") if schema else None,
+        "canonical_start_field": schema.get("start") if schema else None,
+        "canonical_end_field": schema.get("end") if schema else None,
+        "canonical_left_censor_field": schema.get("left_censored") if schema else None,
+        "canonical_right_censor_field": schema.get("right_censored") if schema else None,
+    }
+    return events, audit
+
+
+def load_events():
+    rows, source_inventory = load_observation_rows()
+    points = points_from_rows(rows)
+    events, event_audit = build_canonical_aware_events(points)
+    return events, points, {**source_inventory, **event_audit}
+
+
 def read_state():
     if not STATE_PATH.exists():
         return {"schema": "prognozaepir-fog-vnext-backfill-state-v1", "batches": {}, "events": {}}
@@ -295,13 +377,13 @@ def candidate_batches(events, already, state, max_events=None):
     candidates = []
     ordered = sorted(events, key=lambda e: (e.priority, -e.start.timestamp()))
     if max_events:
-        # Keep class priority, but cap events rather than individual lead batches.
         ordered = ordered[:max_events]
     for e in ordered:
         state["events"][e.event_id] = {
             **asdict(e),
             "start": mv.iso(e.start),
             "end": mv.iso(e.end),
+            "exact_onset": e.exact_onset,
         }
         for lead in LEAD_TARGETS_H:
             batch = (e.start - timedelta(hours=lead)).replace(minute=0, second=0, microsecond=0)
@@ -312,7 +394,6 @@ def candidate_batches(events, already, state, max_events=None):
             if prior.get("ok"):
                 continue
             candidates.append((e.priority, e.start, lead, e, batch))
-    # Interleave events before taking additional lead-times from the same event.
     candidates.sort(key=lambda x: (x[2], x[0], -x[1].timestamp()))
     return candidates
 
@@ -324,9 +405,7 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
-    rows, source_inventory = load_observation_rows()
-    points = points_from_rows(rows)
-    events = build_events(points)
+    events, points, source_inventory = load_events()
     state = read_state()
     already = archived_batch_keys()
     candidates = candidate_batches(events, already, state, args.max_events or None)
@@ -346,7 +425,14 @@ def main():
     if args.dry_run:
         print(json.dumps({
             "selected": [
-                {"event_id": e.event_id, "event_start": mv.iso(e.start), "lead_target_h": lead, "batch": mv.iso(batch)}
+                {
+                    "event_id": e.event_id,
+                    "event_start": mv.iso(e.start),
+                    "lead_target_h": lead,
+                    "batch": mv.iso(batch),
+                    "left_censored_onset": e.left_censored_onset,
+                    "exact_onset": e.exact_onset,
+                }
                 for _p, _s, lead, e, batch in selected
             ]
         }, ensure_ascii=False, indent=2))
@@ -361,6 +447,9 @@ def main():
             "event_has_fog": e.fog,
             "event_has_mifg": e.mifg,
             "event_has_br": e.br,
+            "left_censored_onset": e.left_censored_onset,
+            "right_censored_end": e.right_censored_end,
+            "exact_onset": e.exact_onset,
             "lead_target_h": lead,
             "attempted_at": mv.iso(mv.utcnow()),
         }
