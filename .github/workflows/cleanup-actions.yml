@@ -29,8 +29,8 @@ jobs:
             const repo = context.repo.repo;
             const cutoff = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
 
-            // GITHUB_TOKEN has a finite REST API budget. Keep enough reserve
-            // for listing/pagination and for GitHub's own housekeeping.
+            // Delete in bounded batches so the cleanup does not exhaust the
+            // repository's GitHub REST API budget in a single run.
             const maxDeletes = 850;
 
             const runs = await github.paginate(
