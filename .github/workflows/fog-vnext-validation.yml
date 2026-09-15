@@ -164,23 +164,6 @@ jobs:
           print('archive mapping: OK')
           PY
 
-      - name: Learning wrappers
-        run: |
-          python3 scripts/build_adaptive_weights_v2.py
-          python3 scripts/build_fog_event_learning_v2.py
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          aw=json.loads(Path('data/learning/adaptive-weights.json').read_text(encoding='utf-8'))
-          fg=json.loads(Path('data/learning/fog-event-skill.json').read_text(encoding='utf-8'))
-          for model in ('dmi_harmonie_arome_europe','knmi_harmonie_arome_europe'):
-              assert model in aw['models'], model
-              assert model in fg['models'], model
-          assert 'MIFG' not in fg['codes']['fog']
-          assert fg['target_policy']['mifg_separate'] is True
-          print('learning wrappers: OK')
-          PY
-
       - name: Verification builder and SSFC diagnostics 2020-2026
         run: |
           python3 scripts/fog_vnext_verification_censored.py
@@ -223,4 +206,21 @@ jobs:
           print('SSFC by coverage:', json.dumps(x['by_coverage'], ensure_ascii=False))
           print('SSFC components:', json.dumps(x['components'], ensure_ascii=False))
           print('activation:', json.dumps(g, ensure_ascii=False))
+          PY
+
+      - name: Learning wrappers
+        run: |
+          python3 scripts/build_adaptive_weights_v2.py
+          python3 scripts/build_fog_event_learning_v2.py
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          aw=json.loads(Path('data/learning/adaptive-weights.json').read_text(encoding='utf-8'))
+          fg=json.loads(Path('data/learning/fog-event-skill.json').read_text(encoding='utf-8'))
+          for model in ('dmi_harmonie_arome_europe','knmi_harmonie_arome_europe'):
+              assert model in aw['models'], model
+              assert model in fg['models'], model
+          assert 'MIFG' not in fg['codes']['fog']
+          assert fg['target_policy']['mifg_separate'] is True
+          print('learning wrappers: OK')
           PY
