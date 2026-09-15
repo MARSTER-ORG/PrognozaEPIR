@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 
 import fog_vnext_event_backfill as backfill
+import fog_vnext_history_coverage as history_coverage
 import fog_vnext_verification as verify
 import model_verification as mv
 
@@ -112,5 +113,27 @@ assert gate['statistical_ready'] is False
 assert gate['operational_activation_ready'] is False
 assert gate['mode'] == 'shadow'
 assert gate['blockers']
+
+# Audit the real canonical binary archives when CI has attached them from main.
+# This deliberately checks ZIP internals rather than trusting outer filenames.
+history_root = ROOT / 'data/import/epir-history'
+if history_root.exists():
+    year_2025 = []
+    for archive_path in sorted(history_root.glob('*.zip')):
+        try:
+            with zipfile.ZipFile(archive_path) as zf:
+                summary = history_coverage.scan_zip(zf, str(archive_path))
+        except zipfile.BadZipFile:
+            continue
+        member_hits = summary.get('year_member_hits', {}).get('2025', 0)
+        content_hits = summary.get('year_content_hits', {}).get('2025', 0)
+        if member_hits or content_hits:
+            year_2025.append({
+                'archive': archive_path.name,
+                'member_hits': member_hits,
+                'content_hits': content_hits,
+                'examples': summary.get('examples', {}).get('2025', []),
+            })
+    print('EPIR_HISTORY_2025=' + json.dumps(year_2025, ensure_ascii=False))
 
 print('fog vNext stage2 tests: OK')
