@@ -6,6 +6,7 @@ import io
 import sys
 import tempfile
 import zipfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -91,7 +92,24 @@ def main():
     assert m["hourly"]["n"] == 2
     assert m["hourly"]["positive"] == 1
     assert m["hourly"]["negative"] == 1
-    print("canonical censor parsing + unknown-target exclusion: OK")
+
+    # The indexed METAR lookup must be bit-for-bit equivalent to the existing
+    # +/-31 minute selection policy, including circular averaging in weak wind.
+    target = datetime(2026, 9, 15, 1, 0, tzinfo=timezone.utc)
+    points = [
+        (target - timedelta(hours=3), {"obs_time": "2026-09-14T22:00:00Z", "wind_direction_deg": 180.0, "wind_speed_ms": 4.0}),
+        (target - timedelta(minutes=30), {"obs_time": "2026-09-15T00:30:00Z", "wind_direction_deg": 350.0, "wind_speed_ms": 1.2}),
+        (target, {"obs_time": "2026-09-15T01:00:00Z", "wind_direction_deg": 10.0, "wind_speed_ms": 1.0}),
+        (target + timedelta(minutes=30), {"obs_time": "2026-09-15T01:30:00Z", "wind_direction_deg": 20.0, "wind_speed_ms": 1.1}),
+        (target + timedelta(hours=3), {"obs_time": "2026-09-15T04:00:00Z", "wind_direction_deg": 270.0, "wind_speed_ms": 5.0}),
+    ]
+    legacy = cv._ORIGINAL_WIND_REFERENCE(target, points)
+    indexed = cv.indexed_metar_wind_reference(target, points)
+    assert indexed == legacy
+    assert indexed["wind_direction_reference_source"] == "METAR_3_CIRCULAR_MEAN"
+    assert len(indexed["wind_direction_reference_samples"]) == 3
+
+    print("canonical censor parsing + unknown-target exclusion + indexed wind reference: OK")
 
 
 if __name__ == "__main__":
