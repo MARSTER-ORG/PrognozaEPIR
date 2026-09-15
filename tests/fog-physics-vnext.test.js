@@ -43,8 +43,13 @@ const legacy={score:63,RAD:61,type:{text:'radiacyjna'}};
 const preserved=F.enhanceLegacyHour(legacy,{...base,precip12:null,tsurface:null,pbl:null,soilIcon01:null,soilIcon13:null,soilEcmwf07:null});
 assert.equal(preserved.score,63);assert.equal(preserved.fogScoreVNextShadow,63);assert.equal(preserved.vnextShadowActive,false);
 
-// 9. Full data -> correct renormalization/coverage and finite result.
+// 9. Full data -> correct coverage and missing-data renormalization.
 assert(favorable.dataQuality>0.7,favorable.dataQuality);assert(Number.isFinite(favorable.SSOIL)&&Number.isFinite(favorable.SPBL)&&Number.isFinite(favorable.SSFC_COOL));
+const weightedFull=F.weightedAvailable([{v:.2,w:.2},{v:.8,w:.8}]);
+const weightedMissing=F.weightedAvailable([{v:null,w:.2},{v:.8,w:.8}]);
+assert(Math.abs(weightedFull.value-.68)<1e-12,weightedFull);
+assert(Math.abs(weightedMissing.value-.8)<1e-12,weightedMissing);
+assert(Math.abs(weightedMissing.coverage-.8)<1e-12,weightedMissing);
 
 // 10. No NaN/Infinity anywhere in populated output.
 assert(finiteDeep(favorable));assert(finiteDeep(mixed));
@@ -58,6 +63,11 @@ assert(F.windAdvSignal(6)>0.8,F.windAdvSignal(6));assert(F.windAdvSignal(6)>F.wi
 
 // 13. Mature fog uses a different turbulence/wind response than pre-onset.
 assert(F.windRadSignal(4,'mature')>F.windRadSignal(4,'pre-onset'));
+
+// Wet-bulb, soil temperature and T5cm are diagnostic inputs, not independent fog votes.
+const extraDiagnostics=F.evaluateHour({...base,soilIcon01:.32,pbl:220,tsurface:6.2,deltaTsurface3:-1.5,wetBulb:0,soilTemperature0:-20,soilTemperature6:30,t5cmObs:-15});
+const withoutExtraDiagnostics=F.evaluateHour({...base,soilIcon01:.32,pbl:220,tsurface:6.2,deltaTsurface3:-1.5});
+for(const k of ['RAD','ADV','CBL','PCP'])assert.equal(extraDiagnostics[k],withoutExtraDiagnostics[k],k);
 
 // Separate dissipation engine: warming + PBL rise + drying must produce a signal.
 const diss=F.dissipationSignal({deltaTsurface3:2.5,deltaPbl3:420,deltaSpread3:1.5,deltaRh3:-10,cbhRise3:400,windChange3:2,shortwave:220});
