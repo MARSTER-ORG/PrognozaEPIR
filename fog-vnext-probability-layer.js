@@ -4,30 +4,74 @@
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   if(root)root.PrognozaEPIRFogVNextProbabilityLayer=api;
 
-  // Rendering authority: the meteogram may redraw for many unrelated reasons
-  // (tap/click, resize, zoom). Fog bars must always use one completed vNext
-  // snapshot, never a half-updated mutable series. While vNext is recalculating
-  // we intentionally draw no FG bars rather than mixing legacy and vNext states.
+  // Rendering authority for the main meteogram. The chart may redraw for many
+  // unrelated reasons (tap/click, resize, zoom). FG bars must always come from
+  // one completed vNext snapshot, never from the mutable legacy/intermediate
+  // series. Marginal 50-59/100 remains available in diagnostics, but the main
+  // meteogram only draws operationally useful >=60/100 FG bars.
   if(root&&root.document){
+    const d=root.document;
+    const FOG_RENDER_THRESHOLD=60;
+    const path=String(root.location?.pathname||'').toLowerCase();
+    const mainMeteogram=/\/(?:index\.html)?$/.test(path);
     let guardedDraw=null;
     let guardedBase=null;
 
+    const installFogNavLink=()=>{
+      const nav=d.querySelector('#epirGlobalNav .epir-global-nav-inner');
+      if(!nav||d.getElementById('epirFogEngineNav'))return;
+      const a=d.createElement('a');
+      a.id='epirFogEngineNav';
+      a.href='fog.html';
+      a.textContent='FOG ENGINE';
+      const meteo=nav.querySelector('a[href="index.html"]');
+      if(meteo)meteo.insertAdjacentElement('afterend',a);else nav.appendChild(a);
+    };
+
+    const patchMeteogramLegend=()=>{
+      const legend=d.getElementById('fogMeteogramLegend');
+      if(legend&&/od 50\/100/.test(legend.innerHTML))legend.innerHTML=legend.innerHTML.replace(/od 50\/100/g,'od 60/100');
+    };
+
+    const patchCanvasFogLabel=()=>{
+      const proto=root.CanvasRenderingContext2D?.prototype;
+      if(!proto||proto.__epirFog60LabelPatched||typeof proto.fillText!=='function')return;
+      const native=proto.fillText;
+      proto.fillText=function(text,...args){
+        return native.call(this,text==='FOG 50'?'FOG 60':text,...args);
+      };
+      try{Object.defineProperty(proto,'__epirFog60LabelPatched',{value:true});}catch(_){proto.__epirFog60LabelPatched=true;}
+    };
+
     const installUiAuthority=()=>{
-      const d=root.document;
       if(!d.getElementById('fogVNextUiAuthority')){
         const style=d.createElement('style');
         style.id='fogVNextUiAuthority';
-        style.textContent='#fogSummaryStructured,#fogAuxStructured{display:none!important}#fogSummary{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}@media(max-width:700px){#fogSummary{grid-template-columns:repeat(2,minmax(0,1fr))}}';
+        style.textContent=(mainMeteogram?'#fogEngine{display:none!important}':'')+
+          '#fogSummaryStructured,#fogAuxStructured{display:none!important}#fogSummary{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}@media(max-width:700px){#fogSummary{grid-template-columns:repeat(2,minmax(0,1fr))}}';
         d.head?.appendChild(style);
       }
-      const summary=d.getElementById('fogSummary');
-      if(summary){summary.removeAttribute('aria-hidden');summary.style.removeProperty('display');}
+      if(!mainMeteogram){
+        const summary=d.getElementById('fogSummary');
+        if(summary){summary.removeAttribute('aria-hidden');summary.style.removeProperty('display');}
+      }
+      installFogNavLink();
+      patchMeteogramLegend();
+      patchCanvasFogLabel();
     };
 
-    const cloneRenderSeries=rows=>Object.freeze((rows||[]).map(row=>Object.freeze({
-      ...row,
-      models:Array.isArray(row?.models)?row.models.slice():row?.models
-    })));
+    const cloneRenderSeries=rows=>Object.freeze((rows||[]).map(row=>{
+      const operationalScore=Number(row?.score);
+      const displayScore=Number.isFinite(operationalScore)&&operationalScore<FOG_RENDER_THRESHOLD
+        ? Math.min(49,operationalScore)
+        : operationalScore;
+      return Object.freeze({
+        ...row,
+        fogScoreOperational:Number.isFinite(operationalScore)?operationalScore:null,
+        score:Number.isFinite(displayScore)?displayScore:row?.score,
+        models:Array.isArray(row?.models)?row.models.slice():row?.models
+      });
+    }));
 
     const installDrawGuard=()=>{
       if(typeof root.draw!=='function')return false;
@@ -51,25 +95,33 @@
     };
 
     const clearRenderSnapshot=()=>{
-      root.PrognozaEPIRFogRenderSeries=null;
-      installDrawGuard();
+      root.PrognozaEPIRFogRenderSeries=Object.freeze([]);
+      redrawStable();
     };
 
     const commitRenderSnapshot=()=>{
       const rows=root.PrognozaEPIRFogSeries;
       root.PrognozaEPIRFogRenderSeries=Array.isArray(rows)&&rows.length?cloneRenderSeries(rows):Object.freeze([]);
       root.PrognozaEPIRFogRenderRevision=(root.PrognozaEPIRFogRenderRevision||0)+1;
+      root.PrognozaEPIRFogRenderThreshold=FOG_RENDER_THRESHOLD;
       redrawStable();
     };
 
-    root.addEventListener?.('prognozaepir:fog-series-updated',clearRenderSnapshot);
+    // Capture listener runs before the overlay's normal listener on subsequent
+    // engine refreshes, so a raw/legacy series cannot flash onto the meteogram.
+    root.addEventListener?.('prognozaepir:fog-series-updated',clearRenderSnapshot,true);
     root.addEventListener?.('prognozaepir:fog-vnext-updated',commitRenderSnapshot);
-    setTimeout(()=>{installUiAuthority();installDrawGuard();},0);
+
+    // The first raw event may have fired before this dynamically loaded module
+    // existed. Clear it as soon as the module is installed and wait for vNext.
+    root.PrognozaEPIRFogRenderSeries=Object.freeze([]);
+    setTimeout(redrawStable,0);
+    setTimeout(()=>{installUiAuthority();installFogNavLink();patchMeteogramLegend();},600);
   }
 })(typeof window!=='undefined'?window:globalThis,function(){
   'use strict';
 
-  const VERSION='1.3.0-state-gated-stable-render';
+  const VERSION='1.4.0-state-gated-authoritative-render';
   const finite=Number.isFinite;
   const num=v=>v!==null&&v!==undefined&&v!==''&&finite(Number(v))?Number(v):null;
   const clamp=(v,a=0,b=1)=>Math.max(a,Math.min(b,v));
@@ -136,10 +188,9 @@
     };
   }
 
-  // NWP visibility is still not allowed to veto a strong, saturated internal
-  // fog signal. It is used only as a contradiction check for marginal FG when
-  // the near-surface state is simultaneously weak/drying. This addresses long
-  // tails such as 50-59/100 during 10-30 km daytime visibility.
+  // NWP visibility is not allowed to veto a strong, saturated internal fog
+  // signal. It is only a contradiction check for marginal FG when the internal
+  // near-surface state is simultaneously weak or drying.
   function visibilityContradiction(input={},physicsOutput={},physics={}){
     const vis=num(input.visibility);
     const sat=num(physicsOutput.SATURATION);
@@ -209,7 +260,7 @@
       final=Math.min(final,.49);
 
     return {
-      version:VERSION,calibrated:false,calibrationStatus:'physics-state-gated-stable-render-2026-09-16',
+      version:VERSION,calibrated:false,calibrationStatus:'physics-state-gated-authoritative-render-2026-09-16',
       P_potential:p.potential,P_physics:p.value,P_direct:d.value,
       P_model_final:final,P_model_final_shadow:final,
       stateReadiness:p.readiness,stateReadinessCoverage:p.readinessCoverage,dissipationPenalty:p.dissipationPenalty,
