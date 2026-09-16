@@ -3,7 +3,7 @@
   if (typeof PLACE === 'undefined') return;
 
   const APP_VERSION = 'v0.10.24 HTML';
-  const ENGINE_VERSION = 'EPIR FOG ENGINE v1.4';
+  const ENGINE_VERSION = 'EPIR FOG ENGINE vNext';
   // Legacy Pages compatibility markers only; runtime v1.3 logic is authoritative.
   // EPIR FOG ENGINE v1.2
   // fogSeries=out;renderFog();
