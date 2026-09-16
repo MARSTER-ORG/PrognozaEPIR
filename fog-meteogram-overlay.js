@@ -1,8 +1,8 @@
 'use strict';
 (() => {
-  const FOG_DRAW_THRESHOLD = 60;
-  const MIFG_DRAW_THRESHOLD = 60;
-  const BR_DRAW_THRESHOLD = 60;
+  const FOG_DRAW_THRESHOLD = 50;
+  const MIFG_DRAW_THRESHOLD = 50;
+  const BR_DRAW_THRESHOLD = 50;
   const FOG_INFO_THRESHOLD = 50;
   const MIFG_INFO_THRESHOLD = 50;
   const BR_INFO_THRESHOLD = 50;
@@ -286,7 +286,7 @@
       ctx.fillRect(xx - barW / 2, baseY - h, barW, h);
     }
 
-    // Shallow fog / MIFG: draw only operationally relevant values >= 60.
+    // Shallow fog / MIFG: draw operationally relevant values >= 50.
     // Points are intentionally not connected; the numeric label is the exact score.
     const mifg = mifgSeries().filter(row => row && finite(row.t) && finite(row.score) && row.score >= MIFG_DRAW_THRESHOLD && row.t >= m.t0 && row.t <= m.t1);
     ctx.font = 'bold 7.5px Arial';
@@ -307,7 +307,7 @@
     }
 
     // Zamglenie BR: zawsze przerywana linia, nigdy punkt/marker.
-    // Ciagle okresy >= 60/100 laczymy, a pojedyncza godzine pokazujemy
+    // Ciagle okresy >= 50/100 laczymy, a pojedyncza godzine pokazujemy
     // jako krotki przerywany odcinek, zeby symbol pozostawal zgodny z legenda.
     const br = brSeries().filter(row => row.t >= m.t0 && row.t <= m.t1);
     const brOperational = br.filter(row => finite(row.t) && finite(row.score) && row.score >= BR_DRAW_THRESHOLD);
@@ -357,14 +357,14 @@
     ctx.setLineDash([]);
     ctx.restore();
 
-    // Put FOG 60 immediately before the 0 km axis label and FOG 100 before 20 km.
+    // Put FOG 50 immediately before the 0 km axis label and FOG 100 before 20 km.
     ctx.save();
     ctx.globalAlpha = .96;
     ctx.fillStyle = cp.muted || '#666';
     ctx.font = 'bold 8px Arial';
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'right';
-    ctx.fillText('FOG 60',x0-24,baseY);
+    ctx.fillText('FOG 50',x0-24,baseY);
     ctx.fillText('FOG 100',x0-24,fog100LabelY);
     ctx.restore();
   }
@@ -384,7 +384,7 @@
     const values = box.querySelector('.section-values');
     if (!values) return;
     const help = box.querySelector('.section-help');
-    if (help) help.textContent = 'Pomarańczowa linia pokazuje widzialność konsensusu. Na meteogramie FOG, MIFG i BR są rysowane dopiero od 60/100; w informacji godziny FOG, MIFG i BR są pokazywane od 50/100.';
+    if (help) help.textContent = 'Pomarańczowa linia pokazuje widzialność konsensusu. Na meteogramie FOG, MIFG i BR są rysowane i pokazywane od 50/100.';
     if (fog && fog.score >= FOG_INFO_THRESHOLD && !values.querySelector('[data-fog-risk="1"]')) {
       const cell = document.createElement('div');
       cell.className = 'section-value';
@@ -420,9 +420,9 @@
     el.innerHTML =
       '<b>Widzialność / mgła:</b>' +
       '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:16px;height:3px;border-radius:2px;background:#d97706"></i>linia = widzialność konsensusu</span>' +
-      '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:8px;height:12px;border-radius:1px;background:rgba(216,108,47,.72)"></i>słupki = FOG ENGINE, od 60/100</span>' +
-      '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#d63434;border:1px solid #ffdede"></i>czerwone punkty = niska mgła MIFG &lt;2 m, od 60/100; liczba = wynik MIFG</span>' +
-      '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:16px;height:0;border-top:2px dashed '+BR_COLOR+'"></i>linia BR = zamglenie, od 60/100</span>';
+      '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:8px;height:12px;border-radius:1px;background:rgba(216,108,47,.72)"></i>słupki = FOG ENGINE, od 50/100</span>' +
+      '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#d63434;border:1px solid #ffdede"></i>czerwone punkty = niska mgła MIFG &lt;2 m, od 50/100; liczba = wynik MIFG</span>' +
+      '<span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:16px;height:0;border-top:2px dashed '+BR_COLOR+'"></i>linia BR = zamglenie, od 50/100</span>';
     legend.appendChild(el);
   }
 
@@ -545,18 +545,18 @@
   }
 
   function installCanvasLegendThresholdPatch() {
-    if (window.__epirFogLegend60Wrapped || typeof drawLegend !== 'function' || typeof ctx === 'undefined') return;
+    if (window.__epirFogLegend50Wrapped || typeof drawLegend !== 'function' || typeof ctx === 'undefined') return;
     const baseLegend = drawLegend;
     drawLegend = function() {
       const nativeFillText = ctx.fillText;
       ctx.fillText = function(text,...args) {
-        if (text === 'FOG ENGINE ≥40/100') text = 'FOG ENGINE ≥60/100';
+        if (text === 'FOG ENGINE ≥40/100') text = 'FOG ENGINE ≥50/100';
         return nativeFillText.call(this,text,...args);
       };
       try { return baseLegend.apply(this,arguments); }
       finally { ctx.fillText = nativeFillText; }
     };
-    window.__epirFogLegend60Wrapped = true;
+    window.__epirFogLegend50Wrapped = true;
   }
 
   function install() {
