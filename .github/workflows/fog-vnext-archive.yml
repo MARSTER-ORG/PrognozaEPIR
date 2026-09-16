@@ -1,0 +1,188 @@
+name: Fog vNext archive and shadow learning
+
+on:
+  push:
+    branches:
+      - fog-vnext-physics-20260915
+    paths:
+      - 'scripts/fog_vnext_model_archive.py'
+      - 'scripts/fog_vnext_censored_events.py'
+      - 'scripts/fog_vnext_event_backfill.py'
+      - 'scripts/fog_vnext_materialize_truth.py'
+      - 'scripts/fog_vnext_historical_backfill.py'
+      - 'scripts/fog_vnext_historical_validation.py'
+      - 'scripts/fog_vnext_ssfc_diagnostics.py'
+      - 'scripts/backfill_fog_vnext_history.py'
+      - 'scripts/fog_vnext_verification.py'
+      - 'scripts/fog_vnext_verification_censored.py'
+      - 'scripts/fog_vnext_eval.js'
+      - 'scripts/build_fog_transition_priors_vnext.py'
+      - 'scripts/build_fog_event_learning_v2.py'
+      - 'scripts/build_adaptive_weights_v2.py'
+      - 'tests/test_fog_vnext_censored_events.py'
+      - 'tests/test_fog_vnext_ssfc_diagnostics.py'
+      - 'fog-physics-vnext.js'
+      - 'fog-vnext-probability-layer.js'
+      - 'fog-vnext-transition-risk.js'
+      - '.github/workflows/fog-vnext-archive.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '17 */3 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fog-vnext-archive-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    if: github.event_name != 'schedule' || github.ref_name == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Attach canonical EPIR history 2020-2026
+        run: |
+          git fetch origin main
+          git restore --source=origin/main --worktree -- data/import/epir-history
+          test -f data/import/epir-history/fog_training_2020_2024_corrected_v2.zip
+          git fetch origin fix/supabase-message-mirror-2025
+          git restore --source=origin/fix/supabase-message-mirror-2025 --worktree -- data/messages
+          test -d data/messages/metar/2025
+          for y in 2020 2021 2022 2023 2024 2025 2026; do test -d "data/messages/synop/$y"; done
+
+      - name: Materialize canonical aviation truth 2020-2024
+        run: python3 scripts/fog_vnext_materialize_truth.py
+
+      - name: Validate vNext code
+        run: |
+          node --check fog-physics-vnext.js
+          node --check fog-vnext-probability-layer.js
+          node --check fog-vnext-transition-risk.js
+          node --check scripts/fog_vnext_eval.js
+          node tests/fog-physics-vnext.test.js
+          node tests/fog-vnext-transition-risk.test.js
+          python3 tests/test_fog_event_learning.py
+          python3 tests/test_fog_event_learning_v2.py
+          python3 tests/test_fog_transition_priors_vnext.py
+          python3 tests/test_fog_vnext_historical_validation.py
+          python3 tests/test_fog_vnext_censored_events.py
+          python3 tests/test_fog_vnext_ssfc_diagnostics.py
+          python3 -m py_compile \
+            scripts/fog_vnext_model_archive.py \
+            scripts/fog_vnext_censored_events.py \
+            scripts/fog_vnext_event_backfill.py \
+            scripts/fog_vnext_materialize_truth.py \
+            scripts/fog_vnext_historical_backfill.py \
+            scripts/fog_vnext_historical_validation.py \
+            scripts/fog_vnext_ssfc_diagnostics.py \
+            scripts/backfill_fog_vnext_history.py \
+            scripts/fog_vnext_verification.py \
+            scripts/fog_vnext_verification_censored.py \
+            scripts/build_fog_transition_priors_vnext.py
+
+      - name: Build canonical transition priors
+        run: python3 scripts/build_fog_transition_priors_vnext.py
+
+      - name: Backfill genuine ECMWF issued runs for 2024-2025
+        run: python3 scripts/fog_vnext_historical_backfill.py --years 2024,2025 --max-batches 1
+
+      - name: Event-stratified explicit-run backfill 2026 multimodel
+        run: python3 scripts/fog_vnext_event_backfill.py --max-batches 1
+
+      - name: Archive current explicit model runs
+        run: python3 scripts/fog_vnext_model_archive.py
+
+      - name: Build shadow adaptive and fog-event weights
+        run: |
+          cp data/learning/adaptive-weights.json /tmp/adaptive-weights.production.json
+          cp data/learning/fog-event-skill.json /tmp/fog-event-skill.production.json
+          python3 scripts/build_adaptive_weights_v2.py
+          cp data/learning/adaptive-weights.json data/learning/adaptive-weights-vnext-shadow.json
+          python3 scripts/build_fog_event_learning_v2.py
+          cp data/learning/fog-event-skill.json data/learning/fog-event-skill-vnext-shadow.json
+          cp /tmp/adaptive-weights.production.json data/learning/adaptive-weights.json
+          cp /tmp/fog-event-skill.production.json data/learning/fog-event-skill.json
+
+      - name: Build censor-aware forecast-to-truth verification and 2020-2026 historical report
+        run: |
+          python3 scripts/fog_vnext_verification_censored.py
+          python3 scripts/fog_vnext_historical_validation.py
+          python3 scripts/fog_vnext_ssfc_diagnostics.py
+
+      - name: Validate shadow artifacts and activation gate
+        run: |
+          python3 -m json.tool data/learning/adaptive-weights-vnext-shadow.json >/dev/null
+          python3 -m json.tool data/learning/fog-event-skill-vnext-shadow.json >/dev/null
+          python3 -m json.tool data/learning/fog-transition-priors-vnext.json >/dev/null
+          python3 -m json.tool data/learning/fog-vnext-verification/summary.json >/dev/null
+          python3 -m json.tool data/learning/fog-vnext-historical-validation.json >/dev/null
+          python3 -m json.tool data/learning/fog-vnext-ssfc-diagnostics.json >/dev/null
+          python3 -m json.tool data/learning/fog-vnext-activation.json >/dev/null
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          aw=json.loads(Path('data/learning/adaptive-weights-vnext-shadow.json').read_text(encoding='utf-8'))
+          fg=json.loads(Path('data/learning/fog-event-skill-vnext-shadow.json').read_text(encoding='utf-8'))
+          tp=json.loads(Path('data/learning/fog-transition-priors-vnext.json').read_text(encoding='utf-8'))
+          summary=json.loads(Path('data/learning/fog-vnext-verification/summary.json').read_text(encoding='utf-8'))
+          history=json.loads(Path('data/learning/fog-vnext-historical-validation.json').read_text(encoding='utf-8'))
+          ssfc=json.loads(Path('data/learning/fog-vnext-ssfc-diagnostics.json').read_text(encoding='utf-8'))
+          gate=json.loads(Path('data/learning/fog-vnext-activation.json').read_text(encoding='utf-8'))
+          for m in ('dmi_harmonie_arome_europe','knmi_harmonie_arome_europe'):
+              assert m in aw['models']
+              assert m in fg['models']
+          assert fg['target_policy']['mifg_separate'] is True
+          assert tp['schema']=='prognozaepir-fog-transition-priors-v1'
+          assert tp['adjacent_known_transitions'] > 0
+          assert summary['schema']=='prognozaepir-fog-vnext-verification-summary-v3'
+          assert summary['censoring_policy']['canonical_2020_2024_event_boundaries'] is True
+          assert summary['censoring_policy']['unknown_transition_targets_excluded_not_negative'] is True
+          assert history['schema']=='prognozaepir-fog-vnext-historical-validation-v1'
+          assert ssfc['schema']=='prognozaepir-fog-vnext-ssfc-diagnostics-v1'
+          assert ssfc['policy']['diagnostic_only'] is True
+          assert set(history['years']) == {str(y) for y in range(2020, 2027)}
+          assert history['years']['2025']['truth']['aviation_observations'] > 0
+          for y in range(2020, 2027):
+              assert history['years'][str(y)]['truth']['synop_teacher'] > 0, y
+          for key in ('fog_truth_physics','fog_truth_direct','fog_truth_blend','onset_next_1h','dissipation_next_1h'):
+              assert key in summary['metrics'], key
+          assert gate['schema']=='prognozaepir-fog-vnext-activation-v1'
+          if gate['operational_activation_ready']:
+              assert gate['statistical_ready'] and gate['promotion_approved']
+          print('censoring:', summary['censoring_policy'])
+          print('historical tiers:', {y:r['cohort']['tier'] for y,r in history['years'].items()})
+          print('rolling:', [(r['test_year'],r['forecast_evaluable']) for r in history['rolling_origin']])
+          print('SSFC:', ssfc['overall']['delta_event_auc_full_minus_no_ssfc'], ssfc['worst_event_auc_groups'][:6])
+          print('activation:', gate['mode'], gate['blockers'])
+          PY
+
+      - name: Remove temporary truth working copies
+        run: |
+          git reset -- data/messages data/import/epir-history || true
+          git restore --source=HEAD --worktree -- data/messages || true
+          git clean -fd data/messages || true
+          git clean -fd data/import/epir-history || true
+
+      - name: Commit archive, verification and shadow learning
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/learning/fog-vnext-forecasts data/learning/model-forecasts/fog-vnext-*.jsonl \
+            data/learning/adaptive-weights-vnext-shadow.json data/learning/fog-event-skill-vnext-shadow.json \
+            data/learning/fog-transition-priors-vnext.json \
+            data/learning/fog-vnext-verification data/learning/fog-vnext-historical-validation.json \
+            data/learning/fog-vnext-ssfc-diagnostics.json \
+            data/learning/fog-vnext-activation.json data/learning/fog-vnext-backfill-state.json \
+            data/learning/fog-vnext-historical-backfill-state.json
+          if git diff --cached --quiet; then
+            echo 'No vNext archive changes'
+          else
+            git commit -m 'weather: accumulate 2020-2026 Fog vNext validation'
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin HEAD:"${GITHUB_REF_NAME}"
+          fi

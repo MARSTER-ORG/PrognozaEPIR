@@ -1,0 +1,35 @@
+name: Fog vNext history archive audit
+
+on:
+  push:
+    branches:
+      - fog-vnext-physics-20260915
+    paths:
+      - 'scripts/fog_vnext_history_coverage.py'
+      - '.github/workflows/fog-vnext-history-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Attach canonical EPIR archive from main
+        run: |
+          git fetch origin main
+          git checkout origin/main -- data/import/epir-history
+          if git cat-file -e origin/main:data/import/epir 2>/dev/null; then
+            git checkout origin/main -- data/import/epir
+          fi
+
+      # Keep this audit explicit because outer ZIP names are not authoritative
+      # for the actual observation-year coverage stored inside them.
+      - name: Inspect archive internals and year coverage
+        run: python3 scripts/fog_vnext_history_coverage.py

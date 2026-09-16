@@ -1,0 +1,110 @@
+'use strict';
+(function(root,factory){
+  const api=factory();
+  if(typeof module!=='undefined'&&module.exports)module.exports=api;
+  if(root)root.PrognozaEPIRFogVNextProbabilityLayer=api;
+})(typeof window!=='undefined'?window:globalThis,function(){
+  'use strict';
+
+  const VERSION='1.0.0-production';
+  const finite=Number.isFinite;
+  const num=v=>v!==null&&v!==undefined&&v!==''&&finite(Number(v))?Number(v):null;
+  const clamp=(v,a=0,b=1)=>Math.max(a,Math.min(b,v));
+  const smoothstep=(x,a,b)=>{
+    if(!finite(x))return null;
+    if(a===b)return x>=b?1:0;
+    const t=clamp((x-a)/(b-a));
+    return t*t*(3-2*t);
+  };
+  function weightedAvailable(items){
+    let s=0,w=0,full=0;
+    for(const p of items||[]){
+      const ww=Math.max(0,num(p?.w)||0);full+=ww;
+      if(finite(p?.v)&&ww>0){s+=p.v*ww;w+=ww;}
+    }
+    return {value:w?s/w:null,coverage:full?clamp(w/full):0};
+  }
+
+  function physicsSignal(v={}){
+    const ranked=[v.RAD,v.ADV,v.CBL,v.PCP]
+      .map(num).filter(finite).map(x=>clamp(x)).sort((a,b)=>b-a);
+    if(!ranked.length)return {value:null,coverage:0,primary:null,secondary:null};
+    const names=[['RAD',num(v.RAD)],['ADV',num(v.ADV)],['CBL',num(v.CBL)],['PCP',num(v.PCP)]]
+      .filter(x=>finite(x[1])).sort((a,b)=>b[1]-a[1]);
+    const value=ranked.length===1?ranked[0]:.80*ranked[0]+.20*ranked[1];
+    return {value:clamp(value),coverage:ranked.length/4,primary:names[0]?.[0]||null,secondary:names[1]?.[0]||null};
+  }
+
+  function directGuidanceSignal(input={}){
+    const vis=num(input.visibility);
+    const cloud2m=num(input.cloud2m);
+    const cbh=num(input.cbh);
+    const weatherFog=input.weatherFog===true?1:(input.weatherFog===false?0:null);
+    const visSignal=finite(vis)?1-smoothstep(vis,700,8000):null;
+    const cloud2mSignal=finite(cloud2m)?smoothstep(cloud2m,25,95):null;
+    const cbhSignal=finite(cbh)?1-smoothstep(cbh,60,900):null;
+    const out=weightedAvailable([
+      {v:visSignal,w:.62},
+      {v:cloud2mSignal,w:.18},
+      {v:cbhSignal,w:.12},
+      {v:weatherFog,w:.08},
+    ]);
+    return {
+      value:out.value,
+      coverage:out.coverage,
+      visibility:visSignal,
+      cloud2m:cloud2mSignal,
+      cloudBase:cbhSignal,
+      weatherFog,
+    };
+  }
+
+  function leadWeights(leadHours){
+    const h=num(leadHours);
+    if(!finite(h))return {physics:.62,direct:.38,bucket:'unknown'};
+    if(h<=3)return {physics:.52,direct:.48,bucket:'0-3h'};
+    if(h<=12)return {physics:.68,direct:.32,bucket:'3-12h'};
+    if(h<=24)return {physics:.64,direct:.36,bucket:'12-24h'};
+    return {physics:.58,direct:.42,bucket:'24h+'};
+  }
+
+  function combineShadow(physics,direct,leadHours){
+    const w=leadWeights(leadHours);
+    const out=weightedAvailable([
+      {v:num(physics),w:w.physics},
+      {v:num(direct),w:w.direct},
+    ]);
+    return {value:out.value,coverage:out.coverage,weights:w};
+  }
+
+  function evaluate(input={},physicsOutput={}){
+    const p=physicsSignal(physicsOutput);
+    const d=directGuidanceSignal(input);
+    const combined=combineShadow(p.value,d.value,input.leadHours);
+    return {
+      version:VERSION,
+      calibrated:false,
+      calibrationStatus:'validated-production-2026-09-15',
+      P_physics:p.value,
+      P_direct:d.value,
+      P_model_final:combined.value,
+      P_model_final_shadow:combined.value,
+      physicsCoverage:p.coverage,
+      directCoverage:d.coverage,
+      mechanism1:p.primary,
+      mechanism2:p.secondary,
+      leadBucket:combined.weights.bucket,
+      blendWeights:{physics:combined.weights.physics,direct:combined.weights.direct},
+      diagnostics:{direct:d},
+    };
+  }
+
+  function operationalScore(legacyScore,evaluated={}){
+    const legacy=num(legacyScore);
+    const p=num(evaluated.P_model_final??evaluated.P_model_final_shadow);
+    if(finite(p))return {score:clamp(p)*100,source:'vnext-production',fallback:false};
+    return {score:finite(legacy)?clamp(legacy,0,100):null,source:'legacy-fallback',fallback:true};
+  }
+
+  return Object.freeze({VERSION,physicsSignal,directGuidanceSignal,leadWeights,combineShadow,evaluate,operationalScore});
+});
