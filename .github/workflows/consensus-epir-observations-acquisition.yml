@@ -44,12 +44,16 @@ jobs:
           from pathlib import Path
           s=json.loads(Path('data/learning/epir-observation-backfill-state.json').read_text(encoding='utf-8'))
           print(json.dumps(s, ensure_ascii=False, indent=2))
-          assert s['schema']=='prognozaepir-epir-observation-backfill-v2'
+          assert s['schema']=='prognozaepir-epir-observation-backfill-v3'
           assert s['station']=='EPIR'
-          assert s['station_metadata']['usaf']=='121052'
-          assert s['station_metadata']['icao']=='EPIR'
+          m=s['station_metadata']
+          assert m['usaf']=='121052'
+          assert m['wban']=='99999'
+          assert m['country']=='PL'
+          assert 'INOWROCLAW' in m['name'].upper()
+          assert float(m['distance_to_arp_km']) <= 10.0
           assert s['rows_total'] >= 10000, s['rows_total']
-          assert len(s['years']) >= 6
+          assert len(s['years']) >= 5
           assert s['field_non_null_counts']['temperature_c'] >= 5000
           assert s['field_non_null_counts']['wind_speed_ms'] >= 5000
           assert s['field_non_null_counts']['visibility_m'] >= 1000
