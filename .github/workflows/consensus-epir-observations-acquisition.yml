@@ -1,0 +1,86 @@
+name: CONSENSUS EPIR observation acquisition
+
+on:
+  push:
+    branches: [consensus-data-backfill-20260916]
+    paths:
+      - 'scripts/backfill_epir_observations_iem.py'
+      - '.github/workflows/consensus-epir-observations-acquisition.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  BRANCH: consensus-data-backfill-20260916
+
+jobs:
+  acquire-observations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: consensus-data-backfill-20260916
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate observation acquisition code
+        run: python3 -m py_compile scripts/backfill_epir_observations_iem.py
+
+      - name: Acquire EPIR observations 2020-2026
+        run: |
+          python3 scripts/backfill_epir_observations_iem.py \
+            --start 2020-01-01 \
+            --end 2026-09-12
+
+      - name: Validate observation archive
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('data/learning/epir-observation-backfill-state.json').read_text(encoding='utf-8'))
+          print(json.dumps(s, ensure_ascii=False, indent=2))
+          assert s['station']=='EPIR'
+          assert s['network']=='PL__ASOS'
+          assert s['rows_total'] >= 10000, s['rows_total']
+          assert len(s['years']) >= 6
+          assert s['field_non_null_counts']['temperature_c'] >= 5000
+          assert s['field_non_null_counts']['visibility_m'] >= 1000
+          assert s['field_non_null_counts']['raw_metar'] >= 5000
+          PY
+
+      - name: Package raw and normalized observations
+        run: |
+          tar -czf consensus-EPIR-observations-2020-2026.tar.gz \
+            data/learning/observations \
+            data/learning/epir-observation-backfill-state.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: consensus-EPIR-observations-2020-2026
+          path: consensus-EPIR-observations-2020-2026.tar.gz
+          retention-days: 2
+
+      - name: Commit normalized observations and state
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/learning/observations/EPIR-*.jsonl data/learning/epir-observation-backfill-state.json
+          if git diff --cached --quiet; then
+            echo 'No new observation data'
+            exit 0
+          fi
+          git commit -m 'weather: acquire EPIR observations 2020-2026'
+          for attempt in 1 2 3 4 5; do
+            git fetch origin ${BRANCH}
+            if git rebase origin/${BRANCH} && git push origin HEAD:${BRANCH}; then
+              exit 0
+            fi
+            git rebase --abort 2>/dev/null || true
+            sleep $((attempt * 3))
+          done
+          exit 1
