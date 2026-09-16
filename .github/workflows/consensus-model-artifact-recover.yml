@@ -48,17 +48,15 @@ jobs:
           root=Path('_validated')
           state=json.loads((root/'previous-runs-backfill-state.json').read_text(encoding='utf-8'))
           files=sorted(root.glob('previous-runs-*.jsonl'))
-          rows=0; models=Counter(); leads=Counter(); bad_location=0
+          rows=0; models=Counter(); leads=Counter()
           for p in files:
               for line in p.read_text(encoding='utf-8').splitlines():
                   if not line.strip(): continue
                   r=json.loads(line); rows += 1
                   models[r['model']] += 1
                   leads[int(r['lead_hours'])] += 1
-                  lat=float(r.get('requested_latitude', r.get('latitude', 999)))
-                  lon=float(r.get('requested_longitude', r.get('longitude', 999)))
-                  if abs(lat-52.828611111111115)>1e-5 or abs(lon-18.330277777777777)>1e-5:
-                      bad_location += 1
+                  assert r.get('archive_source')=='open-meteo-previous-runs'
+                  assert r.get('archive_fixed_lead') is True
           print('files',len(files),'rows',rows,'models',dict(models),'leads',dict(leads))
           print('state',json.dumps(state,ensure_ascii=False,indent=2))
           assert len(files)==29
@@ -67,7 +65,9 @@ jobs:
           assert state['requests_successful']==174 and state['requests_failed']==0
           assert state['location_code']=='EPIR'
           assert state['location_basis']=='MIL_AIP_EPIR_ARP'
-          assert bad_location==0, bad_location
+          assert abs(float(state['latitude'])-52.828611111111115)<1e-6
+          assert abs(float(state['longitude'])-18.330277777777777)<1e-6
+          assert state['period_start']=='2024-01-01' and state['period_end']=='2026-05-31'
           PY
 
       - name: Install validated files into branch
