@@ -32,8 +32,11 @@ OUT_DIR = ROOT / "data" / "learning" / "model-forecasts"
 STATE = ROOT / "data" / "learning" / "previous-runs-backfill-state.json"
 API = "https://previous-runs-api.open-meteo.com/v1/forecast"
 USER_AGENT = "PrognozaEPIR-ConsensusPreviousRuns/1.0"
-LAT = 52.7989
-LON = 18.2639
+# Official EPIR ARP: MIL AIP POLAND AD 4 EPIR 4.2.
+LAT = 52.828611111111115
+LON = 18.330277777777777
+LOCATION_CODE = "EPIR"
+LOCATION_BASIS = "MIL_AIP_EPIR_ARP"
 
 # These IDs are already used by model_verification.py in this repository.
 MODELS = {
@@ -177,6 +180,10 @@ def rows_from_payload(model: str, payload: dict):
                 "archive_backfill": True,
                 "archive_fixed_lead": True,
                 "run_time_semantics": "valid_time_minus_fixed_lead; not native init metadata",
+                "location_code": LOCATION_CODE,
+                "location_basis": LOCATION_BASIS,
+                "requested_lat": LAT,
+                "requested_lon": LON,
                 "archive_variable_count": non_null,
                 **fields,
                 "visibility_m": None,
@@ -251,6 +258,7 @@ def main():
     failures = []
 
     print(f"Previous Runs acquisition {start}..{end}; models={len(selected)}; chunks={len(tasks)}")
+    print(f"Location {LOCATION_CODE}: {LAT:.8f}, {LON:.8f} ({LOCATION_BASIS})")
     with ThreadPoolExecutor(max_workers=max(1, min(args.workers, 4))) as pool:
         futs = {pool.submit(fetch_task, *task): task for task in tasks}
         for i, fut in enumerate(as_completed(futs), 1):
@@ -292,6 +300,10 @@ def main():
         "valid_hour_utc": 0,
         "lead_hours": [d * 24 for d in LEAD_DAYS],
         "models_requested": selected,
+        "location_code": LOCATION_CODE,
+        "location_basis": LOCATION_BASIS,
+        "latitude": LAT,
+        "longitude": LON,
         "source": "Open-Meteo Previous Runs API",
         "source_semantics": "fixed lead offsets; not native run initialisation metadata",
         "requests_total": len(tasks),
