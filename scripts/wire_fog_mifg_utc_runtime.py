@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""Make deployed FOG/MIFG clock semantics explicit UTC.
+"""Wire the deployed FOG/MIFG runtime and production Fog Engine vNext bridge.
 
 Archive routing is owned solely by message-archive-client.js. This build step
-only normalizes the remaining FOG/MIFG display/input clock semantics in the
-canonical Pages artifact.
+normalizes FOG/MIFG display/input clock semantics to UTC and ensures the
+validated Fog Engine vNext production bridge is present in the canonical Pages
+artifact after prepare_pages.py has assembled the site.
 """
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "_site"
+ASSET_V = os.environ.get("GITHUB_SHA", "dev")[:12]
 
 
 def patch_fog() -> None:
@@ -60,22 +63,51 @@ def patch_mifg() -> None:
     p.write_text(s, encoding="utf-8")
 
 
+def patch_vnext() -> None:
+    index = SITE / "index.html"
+    bridge = SITE / "fog-summary-layout.js"
+    physics = SITE / "fog-physics-vnext.js"
+    probability = SITE / "fog-vnext-probability-layer.js"
+    for p in (bridge, physics, probability):
+        if not p.is_file() or p.stat().st_size == 0:
+            raise SystemExit(f"Fog vNext production asset missing: {p.name}")
+
+    s = index.read_text(encoding="utf-8")
+    tag = f'<script src="fog-summary-layout.js?v={ASSET_V}"></script>'
+    if 'fog-summary-layout.js?v=' not in s:
+        marker = '</body>'
+        if marker not in s:
+            raise SystemExit("index.html body marker missing for Fog vNext bridge")
+        s = s.replace(marker, tag + "\n" + marker, 1)
+    index.write_text(s, encoding="utf-8")
+
+
 def validate() -> None:
     fog = (SITE / "fog-engine.js").read_text(encoding="utf-8")
     mifg = (SITE / "mifg-engine.js").read_text(encoding="utf-8")
+    index = (SITE / "index.html").read_text(encoding="utf-8")
+    bridge = (SITE / "fog-summary-layout.js").read_text(encoding="utf-8")
+    probability = (SITE / "fog-vnext-probability-layer.js").read_text(encoding="utf-8")
     if "function parseLocalInput(v){return v?Date.parse(/[zZ]|[+-]\\d\\d:\\d\\d$/.test(v)?v:v+'Z'):NaN;}" not in fog:
         raise SystemExit("FOG datetime-local is not UTC")
     if "timeZone:PLACE.tz" in fog or "timeZone:PLACE.tz" in mifg:
         raise SystemExit("local timezone reference remains in deployed FOG/MIFG")
     if "+' UTC'" not in fog or "+' UTC'" not in mifg:
         raise SystemExit("explicit UTC label missing in FOG/MIFG")
+    if 'fog-summary-layout.js?v=' not in index:
+        raise SystemExit("Fog vNext production bridge is not wired into deployed index.html")
+    if "fogEngineMode:'vnext-production'" not in bridge or 'Probability.operationalScore' not in bridge:
+        raise SystemExit("Fog vNext bridge is not in production mode")
+    if "const VERSION='1.0.0-production'" not in probability or 'P_model_final' not in probability:
+        raise SystemExit("Fog vNext production probability layer contract missing")
 
 
 def main() -> int:
     patch_fog()
     patch_mifg()
+    patch_vnext()
     validate()
-    print("wired explicit UTC FOG/MIFG runtime")
+    print("wired explicit UTC FOG/MIFG runtime and Fog vNext production bridge")
     return 0
 
 
