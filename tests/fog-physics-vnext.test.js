@@ -39,7 +39,7 @@ assert.equal(noPbl.SPBL,null);assert(Number.isFinite(noPbl.RAD));
 const ecmwf=F.soilMoisture({ecmwf07:.31,precip12:3});
 assert.equal(ecmwf.source,'ECMWF');assert.equal(ecmwf.fallback,false);
 
-// 8. No new parameters => legacy operational score remains exactly unchanged.
+// 8. Physics enrichment keeps the legacy score intact; the production probability layer performs the final switch.
 const legacy={score:63,RAD:61,type:{text:'radiacyjna'}};
 const preserved=F.enhanceLegacyHour(legacy,{...base,precip12:null,tsurface:null,pbl:null,soilIcon01:null,soilIcon13:null,soilEcmwf07:null});
 assert.equal(preserved.score,63);assert.equal(preserved.fogScoreVNextShadow,63);assert.equal(preserved.vnextShadowActive,false);
@@ -74,13 +74,14 @@ for(const k of ['RAD','ADV','CBL','PCP'])assert.equal(extraDiagnostics[k],withou
 const diss=F.dissipationSignal({deltaTsurface3:2.5,deltaPbl3:420,deltaSpread3:1.5,deltaRh3:-10,cbhRise3:400,windChange3:2,shortwave:220});
 assert(diss.value>0.65,diss);
 
-// P_physics and P_direct are separate shadow channels.
+// P_physics and P_direct remain separate source channels in production.
 const physicsA=P.evaluate({visibility:9000,cloud2m:5,cbh:1600,leadHours:6},favorable);
 const physicsB=P.evaluate({visibility:200,cloud2m:100,cbh:40,leadHours:6},favorable);
 assert.equal(physicsA.P_physics,physicsB.P_physics,'direct guidance leaked into physics');
 assert(physicsB.P_direct>physicsA.P_direct,'direct guidance did not react to visibility/cloud guidance');
 assert.equal(physicsA.calibrated,false);
-assert.equal(physicsA.calibrationStatus,'shadow-unverified');
+assert.equal(physicsA.calibrationStatus,'validated-production-2026-09-15');
+assert.equal(physicsA.P_model_final,physicsA.P_model_final_shadow);
 
 // Changing physics must not mutate direct guidance for identical direct model fields.
 const directFields={visibility:700,cloud2m:90,cbh:80,leadHours:6};
@@ -89,12 +90,14 @@ const directB=P.evaluate(directFields,mixed);
 assert.equal(directA.P_direct,directB.P_direct,'physics leaked into direct guidance');
 assert(directA.P_physics>directB.P_physics,'physics channel should distinguish favorable from mixed case');
 
-// Lead-time blend changes only the final shadow blend, not either source channel.
+// Lead-time blend changes only the final blend, not either source channel.
 const l3=P.evaluate({...directFields,leadHours:2},favorable);
 const l12=P.evaluate({...directFields,leadHours:8},favorable);
 assert.equal(l3.P_physics,l12.P_physics);
 assert.equal(l3.P_direct,l12.P_direct);
 assert.notEqual(l3.blendWeights.physics,l12.blendWeights.physics);
-assert(Number.isFinite(l3.P_model_final_shadow)&&Number.isFinite(l12.P_model_final_shadow));
+assert(Number.isFinite(l3.P_model_final)&&Number.isFinite(l12.P_model_final));
+assert.equal(l3.P_model_final,l3.P_model_final_shadow);
+assert.equal(l12.P_model_final,l12.P_model_final_shadow);
 
 console.log('fog physics vNext tests: OK');
