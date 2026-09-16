@@ -22,7 +22,7 @@ assert.equal(E.QUALITY_VERSION,'2.4.1');
 {
   const rows=Array.from({length:12},(_,i)=>row(i,{RR:1,code:61,vis:12000}));
   const q=gen(rows);
-  assert.match(q.taf,/\b-RA\b/,q.taf);
+  assert.ok(q.taf.includes('-RA'),q.taf);
   assert.ok(!q.taf.includes('+RA'),q.taf);
 }
 
@@ -40,7 +40,7 @@ assert.equal(E.QUALITY_VERSION,'2.4.1');
   const rows=Array.from({length:12},(_,i)=>row(i,{RR:12,code:65,vis:12000}));
   rows[5]=row(5,{RR:12,vis:12000,mv:[member({code:65,w:.4}),member({code:0,w:.6})]});
   const q=gen(rows);
-  assert.match(q.taf,/\b\+RA\b/,q.taf);
+  assert.ok(q.taf.includes('+RA'),q.taf);
   assert.ok(!/PROB30(?: TEMPO)?[^\n]*\+RA/.test(q.taf),q.taf);
   assert.ok(q.diagnostics.reasons.some(x=>/bez nowej informacji/.test(x)),JSON.stringify(q.diagnostics.reasons));
 }
