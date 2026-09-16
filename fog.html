@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>EPIR FOG ENGINE vNext</title>
+<script src="utc-ui-guard.js"></script>
+<style>
+:root{--bg:#f4f4f2;--ink:#232323;--muted:#6e6e6e;--surface:#fff;--surface2:#f7f7f7;--soft:#f4f4f2;--border:#b5b5b5;--blueText:#1f2a75;--errorText:#8a2d2d}
+:root[data-theme="dark"]{--bg:#111418;--ink:#e7e9ed;--muted:#a6acb5;--surface:#181c21;--surface2:#20252b;--soft:#20252b;--border:#4e5660;--blueText:#9aabff;--errorText:#ffb8c0}
+@media(prefers-color-scheme:dark){:root:not([data-theme]){--bg:#111418;--ink:#e7e9ed;--muted:#a6acb5;--surface:#181c21;--surface2:#20252b;--soft:#20252b;--border:#4e5660;--blueText:#9aabff;--errorText:#ffb8c0}}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--ink);font-family:Arial,Helvetica,sans-serif}.app{max-width:1180px;margin:0 auto;padding:8px 8px 24px}.local-nav{display:flex;gap:5px;flex-wrap:wrap;padding:6px 0 9px}.local-nav a{display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--ink);font-size:10px;font-weight:700;text-decoration:none}.local-nav a.active{background:var(--blueText);border-color:var(--blueText);color:#fff}.top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:8px 4px}.brand{font-size:19px;font-weight:700;color:var(--blueText)}.brand small{font-size:12px;font-weight:400;color:var(--muted)}.place{margin-top:4px;font-size:12px;color:var(--muted)}.status{font-size:10px;color:var(--muted);text-align:right}.intro{margin:4px 0 8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);font-size:10px;line-height:1.45;color:var(--muted)}.intro b{color:var(--ink)}.fog-engine{margin-top:6px!important}.page-note{margin-top:10px;font-size:9px;color:var(--muted);line-height:1.4}@media(max-width:700px){.app{padding:5px 4px 18px}.local-nav a{flex:1 1 calc(33.333% - 5px);min-width:95px;font-size:9px;padding:6px}.brand{font-size:17px}.top{padding:6px 2px}.intro{font-size:9px}}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="local-nav" aria-label="Główna nawigacja PrognozaEPIR">
+    <a href="index.html">METEOGRAM</a>
+    <a href="fog.html" class="active" aria-current="page">FOG ENGINE</a>
+    <a href="radar.html">RADAR</a>
+    <a href="sat-fog.html">MGŁA SAT</a>
+    <a href="taf.html">TAF GENERATOR</a>
+    <a href="arch.html">ARCHIWUM</a>
+  </nav>
+  <div class="top">
+    <div>
+      <div class="brand">EPIR FOG ENGINE vNext <small>standalone</small></div>
+      <div class="place">Inowrocław (52.80, 18.26) · analiza FG / BR / MIFG i prognozowanej widzialności</div>
+    </div>
+    <div class="status">Dane i obliczenia aktualizują się automatycznie</div>
+  </div>
+  <div class="intro"><b>Osobna strona silnika mgły.</b> Tutaj pozostają szczegóły procesu, przedział czasu zjawiska, VIS vNext, prawdopodobieństwa progów widzialności, przyczyny, pewność i diagnostyka. Główny meteogram pokazuje tylko graficzny sygnał z ukończonego wyniku vNext.</div>
+  <div id="fogStandaloneMount"></div>
+  <div class="page-note">FOG Engine wykorzystuje własną fizykę warstwy przyziemnej. Widzialność NWP pozostaje sygnałem kontrolnym i nie steruje prognozowaną VIS vNext.</div>
+</div>
+<script>
+'use strict';
+const PLACE={lat:52.7989,lon:18.2639,tz:'UTC'};
+// Standalone mode needs no meteogram datasets. The core engine can operate on
+// its independently fetched DMI/KNMI inputs; vNext adds ICON-D2/ECMWF physics.
+const MODELS=[];
+const datasets=new Map();
+window.__PROGNOZA_EPIR_FOG_STANDALONE__=true;
+</script>
+<script src="fog-engine.js?v=20260916-fogpage1"></script>
+<script src="mifg-engine.js?v=20260916-fogpage1"></script>
+<script src="fog-summary-layout.js?v=20260916-fogpage1"></script>
+</body>
+</html>
