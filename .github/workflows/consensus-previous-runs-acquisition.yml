@@ -17,7 +17,7 @@ env:
 jobs:
   acquire:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,47 +31,72 @@ jobs:
       - name: Validate acquisition code
         run: python3 -m py_compile scripts/backfill_previous_runs_history.py
 
-      - name: Probe January 2024 for all configured models
+      - name: Acquire validated model history 2024-2026
         run: |
           python3 scripts/backfill_previous_runs_history.py \
             --start 2024-01-01 \
-            --end 2024-01-31 \
-            --workers 4
+            --end 2026-05-31 \
+            --workers 4 \
+            --models ncep_gfs_global,icon_eu,icon_global,icon_d2,meteofrance_arpege_europe,cmc_gem_gdps
 
-      - name: Report archived coverage
+      - name: Validate acquired archive
         run: |
           python3 - <<'PY'
           import json
           from collections import Counter
           from pathlib import Path
           state=json.loads(Path('data/learning/previous-runs-backfill-state.json').read_text(encoding='utf-8'))
-          p=Path('data/learning/model-forecasts/previous-runs-2024-01.jsonl')
-          rows=[json.loads(x) for x in p.read_text(encoding='utf-8').splitlines() if x.strip()]
-          models=Counter(r.get('model') for r in rows)
-          leads=Counter(int(r.get('lead_hours') or 0) for r in rows)
-          print('rows',len(rows))
-          print('models',dict(models))
-          print('leads',dict(leads))
-          print('requests',state['requests_successful'],'success',state['requests_failed'],'failed')
-          print('failures',json.dumps(state.get('failures') or [],ensure_ascii=False))
-          assert len(rows) >= 50
-          assert len(models) >= 1
-          assert leads[24] > 0 and leads[48] > 0
+          rows=0; models=Counter(); leads=Counter(); months=0
+          for p in sorted(Path('data/learning/model-forecasts').glob('previous-runs-*.jsonl')):
+              months += 1
+              for line in p.read_text(encoding='utf-8').splitlines():
+                  if not line.strip(): continue
+                  r=json.loads(line); rows += 1
+                  models[r.get('model')] += 1
+                  leads[int(r.get('lead_hours') or 0)] += 1
+                  assert r.get('archive_source') == 'open-meteo-previous-runs'
+                  assert r.get('archive_fixed_lead') is True
+          print('rows', rows)
+          print('months', months)
+          print('models', dict(models))
+          print('leads', dict(leads))
+          print('requests', state['requests_successful'], 'success', state['requests_failed'], 'failed')
+          print('failures', json.dumps(state.get('failures') or [], ensure_ascii=False))
+          assert rows >= 5000, f'too few rows: {rows}'
+          assert len(models) >= 5, f'too few models: {len(models)}'
+          assert months >= 24, f'too few months: {months}'
+          assert leads[24] > 500 and leads[48] > 500 and leads[72] > 500
           PY
 
-      - name: Commit probe data
+      - name: Package acquired data
+        run: |
+          mkdir -p _artifact
+          cp data/learning/previous-runs-backfill-state.json _artifact/
+          cp data/learning/model-forecasts/previous-runs-*.jsonl _artifact/
+          tar -czf consensus-previous-runs-2024-2026.tar.gz -C _artifact .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: consensus-previous-runs-2024-2026
+          path: consensus-previous-runs-2024-2026.tar.gz
+          retention-days: 2
+
+      - name: Commit acquired history to acquisition branch
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add data/learning/model-forecasts/previous-runs-2024-01.jsonl data/learning/previous-runs-backfill-state.json
+          git add data/learning/model-forecasts/previous-runs-*.jsonl data/learning/previous-runs-backfill-state.json
           if git diff --cached --quiet; then
             echo 'No new historical data'
             exit 0
           fi
-          git commit -m 'weather: probe January 2024 consensus model history'
-          for attempt in 1 2 3; do
-            git pull --rebase origin ${BRANCH} && git push origin HEAD:${BRANCH} && exit 0
+          git commit -m 'weather: acquire consensus fixed-lead history 2024-2026'
+          for attempt in 1 2 3 4 5; do
+            git fetch origin ${BRANCH}
+            if git rebase origin/${BRANCH} && git push origin HEAD:${BRANCH}; then
+              exit 0
+            fi
             git rebase --abort 2>/dev/null || true
-            sleep $((attempt * 2))
+            sleep $((attempt * 3))
           done
           exit 1
