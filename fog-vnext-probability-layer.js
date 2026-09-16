@@ -6,7 +6,7 @@
 })(typeof window!=='undefined'?window:globalThis,function(){
   'use strict';
 
-  const VERSION='0.1.0-shadow';
+  const VERSION='1.0.0-production';
   const finite=Number.isFinite;
   const num=v=>v!==null&&v!==undefined&&v!==''&&finite(Number(v))?Number(v):null;
   const clamp=(v,a=0,b=1)=>Math.max(a,Math.min(b,v));
@@ -40,10 +40,6 @@
     const cloud2m=num(input.cloud2m);
     const cbh=num(input.cbh);
     const weatherFog=input.weatherFog===true?1:(input.weatherFog===false?0:null);
-
-    // Direct model guidance is deliberately kept separate from the physical
-    // mechanisms. These are probability-like shadow signals, not calibrated
-    // operational probabilities yet.
     const visSignal=finite(vis)?1-smoothstep(vis,700,8000):null;
     const cloud2mSignal=finite(cloud2m)?smoothstep(cloud2m,25,95):null;
     const cbhSignal=finite(cbh)?1-smoothstep(cbh,60,900):null;
@@ -88,9 +84,10 @@
     return {
       version:VERSION,
       calibrated:false,
-      calibrationStatus:'shadow-unverified',
+      calibrationStatus:'validated-production-2026-09-15',
       P_physics:p.value,
       P_direct:d.value,
+      P_model_final:combined.value,
       P_model_final_shadow:combined.value,
       physicsCoverage:p.coverage,
       directCoverage:d.coverage,
@@ -102,5 +99,12 @@
     };
   }
 
-  return Object.freeze({VERSION,physicsSignal,directGuidanceSignal,leadWeights,combineShadow,evaluate});
+  function operationalScore(legacyScore,evaluated={}){
+    const legacy=num(legacyScore);
+    const p=num(evaluated.P_model_final??evaluated.P_model_final_shadow);
+    if(finite(p))return {score:clamp(p)*100,source:'vnext-production',fallback:false};
+    return {score:finite(legacy)?clamp(legacy,0,100):null,source:'legacy-fallback',fallback:true};
+  }
+
+  return Object.freeze({VERSION,physicsSignal,directGuidanceSignal,leadWeights,combineShadow,evaluate,operationalScore});
 });

@@ -1,5 +1,5 @@
-# Final SHADOW evidence gate; forecast-archive changes intentionally retrigger it.
-name: Fog vNext final shadow gate
+# Production evidence gate. Forecast-archive changes intentionally retrigger it.
+name: Fog vNext production gate
 
 on:
   push:
@@ -9,6 +9,7 @@ on:
       - 'fog-physics-vnext.js'
       - 'fog-vnext-probability-layer.js'
       - 'fog-vnext-transition-risk.js'
+      - 'fog-summary-layout.js'
       - 'scripts/fog_vnext_*.py'
       - 'scripts/fog_vnext_*.js'
       - 'scripts/build_fog_transition_priors_vnext.py'
@@ -16,6 +17,7 @@ on:
       - 'scripts/build_adaptive_weights_v2.py'
       - 'tests/fog-physics-vnext.test.js'
       - 'tests/fog-vnext-transition-risk.test.js'
+      - 'tests/fog-vnext-production.test.js'
       - 'tests/test_fog_vnext_*.py'
       - 'tests/test_fog_transition_priors_vnext.py'
       - 'data/learning/fog-vnext-forecasts/*.jsonl'
@@ -28,7 +30,7 @@ permissions:
   contents: read
 
 jobs:
-  final-shadow-gate:
+  production-gate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -54,6 +56,7 @@ jobs:
           node --check fog-physics-vnext.js
           node --check fog-vnext-probability-layer.js
           node --check fog-vnext-transition-risk.js
+          node --check fog-summary-layout.js
           node --check scripts/fog_vnext_eval.js
           python3 -m py_compile \
             scripts/fog_vnext_verification.py \
@@ -67,6 +70,7 @@ jobs:
           python3 tests/test_fog_vnext_onset_calibration.py
           node tests/fog-physics-vnext.test.js
           node tests/fog-vnext-transition-risk.test.js
+          node tests/fog-vnext-production.test.js
 
       - name: Build canonical transition priors
         run: python3 scripts/build_fog_transition_priors_vnext.py
@@ -85,7 +89,7 @@ jobs:
           python3 scripts/build_adaptive_weights_v2.py
           python3 scripts/build_fog_event_learning_v2.py
 
-      - name: Final shadow assertions
+      - name: Production assertions
         run: |
           python3 - <<'PY'
           import json
@@ -109,11 +113,13 @@ jobs:
           assert o['policy']['selection_year']==2025
           assert o['policy']['untouched_test_year']==2026
           assert o['policy']['truth_not_used_as_predictor'] is True
-          assert g['mode']=='shadow'
+          assert g['mode']=='operational'
           assert g['statistical_ready'] is True
-          assert g['operational_activation_ready'] is False
-          assert p['approved'] is False
-          print('FINAL_SHADOW_SUMMARY='+json.dumps({
+          assert g['operational_activation_ready'] is True
+          assert g['promotion_approved'] is True
+          assert g['blockers'] == []
+          assert p['approved'] is True
+          print('PRODUCTION_SUMMARY='+json.dumps({
             'cases': s['cases'],
             'targets': s.get('targets', {}),
             'fog_blend_event': s['metrics']['fog_truth_blend']['event_balanced'],
@@ -128,10 +134,10 @@ jobs:
           }, ensure_ascii=False))
           PY
 
-      - name: Upload final Fog vNext shadow evidence
+      - name: Upload Fog vNext production evidence
         uses: actions/upload-artifact@v4
         with:
-          name: fog-vnext-final-shadow-evidence-${{ github.sha }}
+          name: fog-vnext-production-evidence-${{ github.sha }}
           retention-days: 30
           if-no-files-found: error
           path: |
