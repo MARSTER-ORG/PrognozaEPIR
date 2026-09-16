@@ -4,7 +4,7 @@ on:
   push:
     branches: [consensus-data-backfill-20260916]
     paths:
-      - 'scripts/backfill_epir_observations_iem.py'
+      - 'scripts/backfill_epir_observations_ncei.py'
       - '.github/workflows/consensus-epir-observations-acquisition.yml'
   workflow_dispatch:
 
@@ -29,13 +29,13 @@ jobs:
           python-version: '3.12'
 
       - name: Validate observation acquisition code
-        run: python3 -m py_compile scripts/backfill_epir_observations_iem.py
+        run: python3 -m py_compile scripts/backfill_epir_observations_ncei.py
 
-      - name: Acquire EPIR observations 2020-2026
+      - name: Acquire EPIR observations 2020-2026 from NOAA NCEI
         run: |
-          python3 scripts/backfill_epir_observations_iem.py \
+          python3 scripts/backfill_epir_observations_ncei.py \
             --start 2020-01-01 \
-            --end 2026-09-12
+            --end 2026-09-17
 
       - name: Validate observation archive
         run: |
@@ -44,37 +44,40 @@ jobs:
           from pathlib import Path
           s=json.loads(Path('data/learning/epir-observation-backfill-state.json').read_text(encoding='utf-8'))
           print(json.dumps(s, ensure_ascii=False, indent=2))
+          assert s['schema']=='prognozaepir-epir-observation-backfill-v2'
           assert s['station']=='EPIR'
-          assert s['network']=='PL__ASOS'
+          assert s['station_metadata']['usaf']=='121052'
+          assert s['station_metadata']['icao']=='EPIR'
           assert s['rows_total'] >= 10000, s['rows_total']
           assert len(s['years']) >= 6
           assert s['field_non_null_counts']['temperature_c'] >= 5000
+          assert s['field_non_null_counts']['wind_speed_ms'] >= 5000
           assert s['field_non_null_counts']['visibility_m'] >= 1000
-          assert s['field_non_null_counts']['raw_metar'] >= 5000
           PY
 
       - name: Package raw and normalized observations
         run: |
-          tar -czf consensus-EPIR-observations-2020-2026.tar.gz \
-            data/learning/observations \
+          tar -czf consensus-EPIR-NCEI-observations-2020-2026.tar.gz \
+            data/learning/observations/raw-ncei \
+            data/learning/observations/EPIR-NCEI-*.jsonl \
             data/learning/epir-observation-backfill-state.json
 
       - uses: actions/upload-artifact@v4
         with:
-          name: consensus-EPIR-observations-2020-2026
-          path: consensus-EPIR-observations-2020-2026.tar.gz
+          name: consensus-EPIR-NCEI-observations-2020-2026
+          path: consensus-EPIR-NCEI-observations-2020-2026.tar.gz
           retention-days: 2
 
       - name: Commit normalized observations and state
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add data/learning/observations/EPIR-*.jsonl data/learning/epir-observation-backfill-state.json
+          git add data/learning/observations/EPIR-NCEI-*.jsonl data/learning/epir-observation-backfill-state.json
           if git diff --cached --quiet; then
             echo 'No new observation data'
             exit 0
           fi
-          git commit -m 'weather: acquire EPIR observations 2020-2026'
+          git commit -m 'weather: acquire NOAA NCEI EPIR observations 2020-2026'
           for attempt in 1 2 3 4 5; do
             git fetch origin ${BRANCH}
             if git rebase origin/${BRANCH} && git push origin HEAD:${BRANCH}; then
