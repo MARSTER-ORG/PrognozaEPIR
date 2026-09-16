@@ -1,9 +1,9 @@
-name: Fog vNext archive and shadow learning
+name: Fog vNext archive and operational learning
 
 on:
   push:
     branches:
-      - fog-vnext-physics-20260915
+      - main
     paths:
       - 'scripts/fog_vnext_model_archive.py'
       - 'scripts/fog_vnext_censored_events.py'
@@ -45,14 +45,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Attach canonical EPIR history 2020-2026
+      - name: Validate canonical EPIR history 2020-2026
         run: |
-          git fetch origin main
-          git restore --source=origin/main --worktree -- data/import/epir-history
           test -f data/import/epir-history/fog_training_2020_2024_corrected_v2.zip
-          git fetch origin fix/supabase-message-mirror-2025
-          git restore --source=origin/fix/supabase-message-mirror-2025 --worktree -- data/messages
           test -d data/messages/metar/2025
+          test -d data/messages/speci/2025
+          test -d data/messages/taf/2025
           for y in 2020 2021 2022 2023 2024 2025 2026; do test -d "data/messages/synop/$y"; done
 
       - name: Materialize canonical aviation truth 2020-2024
@@ -97,7 +95,7 @@ jobs:
       - name: Archive current explicit model runs
         run: python3 scripts/fog_vnext_model_archive.py
 
-      - name: Build shadow adaptive and fog-event weights
+      - name: Build adaptive and fog-event learning candidates
         run: |
           cp data/learning/adaptive-weights.json /tmp/adaptive-weights.production.json
           cp data/learning/fog-event-skill.json /tmp/fog-event-skill.production.json
@@ -114,7 +112,7 @@ jobs:
           python3 scripts/fog_vnext_historical_validation.py
           python3 scripts/fog_vnext_ssfc_diagnostics.py
 
-      - name: Validate shadow artifacts and activation gate
+      - name: Validate learning artifacts and activation gate
         run: |
           python3 -m json.tool data/learning/adaptive-weights-vnext-shadow.json >/dev/null
           python3 -m json.tool data/learning/fog-event-skill-vnext-shadow.json >/dev/null
@@ -168,7 +166,7 @@ jobs:
           git clean -fd data/messages || true
           git clean -fd data/import/epir-history || true
 
-      - name: Commit archive, verification and shadow learning
+      - name: Commit archive, verification and learning candidates
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
