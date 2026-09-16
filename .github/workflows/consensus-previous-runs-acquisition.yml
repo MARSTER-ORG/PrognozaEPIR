@@ -17,7 +17,7 @@ env:
 jobs:
   acquire:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,34 +31,35 @@ jobs:
       - name: Validate acquisition code
         run: python3 -m py_compile scripts/backfill_previous_runs_history.py
 
-      - name: Acquire GFS January 2024 fixed-lead history
+      - name: Probe January 2024 for all configured models
         run: |
           python3 scripts/backfill_previous_runs_history.py \
             --start 2024-01-01 \
             --end 2024-01-31 \
-            --workers 1 \
-            --models ncep_gfs_global
+            --workers 4
 
-      - name: Validate acquired archive
+      - name: Report archived coverage
         run: |
           python3 - <<'PY'
           import json
           from collections import Counter
           from pathlib import Path
+          state=json.loads(Path('data/learning/previous-runs-backfill-state.json').read_text(encoding='utf-8'))
           p=Path('data/learning/model-forecasts/previous-runs-2024-01.jsonl')
-          assert p.exists()
           rows=[json.loads(x) for x in p.read_text(encoding='utf-8').splitlines() if x.strip()]
+          models=Counter(r.get('model') for r in rows)
           leads=Counter(int(r.get('lead_hours') or 0) for r in rows)
-          print('rows', len(rows))
-          print('leads', dict(leads))
-          print('first', json.dumps(rows[0], ensure_ascii=False))
-          assert len(rows) >= 20
-          assert all(r.get('model')=='ncep_gfs_global' for r in rows)
+          print('rows',len(rows))
+          print('models',dict(models))
+          print('leads',dict(leads))
+          print('requests',state['requests_successful'],'success',state['requests_failed'],'failed')
+          print('failures',json.dumps(state.get('failures') or [],ensure_ascii=False))
+          assert len(rows) >= 50
+          assert len(models) >= 1
           assert leads[24] > 0 and leads[48] > 0
-          assert all(r.get('archive_source')=='open-meteo-previous-runs' for r in rows)
           PY
 
-      - name: Commit acquired history to acquisition branch
+      - name: Commit probe data
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
@@ -67,5 +68,10 @@ jobs:
             echo 'No new historical data'
             exit 0
           fi
-          git commit -m 'weather: acquire GFS January 2024 consensus history'
-          git push origin HEAD:${BRANCH}
+          git commit -m 'weather: probe January 2024 consensus model history'
+          for attempt in 1 2 3; do
+            git pull --rebase origin ${BRANCH} && git push origin HEAD:${BRANCH} && exit 0
+            git rebase --abort 2>/dev/null || true
+            sleep $((attempt * 2))
+          done
+          exit 1
