@@ -3,6 +3,26 @@
   const api=factory();
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   if(root)root.PrognozaEPIRFogVNextProbabilityLayer=api;
+  if(root&&root.document){
+    const installUiAuthority=()=>{
+      const d=root.document;
+      if(!d.getElementById('fogVNextUiAuthority')){
+        const style=d.createElement('style');
+        style.id='fogVNextUiAuthority';
+        style.textContent='#fogSummaryStructured,#fogAuxStructured{display:none!important}#fogSummary{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}@media(max-width:700px){#fogSummary{grid-template-columns:repeat(2,minmax(0,1fr))}}';
+        d.head?.appendChild(style);
+      }
+      const summary=d.getElementById('fogSummary');
+      if(summary){summary.removeAttribute('aria-hidden');summary.style.removeProperty('display');}
+    };
+    const redraw=()=>{
+      installUiAuthority();
+      root.queueMicrotask?.(()=>{try{if(typeof root.draw==='function')root.draw();}catch(_){}});
+    };
+    root.addEventListener?.('prognozaepir:fog-vnext-updated',redraw);
+    setTimeout(installUiAuthority,0);
+    setTimeout(redraw,500);
+  }
 })(typeof window!=='undefined'?window:globalThis,function(){
   'use strict';
 
