@@ -1,0 +1,56 @@
+name: CONSENSUS GFS first historical batch
+
+on:
+  push:
+    branches: [consensus-data-backfill-20260916]
+    paths:
+      - '.github/workflows/consensus-gfs-smoke-acquisition.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  acquire-gfs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: consensus-data-backfill-20260916
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Acquire GFS January 2024
+        run: |
+          python3 scripts/backfill_previous_runs_history.py \
+            --start 2024-01-01 \
+            --end 2024-01-31 \
+            --workers 1 \
+            --models ncep_gfs_global
+
+      - name: Validate first batch
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('data/learning/model-forecasts/previous-runs-2024-01.jsonl')
+          assert p.exists()
+          rows=[json.loads(x) for x in p.read_text(encoding='utf-8').splitlines() if x.strip()]
+          print('GFS January 2024 rows:', len(rows))
+          print('leads:', sorted({r['lead_hours'] for r in rows}))
+          print('first:', rows[0])
+          assert len(rows) >= 20
+          assert all(r['model']=='ncep_gfs_global' for r in rows)
+          PY
+
+      - name: Commit first batch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/learning/model-forecasts/previous-runs-2024-01.jsonl data/learning/previous-runs-backfill-state.json
+          git commit -m 'weather: acquire GFS January 2024 consensus history'
+          git push origin HEAD:consensus-data-backfill-20260916
