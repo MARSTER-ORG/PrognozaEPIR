@@ -1,0 +1,89 @@
+name: CONSENSUS recover validated model archive
+
+on:
+  push:
+    branches: [consensus-data-backfill-20260916]
+    paths:
+      - '.github/workflows/consensus-model-artifact-recover.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+env:
+  BRANCH: consensus-data-backfill-20260916
+  SOURCE_RUN: '35150489566'
+  ARTIFACT_NAME: consensus-previous-runs-2024-2026
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: consensus-data-backfill-20260916
+          fetch-depth: 0
+
+      - name: Download validated acquisition artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          rm -rf _recover _validated
+          mkdir -p _recover _validated
+          gh run download "$SOURCE_RUN" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name "$ARTIFACT_NAME" \
+            --dir _recover
+          test -f _recover/consensus-previous-runs-2024-2026.tar.gz
+          tar -xzf _recover/consensus-previous-runs-2024-2026.tar.gz -C _validated
+
+      - name: Validate recovered archive
+        run: |
+          python3 - <<'PY'
+          import json
+          from collections import Counter
+          from pathlib import Path
+          root=Path('_validated')
+          state=json.loads((root/'previous-runs-backfill-state.json').read_text(encoding='utf-8'))
+          files=sorted(root.glob('previous-runs-*.jsonl'))
+          rows=0; models=Counter(); leads=Counter(); bad_location=0
+          for p in files:
+              for line in p.read_text(encoding='utf-8').splitlines():
+                  if not line.strip(): continue
+                  r=json.loads(line); rows += 1
+                  models[r['model']] += 1
+                  leads[int(r['lead_hours'])] += 1
+                  lat=float(r.get('requested_latitude', r.get('latitude', 999)))
+                  lon=float(r.get('requested_longitude', r.get('longitude', 999)))
+                  if abs(lat-52.828611111111115)>1e-5 or abs(lon-18.330277777777777)>1e-5:
+                      bad_location += 1
+          print('files',len(files),'rows',rows,'models',dict(models),'leads',dict(leads))
+          print('state',json.dumps(state,ensure_ascii=False,indent=2))
+          assert len(files)==29
+          assert rows==19810
+          assert len(models)==6
+          assert state['requests_successful']==174 and state['requests_failed']==0
+          assert state['location_code']=='EPIR'
+          assert state['location_basis']=='MIL_AIP_EPIR_ARP'
+          assert bad_location==0, bad_location
+          PY
+
+      - name: Install validated files into branch
+        run: |
+          mkdir -p data/learning/model-forecasts
+          cp _validated/previous-runs-*.jsonl data/learning/model-forecasts/
+          cp _validated/previous-runs-backfill-state.json data/learning/
+
+      - name: Commit recovered validated archive
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/learning/model-forecasts/previous-runs-*.jsonl data/learning/previous-runs-backfill-state.json
+          if git diff --cached --quiet; then
+            echo 'Validated archive already installed'
+            exit 0
+          fi
+          git commit -m 'weather: install validated consensus history 2024-2026'
+          git push origin HEAD:${BRANCH}
