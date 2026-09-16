@@ -1,0 +1,62 @@
+name: One-shot Fog overlay thresholds 50
+
+on:
+  push:
+    branches: [fix/fog-overlay-thresholds-50-real]
+    paths:
+      - '.github/workflows/one-shot-fog-overlay-thresholds-50.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/fog-overlay-thresholds-50-real
+
+      - name: Set FG BR MIFG drawing threshold to 50
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('fog-meteogram-overlay.js')
+          s = p.read_text(encoding='utf-8')
+          replacements = [
+              ('const FOG_DRAW_THRESHOLD = 60;', 'const FOG_DRAW_THRESHOLD = 50;'),
+              ('const MIFG_DRAW_THRESHOLD = 60;', 'const MIFG_DRAW_THRESHOLD = 50;'),
+              ('const BR_DRAW_THRESHOLD = 60;', 'const BR_DRAW_THRESHOLD = 50;'),
+              ('Shallow fog / MIFG: draw only operationally relevant values >= 60.', 'Shallow fog / MIFG: draw operationally relevant values >= 50.'),
+              ('Ciagle okresy >= 60/100 laczymy', 'Ciagle okresy >= 50/100 laczymy'),
+              ('Put FOG 60 immediately before the 0 km axis label', 'Put FOG 50 immediately before the 0 km axis label'),
+              ("ctx.fillText('FOG 60',x0-24,baseY);", "ctx.fillText('FOG 50',x0-24,baseY);"),
+              ('Na meteogramie FOG, MIFG i BR są rysowane dopiero od 60/100; w informacji godziny FOG, MIFG i BR są pokazywane od 50/100.', 'Na meteogramie FOG, MIFG i BR są rysowane i pokazywane od 50/100.'),
+              ('słupki = FOG ENGINE, od 60/100', 'słupki = FOG ENGINE, od 50/100'),
+              ('czerwone punkty = niska mgła MIFG &lt;2 m, od 60/100; liczba = wynik MIFG', 'czerwone punkty = niska mgła MIFG &lt;2 m, od 50/100; liczba = wynik MIFG'),
+              ('linia BR = zamglenie, od 60/100', 'linia BR = zamglenie, od 50/100'),
+              ("text = 'FOG ENGINE ≥60/100';", "text = 'FOG ENGINE ≥50/100';"),
+              ('__epirFogLegend60Wrapped', '__epirFogLegend50Wrapped'),
+          ]
+          for old, new in replacements:
+              if old not in s:
+                  raise SystemExit(f'missing expected marker: {old}')
+              s = s.replace(old, new)
+          p.write_text(s, encoding='utf-8')
+          PY
+          node --check fog-meteogram-overlay.js
+          grep -F 'const FOG_DRAW_THRESHOLD = 50;' fog-meteogram-overlay.js
+          grep -F 'const MIFG_DRAW_THRESHOLD = 50;' fog-meteogram-overlay.js
+          grep -F 'const BR_DRAW_THRESHOLD = 50;' fog-meteogram-overlay.js
+          grep -F 'FOG ENGINE ≥50/100' fog-meteogram-overlay.js
+          ! grep -F 'od 60/100' fog-meteogram-overlay.js
+
+      - name: Commit patch and remove one-shot workflow
+        run: |
+          rm .github/workflows/one-shot-fog-overlay-thresholds-50.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add fog-meteogram-overlay.js .github/workflows/one-shot-fog-overlay-thresholds-50.yml
+          git commit -m 'fog: draw FG BR MIFG from 50/100'
+          git push origin HEAD:fix/fog-overlay-thresholds-50-real
