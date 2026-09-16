@@ -34,7 +34,7 @@ assert(marginalHighVis.visibilityContradiction>0,'high VIS must be recognized as
 assert(marginalHighVis.P_model_final<marginalLowVis.P_model_final,'marginal high-VIS daytime FG must be reduced relative to low-VIS corroboration');
 assert(marginalHighVis.P_model_final<.50,'30 km daytime marginal FG should not remain an operational fog bar');
 assert.strictEqual(nightHighVis.directRole,'confirm-only');
-assert.strictEqual(nightHighVis.calibrationStatus,'physics-state-gated-stable-render-2026-09-16');
+assert.strictEqual(nightHighVis.calibrationStatus,'physics-state-gated-authoritative-render-2026-09-16');
 assert.strictEqual(nightHighVis.P_model_final,nightHighVis.P_model_final_shadow);
 assert(Number.isFinite(nightHighVis.P_potential));
 assert(Number.isFinite(nightHighVis.stateReadiness));
