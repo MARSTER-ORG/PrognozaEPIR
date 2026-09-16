@@ -24,20 +24,20 @@ jobs:
 
       - name: Prepare canonical site
         run: |
-          python3 scripts/prepare_pages.py
+          python3 scripts/prepare_pages_v241.py
           python3 scripts/wire_fog_mifg_utc_runtime.py
           printf '{"commit":"%s","built_at":"%s"}\n' \
             "$GITHUB_SHA" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" > _site/pages-build.json
 
-      - name: Validate JavaScript and TAF 2.4
+      - name: Validate JavaScript and TAF 2.4.1
         run: |
-          python3 -m py_compile scripts/prepare_pages.py scripts/wire_fog_mifg_utc_runtime.py
+          python3 -m py_compile scripts/prepare_pages.py scripts/prepare_pages_v241.py scripts/wire_fog_mifg_utc_runtime.py
           for f in \
-            taf-engine-v2.js taf-engine-v24.js taf-app-v2.js message-archive-client.js neighbor-observation-context.js \
+            taf-engine-v2.js taf-engine-v24.js taf-engine-v241.js taf-app-v2.js message-archive-client.js neighbor-observation-context.js \
             fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js \
             fog-summary-layout.js fog-physics-vnext.js fog-vnext-probability-layer.js fog-vnext-transition-risk.js \
             radar-risk-policy.js lightning-alert-sw.js opera-nowcast.js opera-convection-bridge.js \
-            _site/taf-engine-v2.js _site/taf-engine-v24.js _site/taf-app-v2.js _site/message-archive-client.js \
+            _site/taf-engine-v2.js _site/taf-engine-v24.js _site/taf-engine-v241.js _site/taf-app-v2.js _site/message-archive-client.js \
             _site/fog-engine.js _site/observation-engine.js _site/mifg-engine.js \
             _site/fog-summary-layout.js _site/fog-physics-vnext.js _site/fog-vnext-probability-layer.js _site/fog-vnext-transition-risk.js \
             _site/radar-risk-policy.js _site/lightning-alert-sw.js; do
@@ -45,6 +45,7 @@ jobs:
           done
           node tests/taf-engine-v2.test.js
           node tests/taf-engine-v24.test.js
+          node tests/taf-engine-v241.test.js
           node tests/fog-vnext-production.test.js
 
       - name: Validate canonical artifact
@@ -53,6 +54,7 @@ jobs:
           test -s _site/radar.html
           test -s _site/taf.html
           test -s _site/taf-engine-v24.js
+          test -s _site/taf-engine-v241.js
           test -s _site/sat-fog.html
           test -s _site/arch.html
           test -s _site/lightning-alerts.html
@@ -76,13 +78,15 @@ jobs:
           python3 -m json.tool _site/data/learning/adaptive-weights.json >/dev/null
           python3 -m json.tool _site/data/learning/fog-event-skill.json >/dev/null
           python3 -m json.tool _site/data/learning/model-verification.json >/dev/null
-          grep -F 'TAF ENGINE 2.4.0 · CALIBRATED · INSTRUCTION FIRST' _site/taf.html
+          grep -F 'TAF ENGINE 2.4.1 · SEMANTIC QUALITY · INSTRUCTION FIRST' _site/taf.html
           grep -F 'taf-engine-v2.js?v=2.3.0-kernel' _site/taf.html
           grep -F 'taf-engine-v24.js?v=2.4.0' _site/taf.html
+          grep -F 'taf-engine-v241.js?v=2.4.1-audit' _site/taf.html
           grep -F 'taf-app-v2.js?v=2.4.0-ui' _site/taf.html
-          grep -F 'prognozaepir-taf-engine-v2' _site/taf.html
+          grep -F 'content="2.4.1"' _site/taf.html
           grep -F "const VERSION='2.4.0'" _site/taf-engine-v24.js
-          grep -F "postGenerationMutation:false" _site/taf-engine-v24.js
+          grep -F "const VERSION='2.4.1'" _site/taf-engine-v241.js
+          grep -F 'structuredFinalization:true' _site/taf-engine-v241.js
           grep -F 'radar-risk-policy.js?v=' _site/radar.html
           grep -F 'lightning-alerts.html' _site/radar.html
           grep -F 'observation-engine.js' _site/index.html
@@ -144,19 +148,21 @@ jobs:
           for attempt in $(seq 1 18); do
             marker="$(curl -fsSL --max-time 15 "${base}/pages-build.json?v=${GITHUB_SHA}" 2>/dev/null || true)"
             index="$(curl -fsSL --max-time 15 "${base}/index.html?v=${GITHUB_SHA}" 2>/dev/null || true)"
+            taf="$(curl -fsSL --max-time 15 "${base}/taf.html?v=${GITHUB_SHA}" 2>/dev/null || true)"
             bridge="$(curl -fsSL --max-time 15 "${base}/fog-summary-layout.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
             arch="$(curl -fsSL --max-time 15 "${base}/arch.html?v=${GITHUB_SHA}" 2>/dev/null || true)"
             if printf '%s' "$marker" | grep -Fq "$GITHUB_SHA" \
               && printf '%s' "$index" | grep -Fq 'fog-summary-layout.js?v=' \
+              && printf '%s' "$taf" | grep -Fq 'taf-engine-v241.js?v=2.4.1-audit' \
               && printf '%s' "$bridge" | grep -Fq "fogEngineMode:'vnext-production'" \
               && printf '%s' "$bridge" | grep -Fq 'Probability.operationalScore' \
               && printf '%s' "$arch" | grep -Fq 'id="modeAdvanced"' \
               && printf '%s' "$arch" | grep -Fq 'message-archive-client.js?v='; then
-              echo "GitHub Pages serves commit $GITHUB_SHA with Fog vNext production and the advanced ARCH UI."
+              echo "GitHub Pages serves commit $GITHUB_SHA with TAF 2.4.1, Fog vNext production and the advanced ARCH UI."
               exit 0
             fi
             echo "Waiting for Pages/CDN propagation (${attempt}/18)..."
             sleep 10
           done
-          echo "ERROR: live GitHub Pages is not serving the deployed revision, Fog vNext production bridge, or advanced ARCH UI." >&2
+          echo "ERROR: live GitHub Pages is not serving the deployed revision, TAF 2.4.1, Fog vNext production bridge, or advanced ARCH UI." >&2
           exit 1
