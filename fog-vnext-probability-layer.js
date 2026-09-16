@@ -6,7 +6,7 @@
 })(typeof window!=='undefined'?window:globalThis,function(){
   'use strict';
 
-  const VERSION='1.0.0-production';
+  const VERSION='1.1.0-physics-first';
   const finite=Number.isFinite;
   const num=v=>v!==null&&v!==undefined&&v!==''&&finite(Number(v))?Number(v):null;
   const clamp=(v,a=0,b=1)=>Math.max(a,Math.min(b,v));
@@ -35,6 +35,8 @@
     return {value:clamp(value),coverage:ranked.length/4,primary:names[0]?.[0]||null,secondary:names[1]?.[0]||null};
   }
 
+  // NWP direct guidance is corroborative only. In particular, high model VIS
+  // must never veto a strong fog signal produced by the internal physics layer.
   function directGuidanceSignal(input={}){
     const vis=num(input.visibility);
     const cloud2m=num(input.cloud2m);
@@ -61,20 +63,34 @@
 
   function leadWeights(leadHours){
     const h=num(leadHours);
-    if(!finite(h))return {physics:.62,direct:.38,bucket:'unknown'};
-    if(h<=3)return {physics:.52,direct:.48,bucket:'0-3h'};
-    if(h<=12)return {physics:.68,direct:.32,bucket:'3-12h'};
-    if(h<=24)return {physics:.64,direct:.36,bucket:'12-24h'};
-    return {physics:.58,direct:.42,bucket:'24h+'};
+    if(!finite(h))return {physics:1,direct:.20,directConfirm:.20,bucket:'unknown'};
+    if(h<=3)return {physics:1,direct:.28,directConfirm:.28,bucket:'0-3h'};
+    if(h<=12)return {physics:1,direct:.20,directConfirm:.20,bucket:'3-12h'};
+    if(h<=24)return {physics:1,direct:.16,directConfirm:.16,bucket:'12-24h'};
+    return {physics:1,direct:.12,directConfirm:.12,bucket:'24h+'};
   }
 
   function combineShadow(physics,direct,leadHours){
-    const w=leadWeights(leadHours);
-    const out=weightedAvailable([
-      {v:num(physics),w:w.physics},
-      {v:num(direct),w:w.direct},
-    ]);
-    return {value:out.value,coverage:out.coverage,weights:w};
+    const p=num(physics),d=num(direct),w=leadWeights(leadHours);
+    if(finite(p)){
+      const positiveGap=finite(d)?Math.max(0,d-p):0;
+      return {
+        value:clamp(p+positiveGap*w.directConfirm),
+        coverage:finite(d)?1:.75,
+        weights:w,
+        directRole:'confirm-only',
+        usedDirectFallback:false,
+        directContribution:positiveGap*w.directConfirm,
+      };
+    }
+    return {
+      value:finite(d)?clamp(d):null,
+      coverage:finite(d)?.45:0,
+      weights:w,
+      directRole:'fallback-no-physics',
+      usedDirectFallback:finite(d),
+      directContribution:finite(d)?d:null,
+    };
   }
 
   function evaluate(input={},physicsOutput={}){
@@ -84,7 +100,7 @@
     return {
       version:VERSION,
       calibrated:false,
-      calibrationStatus:'validated-production-2026-09-15',
+      calibrationStatus:'physics-first-production-2026-09-16',
       P_physics:p.value,
       P_direct:d.value,
       P_model_final:combined.value,
@@ -94,7 +110,10 @@
       mechanism1:p.primary,
       mechanism2:p.secondary,
       leadBucket:combined.weights.bucket,
-      blendWeights:{physics:combined.weights.physics,direct:combined.weights.direct},
+      blendWeights:{physics:1,direct:combined.weights.directConfirm,directConfirm:combined.weights.directConfirm},
+      directRole:combined.directRole,
+      usedDirectFallback:combined.usedDirectFallback,
+      directContribution:combined.directContribution,
       diagnostics:{direct:d},
     };
   }
