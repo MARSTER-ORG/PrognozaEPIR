@@ -3,7 +3,15 @@
   const api=factory();
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   if(root)root.PrognozaEPIRFogVNextProbabilityLayer=api;
+
+  // Rendering authority: the meteogram may redraw for many unrelated reasons
+  // (tap/click, resize, zoom). Fog bars must always use one completed vNext
+  // snapshot, never a half-updated mutable series. While vNext is recalculating
+  // we intentionally draw no FG bars rather than mixing legacy and vNext states.
   if(root&&root.document){
+    let guardedDraw=null;
+    let guardedBase=null;
+
     const installUiAuthority=()=>{
       const d=root.document;
       if(!d.getElementById('fogVNextUiAuthority')){
@@ -15,18 +23,53 @@
       const summary=d.getElementById('fogSummary');
       if(summary){summary.removeAttribute('aria-hidden');summary.style.removeProperty('display');}
     };
-    const redraw=()=>{
+
+    const cloneRenderSeries=rows=>Object.freeze((rows||[]).map(row=>Object.freeze({
+      ...row,
+      models:Array.isArray(row?.models)?row.models.slice():row?.models
+    })));
+
+    const installDrawGuard=()=>{
+      if(typeof root.draw!=='function')return false;
+      if(root.draw===guardedDraw)return true;
+      guardedBase=root.draw;
+      guardedDraw=function(...args){
+        const live=root.PrognozaEPIRFogSeries;
+        const stable=root.PrognozaEPIRFogRenderSeries;
+        root.PrognozaEPIRFogSeries=Array.isArray(stable)?stable:[];
+        try{return guardedBase.apply(this,args);}
+        finally{root.PrognozaEPIRFogSeries=live;}
+      };
+      root.draw=guardedDraw;
+      return true;
+    };
+
+    const redrawStable=()=>{
       installUiAuthority();
+      installDrawGuard();
       root.queueMicrotask?.(()=>{try{if(typeof root.draw==='function')root.draw();}catch(_){}});
     };
-    root.addEventListener?.('prognozaepir:fog-vnext-updated',redraw);
-    setTimeout(installUiAuthority,0);
-    setTimeout(redraw,500);
+
+    const clearRenderSnapshot=()=>{
+      root.PrognozaEPIRFogRenderSeries=null;
+      installDrawGuard();
+    };
+
+    const commitRenderSnapshot=()=>{
+      const rows=root.PrognozaEPIRFogSeries;
+      root.PrognozaEPIRFogRenderSeries=Array.isArray(rows)&&rows.length?cloneRenderSeries(rows):Object.freeze([]);
+      root.PrognozaEPIRFogRenderRevision=(root.PrognozaEPIRFogRenderRevision||0)+1;
+      redrawStable();
+    };
+
+    root.addEventListener?.('prognozaepir:fog-series-updated',clearRenderSnapshot);
+    root.addEventListener?.('prognozaepir:fog-vnext-updated',commitRenderSnapshot);
+    setTimeout(()=>{installUiAuthority();installDrawGuard();},0);
   }
 })(typeof window!=='undefined'?window:globalThis,function(){
   'use strict';
 
-  const VERSION='1.2.0-state-gated';
+  const VERSION='1.3.0-state-gated-stable-render';
   const finite=Number.isFinite;
   const num=v=>v!==null&&v!==undefined&&v!==''&&finite(Number(v))?Number(v):null;
   const clamp=(v,a=0,b=1)=>Math.max(a,Math.min(b,v));
@@ -69,7 +112,6 @@
 
   // Mechanism strength says that a fog-forming process exists. Operational FG
   // additionally requires a near-surface thermodynamic state capable of sustaining it.
-  // This shortens false daytime tails without asking NWP visibility to veto the engine.
   function physicsSignal(v={}){
     const potential=mechanismPotential(v);
     if(!finite(potential.value))return {...potential,potential:null,readiness:null,readinessCoverage:0,dissipationPenalty:0};
@@ -83,8 +125,6 @@
         dissipationPenalty=.55*clamp(ready.dissipation);
         value*=1-dissipationPenalty;
       }
-      // Strongly unsaturated/dispersing boundary layers cannot remain operational FG
-      // solely because a mechanism score (e.g. ADV/CBL) is still elevated.
       if(finite(ready.saturation)&&ready.saturation<.20)value=Math.min(value,.36);
       else if(finite(ready.saturation)&&ready.saturation<.32&&finite(ready.dissipation)&&ready.dissipation>.35)value=Math.min(value,.46);
     }
@@ -96,8 +136,26 @@
     };
   }
 
-  // NWP direct guidance is corroborative only. High model VIS must never veto
-  // a strong fog signal produced by the state-gated internal physics layer.
+  // NWP visibility is still not allowed to veto a strong, saturated internal
+  // fog signal. It is used only as a contradiction check for marginal FG when
+  // the near-surface state is simultaneously weak/drying. This addresses long
+  // tails such as 50-59/100 during 10-30 km daytime visibility.
+  function visibilityContradiction(input={},physicsOutput={},physics={}){
+    const vis=num(input.visibility);
+    const sat=num(physicsOutput.SATURATION);
+    const readiness=num(physics.readiness);
+    const p=num(physics.value);
+    if(input.observedFog===true||!finite(vis)||vis<7000||!finite(p))return {value:0,visibility:vis,saturation:sat,readiness,reason:'inactive'};
+    if((finite(sat)&&sat>=.70)&&(finite(readiness)&&readiness>=.65))return {value:0,visibility:vis,saturation:sat,readiness,reason:'strong-state'};
+    const highVis=smoothstep(vis,7000,18000);
+    const marginal=1-smoothstep(p,.52,.74);
+    const unsat=finite(sat)?1-smoothstep(sat,.35,.78):.45;
+    const weakState=finite(readiness)?1-smoothstep(readiness,.42,.72):.45;
+    const dayFactor=num(input.isDay)===1?1:.65;
+    const value=clamp((highVis||0)*(marginal||0)*(.58*(unsat||0)+.42*(weakState||0))*dayFactor);
+    return {value,visibility:vis,saturation:sat,readiness,highVis,marginal,unsat,weakState,reason:value>0?'marginal-high-vis':'inactive'};
+  }
+
   function directGuidanceSignal(input={}){
     const vis=num(input.visibility);
     const cloud2m=num(input.cloud2m);
@@ -137,15 +195,29 @@
     const p=physicsSignal(physicsOutput);
     const d=directGuidanceSignal(input);
     const combined=combineShadow(p.value,d.value,input.leadHours);
+    const contradiction=visibilityContradiction(input,physicsOutput,p);
+    let final=combined.value;
+    let contradictionPenalty=0;
+    if(finite(final)&&contradiction.value>0){
+      contradictionPenalty=.45*contradiction.value;
+      final=clamp(final*(1-contradictionPenalty));
+    }
+    // Hard operational guard only for a clearly marginal, daytime, unsaturated
+    // case with very high visibility. Strong/saturated physics never reaches it.
+    const sat=num(physicsOutput.SATURATION),vis=num(input.visibility),isDay=num(input.isDay);
+    if(finite(final)&&isDay===1&&finite(vis)&&vis>=12000&&finite(sat)&&sat<.45&&finite(p.value)&&p.value<.65)
+      final=Math.min(final,.49);
+
     return {
-      version:VERSION,calibrated:false,calibrationStatus:'physics-state-gated-production-2026-09-16',
+      version:VERSION,calibrated:false,calibrationStatus:'physics-state-gated-stable-render-2026-09-16',
       P_potential:p.potential,P_physics:p.value,P_direct:d.value,
-      P_model_final:combined.value,P_model_final_shadow:combined.value,
+      P_model_final:final,P_model_final_shadow:final,
       stateReadiness:p.readiness,stateReadinessCoverage:p.readinessCoverage,dissipationPenalty:p.dissipationPenalty,
+      contradictionPenalty,visibilityContradiction:contradiction.value,
       physicsCoverage:p.coverage,directCoverage:d.coverage,mechanism1:p.primary,mechanism2:p.secondary,
       leadBucket:combined.weights.bucket,blendWeights:{physics:1,direct:combined.weights.directConfirm,directConfirm:combined.weights.directConfirm},
       directRole:combined.directRole,usedDirectFallback:combined.usedDirectFallback,directContribution:combined.directContribution,
-      diagnostics:{direct:d,state:p.diagnostics?.state||null},
+      diagnostics:{direct:d,state:p.diagnostics?.state||null,contradiction},
     };
   }
 
@@ -156,5 +228,5 @@
     return {score:finite(legacy)?clamp(legacy,0,100):null,source:'legacy-fallback',fallback:true};
   }
 
-  return Object.freeze({VERSION,weightedAvailable,mechanismPotential,stateReadiness,physicsSignal,directGuidanceSignal,leadWeights,combineShadow,evaluate,operationalScore});
+  return Object.freeze({VERSION,weightedAvailable,mechanismPotential,stateReadiness,physicsSignal,visibilityContradiction,directGuidanceSignal,leadWeights,combineShadow,evaluate,operationalScore});
 });
