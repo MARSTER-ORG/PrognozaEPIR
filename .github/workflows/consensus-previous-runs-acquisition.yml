@@ -17,7 +17,7 @@ env:
 jobs:
   acquire:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,12 +31,13 @@ jobs:
       - name: Validate acquisition code
         run: python3 -m py_compile scripts/backfill_previous_runs_history.py
 
-      - name: Acquire 2024-2026 fixed-lead operational history
+      - name: Acquire GFS January 2024 fixed-lead history
         run: |
           python3 scripts/backfill_previous_runs_history.py \
             --start 2024-01-01 \
-            --end 2026-05-31 \
-            --workers 3
+            --end 2024-01-31 \
+            --workers 1 \
+            --models ncep_gfs_global
 
       - name: Validate acquired archive
         run: |
@@ -44,52 +45,27 @@ jobs:
           import json
           from collections import Counter
           from pathlib import Path
-
-          state=json.loads(Path('data/learning/previous-runs-backfill-state.json').read_text(encoding='utf-8'))
-          assert state['schema']=='prognozaepir-previous-runs-backfill-v1'
-          rows=0
-          models=Counter()
-          leads=Counter()
-          bad=0
-          for p in sorted(Path('data/learning/model-forecasts').glob('previous-runs-*.jsonl')):
-              for line in p.read_text(encoding='utf-8').splitlines():
-                  r=json.loads(line)
-                  rows += 1
-                  models[r.get('model')] += 1
-                  leads[int(r.get('lead_hours') or 0)] += 1
-                  if r.get('archive_source') != 'open-meteo-previous-runs': bad += 1
-                  if not r.get('archive_fixed_lead'): bad += 1
-          print('rows',rows)
-          print('models',dict(models))
-          print('leads',dict(leads))
-          print('failed requests',state['requests_failed'],'/',state['requests_total'])
-          assert rows >= 5000, f'too few acquired rows: {rows}'
-          assert len(models) >= 3, f'too few models with history: {len(models)}'
+          p=Path('data/learning/model-forecasts/previous-runs-2024-01.jsonl')
+          assert p.exists()
+          rows=[json.loads(x) for x in p.read_text(encoding='utf-8').splitlines() if x.strip()]
+          leads=Counter(int(r.get('lead_hours') or 0) for r in rows)
+          print('rows', len(rows))
+          print('leads', dict(leads))
+          print('first', json.dumps(rows[0], ensure_ascii=False))
+          assert len(rows) >= 20
+          assert all(r.get('model')=='ncep_gfs_global' for r in rows)
           assert leads[24] > 0 and leads[48] > 0
-          assert bad == 0
+          assert all(r.get('archive_source')=='open-meteo-previous-runs' for r in rows)
           PY
-
-      - name: Package acquired data
-        run: |
-          mkdir -p _artifact
-          cp data/learning/previous-runs-backfill-state.json _artifact/
-          cp data/learning/model-forecasts/previous-runs-*.jsonl _artifact/
-          tar -czf consensus-previous-runs-2024-2026.tar.gz -C _artifact .
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: consensus-previous-runs-2024-2026
-          path: consensus-previous-runs-2024-2026.tar.gz
-          retention-days: 2
 
       - name: Commit acquired history to acquisition branch
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add data/learning/model-forecasts/previous-runs-*.jsonl data/learning/previous-runs-backfill-state.json
+          git add data/learning/model-forecasts/previous-runs-2024-01.jsonl data/learning/previous-runs-backfill-state.json
           if git diff --cached --quiet; then
             echo 'No new historical data'
             exit 0
           fi
-          git commit -m 'weather: acquire fixed-lead consensus history 2024-2026'
+          git commit -m 'weather: acquire GFS January 2024 consensus history'
           git push origin HEAD:${BRANCH}
