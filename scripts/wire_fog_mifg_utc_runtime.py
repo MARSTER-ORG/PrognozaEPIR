@@ -7,6 +7,7 @@ validated Fog Engine vNext production bridge is present in the canonical Pages
 artifact after prepare_pages.py has assembled the site.
 """
 import os
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -68,9 +69,20 @@ def patch_vnext() -> None:
     bridge = SITE / "fog-summary-layout.js"
     physics = SITE / "fog-physics-vnext.js"
     probability = SITE / "fog-vnext-probability-layer.js"
-    for p in (bridge, physics, probability):
+    visibility = SITE / "fog-visibility-vnext.js"
+    fog_page = SITE / "fog.html"
+    for p in (bridge, physics, probability, visibility):
         if not p.is_file() or p.stat().st_size == 0:
             raise SystemExit(f"Fog vNext production asset missing: {p.name}")
+
+    # Every deployment gets a fresh URL for the bridge and for modules that the
+    # bridge loads dynamically. This prevents an older Fog Engine from surviving
+    # in the browser cache after the repository has already been updated.
+    b = bridge.read_text(encoding="utf-8")
+    b = re.sub(r"fog-physics-vnext\.js\?v=[^']+", f"fog-physics-vnext.js?v={ASSET_V}", b)
+    b = re.sub(r"fog-vnext-probability-layer\.js\?v=[^']+", f"fog-vnext-probability-layer.js?v={ASSET_V}", b)
+    b = re.sub(r"fog-visibility-vnext\.js\?v=[^']+", f"fog-visibility-vnext.js?v={ASSET_V}", b)
+    bridge.write_text(b, encoding="utf-8")
 
     s = index.read_text(encoding="utf-8")
     tag = f'<script src="fog-summary-layout.js?v={ASSET_V}"></script>'
@@ -81,6 +93,13 @@ def patch_vnext() -> None:
         s = s.replace(marker, tag + "\n" + marker, 1)
     index.write_text(s, encoding="utf-8")
 
+    # Standalone Fog Engine page uses the same deployed, UTC-normalized runtime.
+    if fog_page.is_file():
+        f = fog_page.read_text(encoding="utf-8")
+        for asset in ("fog-engine.js", "mifg-engine.js", "fog-summary-layout.js"):
+            f = re.sub(rf'{re.escape(asset)}\?v=[^\"]+', f'{asset}?v={ASSET_V}', f)
+        fog_page.write_text(f, encoding="utf-8")
+
 
 def validate() -> None:
     fog = (SITE / "fog-engine.js").read_text(encoding="utf-8")
@@ -88,6 +107,7 @@ def validate() -> None:
     index = (SITE / "index.html").read_text(encoding="utf-8")
     bridge = (SITE / "fog-summary-layout.js").read_text(encoding="utf-8")
     probability = (SITE / "fog-vnext-probability-layer.js").read_text(encoding="utf-8")
+    fog_page = SITE / "fog.html"
     if "function parseLocalInput(v){return v?Date.parse(/[zZ]|[+-]\\d\\d:\\d\\d$/.test(v)?v:v+'Z'):NaN;}" not in fog:
         raise SystemExit("FOG datetime-local is not UTC")
     if "timeZone:PLACE.tz" in fog or "timeZone:PLACE.tz" in mifg:
@@ -98,8 +118,22 @@ def validate() -> None:
         raise SystemExit("Fog vNext production bridge is not wired into deployed index.html")
     if "fogEngineMode:'vnext-production'" not in bridge or 'Probability.operationalScore' not in bridge:
         raise SystemExit("Fog vNext bridge is not in production mode")
-    if "const VERSION='1.0.0-production'" not in probability or 'P_model_final' not in probability:
-        raise SystemExit("Fog vNext production probability layer contract missing")
+    for asset in ("fog-physics-vnext.js", "fog-vnext-probability-layer.js", "fog-visibility-vnext.js"):
+        if f'{asset}?v={ASSET_V}' not in bridge:
+            raise SystemExit(f"Fog vNext dynamic asset is not cache-busted: {asset}")
+    required_probability = (
+        "P_model_final", "stateReadiness", "visibilityContradiction",
+        "PrognozaEPIRFogRenderSeries", "const FOG_RENDER_THRESHOLD=60",
+    )
+    for marker in required_probability:
+        if marker not in probability:
+            raise SystemExit(f"Fog vNext production probability layer contract missing: {marker}")
+    if not fog_page.is_file():
+        raise SystemExit("standalone fog.html missing from Pages artifact")
+    fog_html = fog_page.read_text(encoding="utf-8")
+    for marker in ("EPIR FOG ENGINE vNext", f"fog-engine.js?v={ASSET_V}", f"fog-summary-layout.js?v={ASSET_V}"):
+        if marker not in fog_html:
+            raise SystemExit(f"standalone Fog Engine page contract missing: {marker}")
 
 
 def main() -> int:
@@ -107,7 +141,7 @@ def main() -> int:
     patch_mifg()
     patch_vnext()
     validate()
-    print("wired explicit UTC FOG/MIFG runtime and Fog vNext production bridge")
+    print("wired explicit UTC FOG/MIFG runtime, authoritative Fog vNext render and standalone fog page")
     return 0
 
 
