@@ -7,7 +7,6 @@
   const HOUR = 3600e3;
   const finite = Number.isFinite;
   const num = v => v !== null && v !== undefined && v !== '' && finite(Number(v)) ? Number(v) : null;
-  const clamp = (v, a = 0, b = 100) => Math.max(a, Math.min(b, v));
   const mean = a => { const q = (a || []).filter(finite); return q.length ? q.reduce((s, v) => s + v, 0) / q.length : null; };
   const fmt = (v, d = 1) => finite(v) ? Number(v).toFixed(d) : '—';
   const fmt0 = v => finite(v) ? String(Math.round(v)) : '—';
@@ -35,6 +34,7 @@
   }
   const loadPhysics = () => loadScript('PrognozaEPIRFogPhysicsVNext', 'fog-physics-vnext.js?v=20260916-prod1', 'fog-physics-vnext');
   const loadProbability = () => loadScript('PrognozaEPIRFogVNextProbabilityLayer', 'fog-vnext-probability-layer.js?v=20260916-prod1', 'fog-probability-vnext');
+  const loadVisibility = () => loadScript('PrognozaEPIRFogVisibilityVNext', 'fog-visibility-vnext.js?v=20260916-vis1', 'fog-visibility-vnext');
 
   async function fetchJson(url) {
     const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 12000);
@@ -136,7 +136,10 @@
 
   function scoreClass(s) { if (!finite(s)) return 'BRAK DANYCH'; if (s < 50) return 'NIE'; if (s < 60) return 'MOŻLIWA'; if (s < 80) return 'PRAWDOPODOBNA'; return 'BARDZO PRAWDOPODOBNA'; }
   function riskCss(s) { if (!finite(s) || s < 50) return ''; return s >= 80 ? 'fog-risk-vhigh' : s >= 60 ? 'fog-risk-high' : 'fog-risk-mid'; }
+  function visCss(v) { if (!finite(v)) return ''; return v < 200 ? 'fog-risk-vhigh' : v < 500 ? 'fog-risk-high' : v < 1000 ? 'fog-risk-mid' : ''; }
   function localHour(t) { try { return new Intl.DateTimeFormat('pl-PL', {timeZone:window.PLACE?.tz || 'UTC', hour:'2-digit', minute:'2-digit'}).format(new Date(t)); } catch (_) { return new Date(t).toISOString().slice(11, 16); } }
+  function fmtVis(v) { return finite(v) ? Math.max(0, Math.round(v)) + ' m' : '—'; }
+  function fmtRange(g) { return g && finite(g.low) && finite(g.high) ? `${Math.round(g.low)}–${Math.round(g.high)} m` : '—'; }
   function onsetAndDissipation(series) {
     const idx = series.findIndex(x => finite(x?.score) && x.score >= 50), onset = idx >= 0 ? series[idx].t : null;
     let end = null;
@@ -144,6 +147,22 @@
     const peak = series.reduce((a, b) => !a || (finite(b.score) && (!finite(a.score) || b.score > a.score)) ? b : a, null);
     return {onset, end, peak};
   }
+  function episodeRows(series, ev) {
+    if (!ev?.onset) return [];
+    return series.filter(x => x.t >= ev.onset && (!ev.end || x.t < ev.end) && finite(x.score) && x.score >= 50);
+  }
+  function driverText(row) {
+    const v = row?.vnext || {};
+    const items = [
+      ['nasycenie', finite(v.SATURATION) ? v.SATURATION * 100 : null],
+      ['niski/stabilny PBL', num(row?.SPBL)],
+      ['chłodzenie powierzchni', num(row?.SSFC_COOL)],
+      ['wilgotność gleby', num(row?.SSOIL)],
+      ['RAD', num(row?.RAD_vNextShadow)], ['ADV', num(row?.ADV_vNextShadow)], ['CBL', num(row?.CBL_vNextShadow)], ['PCP', num(row?.PCP_vNextShadow)]
+    ].filter(x => finite(x[1])).sort((a,b) => b[1]-a[1]).slice(0,3);
+    return items.length ? items.map(x => `${x[0]} ${Math.round(x[1])}/100`).join(' · ') : 'brak wystarczających danych';
+  }
+
   function renderOperationalSummary() {
     const series = window.PrognozaEPIRFogSeries || [], now = Date.now();
     const future = series.filter(x => x.t >= now - HOUR && x.t <= now + 48 * HOUR);
@@ -152,19 +171,39 @@
     if (!summary) return;
     const current = future.reduce((a, b) => Math.abs(b.t - now) < Math.abs(a.t - now) ? b : a, future[0]);
     const ev = onsetAndDissipation(future), peak = ev.peak || current, type = peak.type?.text || current.type?.text || peak.mechanism1 || current.mechanism1 || '—';
+    const rows = episodeRows(future, ev), Visibility = window.PrognozaEPIRFogVisibilityVNext;
+    const eventVis = Visibility?.eventSummary ? Visibility.eventSummary(rows) : null;
+    const curVis = current.visGuidance, peakVis = peak.visGuidance;
+    const minVis = eventVis?.minimum ?? peakVis?.point ?? curVis?.point;
+    const minTime = eventVis?.minimumTime ?? peak.t;
+    const p1000 = eventVis?.p1000 ?? peakVis?.p1000 ?? curVis?.p1000;
+    const p500 = eventVis?.p500 ?? peakVis?.p500 ?? curVis?.p500;
+    const p1500 = eventVis?.p1500 ?? peakVis?.p1500 ?? curVis?.p1500;
+    const p200 = eventVis?.p200 ?? peakVis?.p200 ?? curVis?.p200;
+    const visConf = eventVis?.confidence ?? peakVis?.confidence ?? curVis?.confidence;
+    const visConfLabel = eventVis?.confidenceLabel ?? peakVis?.confidenceLabel ?? curVis?.confidenceLabel ?? 'brak danych';
+
     summary.innerHTML = `
       <div class="fog-card ${riskCss(current.score)}"><small>MGŁA W CIĄGU NAJBLIŻSZEJ GODZINY</small><strong>${scoreClass(current.score)}</strong><em>${finite(current.score) ? fmt0(current.score) + '/100' : 'brak danych'}</em></div>
-      <div class="fog-card"><small>Silnik</small><strong>vNext PRODUKCJA</strong><em>${current.fogEngineFallback ? 'fallback legacy dla tej godziny' : 'P_model_final'}</em></div>
-      <div class="fog-card"><small>Typ procesu</small><strong>${esc(type)}</strong><em>${esc(current.mechanism2 || current.type?.secondary || 'dominujący mechanizm')}</em></div>
+      <div class="fog-card"><small>Typ procesu</small><strong>${esc(type)}</strong><em>${esc(current.vnext?.phase || 'faza nieustalona')}</em></div>
       <div class="fog-card"><small>Kiedy mgła?</small><strong>${ev.onset ? localHour(ev.onset) + ' → ' + (ev.end ? localHour(ev.end) : 'dalej') : 'brak sygnału ≥50 w 48 h'}</strong><em>próg operacyjny 50/100</em></div>
-      <div class="fog-card ${riskCss(peak.score)}"><small>Maksimum w 48 h</small><strong>${finite(peak.score) ? scoreClass(peak.score) : 'BRAK DANYCH'}</strong><em>${finite(peak.score) ? fmt0(peak.score) + '/100' : '—'}</em></div>
-      <div class="fog-card"><small>Legacy / vNext</small><strong>${fmt0(current.fogScoreLegacy)}/100 → ${fmt0(current.score)}/100</strong><em>legacy zachowany jako fallback</em></div>
-      <div class="fog-card"><small>VIS EPIR</small><strong>${finite(current.vis) ? Math.max(0, Math.round(current.vis)) + ' m' : '—'}</strong><em>bez zmiany danych VIS</em></div>
-      <div class="fog-card"><small>Pewność legacy</small><strong>${fmt0((current.confidence ?? 0) * 100)}%</strong><em>diagnostyka zgodności modeli</em></div>`;
+      <div class="fog-card ${riskCss(peak.score)}"><small>Maksimum w 48 h</small><strong>${finite(peak.score) ? scoreClass(peak.score) : 'BRAK DANYCH'}</strong><em>${finite(peak.score) ? fmt0(peak.score) + '/100 · ' + localHour(peak.t) : '—'}</em></div>
+      <div class="fog-card ${visCss(curVis?.point)}"><small>VIS — NAJBLIŻSZA GODZINA</small><strong>${fmtRange(curVis)}</strong><em>oczekiwana ${fmtVis(curVis?.point)}</em></div>
+      <div class="fog-card ${visCss(peakVis?.point)}"><small>VIS — MAKSIMUM ZJAWISKA</small><strong>${fmtRange(peakVis)}</strong><em>oczekiwana ${fmtVis(peakVis?.point)} · ${localHour(peak.t)}</em></div>
+      <div class="fog-card ${visCss(minVis)}"><small>MINIMUM OCZEKIWANEJ VIS</small><strong>${fmtVis(minVis)}</strong><em>${finite(minTime) ? localHour(minTime) : '—'} · nie pojedyncza „dokładna” wartość</em></div>
+      <div class="fog-card"><small>P(VIS &lt;1000 / &lt;500 m)</small><strong>${fmt0(p1000)}% · ${fmt0(p500)}%</strong><em>maksimum prawdopodobieństwa w epizodzie</em></div>
+      <div class="fog-card"><small>P(VIS &lt;1500 / &lt;200 m)</small><strong>${fmt0(p1500)}% · ${fmt0(p200)}%</strong><em>osobne progi operacyjne</em></div>
+      <div class="fog-card"><small>Pewność prognozy VIS</small><strong>${esc(visConfLabel)}</strong><em>${fmt0((visConf ?? 0) * 100)}% · zgodność i rozrzut modeli</em></div>
+      <div class="fog-card"><small>Dlaczego?</small><strong>${esc(driverText(peak))}</strong><em>najsilniejsze czynniki przy maksimum</em></div>
+      <div class="fog-card"><small>Źródło VIS</small><strong>vNext VIS guidance</strong><em>${peakVis?.modelCount ?? curVis?.modelCount ?? 0} modeli VIS · legacy zachowany diagnostycznie</em></div>`;
+
     if (hours) {
-      hours.innerHTML = future.slice(0, 13).map(x => `<div class="fog-hour ${riskCss(x.score)}"><b>${localHour(x.t)}</b><div class="p">${scoreClass(x.score)}</div><small>${finite(x.score) ? fmt0(x.score) + '/100' : '—'}</small><small>${x.fogEngineFallback ? 'legacy fallback' : 'vNext'}</small><small>VIS ${finite(x.vis) ? Math.round(x.vis) + ' m' : '—'}</small></div>`).join('');
+      hours.innerHTML = future.slice(0, 13).map(x => {
+        const g = x.visGuidance;
+        return `<div class="fog-hour ${riskCss(x.score)}"><b>${localHour(x.t)}</b><div class="p">${scoreClass(x.score)}</div><small>${finite(x.score) ? fmt0(x.score) + '/100' : '—'} · ${esc(x.vnext?.phase || '')}</small><small>VIS ${fmtRange(g)}</small><small>oczek. ${fmtVis(g?.point)}</small><small>&lt;1 km ${fmt0(g?.p1000)}% · &lt;500 ${fmt0(g?.p500)}%</small></div>`;
+      }).join('');
     }
-    if (source) source.textContent = `EPIR FOG ENGINE vNext PRODUCTION · ${current.models?.length ?? 0} modeli · ${current.fogEngineFallback ? 'fallback legacy' : 'P_model_final'}`;
+    if (source) source.textContent = `EPIR FOG ENGINE vNext PRODUCTION · VIS guidance ${peakVis?.version || curVis?.version || '—'} · ${current.models?.length ?? 0} modeli · ${current.fogEngineFallback ? 'fog: legacy fallback' : 'fog: P_model_final'}`;
   }
 
   function cell(k, v, sub = '') { return `<div class="fog-diag-cell"><small>${esc(k)}</small><b>${esc(v)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</div>`; }
@@ -174,10 +213,13 @@
     const base = document.getElementById('fogDiag')?.closest('details'); if (!base) return;
     let details = document.getElementById('fogVNextDiagnostics');
     if (!details) { details = document.createElement('details'); details.id = 'fogVNextDiagnostics'; details.className = 'fog-diag'; base.insertAdjacentElement('afterend', details); }
-    const vi = h.vnextInput || {}, p = h.vnextProbability || {};
-    details.innerHTML = `<summary>Fog Engine vNext — PRODUKCJA</summary><div class="fog-data-note"><b>Tryb:</b> operational. Wynik główny pochodzi z walidowanego P_model_final (physics + direct guidance). Legacy jest używany tylko jako awaryjny fallback, gdy vNext nie zwróci poprawnego wyniku.</div><div class="fog-diag-grid">
+    const vi = h.vnextInput || {}, p = h.vnextProbability || {}, vg = h.visGuidance || {}, vd = vg.diagnostics || {};
+    details.innerHTML = `<summary>Fog Engine vNext — PRODUKCJA + VIS</summary><div class="fog-data-note"><b>Tryb:</b> operational. Fog score pochodzi z P_model_final. VIS guidance łączy rozkład widzialności z modeli, dotychczasowe progi VIS, nasycenie i siłę sygnału vNext; stara VIS pozostaje jako diagnostyczny punkt odniesienia/fallback.</div><div class="fog-diag-grid">
       ${cell('Fog score vNext', finite(h.score) ? fmt0(h.score) + '/100' : '—', h.fogEngineFallback ? 'LEGACY FALLBACK' : 'PRODUCTION')}
       ${cell('Fog score legacy', finite(h.fogScoreLegacy) ? fmt0(h.fogScoreLegacy) + '/100' : '—')}
+      ${cell('VIS proponowana', fmtVis(vg.point), fmtRange(vg))}${cell('Pewność VIS', vg.confidenceLabel || '—', finite(vg.confidence) ? fmt0(vg.confidence * 100) + '%' : '—')}
+      ${cell('P VIS <1500', finite(vg.p1500) ? fmt0(vg.p1500) + '%' : '—')}${cell('P VIS <1000', finite(vg.p1000) ? fmt0(vg.p1000) + '%' : '—')}${cell('P VIS <500', finite(vg.p500) ? fmt0(vg.p500) + '%' : '—')}${cell('P VIS <200', finite(vg.p200) ? fmt0(vg.p200) + '%' : '—')}
+      ${cell('VIS modeli Q25–Q75', finite(vd.q25) && finite(vd.q75) ? `${vd.q25}–${vd.q75} m` : '—', `${vg.modelCount ?? 0} modeli VIS`)}${cell('VIS legacy', fmtVis(vg.rawLegacy))}
       ${cell('P_physics', finite(p.P_physics) ? fmt(p.P_physics, 3) : '—')}${cell('P_direct', finite(p.P_direct) ? fmt(p.P_direct, 3) : '—')}
       ${cell('P_model_final', finite(p.P_model_final) ? fmt(p.P_model_final, 3) : '—')}${cell('Lead bucket', p.leadBucket || '—')}
       ${cell('SSOIL', fmt0(h.SSOIL) + '/100')}${cell('SPBL', fmt0(h.SPBL) + '/100')}${cell('SSFC_COOL', fmt0(h.SSFC_COOL) + '/100')}
@@ -187,10 +229,10 @@
     </div>`;
   }
 
-  function enrichSeries(Physics, Probability) {
+  function enrichSeries(Physics, Probability, Visibility) {
     const series = window.PrognozaEPIRFogSeries; if (!Array.isArray(series) || !series.length) return false;
-    const sig = `${series.length}:${series[0]?.t}:${series.at(-1)?.t}:${iconRows.length}:${ecmwfRows.length}`;
-    if (sig === lastAppliedSignature && series.every(x => x?.fogEngineMode === 'vnext-production')) { renderOperationalSummary(); renderDiagnostics(); return true; }
+    const sig = `${series.length}:${series[0]?.t}:${series.at(-1)?.t}:${iconRows.length}:${ecmwfRows.length}:vis1`;
+    if (sig === lastAppliedSignature && series.every(x => x?.fogEngineMode === 'vnext-production' && x?.visGuidance)) { renderOperationalSummary(); renderDiagnostics(); return true; }
     for (const h of series) {
       if (!finite(h?.t)) continue;
       const legacyScore = num(h.fogScoreLegacy) ?? num(h.score);
@@ -198,6 +240,7 @@
       const enhanced = Physics.enhanceLegacyHour({...h, score:legacyScore}, input);
       const probability = Probability.evaluate(input, enhanced.vnext || {});
       const op = Probability.operationalScore(legacyScore, probability);
+      const visGuidance = Visibility.evaluate(h, {score:op.score, saturation:h.sat, directFog:h.dmiFog, leadHours:input.leadHours, phase:enhanced.vnext?.phase});
       Object.assign(h, enhanced, {
         score:op.score,
         fogScoreLegacy:legacyScore,
@@ -206,6 +249,15 @@
         fogEngineSource:op.source,
         fogProbabilityVNext:finite(probability.P_model_final) ? probability.P_model_final : null,
         vnextProbability:probability,
+        visGuidance,
+        visProposed:visGuidance?.point ?? null,
+        visRangeLow:visGuidance?.low ?? null,
+        visRangeHigh:visGuidance?.high ?? null,
+        visProb1500:visGuidance?.p1500 ?? null,
+        visProb1000:visGuidance?.p1000 ?? null,
+        visProb500:visGuidance?.p500 ?? null,
+        visProb200:visGuidance?.p200 ?? null,
+        visConfidence:visGuidance?.confidence ?? null,
         vnextInput:{tsurface:input.tsurface, soilTemperature0:input.soilTemperature0, soilTemperature6:input.soilTemperature6, soilTemperatureEcmwf07:input.soilTemperatureEcmwf07, t5cmObs:input.t5cmObs, t5cmObsTime:input.t5cmObsTime, t5cmObsSource:input.t5cmObsSource, t5cmObsAgeHours:input.t5cmObsAgeHours}
       });
     }
@@ -220,9 +272,9 @@
 
   async function refresh() {
     try {
-      const [Physics, Probability] = await Promise.all([loadPhysics(), loadProbability()]);
+      const [Physics, Probability, Visibility] = await Promise.all([loadPhysics(), loadProbability(), loadVisibility()]);
       await ensurePhysicalData();
-      enrichSeries(Physics, Probability);
+      enrichSeries(Physics, Probability, Visibility);
     } catch (e) { window.PrognozaEPIRFogVNextError = String(e?.message || e); }
   }
   window.addEventListener('prognozaepir:fog-series-updated', refresh);
