@@ -18,7 +18,8 @@ function fakeStorage(mode) {
     PrognozaEPIRFogSeries: [{ t: 1, score: 82, fogScoreLegacy: 55, vis: 900, fogEngineMode: 'vnext-production' }],
     PrognozaEPIRFogVNextSeries: [{ t: 1, score: 82, fogScoreLegacy: 55, vis: 900, fogEngineMode: 'vnext-production' }]
   };
-  const rows = Policy.seriesForMode(win, 'legacy');
+  assert.equal(Policy.selectedMode(win), 'legacy');
+  const rows = Policy.seriesForMode(win, Policy.selectedMode(win));
   assert.equal(rows.length, 1);
   assert.equal(rows[0].score, 55);
   assert.equal(Policy.normalizeMode(rows[0].fogEngineMode), 'legacy');
@@ -40,38 +41,57 @@ function fakeStorage(mode) {
     localStorage: fakeStorage('vnext'),
     PrognozaEPIRFogVNextSeries: [{ t: 1, score: 77, fogEngineMode: 'vnext-production' }]
   };
-  const rows = Policy.seriesForMode(win, 'vnext');
+  assert.equal(Policy.selectedMode(win), 'vnext');
+  const rows = Policy.seriesForMode(win, Policy.selectedMode(win));
   assert.equal(rows.length, 1);
   assert.equal(rows[0].score, 77);
 })();
 
-(function testFogPageIsolationContract() {
+(function testFogPageIsNativeAndMeteogramFree() {
   const html = read('fog.html');
-  assert(html.includes('id="fogRuntime"'));
-  assert(html.includes('index.html?fogpanel=1&v='));
-  assert(html.includes("mount.id = 'fogStandaloneMount'"));
-  assert(html.includes("const ids = ['fogEngineModeSwitch', 'fogEngine', 'brEngine', 'mifgEngineStandalone']"));
-  assert(html.includes('body>.wrap,body>.app'));
-  assert(html.includes('#fogStandaloneMount{display:block!important'));
+  assert(html.includes('id="epirGlobalNav"'));
+  assert(html.includes('id="fogStandaloneMount"'));
+  assert(html.includes('window.__PROGNOZA_EPIR_FOG_STANDALONE__=true'));
+  for (const asset of [
+    'fog-mode-switch.js', 'fog-engine.js', 'mifg-engine.js', 'fog-summary-layout.js',
+    'br-engine.js', 'fog-page-layout.js', 'fog-visibility-cells.js'
+  ]) assert(html.includes(asset), `missing ${asset}`);
+  for (const forbidden of [
+    '<iframe', 'fogRuntime', 'index.html?fogpanel=', '<canvas', 'canvasViewport',
+    'MutationObserver', 'ResizeObserver', 'epir-pages-compat-', 'observation-engine.js',
+    'fog-meteogram-overlay.js', 'shortcut-mode.js'
+  ]) assert(!html.includes(forbidden), `fog.html contains dead/meteogram marker: ${forbidden}`);
+})();
+
+(function testVisibilityCellsStayPresentWhenInactive() {
+  const js = read('fog-visibility-cells.js');
+  assert(js.includes('FG · szacowana VIS'));
+  assert(js.includes('BR · szacowana VIS'));
+  assert(js.includes('MIFG · VIS standardowa'));
+  assert(js.includes('brak aktywnego FG w 48 h'));
+  assert(js.includes('brak aktywnego BR w 24 h'));
+  assert(js.includes('brak aktywnego MIFG w 48 h'));
 })();
 
 (function testBuildExportsDedicatedLegacySeries() {
   const wire = read('scripts/wire_fog_mifg_utc_runtime.py');
   assert(wire.includes('PrognozaEPIRFogLegacySeries'));
-  assert(wire.includes('index\\.html\\?fogpanel=1&v='));
-  assert(wire.includes('fog-page-layout.js'));
-  assert(wire.includes('fog-visibility-cells.js'));
+  assert(wire.includes("'<iframe'"));
+  assert(wire.includes("'index.html?fogpanel='"));
+  assert(wire.includes('FOG_PAGE_ASSETS'));
 })();
 
-(function testTafRuntimeContract() {
+(function testTafUsesExactlySelectedFogMode() {
   const html = read('taf.html');
   const app = read('taf-app-v25.js');
   assert(html.includes('id="engine"'));
   assert(html.includes('taf-engine-v242.js?v=2.4.2-cloud-fog'));
   assert(html.includes('taf-runtime-bootstrap.js?v=20260917-2'));
-  assert(app.includes('waitForFogSeries'));
-  assert(app.includes("mode==='vnext'"));
-  assert(app.includes('Fog Engine LEGACY'));
+  assert(app.includes('const mode=Policy.selectedMode(w)'));
+  assert(app.includes('Policy.seriesForMode(w,mode)'));
+  assert(app.includes("if(mode==='vnext')throw Error"));
+  assert(app.includes("throw Error('Fog Engine LEGACY nie udostępnił kompletnej serii.')"));
+  assert(!app.includes("mode==='legacy'?'vnext'"));
 })();
 
 require('./site-asset-integrity.test.js');
