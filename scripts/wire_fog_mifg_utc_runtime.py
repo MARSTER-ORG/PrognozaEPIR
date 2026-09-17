@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Wire the deployed FOG/MIFG runtime and production Fog Engine vNext bridge.
+"""Wire the deployed FOG/BR/MIFG runtime and production Fog Engine vNext bridge.
 
 Archive routing is owned solely by message-archive-client.js. This build step
 normalizes FOG/MIFG display/input clock semantics to UTC, keeps the operational
 fog logic available to the meteogram, and keeps the full EPIR FOG interface on
-a dedicated fog.html page.
+a dedicated fog.html page. BR is a separate target/state shared by LEGACY and
+vNEXT, not a fifth fog mechanism.
 """
 import os
 import re
@@ -70,10 +71,11 @@ def patch_vnext() -> None:
     physics = SITE / "fog-physics-vnext.js"
     probability = SITE / "fog-vnext-probability-layer.js"
     visibility = SITE / "fog-visibility-vnext.js"
+    br = SITE / "br-engine.js"
     fog_page = SITE / "fog.html"
-    for p in (bridge, physics, probability, visibility):
+    for p in (bridge, physics, probability, visibility, br):
         if not p.is_file() or p.stat().st_size == 0:
-            raise SystemExit(f"Fog vNext production asset missing: {p.name}")
+            raise SystemExit(f"Fog production asset missing: {p.name}")
 
     # Every deployment gets a fresh URL for the bridge and modules loaded by it.
     b = bridge.read_text(encoding="utf-8")
@@ -102,7 +104,7 @@ def patch_vnext() -> None:
     if fog_page.is_file():
         f = fog_page.read_text(encoding="utf-8")
         f = re.sub(r'utc-ui-guard\.js(?:\?v=[^\"]*)?', f'utc-ui-guard.js?v={ASSET_V}', f)
-        for asset in ("fog-engine.js", "mifg-engine.js", "fog-summary-layout.js", "fog-mode-switch.js"):
+        for asset in ("fog-engine.js", "mifg-engine.js", "fog-summary-layout.js", "fog-mode-switch.js", "br-engine.js"):
             if asset in f:
                 f = re.sub(rf'{re.escape(asset)}\?v=[^\"]+', f'{asset}?v={ASSET_V}', f)
         fog_page.write_text(f, encoding="utf-8")
@@ -111,6 +113,7 @@ def patch_vnext() -> None:
 def validate() -> None:
     fog = (SITE / "fog-engine.js").read_text(encoding="utf-8")
     mifg = (SITE / "mifg-engine.js").read_text(encoding="utf-8")
+    br = (SITE / "br-engine.js").read_text(encoding="utf-8")
     index = (SITE / "index.html").read_text(encoding="utf-8")
     nav = (SITE / "utc-ui-guard.js").read_text(encoding="utf-8")
     bridge = (SITE / "fog-summary-layout.js").read_text(encoding="utf-8")
@@ -142,10 +145,16 @@ def validate() -> None:
     for marker in required_probability:
         if marker not in probability:
             raise SystemExit(f"Fog vNext production probability layer contract missing: {marker}")
+    for marker in ("VERSION:'1.0.0-br-target'", "ZAMGLENIE (BR)", "BR jest osobnym targetem"):
+        if marker not in br:
+            raise SystemExit(f"BR target module contract missing: {marker}")
     if not fog_page.is_file():
         raise SystemExit("standalone fog.html missing from Pages artifact")
     fog_html = fog_page.read_text(encoding="utf-8")
-    for marker in ("EPIR FOG", f"fog-engine.js?v={ASSET_V}", f"fog-summary-layout.js?v={ASSET_V}"):
+    for marker in (
+        "EPIR FOG", f"fog-engine.js?v={ASSET_V}", f"fog-summary-layout.js?v={ASSET_V}",
+        f"br-engine.js?v={ASSET_V}", "moduł zamglenia BR"
+    ):
         if marker not in fog_html:
             raise SystemExit(f"standalone EPIR FOG page contract missing: {marker}")
 
@@ -155,7 +164,7 @@ def main() -> int:
     patch_mifg()
     patch_vnext()
     validate()
-    print("wired UTC FOG/MIFG runtime, standalone EPIR FOG UI and meteogram-only fog graphics")
+    print("wired UTC FOG/BR/MIFG runtime, standalone EPIR FOG UI and meteogram-only fog graphics")
     return 0
 
 
