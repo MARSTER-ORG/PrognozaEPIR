@@ -123,7 +123,7 @@ def patch_vnext() -> None:
             "br-engine.js", "fog-page-layout.js", "fog-visibility-cells.js"
         ):
             if asset in f:
-                f = re.sub(rf'{re.escape(asset)}\?v=[^\"]+', f'{asset}?v={ASSET_V}', f)
+                f = re.sub(rf"{re.escape(asset)}\?v=[^'\"\s<>,)]+", f'{asset}?v={ASSET_V}', f)
         fog_page.write_text(f, encoding="utf-8")
 
 
