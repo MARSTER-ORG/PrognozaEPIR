@@ -20,6 +20,17 @@
     }
   }
 
+  function fmtUtcDate(t) {
+    if (!finite(t)) return '—';
+    try {
+      return new Intl.DateTimeFormat('pl-PL', {
+        timeZone:'UTC', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit', hourCycle:'h23'
+      }).format(new Date(t)) + ' UTC';
+    } catch (_) {
+      const d=new Date(t); return d.toISOString().slice(8,10)+'.'+d.toISOString().slice(5,7)+' '+d.toISOString().slice(11,16)+' UTC';
+    }
+  }
+
   function classify(score) {
     if (!finite(score)) return 'BRAK DANYCH';
     if (score < 50) return 'NIE';
@@ -193,8 +204,8 @@
 
     summary.innerHTML = `
       <div class="mifg-card ${riskClass(cs)}"><small>MIFG teraz / najbliższa godzina</small><strong>${classify(cs)}</strong><em>${finite(cs) ? Math.round(cs) + '/100 · ' + fmtUtc(num(current.t)) : '—'}</em></div>
-      <div class="mifg-card ${riskClass(ps)}"><small>Maksimum MIFG w 48 h</small><strong>${classify(ps)}</strong><em>${finite(ps) ? Math.round(ps) + '/100 · ' + fmtUtc(num(peak.t)) : '—'}</em></div>
-      <div class="mifg-card"><small>Okno MIFG ≥50/100</small><strong>${win ? `${fmtUtc(win.from)}–${fmtUtc(win.to)}` : 'brak w 48 h'}</strong><em>ten sam próg co na meteogramie</em></div>
+      <div class="mifg-card ${riskClass(ps)}"><small>Maksimum MIFG w 48 h</small><strong>${classify(ps)}</strong><em>${finite(ps) ? Math.round(ps) + '/100 · ' + fmtUtcDate(num(peak.t)) : '—'}</em></div>
+      <div class="mifg-card"><small>Okno MIFG ≥50/100</small><strong>${win ? `${fmtUtcDate(win.from)}–${fmtUtcDate(win.to)}` : 'brak w 48 h'}</strong><em>ten sam próg co na meteogramie</em></div>
       <div class="mifg-card"><small>Źródło</small><strong>${source}</strong><em>${status.error ? 'fallback / błąd źródła głównego' : 'seria operacyjna'}</em></div>`;
 
     const display = horizon.filter(r => num(r?.t) >= now - HOUR).slice(0, 30);

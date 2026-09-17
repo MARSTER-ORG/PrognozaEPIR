@@ -66,6 +66,15 @@
     } catch (_) { return new Date(t).toISOString().slice(11, 16) + ' UTC'; }
   }
 
+  function fmtUtcDate(t) {
+    if (!finite(t)) return '—';
+    try {
+      return new Intl.DateTimeFormat('pl-PL', {timeZone:'UTC', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit', hourCycle:'h23'}).format(new Date(t)) + ' UTC';
+    } catch (_) {
+      const d=new Date(t); return d.toISOString().slice(8,10)+'.'+d.toISOString().slice(5,7)+' '+d.toISOString().slice(11,16)+' UTC';
+    }
+  }
+
   function ensureCard(host, id, className) {
     if (!host) return null;
     let el = document.getElementById(id);
@@ -91,7 +100,7 @@
     if (!rows.length) { card.hidden = true; return; }
     const min = rows.reduce((a, b) => fogVisibility(b) < fogVisibility(a) ? b : a, rows[0]);
     card.hidden = false;
-    card.innerHTML = `<small>Szacowana VIS przy FG</small><strong>${fmtVis(fogVisibility(min))}</strong><em>minimum przy aktywnym FG · ${fmtUtc(num(min.t))} · ${mode() === 'vnext' ? 'vNEXT' : 'LEGACY'}</em>`;
+    card.innerHTML = `<small>Szacowana VIS przy FG</small><strong>${fmtVis(fogVisibility(min))}</strong><em>minimum przy aktywnym FG · ${fmtUtcDate(num(min.t))} · ${mode() === 'vnext' ? 'vNEXT' : 'LEGACY'}</em>`;
   }
 
   function updateBr() {
@@ -116,7 +125,7 @@
       ? fmtVis(actual)
       : (window.PrognozaEPIRBREngine?.expectedVis?.(ref) || '—');
     card.hidden = false;
-    card.innerHTML = `<small>Szacowana VIS przy BR</small><strong>${estimate}</strong><em>${fmtUtc(num(ref.t))} · zakres BR 1000–5000 m</em>`;
+    card.innerHTML = `<small>Szacowana VIS przy BR</small><strong>${estimate}</strong><em>${fmtUtcDate(num(ref.t))} · zakres BR 1000–5000 m</em>`;
   }
 
   function updateMifg() {
@@ -132,7 +141,7 @@
     const fog = nearest(fogSeries(), num(peak.t));
     const stdVis = fogVisibility(fog);
     card.hidden = false;
-    card.innerHTML = `<small>VIS standardowa przy MIFG</small><strong>${fmtVis(stdVis)}</strong><em>${fmtUtc(num(peak.t))} · nie jest to VIS warstwy &lt;2 m</em>`;
+    card.innerHTML = `<small>VIS standardowa przy MIFG</small><strong>${fmtVis(stdVis)}</strong><em>${fmtUtcDate(num(peak.t))} · nie jest to VIS warstwy &lt;2 m</em>`;
 
     const note = document.getElementById('mifgStandaloneNote');
     if (note && !note.dataset.visContext) {

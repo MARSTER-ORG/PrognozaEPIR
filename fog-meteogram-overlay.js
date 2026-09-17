@@ -111,22 +111,35 @@
     return clip(score,0,100);
   }
 
-  function brAt(t) {
-    const fog = fogAt(t);
-    if (!fog) return null;
-    const score = brScoreForFogRow(fog);
-    return finite(score) ? {...fog,score} : null;
-  }
-
   function brSeries() {
+    const published = window.PrognozaEPIRBRSeries;
+    if (Array.isArray(published) && published.length) {
+      return published
+        .filter(row => row && finite(Number(row.t)) && finite(Number(row.score)))
+        .slice()
+        .sort((a,b) => Number(a.t) - Number(b.t));
+    }
+    // Fallback only until the dedicated BR engine publishes its series.
+    // Do not write this fallback back to PrognozaEPIRBRSeries, otherwise it
+    // could overwrite the authoritative BR result used by the standalone panel.
     const rows = window.PrognozaEPIRFogSeries;
     if (!Array.isArray(rows)) return [];
-    const out = rows.map(row => {
+    return rows.map(row => {
       const score = brScoreForFogRow(row);
       return finite(score) ? {...row,score} : null;
     }).filter(Boolean);
-    window.PrognozaEPIRBRSeries = out;
-    return out;
+  }
+
+  function brAt(t) {
+    const rows = brSeries();
+    if (!rows.length || !finite(t)) return null;
+    let best = null, bestDiff = Infinity;
+    for (const row of rows) {
+      if (!row || !finite(Number(row.t)) || !finite(Number(row.score))) continue;
+      const d = Math.abs(Number(row.t) - t);
+      if (d < bestDiff) { best = row; bestDiff = d; }
+    }
+    return bestDiff <= MAX_MATCH_MS ? best : null;
   }
 
   function fogColor(score) {
@@ -600,6 +613,7 @@
 
   window.addEventListener('prognozaepir:fog-series-updated', () => { redraw(); queueMicrotask(renderMifgCard); queueMicrotask(renderBrCard); });
   window.addEventListener('prognozaepir:mifg-series-updated', () => { redraw(); queueMicrotask(renderMifgCard); queueMicrotask(renderBrCard); });
+  window.addEventListener('prognozaepir:br-series-updated', () => { redraw(); queueMicrotask(renderBrCard); });
   setInterval(() => { renderMifgCard(); renderBrCard(); },90*1000);
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => { install(); installLegendNote(); }, {once:true});

@@ -172,6 +172,11 @@
     catch (_) { return new Date(t).toISOString().slice(11, 16) + ' UTC'; }
   }
 
+  function localDateTime(t) {
+    try { return new Intl.DateTimeFormat('pl-PL', {timeZone:'UTC', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}).format(new Date(t)) + ' UTC'; }
+    catch (_) { const d=new Date(t); return d.toISOString().slice(8,10)+'.'+d.toISOString().slice(5,7)+' '+d.toISOString().slice(11,16)+' UTC'; }
+  }
+
   function firstWindow(rows) {
     const active = rows.map((r, i) => [r, i]).filter(([r]) => finite(r?.score) && r.score >= 50);
     if (!active.length) return null;
@@ -239,9 +244,9 @@
     const obs = current.observedBR ? ' · BR OBS' : '';
     summary.innerHTML = `
       <div class="br-card ${riskClass(current.score)}"><small>BR teraz / najbliższa godzina</small><strong>${classify(current.score)}</strong><em>${Math.round(current.score)}/100${obs}</em></div>
-      <div class="br-card ${riskClass(peak.score)}"><small>Maksimum BR w 24 h</small><strong>${classify(peak.score)}</strong><em>${Math.round(peak.score)}/100 · ${localHour(peak.t)}</em></div>
+      <div class="br-card ${riskClass(peak.score)}"><small>Maksimum BR w 24 h</small><strong>${classify(peak.score)}</strong><em>${Math.round(peak.score)}/100 · ${localDateTime(peak.t)}</em></div>
       <div class="br-card"><small>Oczekiwana VIS przy BR</small><strong>${expectedVis(current)}</strong><em>kod BR: zasadniczo 1000–5000 m</em></div>
-      <div class="br-card"><small>Okno zamglenia</small><strong>${win ? `${localHour(win.from)}–${localHour(win.to)}` : 'BRAK'}</strong><em>${mode === 'vnext' ? 'źródło: vNEXT' : 'źródło: LEGACY'}</em></div>`;
+      <div class="br-card"><small>Okno zamglenia</small><strong>${win ? `${localDateTime(win.from)}–${localDateTime(win.to)}` : 'BRAK'}</strong><em>${mode === 'vnext' ? 'źródło: vNEXT' : 'źródło: LEGACY'}</em></div>`;
     if (hours) {
       hours.hidden = false;
       hours.innerHTML = rows.slice(0, 13).map(r => `<div class="br-hour ${riskClass(r.score)}"><b>${localHour(r.t)}</b><strong>${classify(r.score)}</strong><small>${Math.round(r.score)}/100</small><small>VIS ${expectedVis(r)}</small></div>`).join('');
