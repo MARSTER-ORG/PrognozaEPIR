@@ -36,7 +36,6 @@ def patch_global_theme() -> None:
 
     for path in html_pages:
         s = p.rd(path)
-        # Remove stale copies first so every page gets exactly one cache-busted loader.
         s = re.sub(
             r'\s*<script\s+src=["\']theme-control\.js(?:\?[^"\']*)?["\'][^>]*></script>',
             '',
@@ -55,7 +54,6 @@ def patch_global_theme() -> None:
         else:
             raise RuntimeError(f"HTML page has no </head> for theme wiring: {path.name}")
 
-        # Load in HEAD: the selected/system theme is resolved before BODY paints.
         s = re.sub(r'</head>', f'  {script}\n</head>', s, count=1, flags=re.I)
         p.wr(path, s)
 
@@ -63,7 +61,8 @@ def patch_global_theme() -> None:
 def validate_v242() -> None:
     required = [
         "index.html", "radar.html", "taf.html", "sat-fog.html", "arch.html",
-        "taf-engine-v2.js", "taf-engine-v24.js", "taf-engine-v241.js", "taf-engine-v242.js", "taf-app-v2.js", "message-archive-client.js",
+        "taf-engine-v2.js", "taf-engine-v24.js", "taf-engine-v241.js", "taf-engine-v242.js",
+        "taf-fog-policy.js", "taf-app-v25.js", "message-archive-client.js",
         "fog-engine.js", "observation-engine.js", "mifg-engine.js",
         "meteogram-tap-details.js", "theme-control.js",
         "radar-risk-policy.js", "lightning-alerts.html", "lightning-alert-sw.js",
@@ -91,11 +90,12 @@ def validate_v242() -> None:
             raise RuntimeError(f"legacy TAF runtime in deployed taf.html: {legacy}")
     for marker in (
         "TAF ENGINE 2.4.2 ·",
+        "taf-fog-policy.js?v=20260917-1",
         "taf-engine-v2.js?v=2.3.0-kernel",
         "taf-engine-v24.js?v=2.4.0",
         "taf-engine-v241.js?v=2.4.1-audit",
         "taf-engine-v242.js?v=2.4.2-cloud-fog",
-        "taf-app-v2.js?v=2.4.0-ui",
+        "taf-app-v25.js?v=20260917-1",
         "prognozaepir-taf-engine-v2",
     ):
         if marker not in taf:
