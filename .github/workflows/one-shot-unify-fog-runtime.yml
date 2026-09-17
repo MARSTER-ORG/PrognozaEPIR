@@ -1,0 +1,36 @@
+name: One-shot unify fog runtime
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/one-shot-unify-fog-runtime.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Guard vNext UI by selected mode
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('fog-summary-layout.js')
+          s = p.read_text()
+          old = "  function renderOperationalSummary() {\n    const series = window.PrognozaEPIRFogSeries || [], now = Date.now();"
+          new = "  function renderOperationalSummary() {\n    let selectedMode = 'legacy';\n    try { selectedMode = localStorage.getItem('prognozaepir-fog-engine-mode') === 'vnext' ? 'vnext' : 'legacy'; } catch (_) {}\n    if (selectedMode !== 'vnext') return;\n    const series = window.PrognozaEPIRFogSeries || [], now = Date.now();"
+          if old not in s:
+              raise SystemExit('renderOperationalSummary anchor not found')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+      - name: Commit patch
+        run: |
+          git config user.name 'prognozaepir-runtime-sync'
+          git config user.email 'runtime-sync@prognozaepir.invalid'
+          git add fog-summary-layout.js
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'fix: keep vNext UI isolated to vNext mode'
+          git push
