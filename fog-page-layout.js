@@ -5,6 +5,7 @@
   window.__PROGNOZA_EPIR_FOG_PAGE_LAYOUT__ = true;
 
   const HOUR = 3600e3;
+  const MAX_GAP = 90 * 60e3;
   const finite = Number.isFinite;
   const num = v => v !== null && v !== undefined && v !== '' && finite(Number(v)) ? Number(v) : null;
   let scheduled = false;
@@ -13,10 +14,10 @@
     if (!finite(t)) return '—';
     try {
       return new Intl.DateTimeFormat('pl-PL', {
-        timeZone: 'UTC', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+        timeZone:'UTC', hour:'2-digit', minute:'2-digit', hourCycle:'h23'
       }).format(new Date(t)) + ' UTC';
     } catch (_) {
-      return new Date(t).toISOString().slice(11, 16) + ' UTC';
+      return new Date(t).toISOString().slice(11,16) + ' UTC';
     }
   }
 
@@ -27,7 +28,8 @@
         timeZone:'UTC', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit', hourCycle:'h23'
       }).format(new Date(t)) + ' UTC';
     } catch (_) {
-      const d=new Date(t); return d.toISOString().slice(8,10)+'.'+d.toISOString().slice(5,7)+' '+d.toISOString().slice(11,16)+' UTC';
+      const d = new Date(t);
+      return d.toISOString().slice(8,10)+'.'+d.toISOString().slice(5,7)+' '+d.toISOString().slice(11,16)+' UTC';
     }
   }
 
@@ -60,6 +62,7 @@
       .mifg-head b{color:var(--blueText);font-size:12px}.mifg-head span{color:var(--muted);font-size:9px;text-align:right}
       .mifg-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}.mifg-card{background:var(--soft);border-left:3px solid var(--blueText);padding:6px 7px;min-width:0}
       .mifg-card small{display:block;color:var(--muted);font-size:8px}.mifg-card strong{display:block;font-size:12px;margin-top:1px}.mifg-card em{display:block;color:var(--muted);font-style:normal;font-size:8px;margin-top:1px}
+      .mifg-window-line{display:block;margin-top:2px}.mifg-window-line:first-child{margin-top:0}
       .mifg-mid{border-left-color:#d49a28}.mifg-high{border-left-color:#d86c2f}.mifg-vhigh{border-left-color:#d0503f}
       .mifg-hours{display:flex;gap:4px;overflow-x:auto;margin-top:7px;padding:5px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
       .mifg-hour{flex:0 0 92px;background:var(--soft);border:1px solid var(--border);border-radius:4px;padding:5px;text-align:center}.mifg-hour b{display:block;font-size:9px}.mifg-hour strong{display:block;font-size:10px;margin:2px 0}.mifg-hour small{display:block;color:var(--muted);font-size:8px}
@@ -127,8 +130,6 @@
     const fog = document.getElementById('fogEngine');
     const br = document.getElementById('brEngine');
     const mifg = ensureMifgPanel();
-
-    // Kolejność operacyjna podstrony: FG -> BR -> MIFG.
     if (fog && br && fog.nextElementSibling !== br) fog.insertAdjacentElement('afterend', br);
     const anchor = br || fog || document.getElementById('fogStandaloneMount');
     if (anchor && anchor.nextElementSibling !== mifg) anchor.insertAdjacentElement('afterend', mifg);
@@ -138,7 +139,9 @@
   function mifgSeries() {
     try {
       const rows = window.PrognozaEPIRMIFG?.getSeries?.();
-      return Array.isArray(rows) ? rows.filter(r => finite(num(r?.t))).sort((a,b) => num(a.t)-num(b.t)) : [];
+      return Array.isArray(rows)
+        ? rows.filter(r => finite(num(r?.t))).slice().sort((a,b) => num(a.t)-num(b.t))
+        : [];
     } catch (_) {
       return [];
     }
@@ -152,22 +155,44 @@
   function nearest(rows, t) {
     let best = null, bd = Infinity;
     for (const row of rows) {
-      const rt = num(row?.t), d = finite(rt) ? Math.abs(rt - t) : Infinity;
+      const rt = num(row?.t);
+      const d = finite(rt) ? Math.abs(rt - t) : Infinity;
       if (d < bd) { bd = d; best = row; }
     }
     return best;
   }
 
-  function firstActiveWindow(rows) {
-    const first = rows.findIndex(r => finite(num(r?.score)) && num(r.score) >= 50);
-    if (first < 0) return null;
-    let last = first;
-    while (last + 1 < rows.length) {
-      const prevT = num(rows[last]?.t), nextT = num(rows[last + 1]?.t), nextS = num(rows[last + 1]?.score);
-      if (!finite(nextS) || nextS < 50 || !finite(prevT) || !finite(nextT) || nextT - prevT > 90 * 60e3) break;
-      last++;
+  function activeWindows(rows) {
+    const src = (rows || []).filter(r => finite(num(r?.t))).slice().sort((a,b) => num(a.t)-num(b.t));
+    const out = [];
+    let i = 0;
+    while (i < src.length) {
+      const score = num(src[i]?.score);
+      if (!finite(score) || score < 50) { i++; continue; }
+      const first = i;
+      let last = i;
+      while (last + 1 < src.length) {
+        const nextScore = num(src[last + 1]?.score);
+        const prevT = num(src[last]?.t);
+        const nextT = num(src[last + 1]?.t);
+        if (!finite(nextScore) || nextScore < 50 || !finite(prevT) || !finite(nextT) || nextT - prevT > MAX_GAP) break;
+        last++;
+      }
+      const group = src.slice(first, last + 1);
+      const peak = group.reduce((a,b) => !a || (num(b?.score) ?? -1) > (num(a?.score) ?? -1) ? b : a, null);
+      const lastT = num(src[last]?.t);
+      const followingT = num(src[last + 1]?.t);
+      const to = finite(followingT) && followingT - lastT <= MAX_GAP ? followingT : lastT + HOUR;
+      out.push({from:num(src[first].t), to, peak});
+      i = last + 1;
     }
-    return {from:num(rows[first].t), to:num(rows[last + 1]?.t) ?? (num(rows[last].t) + HOUR)};
+    return out;
+  }
+
+  function windowHtml(win, index) {
+    const peakScore = num(win?.peak?.score);
+    const peakText = finite(peakScore) ? ` · max ${Math.round(peakScore)}/100 @ ${fmtUtcDate(num(win.peak.t))}` : '';
+    return `<span class="mifg-window-line">${index + 1}. ${fmtUtcDate(win.from)}–${fmtUtcDate(win.to)}${peakText}</span>`;
   }
 
   function renderMifg() {
@@ -198,14 +223,15 @@
 
     const current = nearest(horizon, now) || horizon[0];
     const peak = horizon.reduce((a,b) => !a || (num(b?.score) ?? -1) > (num(a?.score) ?? -1) ? b : a, null) || current;
-    const win = firstActiveWindow(horizon);
+    const windows = activeWindows(horizon);
     const cs = num(current?.score), ps = num(peak?.score);
     const source = String(status.source || current?.source || '—');
+    const windowsValue = windows.length ? windows.map(windowHtml).join('') : 'brak w 48 h';
 
     summary.innerHTML = `
       <div class="mifg-card ${riskClass(cs)}"><small>MIFG teraz / najbliższa godzina</small><strong>${classify(cs)}</strong><em>${finite(cs) ? Math.round(cs) + '/100 · ' + fmtUtc(num(current.t)) : '—'}</em></div>
       <div class="mifg-card ${riskClass(ps)}"><small>Maksimum MIFG w 48 h</small><strong>${classify(ps)}</strong><em>${finite(ps) ? Math.round(ps) + '/100 · ' + fmtUtcDate(num(peak.t)) : '—'}</em></div>
-      <div class="mifg-card"><small>Okno MIFG ≥50/100</small><strong>${win ? `${fmtUtcDate(win.from)}–${fmtUtcDate(win.to)}` : 'brak w 48 h'}</strong><em>ten sam próg co na meteogramie</em></div>
+      <div class="mifg-card"><small>Okna MIFG ≥50/100</small><strong>${windowsValue}</strong><em>wszystkie okresy z tej samej serii co meteogram</em></div>
       <div class="mifg-card"><small>Źródło</small><strong>${source}</strong><em>${status.error ? 'fallback / błąd źródła głównego' : 'seria operacyjna'}</em></div>`;
 
     const display = horizon.filter(r => num(r?.t) >= now - HOUR).slice(0, 30);
@@ -215,7 +241,7 @@
       return `<div class="mifg-hour ${riskClass(s)}"><b>${fmtUtc(num(r.t))}</b><strong>${classify(s)}</strong><small>${finite(s) ? Math.round(s) + '/100' : '—'}</small></div>`;
     }).join('');
 
-    note.innerHTML = `<b>Jak czytać MIFG:</b> kafel „teraz” dotyczy najbliższej godziny, natomiast meteogram pokazuje score dla godziny wskazanej kursorem. Maksimum powyżej jest liczone z pełnych 48 h i korzysta z dokładnie tej samej serii MIFG co meteogram. Dlatego przyszła godzina może mieć np. 60+/100, gdy bieżąca godzina nadal ma status NIE.`;
+    note.innerHTML = '<b>Jak czytać MIFG:</b> czerwone punkty i liczby w sekcji „Widzialność / mgła” meteogramu to MIFG ≥50/100. Pomarańczowa linia jest standardową widzialnością poziomą konsensusu i nie musi spadać przy płytkiej mgle MIFG &lt;2 m. Lista „Okna MIFG” pokazuje wszystkie aktywne okresy w 48 h, więc maksimum zawsze należy do jednego z pokazanych okien.';
     return true;
   }
 
@@ -228,10 +254,12 @@
     }, delay);
   }
 
-  window.addEventListener('prognozaepir:mifg-series-updated', () => scheduleRender(0));
-  window.addEventListener('prognozaepir:fog-series-updated', () => scheduleRender(0));
-  window.addEventListener('prognozaepir:fog-vnext-updated', () => scheduleRender(0));
-  window.addEventListener('prognozaepir:fog-engine-mode-applied', () => scheduleRender(0));
+  for (const ev of [
+    'prognozaepir:mifg-series-updated',
+    'prognozaepir:fog-series-updated',
+    'prognozaepir:fog-vnext-updated',
+    'prognozaepir:fog-engine-mode-applied'
+  ]) window.addEventListener(ev, () => scheduleRender(0));
 
   const start = () => {
     ensureStyle();
