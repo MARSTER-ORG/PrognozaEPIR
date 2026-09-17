@@ -1,0 +1,62 @@
+name: One-shot EPIR FOG UI patch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/one-shot-epir-fog-ui.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch live HTML entry points
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          index = Path('index.html')
+          s = index.read_text(encoding='utf-8')
+          s = s.replace(
+              '<script src="utc-ui-guard.js"></script>',
+              '<script src="utc-ui-guard.js?v=20260917-epirfog3"></script>',
+              1,
+          )
+          css = '''\n/* EPIR FOG lives only on fog.html; keep the meteogram page free of the engine panel. */\n#fogEngine,#fogEngineModeSwitch,#fogVNextDiagnostics,#fogSummaryStructured,#fogAuxStructured{display:none!important}\n'''
+          if 'EPIR FOG lives only on fog.html' not in s:
+              s = s.replace('</style>', css + '</style>', 1)
+          index.write_text(s, encoding='utf-8')
+
+          fog = Path('fog.html')
+          f = fog.read_text(encoding='utf-8')
+          f = f.replace(
+              '<script src="utc-ui-guard.js"></script>',
+              '<script src="utc-ui-guard.js?v=20260917-epirfog3"></script>',
+              1,
+          )
+          f = f.replace(
+              '<nav class="local-nav" aria-label="Główna nawigacja PrognozaEPIR">',
+              '<nav id="epirGlobalNav" class="local-nav" aria-label="Główna nawigacja PrognozaEPIR">',
+              1,
+          )
+          fog.write_text(f, encoding='utf-8')
+          PY
+      - name: Commit patched entry points
+        shell: bash
+        run: |
+          if git diff --quiet -- index.html fog.html; then
+            echo 'Nothing to commit'
+            exit 0
+          fi
+          git config user.name 'prognozaepir-ui-patch'
+          git config user.email 'ui-patch@prognozaepir.invalid'
+          git add index.html fog.html
+          git commit -m 'ui: force EPIR FOG navigation and isolate fog page'
+          git push
