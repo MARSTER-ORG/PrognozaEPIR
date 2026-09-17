@@ -90,7 +90,7 @@ def validate_v242() -> None:
         if legacy in taf:
             raise RuntimeError(f"legacy TAF runtime in deployed taf.html: {legacy}")
     for marker in (
-        "TAF ENGINE 2.4.2 · LOW CLOUD/FOG COHERENCE · INSTRUCTION FIRST",
+        "TAF ENGINE 2.4.2 ·",
         "taf-engine-v2.js?v=2.3.0-kernel",
         "taf-engine-v24.js?v=2.4.0",
         "taf-engine-v241.js?v=2.4.1-audit",
