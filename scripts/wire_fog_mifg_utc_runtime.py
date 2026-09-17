@@ -44,6 +44,19 @@ def patch_fog() -> None:
     if old_parse not in s:
         raise SystemExit("FOG datetime-local parser marker not found")
     s = s.replace(old_parse, new_parse, 1)
+
+    # Keep an immutable-enough LEGACY snapshot before the vNext bridge enriches
+    # PrognozaEPIRFogSeries in place. TAF LEGACY consumes this dedicated series.
+    active_export = "fogSeries=out;window.PrognozaEPIRFogSeries=fogSeries;"
+    legacy_export = (
+        "fogSeries=out;"
+        "window.PrognozaEPIRFogLegacySeries=fogSeries.map(h=>({...h,models:Array.isArray(h?.models)?h.models.map(m=>({...m,components:m?.components?{...m.components}:m?.components})):h?.models,fogEngineMode:'legacy',fogEngineSource:'legacy'}));"
+        "window.PrognozaEPIRFogSeries=fogSeries;"
+    )
+    if "PrognozaEPIRFogLegacySeries" not in s:
+        if active_export not in s:
+            raise SystemExit("FOG active series export marker not found")
+        s = s.replace(active_export, legacy_export, 1)
     p.write_text(s, encoding="utf-8")
 
 
@@ -104,9 +117,13 @@ def patch_vnext() -> None:
     if fog_page.is_file():
         f = fog_page.read_text(encoding="utf-8")
         f = re.sub(r'utc-ui-guard\.js(?:\?v=[^\"]*)?', f'utc-ui-guard.js?v={ASSET_V}', f)
-        for asset in ("fog-engine.js", "mifg-engine.js", "fog-summary-layout.js", "fog-mode-switch.js", "br-engine.js"):
+        f = re.sub(r'index\.html\?fogpanel=1&v=[^\"]+', f'index.html?fogpanel=1&v={ASSET_V}', f)
+        for asset in (
+            "fog-engine.js", "mifg-engine.js", "fog-summary-layout.js", "fog-mode-switch.js",
+            "br-engine.js", "fog-page-layout.js", "fog-visibility-cells.js"
+        ):
             if asset in f:
-                f = re.sub(rf'{re.escape(asset)}\?v=[^\"]+', f'{asset}?v={ASSET_V}', f)
+                f = re.sub(rf"{re.escape(asset)}\?v=[^'\"\s<>,)]+", f'{asset}?v={ASSET_V}', f)
         fog_page.write_text(f, encoding="utf-8")
 
 
@@ -125,6 +142,8 @@ def validate() -> None:
         raise SystemExit("local timezone reference remains in deployed FOG/MIFG")
     if "+' UTC'" not in fog or "+' UTC'" not in mifg:
         raise SystemExit("explicit UTC label missing in FOG/MIFG")
+    if "PrognozaEPIRFogLegacySeries" not in fog:
+        raise SystemExit("dedicated LEGACY fog series is not exported for TAF")
     if 'fog-summary-layout.js?v=' not in index:
         raise SystemExit("Fog vNext production bridge is not wired into deployed index.html")
     if f'utc-ui-guard.js?v={ASSET_V}' not in index:
@@ -152,11 +171,13 @@ def validate() -> None:
         raise SystemExit("standalone fog.html missing from Pages artifact")
     fog_html = fog_page.read_text(encoding="utf-8")
     for marker in (
-        "EPIR FOG", f"fog-engine.js?v={ASSET_V}", f"fog-summary-layout.js?v={ASSET_V}",
-        f"br-engine.js?v={ASSET_V}", "moduł zamglenia BR"
+        "EPIR FOG", f"index.html?fogpanel=1&v={ASSET_V}",
+        f"fog-mode-switch.js?v={ASSET_V}", f"fog-page-layout.js?v={ASSET_V}",
+        f"fog-visibility-cells.js?v={ASSET_V}", "fogStandaloneMount",
+        "Wspólny runtime z meteogramem i TAF"
     ):
         if marker not in fog_html:
-            raise SystemExit(f"standalone EPIR FOG page contract missing: {marker}")
+            raise SystemExit(f"standalone EPIR FOG shared-runtime contract missing: {marker}")
 
 
 def main() -> int:
@@ -164,7 +185,7 @@ def main() -> int:
     patch_mifg()
     patch_vnext()
     validate()
-    print("wired UTC FOG/BR/MIFG runtime, standalone EPIR FOG UI and meteogram-only fog graphics")
+    print("wired UTC FOG/BR/MIFG runtime, isolated EPIR FOG UI and dedicated LEGACY/vNext TAF series")
     return 0
 
 

@@ -49,6 +49,7 @@ jobs:
           node tests/taf-engine-v242.test.js
           node tests/fog-vnext-production.test.js
           node tests/br-engine.test.js
+          node tests/runtime-integration-contract.test.js
 
       - name: Validate canonical artifact
         run: |
@@ -97,6 +98,8 @@ jobs:
           grep -F 'taf-runtime-bootstrap.js?v=20260917-2' _site/taf.html
           grep -F 'primeCycleSelect' _site/taf-runtime-bootstrap.js
           grep -F 'taf-app-v25.js?v=${BUILD}' _site/taf-runtime-bootstrap.js
+          grep -F 'recoverLegacySeries' _site/taf-fog-policy.js
+          grep -F 'PrognozaEPIRFogLegacySeries' _site/fog-engine.js
           grep -F 'content="2.4.2"' _site/taf.html
           grep -F 'theme-control.js?v=' _site/index.html
           grep -F 'theme-control.js?v=' _site/taf.html
@@ -119,6 +122,10 @@ jobs:
           grep -F 'id="epirFogStandaloneOnly"' _site/index.html
           grep -F 'EPIR FOG' _site/fog.html
           grep -F 'href="fog.html"' _site/fog.html
+          grep -F 'index.html?fogpanel=1&v=' _site/fog.html
+          grep -F 'fogStandaloneMount' _site/fog.html
+          grep -F 'fog-page-layout.js?v=' _site/fog.html
+          grep -F 'fog-visibility-cells.js?v=' _site/fog.html
           grep -F 'br-engine.js?v=' _site/fog.html
           grep -F 'moduł zamglenia BR' _site/fog.html
           grep -F "VERSION:'1.0.0-br-target'" _site/br-engine.js
@@ -181,11 +188,13 @@ jobs:
             marker="$(curl -fsSL --max-time 15 "${base}/pages-build.json?v=${GITHUB_SHA}" 2>/dev/null || true)"
             index="$(curl -fsSL --max-time 15 "${base}/index.html?v=${GITHUB_SHA}" 2>/dev/null || true)"
             fog="$(curl -fsSL --max-time 15 "${base}/fog.html?v=${GITHUB_SHA}" 2>/dev/null || true)"
+            fogengine="$(curl -fsSL --max-time 15 "${base}/fog-engine.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
             br="$(curl -fsSL --max-time 15 "${base}/br-engine.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
             nav="$(curl -fsSL --max-time 15 "${base}/utc-ui-guard.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
             taf="$(curl -fsSL --max-time 15 "${base}/taf.html?v=${GITHUB_SHA}" 2>/dev/null || true)"
             tafboot="$(curl -fsSL --max-time 15 "${base}/taf-runtime-bootstrap.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
             tafapp="$(curl -fsSL --max-time 15 "${base}/taf-app-v25.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
+            tafpolicy="$(curl -fsSL --max-time 15 "${base}/taf-fog-policy.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
             theme="$(curl -fsSL --max-time 15 "${base}/theme-control.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
             bridge="$(curl -fsSL --max-time 15 "${base}/fog-summary-layout.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
             arch="$(curl -fsSL --max-time 15 "${base}/arch.html?v=${GITHUB_SHA}" 2>/dev/null || true)"
@@ -197,9 +206,14 @@ jobs:
               && printf '%s' "$index" | grep -Fq 'utc-ui-guard.js?v=' \
               && printf '%s' "$fog" | grep -Fq 'EPIR FOG' \
               && printf '%s' "$fog" | grep -Fq 'theme-control.js?v=' \
+              && printf '%s' "$fog" | grep -Fq 'index.html?fogpanel=1&v=' \
+              && printf '%s' "$fog" | grep -Fq 'fogStandaloneMount' \
               && printf '%s' "$fog" | grep -Fq 'fog-mode-switch.js?v=' \
+              && printf '%s' "$fog" | grep -Fq 'fog-page-layout.js?v=' \
+              && printf '%s' "$fog" | grep -Fq 'fog-visibility-cells.js?v=' \
               && printf '%s' "$fog" | grep -Fq 'br-engine.js?v=' \
               && printf '%s' "$fog" | grep -Fq 'moduł zamglenia BR' \
+              && printf '%s' "$fogengine" | grep -Fq 'PrognozaEPIRFogLegacySeries' \
               && printf '%s' "$br" | grep -Fq 'ZAMGLENIE (BR)' \
               && printf '%s' "$br" | grep -Fq "VERSION:'1.0.0-br-target'" \
               && printf '%s' "$nav" | grep -Fq 'fog.html' \
@@ -210,6 +224,7 @@ jobs:
               && printf '%s' "$tafboot" | grep -Fq 'primeCycleSelect' \
               && printf '%s' "$tafboot" | grep -Fq 'taf-app-v25.js?v=${BUILD}' \
               && printf '%s' "$tafapp" | grep -Fq 'function fillCycles' \
+              && printf '%s' "$tafpolicy" | grep -Fq 'recoverLegacySeries' \
               && printf '%s' "$theme" | grep -Fq 'prognozaepir.theme.preference' \
               && printf '%s' "$theme" | grep -Fq 'Systemowy' \
               && printf '%s' "$bridge" | grep -Fq "fogEngineMode:'vnext-production'" \
@@ -217,11 +232,11 @@ jobs:
               && printf '%s' "$arch" | grep -Fq 'id="modeAdvanced"' \
               && printf '%s' "$arch" | grep -Fq 'theme-control.js?v=' \
               && printf '%s' "$arch" | grep -Fq 'message-archive-client.js?v='; then
-              echo "GitHub Pages serves commit $GITHUB_SHA with global theme and repaired TAF runtime bootstrap."
+              echo "GitHub Pages serves commit $GITHUB_SHA with isolated FOG runtime and repaired TAF LEGACY/vNext integration."
               exit 0
             fi
             echo "Waiting for Pages/CDN propagation (${attempt}/18)..."
             sleep 10
           done
-          echo "ERROR: live GitHub Pages is not serving the repaired TAF runtime bootstrap." >&2
+          echo "ERROR: live GitHub Pages is not serving the audited FOG/TAF runtime contract." >&2
           exit 1

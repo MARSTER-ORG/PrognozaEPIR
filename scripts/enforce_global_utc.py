@@ -89,7 +89,7 @@ def patch_arch(text: str) -> str:
 
 
 def patch_taf(text: str) -> str:
-    """Normalize static TAF 2.4 labels; runtime clocks live in taf-app-v2.js."""
+    """Normalize static TAF labels; runtime clocks live in taf-app-v25.js."""
     text = text.replace('<th>Czas</th><th>Wiatr</th>', '<th>Czas UTC</th><th>Wiatr</th>')
     return text
 
@@ -201,8 +201,8 @@ def validate() -> list[str]:
     required = {
         'index.html': ["tz:'UTC'", "?value+' UTC':value", "Aktualizacja: '+fmt(Date.now()"],
         'arch.html': ["replace('T',' ')+' UTC'"],
-        'taf.html': ['TAF ENGINE 2.4.0 · CALIBRATED · INSTRUCTION FIRST', 'Cykl TAF — wszystkie czasy UTC', '<th>Czas UTC</th>', 'czasy prezentowane wyłącznie w UTC'],
-        'taf-app-v2.js': ['function fmtUtc(ms,withDate=true)', 'getUTCHours()', 'getUTCMinutes()', '} UTC`'],
+        'taf.html': ['TAF ENGINE 2.4.2 ·', 'Cykl TAF — wszystkie czasy UTC', '<th>Czas UTC</th>', 'czasy prezentowane wyłącznie w UTC'],
+        'taf-app-v25.js': ['function fmtUtc(ms,withDate=true)', 'getUTCHours()', 'getUTCMinutes()', '} UTC`'],
         'radar.html': ["function fmtTime(ms)", "timeZone:'UTC'", ".format(new Date(ms))+' UTC'", 'function fmtUtc(sec)', 'fmtExternalUtc(od)', '<th>Czas UTC</th>'],
         'sat-fog.html': ["timeZone:'UTC'", "+' UTC'"],
     }
