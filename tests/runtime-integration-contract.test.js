@@ -94,5 +94,6 @@ function fakeStorage(mode) {
   assert(!app.includes("mode==='legacy'?'vnext'"));
 })();
 
+require('./fog-native-page-contract.test.js');
 require('./site-asset-integrity.test.js');
 console.log('runtime integration contract: OK');
