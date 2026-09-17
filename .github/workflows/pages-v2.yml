@@ -33,11 +33,11 @@ jobs:
         run: |
           python3 -m py_compile scripts/prepare_pages.py scripts/prepare_pages_v241.py scripts/wire_fog_mifg_utc_runtime.py
           for f in \
-            taf-engine-v2.js taf-engine-v24.js taf-engine-v241.js taf-engine-v242.js taf-app-v2.js message-archive-client.js neighbor-observation-context.js \
+            theme-control.js taf-engine-v2.js taf-engine-v24.js taf-engine-v241.js taf-engine-v242.js taf-app-v2.js message-archive-client.js neighbor-observation-context.js \
             fog-engine.js observation-engine.js mifg-engine.js br-engine.js fog-meteogram-overlay.js fog-mode-switch.js \
             fog-summary-layout.js fog-physics-vnext.js fog-vnext-probability-layer.js fog-vnext-transition-risk.js \
             radar-risk-policy.js lightning-alert-sw.js opera-nowcast.js opera-convection-bridge.js \
-            _site/taf-engine-v2.js _site/taf-engine-v24.js _site/taf-engine-v241.js _site/taf-engine-v242.js _site/taf-app-v2.js _site/message-archive-client.js \
+            _site/theme-control.js _site/taf-engine-v2.js _site/taf-engine-v24.js _site/taf-engine-v241.js _site/taf-engine-v242.js _site/taf-app-v2.js _site/message-archive-client.js \
             _site/fog-engine.js _site/observation-engine.js _site/mifg-engine.js _site/br-engine.js _site/fog-mode-switch.js \
             _site/fog-summary-layout.js _site/fog-physics-vnext.js _site/fog-vnext-probability-layer.js _site/fog-vnext-transition-risk.js \
             _site/radar-risk-policy.js _site/lightning-alert-sw.js; do
@@ -56,6 +56,7 @@ jobs:
           test -s _site/fog.html
           test -s _site/radar.html
           test -s _site/taf.html
+          test -s _site/theme-control.js
           test -s _site/taf-engine-v24.js
           test -s _site/taf-engine-v241.js
           test -s _site/taf-engine-v242.js
@@ -84,13 +85,19 @@ jobs:
           python3 -m json.tool _site/data/learning/adaptive-weights.json >/dev/null
           python3 -m json.tool _site/data/learning/fog-event-skill.json >/dev/null
           python3 -m json.tool _site/data/learning/model-verification.json >/dev/null
-          grep -F 'TAF ENGINE 2.4.2 · LOW CLOUD/FOG COHERENCE · INSTRUCTION FIRST' _site/taf.html
+          grep -F 'TAF ENGINE 2.4.2 ·' _site/taf.html
           grep -F 'taf-engine-v2.js?v=2.3.0-kernel' _site/taf.html
           grep -F 'taf-engine-v24.js?v=2.4.0' _site/taf.html
           grep -F 'taf-engine-v241.js?v=2.4.1-audit' _site/taf.html
           grep -F 'taf-engine-v242.js?v=2.4.2-cloud-fog' _site/taf.html
           grep -F 'taf-app-v2.js?v=2.4.0-ui' _site/taf.html
           grep -F 'content="2.4.2"' _site/taf.html
+          grep -F 'theme-control.js?v=' _site/index.html
+          grep -F 'theme-control.js?v=' _site/taf.html
+          grep -F 'theme-control.js?v=' _site/radar.html
+          grep -F 'theme-control.js?v=' _site/fog.html
+          grep -F 'theme-control.js?v=' _site/arch.html
+          grep -F '<meta name="color-scheme" content="light dark">' _site/taf.html
           grep -F "const VERSION='2.4.0'" _site/taf-engine-v24.js
           grep -F "const VERSION='2.4.1'" _site/taf-engine-v241.js
           grep -F "const VERSION='2.4.2'" _site/taf-engine-v242.js
@@ -158,7 +165,7 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-      - name: Verify live revision and EPIR FOG standalone UI
+      - name: Verify live revision, global theme and EPIR FOG standalone UI
         env:
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
         run: |
@@ -171,14 +178,17 @@ jobs:
             br="$(curl -fsSL --max-time 15 "${base}/br-engine.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
             nav="$(curl -fsSL --max-time 15 "${base}/utc-ui-guard.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
             taf="$(curl -fsSL --max-time 15 "${base}/taf.html?v=${GITHUB_SHA}" 2>/dev/null || true)"
+            theme="$(curl -fsSL --max-time 15 "${base}/theme-control.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
             bridge="$(curl -fsSL --max-time 15 "${base}/fog-summary-layout.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
             arch="$(curl -fsSL --max-time 15 "${base}/arch.html?v=${GITHUB_SHA}" 2>/dev/null || true)"
             if printf '%s' "$marker" | grep -Fq "$GITHUB_SHA" \
               && printf '%s' "$index" | grep -Fq 'taf.html?v=2.4.2' \
+              && printf '%s' "$index" | grep -Fq 'theme-control.js?v=' \
               && printf '%s' "$index" | grep -Fq 'fog-summary-layout.js?v=' \
               && printf '%s' "$index" | grep -Fq 'epirFogStandaloneOnly' \
               && printf '%s' "$index" | grep -Fq 'utc-ui-guard.js?v=' \
               && printf '%s' "$fog" | grep -Fq 'EPIR FOG' \
+              && printf '%s' "$fog" | grep -Fq 'theme-control.js?v=' \
               && printf '%s' "$fog" | grep -Fq 'fog-mode-switch.js?v=' \
               && printf '%s' "$fog" | grep -Fq 'br-engine.js?v=' \
               && printf '%s' "$fog" | grep -Fq 'moduł zamglenia BR' \
@@ -186,15 +196,19 @@ jobs:
               && printf '%s' "$br" | grep -Fq "VERSION:'1.0.0-br-target'" \
               && printf '%s' "$nav" | grep -Fq 'fog.html' \
               && printf '%s' "$taf" | grep -Fq 'taf-engine-v242.js?v=2.4.2-cloud-fog' \
+              && printf '%s' "$taf" | grep -Fq 'theme-control.js?v=' \
+              && printf '%s' "$theme" | grep -Fq 'prognozaepir.theme.preference' \
+              && printf '%s' "$theme" | grep -Fq 'Systemowy' \
               && printf '%s' "$bridge" | grep -Fq "fogEngineMode:'vnext-production'" \
               && printf '%s' "$bridge" | grep -Fq 'Probability.operationalScore' \
               && printf '%s' "$arch" | grep -Fq 'id="modeAdvanced"' \
+              && printf '%s' "$arch" | grep -Fq 'theme-control.js?v=' \
               && printf '%s' "$arch" | grep -Fq 'message-archive-client.js?v='; then
-              echo "GitHub Pages serves commit $GITHUB_SHA with standalone EPIR FOG, BR target and a meteogram-only main page."
+              echo "GitHub Pages serves commit $GITHUB_SHA with global System/Light/Dark theme control and EPIR FOG/BR standalone UI."
               exit 0
             fi
             echo "Waiting for Pages/CDN propagation (${attempt}/18)..."
             sleep 10
           done
-          echo "ERROR: live GitHub Pages is not serving the deployed EPIR FOG/BR standalone revision." >&2
+          echo "ERROR: live GitHub Pages is not serving the deployed global theme or EPIR FOG/BR standalone revision." >&2
           exit 1
