@@ -9,7 +9,7 @@
 <style>
 :root{--bg:#f4f4f2;--ink:#232323;--muted:#6e6e6e;--surface:#fff;--surface2:#f7f7f7;--soft:#f4f4f2;--border:#b5b5b5;--blueText:#1f2a75;--errorText:#8a2d2d}
 :root[data-theme="dark"]{--bg:#111418;--ink:#e7e9ed;--muted:#a6acb5;--surface:#181c21;--surface2:#20252b;--soft:#20252b;--border:#4e5660;--blueText:#9aabff;--errorText:#ffb8c0}
-@media(prefers-color-scheme:dark){:root:not([data-theme]){--bg:#111418;--ink:#e7e9ed;--muted:#a6acb5;--surface:#181c21;--surface2:#20252b;--soft:#20252b;--border:#4e5660;--blueText:#9aabff;--errorText:#ffb8c0}}
+@media(prefers-color-scheme:dark){:root:not([data-theme]){--bg:#111418;--ink:#e7e9ed;--muted:#a6acb5;--surface:#181c21;--surface2:#20252b;--soft:#20252b;--border:#4e5660;--blueText:#9aabff;--errorBg:#2a1719;--errorBorder:#7d4148;--errorText:#ffb8c0}}
 *{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--ink);font-family:Arial,Helvetica,sans-serif}.app{max-width:1180px;margin:0 auto;padding:8px 8px 24px}.local-nav{display:flex;gap:5px;flex-wrap:wrap;padding:6px 0 9px}.local-nav a{display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--ink);font-size:10px;font-weight:700;text-decoration:none}.local-nav a.active{background:var(--blueText);border-color:var(--blueText);color:#fff}.top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:8px 4px}.brand{font-size:19px;font-weight:700;color:var(--blueText)}.brand small{font-size:12px;font-weight:400;color:var(--muted)}.place{margin-top:4px;font-size:12px;color:var(--muted)}.status{font-size:10px;color:var(--muted);text-align:right}.intro{margin:4px 0 8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);font-size:10px;line-height:1.45;color:var(--muted)}.intro b{color:var(--ink)}.fog-engine{margin-top:6px!important}.page-note{margin-top:10px;font-size:9px;color:var(--muted);line-height:1.4}@media(max-width:700px){.app{padding:5px 4px 18px}.local-nav a{flex:1 1 calc(33.333% - 5px);min-width:95px;font-size:9px;padding:6px}.brand{font-size:17px}.top{padding:6px 2px}.intro{font-size:9px}}
 </style>
 </head>
@@ -30,9 +30,9 @@
     </div>
     <div class="status">Dane i obliczenia aktualizują się automatycznie</div>
   </div>
-  <div class="intro"><b>Osobna podstrona EPIR FOG.</b> Tutaj znajduje się cały interfejs silnika mgły oraz przełącznik LEGACY / vNEXT. Wybrany silnik jest zapamiętywany i dostarcza również sygnał FG rysowany na meteogramie. Na stronie METEOGRAM nie jest wyświetlany panel silnika.</div>
+  <div class="intro"><b>Osobna podstrona EPIR FOG.</b> Tutaj znajduje się cały interfejs silnika mgły, osobny moduł zamglenia BR, moduł MIFG oraz przełącznik LEGACY / vNEXT. Wybrany silnik jest zapamiętywany i dostarcza również sygnał FG rysowany na meteogramie. Na stronie METEOGRAM nie jest wyświetlany panel silnika.</div>
   <div id="fogStandaloneMount"></div>
-  <div class="page-note">LEGACY zachowuje poprzedni algorytm. vNEXT wykorzystuje fizykę warstwy przyziemnej, w tym SSOIL, SPBL i chłodzenie powierzchni oraz własną prognozę VIS. Widzialność NWP w vNEXT pozostaje sygnałem kontrolnym.</div>
+  <div class="page-note">LEGACY zachowuje poprzedni algorytm. vNEXT wykorzystuje fizykę warstwy przyziemnej, w tym SSOIL, SPBL i chłodzenie powierzchni oraz własną prognozę VIS. BR jest oddzielnym targetem zamglenia i korzysta z aktualnie wybranego silnika; MIFG pozostaje osobnym targetem mgły przyziemnej.</div>
 </div>
 <script>
 'use strict';
@@ -45,5 +45,6 @@ window.__PROGNOZA_EPIR_FOG_STANDALONE__=true;
 <script src="fog-engine.js?v=20260916-fogpage1"></script>
 <script src="mifg-engine.js?v=20260916-fogpage1"></script>
 <script src="fog-summary-layout.js?v=20260916-fogpage1"></script>
+<script src="br-engine.js?v=20260917-br1"></script>
 </body>
 </html>
