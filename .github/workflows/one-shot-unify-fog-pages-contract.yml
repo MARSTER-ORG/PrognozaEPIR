@@ -1,0 +1,75 @@
+name: One-shot shared fog Pages contract
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/one-shot-unify-fog-pages-contract.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Update Pages build contract for shared fog runtime
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('scripts/wire_fog_mifg_utc_runtime.py')
+          s = p.read_text()
+          old = '''        for asset in ("fog-engine.js", "mifg-engine.js", "fog-summary-layout.js", "fog-mode-switch.js", "br-engine.js"):
+            if asset in f:
+                f = re.sub(rf'{re.escape(asset)}\\?v=[^\\\"]+', f'{asset}?v={ASSET_V}', f)
+        fog_page.write_text(f, encoding="utf-8")'''
+          new = '''        f = re.sub(r'index\\.html\\?fogpanel=1&v=[^\\\"]+', f'index.html?fogpanel=1&v={ASSET_V}', f)
+        for asset in ("fog-engine.js", "mifg-engine.js", "fog-summary-layout.js", "fog-mode-switch.js", "br-engine.js", "fog-page-layout.js", "fog-visibility-cells.js"):
+            if asset in f:
+                f = re.sub(rf'{re.escape(asset)}\\?v=[^\\\"]+', f'{asset}?v={ASSET_V}', f)
+        fog_page.write_text(f, encoding="utf-8")'''
+          if old not in s:
+              raise SystemExit('fog page cache-bust block not found')
+          s = s.replace(old, new, 1)
+
+          old = '''    for marker in (
+        "EPIR FOG", f"fog-engine.js?v={ASSET_V}", f"fog-summary-layout.js?v={ASSET_V}",
+        f"br-engine.js?v={ASSET_V}", "moduł zamglenia BR"
+    ):
+        if marker not in fog_html:
+            raise SystemExit(f"standalone EPIR FOG page contract missing: {marker}")'''
+          new = '''    for marker in (
+        "EPIR FOG", f"index.html?fogpanel=1&v={ASSET_V}",
+        f"fog-mode-switch.js?v={ASSET_V}", f"fog-page-layout.js?v={ASSET_V}",
+        f"fog-visibility-cells.js?v={ASSET_V}", "Wspólny runtime z meteogramem i TAF"
+    ):
+        if marker not in fog_html:
+            raise SystemExit(f"standalone EPIR FOG shared-runtime contract missing: {marker}")'''
+          if old not in s:
+              raise SystemExit('fog page validation block not found')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          p = Path('.github/workflows/pages-v2.yml')
+          s = p.read_text()
+          old = "          grep -F 'br-engine.js?v=' _site/fog.html\n          grep -F 'moduł zamglenia BR' _site/fog.html\n"
+          new = "          grep -F 'index.html?fogpanel=1&v=' _site/fog.html\n          grep -F 'Wspólny runtime z meteogramem i TAF' _site/fog.html\n"
+          if old not in s:
+              raise SystemExit('Pages static fog validation block not found')
+          s = s.replace(old, new, 1)
+          old = "              && printf '%s' \"$fog\" | grep -Fq 'br-engine.js?v=' \\\n              && printf '%s' \"$fog\" | grep -Fq 'moduł zamglenia BR' \\\n"
+          new = "              && printf '%s' \"$fog\" | grep -Fq 'index.html?fogpanel=1&v=' \\\n              && printf '%s' \"$fog\" | grep -Fq 'Wspólny runtime z meteogramem i TAF' \\\n"
+          if old not in s:
+              raise SystemExit('Pages live fog validation block not found')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+      - name: Commit patch
+        run: |
+          git config user.name 'prognozaepir-runtime-sync'
+          git config user.email 'runtime-sync@prognozaepir.invalid'
+          git add scripts/wire_fog_mifg_utc_runtime.py .github/workflows/pages-v2.yml
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'fix: deploy EPIR FOG from shared meteogram runtime'
+          git push
