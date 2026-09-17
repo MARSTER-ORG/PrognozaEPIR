@@ -43,7 +43,7 @@
       const a=d.createElement('a');
       a.id='epirFogEngineNav';
       a.href='fog.html';
-      a.textContent='FOG ENGINE';
+      a.textContent='EPIR FOG';
       const meteo=nav.querySelector('a[href="index.html"]');
       if(meteo)meteo.insertAdjacentElement('afterend',a);else nav.appendChild(a);
     };
