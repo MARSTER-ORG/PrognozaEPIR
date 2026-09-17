@@ -34,11 +34,11 @@ jobs:
           python3 -m py_compile scripts/prepare_pages.py scripts/prepare_pages_v241.py scripts/wire_fog_mifg_utc_runtime.py
           for f in \
             taf-engine-v2.js taf-engine-v24.js taf-engine-v241.js taf-engine-v242.js taf-app-v2.js message-archive-client.js neighbor-observation-context.js \
-            fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js \
+            fog-engine.js observation-engine.js mifg-engine.js fog-meteogram-overlay.js fog-mode-switch.js \
             fog-summary-layout.js fog-physics-vnext.js fog-vnext-probability-layer.js fog-vnext-transition-risk.js \
             radar-risk-policy.js lightning-alert-sw.js opera-nowcast.js opera-convection-bridge.js \
             _site/taf-engine-v2.js _site/taf-engine-v24.js _site/taf-engine-v241.js _site/taf-engine-v242.js _site/taf-app-v2.js _site/message-archive-client.js \
-            _site/fog-engine.js _site/observation-engine.js _site/mifg-engine.js \
+            _site/fog-engine.js _site/observation-engine.js _site/mifg-engine.js _site/fog-mode-switch.js \
             _site/fog-summary-layout.js _site/fog-physics-vnext.js _site/fog-vnext-probability-layer.js _site/fog-vnext-transition-risk.js \
             _site/radar-risk-policy.js _site/lightning-alert-sw.js; do
             node --check "$f"
@@ -52,6 +52,7 @@ jobs:
       - name: Validate canonical artifact
         run: |
           test -s _site/index.html
+          test -s _site/fog.html
           test -s _site/radar.html
           test -s _site/taf.html
           test -s _site/taf-engine-v24.js
@@ -62,6 +63,7 @@ jobs:
           test -s _site/lightning-alerts.html
           test -s _site/lightning-alert-sw.js
           test -s _site/radar-risk-policy.js
+          test -s _site/fog-mode-switch.js
           test -s _site/fog-summary-layout.js
           test -s _site/fog-physics-vnext.js
           test -s _site/fog-vnext-probability-layer.js
@@ -98,9 +100,15 @@ jobs:
           grep -F 'mifg-engine.js?v=' _site/index.html
           grep -F 'fog-meteogram-overlay.js' _site/index.html
           grep -F 'fog-summary-layout.js?v=' _site/index.html
+          grep -F 'utc-ui-guard.js?v=' _site/index.html
+          grep -F 'id="epirFogStandaloneOnly"' _site/index.html
+          grep -F 'EPIR FOG' _site/fog.html
+          grep -F 'href="fog.html"' _site/fog.html
+          grep -F "href:'fog.html'" _site/utc-ui-guard.js
           grep -F "fogEngineMode:'vnext-production'" _site/fog-summary-layout.js
           grep -F 'Probability.operationalScore' _site/fog-summary-layout.js
-          grep -F "const VERSION='1.0.0-production'" _site/fog-vnext-probability-layer.js
+          grep -F "const VNEXT_THRESHOLD=60" _site/fog-vnext-probability-layer.js
+          grep -F "const LEGACY_THRESHOLD=50" _site/fog-vnext-probability-layer.js
           grep -F 'P_model_final' _site/fog-vnext-probability-layer.js
           grep -F 'functions/v1/message-archive' _site/message-archive-client.js
           grep -F 'search,stations' _site/message-archive-client.js
@@ -144,7 +152,7 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-      - name: Verify live revision, TAF 2.4.2, Fog vNext and ARCH UI
+      - name: Verify live revision and EPIR FOG standalone UI
         env:
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
         run: |
@@ -153,22 +161,29 @@ jobs:
           for attempt in $(seq 1 18); do
             marker="$(curl -fsSL --max-time 15 "${base}/pages-build.json?v=${GITHUB_SHA}" 2>/dev/null || true)"
             index="$(curl -fsSL --max-time 15 "${base}/index.html?v=${GITHUB_SHA}" 2>/dev/null || true)"
+            fog="$(curl -fsSL --max-time 15 "${base}/fog.html?v=${GITHUB_SHA}" 2>/dev/null || true)"
+            nav="$(curl -fsSL --max-time 15 "${base}/utc-ui-guard.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
             taf="$(curl -fsSL --max-time 15 "${base}/taf.html?v=${GITHUB_SHA}" 2>/dev/null || true)"
             bridge="$(curl -fsSL --max-time 15 "${base}/fog-summary-layout.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
             arch="$(curl -fsSL --max-time 15 "${base}/arch.html?v=${GITHUB_SHA}" 2>/dev/null || true)"
             if printf '%s' "$marker" | grep -Fq "$GITHUB_SHA" \
               && printf '%s' "$index" | grep -Fq 'taf.html?v=2.4.2' \
               && printf '%s' "$index" | grep -Fq 'fog-summary-layout.js?v=' \
+              && printf '%s' "$index" | grep -Fq 'epirFogStandaloneOnly' \
+              && printf '%s' "$index" | grep -Fq 'utc-ui-guard.js?v=' \
+              && printf '%s' "$fog" | grep -Fq 'EPIR FOG' \
+              && printf '%s' "$fog" | grep -Fq 'fog-mode-switch.js?v=' \
+              && printf '%s' "$nav" | grep -Fq 'fog.html' \
               && printf '%s' "$taf" | grep -Fq 'taf-engine-v242.js?v=2.4.2-cloud-fog' \
               && printf '%s' "$bridge" | grep -Fq "fogEngineMode:'vnext-production'" \
               && printf '%s' "$bridge" | grep -Fq 'Probability.operationalScore' \
               && printf '%s' "$arch" | grep -Fq 'id="modeAdvanced"' \
               && printf '%s' "$arch" | grep -Fq 'message-archive-client.js?v='; then
-              echo "GitHub Pages serves commit $GITHUB_SHA with TAF 2.4.2, Fog vNext production and the advanced ARCH UI."
+              echo "GitHub Pages serves commit $GITHUB_SHA with standalone EPIR FOG and a meteogram-only main page."
               exit 0
             fi
             echo "Waiting for Pages/CDN propagation (${attempt}/18)..."
             sleep 10
           done
-          echo "ERROR: live GitHub Pages is not serving the deployed revision, TAF 2.4.2, Fog vNext production bridge, or advanced ARCH UI." >&2
+          echo "ERROR: live GitHub Pages is not serving the deployed EPIR FOG standalone revision." >&2
           exit 1
