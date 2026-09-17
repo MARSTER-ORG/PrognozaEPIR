@@ -85,18 +85,30 @@
     return (Array.isArray(series)?series:[]).map(x=>({...x,models:Array.isArray(x?.models)?x.models.map(m=>({...m})):x?.models}));
   }
 
+  function recoverLegacySeries(series){
+    return cloneSeries(series).map(x=>{
+      const legacyScore=num(x?.fogScoreLegacy);
+      if(!finite(legacyScore))return x;
+      return {...x,score:legacyScore,fogEngineMode:'legacy',fogEngineSource:'legacy-recovered',fogEngineFallback:false};
+    }).filter(x=>normalizeMode(x?.fogEngineMode||x?.fogEngineSource)!=='vnext');
+  }
+
   function seriesForMode(win,mode){
     const m=normalizeMode(mode||selectedMode(win));
     if(m==='vnext'){
       const v=win?.PrognozaEPIRFogVNextSeries;
-      return Array.isArray(v)&&v.length?cloneSeries(v):[];
+      if(Array.isArray(v)&&v.length)return cloneSeries(v);
+      const active=win?.PrognozaEPIRFogSeries;
+      if(Array.isArray(active)&&active.length&&active.some(x=>normalizeMode(x?.fogEngineMode||x?.fogEngineSource)==='vnext'))return cloneSeries(active);
+      return [];
     }
     const legacy=win?.PrognozaEPIRFogLegacySeries;
     if(Array.isArray(legacy)&&legacy.length)return cloneSeries(legacy);
     const active=win?.PrognozaEPIRFogSeries;
     if(Array.isArray(active)&&active.length&&!active.some(x=>normalizeMode(x?.fogEngineMode||x?.fogEngineSource)==='vnext'))return cloneSeries(active);
+    if(Array.isArray(active)&&active.some(x=>finite(num(x?.fogScoreLegacy))))return recoverLegacySeries(active);
     return [];
   }
 
-  return Object.freeze({MODE_KEY,normalizeMode,selectedMode,operationalScoreForTaf,activeVisibility,thresholdRisk,mechanismType,normalizeFogHour,seriesForMode,cloneSeries});
+  return Object.freeze({MODE_KEY,normalizeMode,selectedMode,operationalScoreForTaf,activeVisibility,thresholdRisk,mechanismType,normalizeFogHour,seriesForMode,cloneSeries,recoverLegacySeries});
 });
