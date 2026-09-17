@@ -164,6 +164,9 @@
   }
 
   function renderOperationalSummary() {
+    let selectedMode = 'legacy';
+    try { selectedMode = localStorage.getItem('prognozaepir-fog-engine-mode') === 'vnext' ? 'vnext' : 'legacy'; } catch (_) {}
+    if (selectedMode !== 'vnext') return;
     const series = window.PrognozaEPIRFogSeries || [], now = Date.now();
     const future = series.filter(x => x.t >= now - HOUR && x.t <= now + 48 * HOUR);
     if (!future.length) return;
