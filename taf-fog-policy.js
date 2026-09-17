@@ -18,10 +18,12 @@
 
   function selectedMode(win){
     try{
+      const stored=win?.localStorage?.getItem(MODE_KEY);
+      if(stored==='vnext'||stored==='legacy')return stored;
       const explicit=win?.PrognozaEPIRFogSelectedMode;
       if(explicit)return normalizeMode(explicit);
-      return normalizeMode(win?.localStorage?.getItem(MODE_KEY));
-    }catch(_){return 'legacy';}
+      return 'legacy';
+    }catch(_){return normalizeMode(win?.PrognozaEPIRFogSelectedMode);}
   }
 
   // TAF core historically uses 60/70/80 as the operational fog scale.
