@@ -27,17 +27,60 @@ def patch_taf_v242() -> None:
     p.wr(index, x)
 
 
+def patch_global_theme() -> None:
+    """Install one shared System/Light/Dark control on every deployed HTML page."""
+    script = f'<script src="theme-control.js?v={p.ASSET_V}"></script>'
+    html_pages = sorted(p.SITE.glob("*.html"))
+    if not html_pages:
+        raise RuntimeError("no HTML pages available for global theme wiring")
+
+    for path in html_pages:
+        s = p.rd(path)
+        # Remove stale copies first so every page gets exactly one cache-busted loader.
+        s = re.sub(
+            r'\s*<script\s+src=["\']theme-control\.js(?:\?[^"\']*)?["\'][^>]*></script>',
+            '',
+            s,
+            flags=re.I,
+        )
+
+        color_meta = re.compile(
+            r'<meta\b[^>]*\bname=["\']color-scheme["\'][^>]*>',
+            flags=re.I,
+        )
+        if color_meta.search(s):
+            s = color_meta.sub('<meta name="color-scheme" content="light dark">', s, count=1)
+        elif re.search(r'</head>', s, re.I):
+            s = re.sub(r'</head>', '  <meta name="color-scheme" content="light dark">\n</head>', s, count=1, flags=re.I)
+        else:
+            raise RuntimeError(f"HTML page has no </head> for theme wiring: {path.name}")
+
+        # Load in HEAD: the selected/system theme is resolved before BODY paints.
+        s = re.sub(r'</head>', f'  {script}\n</head>', s, count=1, flags=re.I)
+        p.wr(path, s)
+
+
 def validate_v242() -> None:
     required = [
         "index.html", "radar.html", "taf.html", "sat-fog.html", "arch.html",
         "taf-engine-v2.js", "taf-engine-v24.js", "taf-engine-v241.js", "taf-engine-v242.js", "taf-app-v2.js", "message-archive-client.js",
         "fog-engine.js", "observation-engine.js", "mifg-engine.js",
-        "meteogram-tap-details.js",
+        "meteogram-tap-details.js", "theme-control.js",
         "radar-risk-policy.js", "lightning-alerts.html", "lightning-alert-sw.js",
     ]
     missing = [x for x in required if not (p.SITE / x).is_file()]
     if missing:
         raise RuntimeError(f"missing site assets: {missing}")
+
+    html_pages = sorted(p.SITE.glob("*.html"))
+    if not html_pages:
+        raise RuntimeError("no deployed HTML pages found")
+    for page in html_pages:
+        html = p.rd(page)
+        if html.count('theme-control.js?v=') != 1:
+            raise RuntimeError(f"global theme control must be wired exactly once: {page.name}")
+        if '<meta name="color-scheme" content="light dark">' not in html:
+            raise RuntimeError(f"global light/dark color scheme missing: {page.name}")
 
     taf = p.rd(p.SITE / "taf.html")
     for legacy in (
@@ -84,8 +127,9 @@ def main() -> int:
     p.patch_index()
     patch_taf_v242()
     p.patch_radar()
+    patch_global_theme()
     validate_v242()
-    print(f"prepared canonical Pages artifact with TAF 2.4.2: {p.SITE}")
+    print(f"prepared canonical Pages artifact with TAF 2.4.2 and global theme control: {p.SITE}")
     return 0
 
 
