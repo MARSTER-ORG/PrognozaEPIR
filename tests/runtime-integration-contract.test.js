@@ -74,4 +74,5 @@ function fakeStorage(mode) {
   assert(app.includes('Fog Engine LEGACY'));
 })();
 
+require('./site-asset-integrity.test.js');
 console.log('runtime integration contract: OK');
