@@ -22,7 +22,7 @@
 <body>
   <div class="wrap">
     <header class="top">
-      <div class="brand">PrognozaEPIR · TAF Generator <small>TAF ENGINE 2.4.2 · LOW CLOUD/FOG COHERENCE · INSTRUCTION FIRST</small></div>
+      <div class="brand">PrognozaEPIR · TAF Generator <small>TAF ENGINE 2.4.2 · ACTIVE FOG MODE SYNC · INSTRUCTION FIRST</small></div>
     </header>
 
     <section class="card">
@@ -35,7 +35,7 @@
       </div>
       <div class="statusline"><span id="badge" class="badge">TAF ENGINE 2.4.2 · START</span><span id="st">inicjalizacja</span></div>
       <div id="sources" class="sources"></div>
-      <div id="conf" class="note">Instrukcja TAF 11.2023 jest nadrzędną kontrolą końcową. Kalibracja, Fog Engine vNext, pamięć CB/TCU oraz spójność niskich chmur z FG/BR działają przed ostateczną walidacją formalnego kernela.</div>
+      <div id="conf" class="note">Instrukcja TAF 11.2023 jest nadrzędną kontrolą końcową. Generator automatycznie synchronizuje się z aktualnie wybranym Fog Engine: LEGACY albo vNEXT, razem z właściwym score, prognozą widzialności i progami operacyjnymi.</div>
     </section>
 
     <div class="grid2">
@@ -68,17 +68,18 @@
       <div class="tablewrap"><table><thead><tr><th>Stacja</th><th>TAF</th></tr></thead><tbody id="neighborTafs"></tbody></table></div>
     </section>
 
-    <div class="note">Generator tworzy projekt operacyjny na podstawie modeli, lokalnego uczenia, Fog Engine vNext i obserwacji. Niska warstwa chmur jest kodowana spójnie z prognozą FG/BR; grupa 000 nie jest dopuszczana w projekcie TAF. Każdy wynik przechodzi ponownie formalny kernel Instrukcji 11.2023.</div>
+    <div class="note">Generator tworzy projekt operacyjny na podstawie modeli, lokalnego uczenia, aktywnego Fog Engine i obserwacji. W trybie LEGACY używa wyłącznie toru Legacy; w trybie vNEXT czeka na gotową serię vNext i wykorzystuje również VIS vNext. Nie ma cichego fallbacku z vNEXT do LEGACY. Każdy wynik przechodzi formalny kernel Instrukcji 11.2023.</div>
     <footer class="footer">PrognozaEPIR · TAF Engine 2.4.2 · czasy prezentowane wyłącznie w UTC</footer>
   </div>
 
-  <iframe id="engine" class="engine-frame" src="index.html?v=20260916-taf-engine-v242" title="Silnik danych modeli" aria-hidden="true" tabindex="-1"></iframe>
+  <iframe id="engine" class="engine-frame" src="index.html?v=20260917-taf-fog-mode-sync" title="Silnik danych modeli" aria-hidden="true" tabindex="-1"></iframe>
   <script src="utc-ui-guard.js"></script>
   <script src="message-archive-client.js?v=live-jsonl-v7"></script>
+  <script src="taf-fog-policy.js?v=20260917-1"></script>
   <script src="taf-engine-v2.js?v=2.3.0-kernel"></script>
   <script src="taf-engine-v24.js?v=2.4.0"></script>
   <script src="taf-engine-v241.js?v=2.4.1-audit"></script>
   <script src="taf-engine-v242.js?v=2.4.2-cloud-fog"></script>
-  <script src="taf-app-v2.js?v=2.4.0-ui"></script>
+  <script src="taf-app-v25.js?v=20260917-1"></script>
 </body>
 </html>
