@@ -9,7 +9,8 @@ on:
       - 'taf-engine-v24.js'
       - 'taf-engine-v241.js'
       - 'taf-engine-v242.js'
-      - 'taf-app-v2.js'
+      - 'taf-fog-policy.js'
+      - 'taf-app-v25.js'
       - 'message-archive-client.js'
       - 'tests/taf-engine-v2.test.js'
       - 'tests/taf-engine-v24.test.js'
@@ -26,7 +27,8 @@ on:
       - 'taf-engine-v24.js'
       - 'taf-engine-v241.js'
       - 'taf-engine-v242.js'
-      - 'taf-app-v2.js'
+      - 'taf-fog-policy.js'
+      - 'taf-app-v25.js'
       - 'message-archive-client.js'
       - 'tests/taf-engine-v2.test.js'
       - 'tests/taf-engine-v24.test.js'
@@ -57,7 +59,8 @@ jobs:
           node --check taf-engine-v24.js
           node --check taf-engine-v241.js
           node --check taf-engine-v242.js
-          node --check taf-app-v2.js
+          node --check taf-fog-policy.js
+          node --check taf-app-v25.js
           node --check message-archive-client.js
           node --check tests/taf-engine-v2.test.js
           node --check tests/taf-engine-v24.test.js
@@ -78,12 +81,13 @@ jobs:
 
       - name: Confirm sole public production engine stack
         run: |
-          grep -F 'TAF ENGINE 2.4.2 · LOW CLOUD/FOG COHERENCE · INSTRUCTION FIRST' taf.html
+          grep -F 'TAF ENGINE 2.4.2 ·' taf.html
+          grep -F 'taf-fog-policy.js?v=20260917-1' taf.html
           grep -F 'taf-engine-v2.js?v=2.3.0-kernel' taf.html
           grep -F 'taf-engine-v24.js?v=2.4.0' taf.html
           grep -F 'taf-engine-v241.js?v=2.4.1-audit' taf.html
           grep -F 'taf-engine-v242.js?v=2.4.2-cloud-fog' taf.html
-          grep -F 'taf-app-v2.js?v=2.4.0-ui' taf.html
+          grep -F 'taf-app-v25.js?v=20260917-1' taf.html
           grep -F "const VERSION='2.4.2'" taf-engine-v242.js
           grep -F 'lowCloudFogCoherence:true' taf-engine-v242.js
-          ! grep -E 'taf-(hybrid-engine|hybrid-adapter|generator-policy|cloud-policy|weather-policy|gust-policy|cavok-nsc-policy|instruction-guard|output-sanitizer)\.js' taf.html
+          ! grep -E '<script[^>]+src="taf-(hybrid-engine|hybrid-adapter|generator-policy|cloud-policy|weather-policy|gust-policy|cavok-nsc-policy|instruction-guard|output-sanitizer)\.js' taf.html
