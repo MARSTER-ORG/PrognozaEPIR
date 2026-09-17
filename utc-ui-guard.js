@@ -201,6 +201,7 @@
       const path = location.pathname.toLowerCase();
       const pages = [
         {label:'METEOGRAM', href:'index.html', active: /\/(?:index\.html)?$/.test(path)},
+        {label:'EPIR FOG', href:'fog.html', active: /\/fog\.html$/.test(path), id:'epirFogEngineNav'},
         {label:'RADAR', href:'radar.html', active: /\/radar\.html$/.test(path)},
         {label:'MGŁA SAT', href:'sat-fog.html', active: /\/sat-fog\.html$/.test(path)},
         {label:'TAF GENERATOR', href:'taf.html', active: /\/taf\.html$/.test(path)},
@@ -208,6 +209,13 @@
       ];
       const allowed = pages.some(x => x.active);
       if (!allowed) return;
+
+      if (/\/(?:index\.html)?$/.test(path) && !document.getElementById('epirHideFogEngineOnMeteogram')) {
+        const hide = document.createElement('style');
+        hide.id = 'epirHideFogEngineOnMeteogram';
+        hide.textContent = '#fogEngine,#fogEngineModeSwitch,#fogVNextDiagnostics,#fogSummaryStructured,#fogAuxStructured{display:none!important}';
+        document.head.appendChild(hide);
+      }
 
       if (!document.getElementById('epirGlobalNavStyle')) {
         const style = document.createElement('style');
@@ -227,7 +235,7 @@
       nav.id = 'epirGlobalNav';
       nav.setAttribute('aria-label','Główna nawigacja PrognozaEPIR');
       nav.innerHTML = '<div class="epir-global-nav-inner">' + pages.map(p =>
-        `<a href="${p.href}"${p.active?' class="active" aria-current="page"':''}>${p.label}</a>`
+        `<a${p.id?` id="${p.id}"`:''} href="${p.href}"${p.active?' class="active" aria-current="page"':''}>${p.label}</a>`
       ).join('') + '</div>';
       document.body.insertBefore(nav, document.body.firstChild);
     };
@@ -243,7 +251,7 @@
     } catch (_) { return; }
 
     const path = location.pathname.toLowerCase();
-    const allowed = /\/(?:index\.html|radar\.html|sat-fog\.html|taf\.html|arch\.html)?$/.test(path);
+    const allowed = /\/(?:index\.html|fog\.html|radar\.html|sat-fog\.html|taf\.html|arch\.html)?$/.test(path);
     if (!allowed) return;
 
     const install = () => {
@@ -352,6 +360,8 @@
         selectors = ['.toolbar a[href="index.html"]'];
       } else if (/\/arch\.html$/.test(path)) {
         selectors = ['.top a.home[href="index.html"]'];
+      } else if (/\/fog\.html$/.test(path)) {
+        selectors = ['.local-nav'];
       }
       selectors.forEach(selector => document.querySelectorAll(selector).forEach(el => el.remove()));
     };
