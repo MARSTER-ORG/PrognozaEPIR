@@ -22,6 +22,11 @@
     location.reload();
   }
 
+  function setEngineHeading(mode=getMode()) {
+    const head = document.querySelector('#fogEngine .fog-head b');
+    if (head) head.textContent = mode === MODE_VNEXT ? 'EPIR FOG ENGINE vNEXT' : 'EPIR FOG ENGINE LEGACY';
+  }
+
   function captureLegacyUi() {
     const summary = document.getElementById('fogSummary');
     if (!summary) return;
@@ -51,6 +56,7 @@
     if (strip) strip.hidden = legacyUi.stripHidden;
     const nextDiag = document.getElementById('fogVNextDiagnostics');
     if (nextDiag) nextDiag.style.display = 'none';
+    setEngineHeading(MODE_LEGACY);
     updateChooser();
   }
 
@@ -76,7 +82,7 @@
     box.id = 'fogEngineModeSwitch';
     box.className = 'fog-mode-switch';
     box.innerHTML = `
-      <div class="fog-mode-copy"><b>Wybór silnika mgły</b><span>LEGACY = poprzedni silnik. vNEXT = nowa fizyka SSOIL / SPBL / chłodzenie powierzchni i nowa prognoza VIS. Wybór obowiązuje także słupki FG na głównym meteogramie.</span></div>
+      <div class="fog-mode-copy"><b>Wybór silnika mgły</b><span>LEGACY = poprzedni silnik. vNEXT = nowa fizyka SSOIL / SPBL / chłodzenie powierzchni i nowa prognoza VIS. Ten sam wybór steruje słupkami FG na meteogramie oraz generatorem TAF.</span></div>
       <div class="fog-mode-buttons">
         <button type="button" data-fog-mode="legacy">LEGACY · poprzedni</button>
         <button type="button" data-fog-mode="vnext">vNEXT · nowy</button>
@@ -98,6 +104,7 @@
     });
     const badge = document.getElementById('fogModeBadge');
     if (badge) badge.textContent = mode === MODE_LEGACY ? 'AKTYWNY: LEGACY' : 'AKTYWNY: vNEXT';
+    setEngineHeading(mode);
     const nextDiag = document.getElementById('fogVNextDiagnostics');
     if (nextDiag && mode === MODE_VNEXT) nextDiag.style.removeProperty('display');
   }
