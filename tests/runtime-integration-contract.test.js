@@ -73,6 +73,35 @@ function fakeStorage(mode) {
   assert(js.includes('brak aktywnego MIFG w 48 h'));
 })();
 
+(function testMifgUsesSameSeriesOnFogPageAndMeteogram() {
+  const page = read('fog-page-layout.js');
+  const overlay = read('fog-meteogram-overlay.js');
+  const engine = read('mifg-engine.js');
+  assert(page.includes('window.PrognozaEPIRMIFG?.getSeries?.()'));
+  assert(overlay.includes('window.PrognozaEPIRMIFG?.getSeries?.()'));
+  assert(engine.includes('window.PrognozaEPIRMIFG='));
+  assert(overlay.includes("const MIFG_DRAW_THRESHOLD = 50"));
+  assert(page.includes('score < 50'));
+})();
+
+(function testMifgPageListsAllOperationalWindows() {
+  const page = read('fog-page-layout.js');
+  assert(page.includes('function activeWindows(rows)'));
+  assert(page.includes('Okna MIFG ≥50/100'));
+  assert(page.includes("windows.map(windowHtml).join('')"));
+  assert(page.includes('wszystkie okresy z tej samej serii co meteogram'));
+  assert(page.includes('czerwone punkty i liczby'));
+  assert(!page.includes('function firstActiveWindow(rows)'));
+})();
+
+(function testMifgVisibilityMeaningIsNotFabricated() {
+  const cells = read('fog-visibility-cells.js');
+  const engine = read('mifg-engine.js');
+  assert(cells.includes('nie jest to VIS warstwy &lt;2 m'));
+  assert(engine.includes('Visibility is deliberately'));
+  assert(engine.includes('not used as a primary predictor'));
+})();
+
 (function testBuildExportsDedicatedLegacySeries() {
   const wire = read('scripts/wire_fog_mifg_utc_runtime.py');
   assert(wire.includes('PrognozaEPIRFogLegacySeries'));
