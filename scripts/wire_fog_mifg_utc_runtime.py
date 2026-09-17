@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
-"""Wire the deployed FOG/BR/MIFG runtime and production Fog Engine vNext bridge.
+"""Wire the deployed FOG/BR/MIFG runtimes.
 
-Archive routing is owned solely by message-archive-client.js. This build step
-normalizes FOG/MIFG display/input clock semantics to UTC, keeps the operational
-fog logic available to the meteogram, and keeps the full EPIR FOG interface on
-a dedicated fog.html page. BR is a separate target/state shared by LEGACY and
-vNEXT, not a fifth fog mechanism.
+The meteogram and TAF keep their existing model runtime. ``fog.html`` is a
+native standalone page and must never embed or hide ``index.html``.
 """
 import os
 import re
@@ -14,6 +11,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "_site"
 ASSET_V = os.environ.get("GITHUB_SHA", "dev")[:12]
+FOG_PAGE_ASSETS = (
+    "fog-mode-switch.js",
+    "fog-engine.js",
+    "mifg-engine.js",
+    "fog-summary-layout.js",
+    "br-engine.js",
+    "fog-page-layout.js",
+    "fog-visibility-cells.js",
+)
 
 
 def patch_fog() -> None:
@@ -39,14 +45,15 @@ def patch_fog() -> None:
         raise SystemExit("FOG UTC formatter markers not found")
     s = s.replace(old_hour, new_hour, 1).replace(old_dt, new_dt, 1)
     s = s.replace("timeZone:PLACE.tz,year:'numeric'", "timeZone:'UTC',year:'numeric'", 1)
+
     old_parse = "function parseLocalInput(v){return v?Date.parse(v):NaN;}"
     new_parse = "function parseLocalInput(v){return v?Date.parse(/[zZ]|[+-]\\d\\d:\\d\\d$/.test(v)?v:v+'Z'):NaN;}"
     if old_parse not in s:
         raise SystemExit("FOG datetime-local parser marker not found")
     s = s.replace(old_parse, new_parse, 1)
 
-    # Keep an immutable-enough LEGACY snapshot before the vNext bridge enriches
-    # PrognozaEPIRFogSeries in place. TAF LEGACY consumes this dedicated series.
+    # Preserve the untouched LEGACY series before vNEXT enriches the active
+    # series. TAF in LEGACY mode consumes only this dedicated snapshot.
     active_export = "fogSeries=out;window.PrognozaEPIRFogSeries=fogSeries;"
     legacy_export = (
         "fogSeries=out;"
@@ -78,53 +85,40 @@ def patch_mifg() -> None:
     p.write_text(s, encoding="utf-8")
 
 
-def patch_vnext() -> None:
-    index = SITE / "index.html"
+def cache_bust_bridge() -> None:
     bridge = SITE / "fog-summary-layout.js"
-    physics = SITE / "fog-physics-vnext.js"
-    probability = SITE / "fog-vnext-probability-layer.js"
-    visibility = SITE / "fog-visibility-vnext.js"
-    br = SITE / "br-engine.js"
-    fog_page = SITE / "fog.html"
-    for p in (bridge, physics, probability, visibility, br):
-        if not p.is_file() or p.stat().st_size == 0:
-            raise SystemExit(f"Fog production asset missing: {p.name}")
-
-    # Every deployment gets a fresh URL for the bridge and modules loaded by it.
     b = bridge.read_text(encoding="utf-8")
-    b = re.sub(r"fog-physics-vnext\.js\?v=[^']+", f"fog-physics-vnext.js?v={ASSET_V}", b)
-    b = re.sub(r"fog-vnext-probability-layer\.js\?v=[^']+", f"fog-vnext-probability-layer.js?v={ASSET_V}", b)
-    b = re.sub(r"fog-visibility-vnext\.js\?v=[^']+", f"fog-visibility-vnext.js?v={ASSET_V}", b)
+    for asset in ("fog-physics-vnext.js", "fog-vnext-probability-layer.js", "fog-visibility-vnext.js"):
+        b = re.sub(rf"{re.escape(asset)}\?v=[^'\"]+", f"{asset}?v={ASSET_V}", b)
     bridge.write_text(b, encoding="utf-8")
 
-    s = index.read_text(encoding="utf-8")
-    # Force the current global navigation runtime on every Pages deployment.
+
+def wire_meteogram_bridge() -> None:
+    p = SITE / "index.html"
+    s = p.read_text(encoding="utf-8")
     s = re.sub(r'utc-ui-guard\.js(?:\?v=[^\"]*)?', f'utc-ui-guard.js?v={ASSET_V}', s)
-    # EPIR FOG owns the full engine UI. The main page keeps only meteogram FG graphics.
+
     hide = '<style id="epirFogStandaloneOnly">#fogEngine,#fogEngineModeSwitch,#fogVNextDiagnostics,#fogSummaryStructured,#fogAuxStructured{display:none!important}</style>'
     if 'id="epirFogStandaloneOnly"' not in s:
         if '</head>' not in s:
-            raise SystemExit("index.html head marker missing for Fog standalone policy")
+            raise SystemExit("index.html head marker missing")
         s = s.replace('</head>', hide + '\n</head>', 1)
+
     tag = f'<script src="fog-summary-layout.js?v={ASSET_V}"></script>'
     if 'fog-summary-layout.js?v=' not in s:
         if '</body>' not in s:
-            raise SystemExit("index.html body marker missing for Fog vNext bridge")
-        s = s.replace('</body>', tag + "\n</body>", 1)
-    index.write_text(s, encoding="utf-8")
+            raise SystemExit("index.html body marker missing")
+        s = s.replace('</body>', tag + '\n</body>', 1)
+    p.write_text(s, encoding="utf-8")
 
-    # Standalone EPIR FOG page uses the same deployed, UTC-normalized runtime.
-    if fog_page.is_file():
-        f = fog_page.read_text(encoding="utf-8")
-        f = re.sub(r'utc-ui-guard\.js(?:\?v=[^\"]*)?', f'utc-ui-guard.js?v={ASSET_V}', f)
-        f = re.sub(r'index\.html\?fogpanel=1&v=[^\"]+', f'index.html?fogpanel=1&v={ASSET_V}', f)
-        for asset in (
-            "fog-engine.js", "mifg-engine.js", "fog-summary-layout.js", "fog-mode-switch.js",
-            "br-engine.js", "fog-page-layout.js", "fog-visibility-cells.js"
-        ):
-            if asset in f:
-                f = re.sub(rf"{re.escape(asset)}\?v=[^'\"\s<>,)]+", f'{asset}?v={ASSET_V}', f)
-        fog_page.write_text(f, encoding="utf-8")
+
+def wire_standalone_page() -> None:
+    p = SITE / "fog.html"
+    f = p.read_text(encoding="utf-8")
+    f = re.sub(r'utc-ui-guard\.js(?:\?v=[^\"]*)?', f'utc-ui-guard.js?v={ASSET_V}', f)
+    for asset in FOG_PAGE_ASSETS:
+        f = re.sub(rf"{re.escape(asset)}\?v=[^'\"\s<>,)]+", f"{asset}?v={ASSET_V}", f)
+    p.write_text(f, encoding="utf-8")
 
 
 def validate() -> None:
@@ -135,57 +129,65 @@ def validate() -> None:
     nav = (SITE / "utc-ui-guard.js").read_text(encoding="utf-8")
     bridge = (SITE / "fog-summary-layout.js").read_text(encoding="utf-8")
     probability = (SITE / "fog-vnext-probability-layer.js").read_text(encoding="utf-8")
-    fog_page = SITE / "fog.html"
-    if "function parseLocalInput(v){return v?Date.parse(/[zZ]|[+-]\\d\\d:\\d\\d$/.test(v)?v:v+'Z'):NaN;}" not in fog:
-        raise SystemExit("FOG datetime-local is not UTC")
+    fog_html = (SITE / "fog.html").read_text(encoding="utf-8")
+
     if "timeZone:PLACE.tz" in fog or "timeZone:PLACE.tz" in mifg:
         raise SystemExit("local timezone reference remains in deployed FOG/MIFG")
-    if "+' UTC'" not in fog or "+' UTC'" not in mifg:
-        raise SystemExit("explicit UTC label missing in FOG/MIFG")
     if "PrognozaEPIRFogLegacySeries" not in fog:
         raise SystemExit("dedicated LEGACY fog series is not exported for TAF")
-    if 'fog-summary-layout.js?v=' not in index:
-        raise SystemExit("Fog vNext production bridge is not wired into deployed index.html")
+
+    if 'fog-summary-layout.js?v=' not in index or 'id="epirFogStandaloneOnly"' not in index:
+        raise SystemExit("meteogram Fog bridge contract missing")
     if f'utc-ui-guard.js?v={ASSET_V}' not in index:
         raise SystemExit("global navigation runtime is not cache-busted")
-    if 'id="epirFogStandaloneOnly"' not in index:
-        raise SystemExit("Fog Engine panel is not hidden on the meteogram page")
-    if 'href:\'fog.html\'' not in nav and 'href:"fog.html"' not in nav and "href:'fog.html'" not in nav:
-        raise SystemExit("EPIR FOG missing from canonical global navigation")
+
     if "fogEngineMode:'vnext-production'" not in bridge or 'Probability.operationalScore' not in bridge:
         raise SystemExit("Fog vNext bridge is not in production mode")
     for asset in ("fog-physics-vnext.js", "fog-vnext-probability-layer.js", "fog-visibility-vnext.js"):
         if f'{asset}?v={ASSET_V}' not in bridge:
             raise SystemExit(f"Fog vNext dynamic asset is not cache-busted: {asset}")
-    required_probability = (
+    for marker in (
         "P_model_final", "stateReadiness", "visibilityContradiction",
         "PrognozaEPIRFogRenderSeries", "const VNEXT_THRESHOLD=60", "const LEGACY_THRESHOLD=50",
-    )
-    for marker in required_probability:
+    ):
         if marker not in probability:
-            raise SystemExit(f"Fog vNext production probability layer contract missing: {marker}")
+            raise SystemExit(f"Fog vNext probability contract missing: {marker}")
     for marker in ("VERSION:'1.0.0-br-target'", "ZAMGLENIE (BR)", "BR jest osobnym targetem"):
         if marker not in br:
-            raise SystemExit(f"BR target module contract missing: {marker}")
-    if not fog_page.is_file():
-        raise SystemExit("standalone fog.html missing from Pages artifact")
-    fog_html = fog_page.read_text(encoding="utf-8")
+            raise SystemExit(f"BR target contract missing: {marker}")
+
+    # Native standalone page: no iframe, no meteogram markup/runtime and no
+    # compatibility-only metadata. Only the Fog modules may be loaded here.
+    forbidden = (
+        '<iframe', 'index.html?fogpanel=', 'fogRuntime', 'runtime-wrap',
+        'canvasViewport', '<canvas', 'MutationObserver', 'ResizeObserver',
+        'epir-pages-compat-', 'message-archive-client.js', 'observation-engine.js',
+        'fog-meteogram-overlay.js', 'shortcut-mode.js',
+    )
+    for marker in forbidden:
+        if marker in fog_html:
+            raise SystemExit(f"dead/meteogram runtime leaked into fog.html: {marker}")
     for marker in (
-        "EPIR FOG", f"index.html?fogpanel=1&v={ASSET_V}",
-        f"fog-mode-switch.js?v={ASSET_V}", f"fog-page-layout.js?v={ASSET_V}",
-        f"fog-visibility-cells.js?v={ASSET_V}", "fogStandaloneMount",
-        "Wspólny runtime z meteogramem i TAF"
+        'id="epirGlobalNav"', 'href="index.html"', 'href="taf.html"',
+        'id="fogStandaloneMount"', 'window.__PROGNOZA_EPIR_FOG_STANDALONE__=true',
     ):
         if marker not in fog_html:
-            raise SystemExit(f"standalone EPIR FOG shared-runtime contract missing: {marker}")
+            raise SystemExit(f"native EPIR FOG page marker missing: {marker}")
+    for asset in FOG_PAGE_ASSETS:
+        if f'{asset}?v={ASSET_V}' not in fog_html:
+            raise SystemExit(f"native EPIR FOG asset missing/cache stale: {asset}")
+    if 'href:\'fog.html\'' not in nav and 'href:"fog.html"' not in nav and "href:'fog.html'" not in nav:
+        raise SystemExit("EPIR FOG missing from canonical navigation")
 
 
 def main() -> int:
     patch_fog()
     patch_mifg()
-    patch_vnext()
+    cache_bust_bridge()
+    wire_meteogram_bridge()
+    wire_standalone_page()
     validate()
-    print("wired UTC FOG/BR/MIFG runtime, isolated EPIR FOG UI and dedicated LEGACY/vNext TAF series")
+    print("wired native EPIR FOG page, UTC Fog runtimes and dedicated LEGACY/vNext TAF series")
     return 0
 
 
