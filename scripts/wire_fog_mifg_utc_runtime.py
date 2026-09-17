@@ -2,9 +2,9 @@
 """Wire the deployed FOG/MIFG runtime and production Fog Engine vNext bridge.
 
 Archive routing is owned solely by message-archive-client.js. This build step
-normalizes FOG/MIFG display/input clock semantics to UTC and ensures the
-validated Fog Engine vNext production bridge is present in the canonical Pages
-artifact after prepare_pages.py has assembled the site.
+normalizes FOG/MIFG display/input clock semantics to UTC, keeps the operational
+fog logic available to the meteogram, and keeps the full EPIR FOG interface on
+a dedicated fog.html page.
 """
 import os
 import re
@@ -75,9 +75,7 @@ def patch_vnext() -> None:
         if not p.is_file() or p.stat().st_size == 0:
             raise SystemExit(f"Fog vNext production asset missing: {p.name}")
 
-    # Every deployment gets a fresh URL for the bridge and for modules that the
-    # bridge loads dynamically. This prevents an older Fog Engine from surviving
-    # in the browser cache after the repository has already been updated.
+    # Every deployment gets a fresh URL for the bridge and modules loaded by it.
     b = bridge.read_text(encoding="utf-8")
     b = re.sub(r"fog-physics-vnext\.js\?v=[^']+", f"fog-physics-vnext.js?v={ASSET_V}", b)
     b = re.sub(r"fog-vnext-probability-layer\.js\?v=[^']+", f"fog-vnext-probability-layer.js?v={ASSET_V}", b)
@@ -85,19 +83,28 @@ def patch_vnext() -> None:
     bridge.write_text(b, encoding="utf-8")
 
     s = index.read_text(encoding="utf-8")
+    # Force the current global navigation runtime on every Pages deployment.
+    s = re.sub(r'utc-ui-guard\.js(?:\?v=[^\"]*)?', f'utc-ui-guard.js?v={ASSET_V}', s)
+    # EPIR FOG owns the full engine UI. The main page keeps only meteogram FG graphics.
+    hide = '<style id="epirFogStandaloneOnly">#fogEngine,#fogEngineModeSwitch,#fogVNextDiagnostics,#fogSummaryStructured,#fogAuxStructured{display:none!important}</style>'
+    if 'id="epirFogStandaloneOnly"' not in s:
+        if '</head>' not in s:
+            raise SystemExit("index.html head marker missing for Fog standalone policy")
+        s = s.replace('</head>', hide + '\n</head>', 1)
     tag = f'<script src="fog-summary-layout.js?v={ASSET_V}"></script>'
     if 'fog-summary-layout.js?v=' not in s:
-        marker = '</body>'
-        if marker not in s:
+        if '</body>' not in s:
             raise SystemExit("index.html body marker missing for Fog vNext bridge")
-        s = s.replace(marker, tag + "\n" + marker, 1)
+        s = s.replace('</body>', tag + "\n</body>", 1)
     index.write_text(s, encoding="utf-8")
 
-    # Standalone Fog Engine page uses the same deployed, UTC-normalized runtime.
+    # Standalone EPIR FOG page uses the same deployed, UTC-normalized runtime.
     if fog_page.is_file():
         f = fog_page.read_text(encoding="utf-8")
-        for asset in ("fog-engine.js", "mifg-engine.js", "fog-summary-layout.js"):
-            f = re.sub(rf'{re.escape(asset)}\?v=[^\"]+', f'{asset}?v={ASSET_V}', f)
+        f = re.sub(r'utc-ui-guard\.js(?:\?v=[^\"]*)?', f'utc-ui-guard.js?v={ASSET_V}', f)
+        for asset in ("fog-engine.js", "mifg-engine.js", "fog-summary-layout.js", "fog-mode-switch.js"):
+            if asset in f:
+                f = re.sub(rf'{re.escape(asset)}\?v=[^\"]+', f'{asset}?v={ASSET_V}', f)
         fog_page.write_text(f, encoding="utf-8")
 
 
@@ -105,6 +112,7 @@ def validate() -> None:
     fog = (SITE / "fog-engine.js").read_text(encoding="utf-8")
     mifg = (SITE / "mifg-engine.js").read_text(encoding="utf-8")
     index = (SITE / "index.html").read_text(encoding="utf-8")
+    nav = (SITE / "utc-ui-guard.js").read_text(encoding="utf-8")
     bridge = (SITE / "fog-summary-layout.js").read_text(encoding="utf-8")
     probability = (SITE / "fog-vnext-probability-layer.js").read_text(encoding="utf-8")
     fog_page = SITE / "fog.html"
@@ -116,6 +124,12 @@ def validate() -> None:
         raise SystemExit("explicit UTC label missing in FOG/MIFG")
     if 'fog-summary-layout.js?v=' not in index:
         raise SystemExit("Fog vNext production bridge is not wired into deployed index.html")
+    if f'utc-ui-guard.js?v={ASSET_V}' not in index:
+        raise SystemExit("global navigation runtime is not cache-busted")
+    if 'id="epirFogStandaloneOnly"' not in index:
+        raise SystemExit("Fog Engine panel is not hidden on the meteogram page")
+    if 'href:\'fog.html\'' not in nav and 'href:"fog.html"' not in nav and "href:'fog.html'" not in nav:
+        raise SystemExit("EPIR FOG missing from canonical global navigation")
     if "fogEngineMode:'vnext-production'" not in bridge or 'Probability.operationalScore' not in bridge:
         raise SystemExit("Fog vNext bridge is not in production mode")
     for asset in ("fog-physics-vnext.js", "fog-vnext-probability-layer.js", "fog-visibility-vnext.js"):
@@ -123,7 +137,7 @@ def validate() -> None:
             raise SystemExit(f"Fog vNext dynamic asset is not cache-busted: {asset}")
     required_probability = (
         "P_model_final", "stateReadiness", "visibilityContradiction",
-        "PrognozaEPIRFogRenderSeries", "const FOG_RENDER_THRESHOLD=60",
+        "PrognozaEPIRFogRenderSeries", "const VNEXT_THRESHOLD=60", "const LEGACY_THRESHOLD=50",
     )
     for marker in required_probability:
         if marker not in probability:
@@ -131,9 +145,9 @@ def validate() -> None:
     if not fog_page.is_file():
         raise SystemExit("standalone fog.html missing from Pages artifact")
     fog_html = fog_page.read_text(encoding="utf-8")
-    for marker in ("EPIR FOG ENGINE vNext", f"fog-engine.js?v={ASSET_V}", f"fog-summary-layout.js?v={ASSET_V}"):
+    for marker in ("EPIR FOG", f"fog-engine.js?v={ASSET_V}", f"fog-summary-layout.js?v={ASSET_V}"):
         if marker not in fog_html:
-            raise SystemExit(f"standalone Fog Engine page contract missing: {marker}")
+            raise SystemExit(f"standalone EPIR FOG page contract missing: {marker}")
 
 
 def main() -> int:
@@ -141,7 +155,7 @@ def main() -> int:
     patch_mifg()
     patch_vnext()
     validate()
-    print("wired explicit UTC FOG/MIFG runtime, authoritative Fog vNext render and standalone fog page")
+    print("wired UTC FOG/MIFG runtime, standalone EPIR FOG UI and meteogram-only fog graphics")
     return 0
 
 
