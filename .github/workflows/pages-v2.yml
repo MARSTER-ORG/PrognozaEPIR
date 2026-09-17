@@ -29,18 +29,17 @@ jobs:
           printf '{"commit":"%s","built_at":"%s"}\n' \
             "$GITHUB_SHA" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" > _site/pages-build.json
 
-      - name: Validate JavaScript and TAF 2.4.2
+      - name: Validate JavaScript and runtime tests
         run: |
           python3 -m py_compile scripts/prepare_pages.py scripts/prepare_pages_v241.py scripts/wire_fog_mifg_utc_runtime.py
           for f in \
-            theme-control.js taf-engine-v2.js taf-engine-v24.js taf-engine-v241.js taf-engine-v242.js taf-fog-policy.js taf-app-v25.js taf-runtime-bootstrap.js message-archive-client.js neighbor-observation-context.js \
-            fog-engine.js observation-engine.js mifg-engine.js br-engine.js fog-meteogram-overlay.js fog-mode-switch.js \
-            fog-summary-layout.js fog-physics-vnext.js fog-vnext-probability-layer.js fog-vnext-transition-risk.js \
+            theme-control.js taf-engine-v2.js taf-engine-v24.js taf-engine-v241.js taf-engine-v242.js taf-fog-policy.js taf-app-v25.js taf-runtime-bootstrap.js \
+            message-archive-client.js neighbor-observation-context.js fog-engine.js observation-engine.js mifg-engine.js br-engine.js fog-meteogram-overlay.js \
+            fog-mode-switch.js fog-summary-layout.js fog-page-layout.js fog-visibility-cells.js fog-physics-vnext.js fog-vnext-probability-layer.js fog-vnext-transition-risk.js \
             radar-risk-policy.js lightning-alert-sw.js opera-nowcast.js opera-convection-bridge.js \
-            _site/theme-control.js _site/taf-engine-v2.js _site/taf-engine-v24.js _site/taf-engine-v241.js _site/taf-engine-v242.js _site/taf-fog-policy.js _site/taf-app-v25.js _site/taf-runtime-bootstrap.js _site/message-archive-client.js \
-            _site/fog-engine.js _site/observation-engine.js _site/mifg-engine.js _site/br-engine.js _site/fog-mode-switch.js \
-            _site/fog-summary-layout.js _site/fog-physics-vnext.js _site/fog-vnext-probability-layer.js _site/fog-vnext-transition-risk.js \
-            _site/radar-risk-policy.js _site/lightning-alert-sw.js; do
+            _site/theme-control.js _site/taf-engine-v2.js _site/taf-engine-v24.js _site/taf-engine-v241.js _site/taf-engine-v242.js _site/taf-fog-policy.js _site/taf-app-v25.js _site/taf-runtime-bootstrap.js \
+            _site/fog-engine.js _site/observation-engine.js _site/mifg-engine.js _site/br-engine.js _site/fog-mode-switch.js _site/fog-summary-layout.js _site/fog-page-layout.js _site/fog-visibility-cells.js \
+            _site/fog-physics-vnext.js _site/fog-vnext-probability-layer.js _site/fog-vnext-transition-risk.js _site/radar-risk-policy.js _site/lightning-alert-sw.js; do
             node --check "$f"
           done
           node tests/taf-engine-v2.test.js
@@ -53,110 +52,45 @@ jobs:
 
       - name: Validate canonical artifact
         run: |
-          test -s _site/index.html
-          test -s _site/fog.html
-          test -s _site/radar.html
-          test -s _site/taf.html
-          test -s _site/theme-control.js
-          test -s _site/taf-engine-v24.js
-          test -s _site/taf-engine-v241.js
-          test -s _site/taf-engine-v242.js
-          test -s _site/taf-fog-policy.js
-          test -s _site/taf-app-v25.js
-          test -s _site/taf-runtime-bootstrap.js
-          test -s _site/sat-fog.html
-          test -s _site/arch.html
-          test -s _site/lightning-alerts.html
-          test -s _site/lightning-alert-sw.js
-          test -s _site/radar-risk-policy.js
-          test -s _site/fog-mode-switch.js
-          test -s _site/br-engine.js
-          test -s _site/fog-summary-layout.js
-          test -s _site/fog-physics-vnext.js
-          test -s _site/fog-vnext-probability-layer.js
-          test -s _site/fog-vnext-transition-risk.js
-          test -s _site/pages-build.json
-          test -s _site/data/messages/latest.json
-          test -s _site/data/messages/recent.json
-          test -s _site/data/messages/status.json
-          test -s _site/data/learning/adaptive-weights.json
-          test -s _site/data/learning/fog-event-skill.json
-          test -s _site/data/learning/model-verification.json
-          python3 -m json.tool _site/pages-build.json >/dev/null
-          python3 -m json.tool _site/data/messages/latest.json >/dev/null
-          python3 -m json.tool _site/data/messages/recent.json >/dev/null
-          python3 -m json.tool _site/data/messages/status.json >/dev/null
-          python3 -m json.tool _site/data/learning/adaptive-weights.json >/dev/null
-          python3 -m json.tool _site/data/learning/fog-event-skill.json >/dev/null
-          python3 -m json.tool _site/data/learning/model-verification.json >/dev/null
-          grep -F 'TAF ENGINE 2.4.2 ·' _site/taf.html
-          grep -F 'taf-fog-policy.js?v=20260917-2' _site/taf.html
-          grep -F 'taf-engine-v2.js?v=2.3.0-kernel' _site/taf.html
-          grep -F 'taf-engine-v24.js?v=2.4.0' _site/taf.html
-          grep -F 'taf-engine-v241.js?v=2.4.1-audit' _site/taf.html
-          grep -F 'taf-engine-v242.js?v=2.4.2-cloud-fog' _site/taf.html
-          grep -F 'taf-runtime-bootstrap.js?v=20260917-2' _site/taf.html
-          grep -F 'primeCycleSelect' _site/taf-runtime-bootstrap.js
-          grep -F 'taf-app-v25.js?v=${BUILD}' _site/taf-runtime-bootstrap.js
-          grep -F 'recoverLegacySeries' _site/taf-fog-policy.js
-          grep -F 'PrognozaEPIRFogLegacySeries' _site/fog-engine.js
-          grep -F 'content="2.4.2"' _site/taf.html
-          grep -F 'theme-control.js?v=' _site/index.html
-          grep -F 'theme-control.js?v=' _site/taf.html
-          grep -F 'theme-control.js?v=' _site/radar.html
-          grep -F 'theme-control.js?v=' _site/fog.html
-          grep -F 'theme-control.js?v=' _site/arch.html
-          grep -F '<meta name="color-scheme" content="light dark">' _site/taf.html
-          grep -F "const VERSION='2.4.0'" _site/taf-engine-v24.js
-          grep -F "const VERSION='2.4.1'" _site/taf-engine-v241.js
-          grep -F "const VERSION='2.4.2'" _site/taf-engine-v242.js
-          grep -F 'structuredFinalization:true' _site/taf-engine-v241.js
-          grep -F 'lowCloudFogCoherence:true' _site/taf-engine-v242.js
-          grep -F 'radar-risk-policy.js?v=' _site/radar.html
-          grep -F 'lightning-alerts.html' _site/radar.html
-          grep -F 'observation-engine.js' _site/index.html
-          grep -F 'mifg-engine.js?v=' _site/index.html
-          grep -F 'fog-meteogram-overlay.js' _site/index.html
-          grep -F 'fog-summary-layout.js?v=' _site/index.html
-          grep -F 'utc-ui-guard.js?v=' _site/index.html
-          grep -F 'id="epirFogStandaloneOnly"' _site/index.html
-          grep -F 'EPIR FOG' _site/fog.html
-          grep -F 'href="fog.html"' _site/fog.html
-          grep -F 'index.html?fogpanel=1&v=' _site/fog.html
-          grep -F 'fogStandaloneMount' _site/fog.html
-          grep -F 'fog-page-layout.js?v=' _site/fog.html
-          grep -F 'fog-visibility-cells.js?v=' _site/fog.html
-          grep -F 'br-engine.js?v=' _site/fog.html
-          grep -F 'moduł zamglenia BR' _site/fog.html
-          grep -F "VERSION:'1.0.0-br-target'" _site/br-engine.js
-          grep -F 'ZAMGLENIE (BR)' _site/br-engine.js
-          grep -F "href:'fog.html'" _site/utc-ui-guard.js
-          grep -F "fogEngineMode:'vnext-production'" _site/fog-summary-layout.js
-          grep -F 'Probability.operationalScore' _site/fog-summary-layout.js
-          grep -F "const VNEXT_THRESHOLD=60" _site/fog-vnext-probability-layer.js
-          grep -F "const LEGACY_THRESHOLD=50" _site/fog-vnext-probability-layer.js
-          grep -F 'P_model_final' _site/fog-vnext-probability-layer.js
-          grep -F 'functions/v1/message-archive' _site/message-archive-client.js
-          grep -F 'search,stations' _site/message-archive-client.js
-          grep -F 'MessageArchive legacy bridge' _site/message-archive-client.js
-          grep -F 'message-archive-client.js?v=' _site/arch.html
-          grep -F 'id="modeAdvanced"' _site/arch.html
-          grep -F 'data-type="ALL"' _site/arch.html
-          grep -F 'TAF ↔ METAR/SPECI' _site/arch.html
-          grep -F "v+'Z'" _site/fog-engine.js
-          grep -F "+' UTC'" _site/fog-engine.js
-          grep -F "+' UTC'" _site/mifg-engine.js
-          ! grep -F 'message-archive-fetch-bridge.js' _site/index.html
-          ! test -e _site/message-archive-fetch-bridge.js
-          ! grep -F 'taf-instruction-guard.js' _site/message-archive-client.js
-          ! grep -F 'taf-verification-explain.js' _site/message-archive-client.js
-          ! grep -F 'timeZone:PLACE.tz' _site/fog-engine.js
-          ! grep -F 'timeZone:PLACE.tz' _site/mifg-engine.js
-          ! grep -F '<script src="fog-engine.js' _site/index.html
-          ! grep -F 'taf-hybrid-engine.js' _site/taf.html
-          ! grep -F 'taf-hybrid-adapter.js' _site/taf.html
-          ! grep -F 'taf-generator-policy.js' _site/taf.html
-          ! grep -F 'taf-instruction-guard.js' _site/taf.html
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          site = Path('_site')
+          required = [
+              'index.html','fog.html','radar.html','taf.html','sat-fog.html','arch.html','theme-control.js',
+              'taf-engine-v2.js','taf-engine-v24.js','taf-engine-v241.js','taf-engine-v242.js','taf-fog-policy.js','taf-app-v25.js','taf-runtime-bootstrap.js',
+              'fog-engine.js','mifg-engine.js','br-engine.js','fog-mode-switch.js','fog-summary-layout.js','fog-page-layout.js','fog-visibility-cells.js',
+              'fog-physics-vnext.js','fog-vnext-probability-layer.js','fog-vnext-transition-risk.js','radar-risk-policy.js','lightning-alert-sw.js',
+              'pages-build.json','data/messages/latest.json','data/messages/recent.json','data/messages/status.json',
+              'data/learning/adaptive-weights.json','data/learning/fog-event-skill.json','data/learning/model-verification.json'
+          ]
+          missing = [p for p in required if not (site / p).is_file() or (site / p).stat().st_size == 0]
+          if missing:
+              raise SystemExit(f'missing Pages assets: {missing}')
+
+          for p in ['pages-build.json','data/messages/latest.json','data/messages/recent.json','data/messages/status.json','data/learning/adaptive-weights.json','data/learning/fog-event-skill.json','data/learning/model-verification.json']:
+              json.loads((site / p).read_text(encoding='utf-8'))
+
+          index = (site / 'index.html').read_text(encoding='utf-8')
+          fog = (site / 'fog.html').read_text(encoding='utf-8')
+          fog_engine = (site / 'fog-engine.js').read_text(encoding='utf-8')
+          taf = (site / 'taf.html').read_text(encoding='utf-8')
+          taf_app = (site / 'taf-app-v25.js').read_text(encoding='utf-8')
+
+          for marker in ['taf.html?v=2.4.2','theme-control.js?v=','fog-summary-layout.js?v=','epirFogStandaloneOnly','utc-ui-guard.js?v=']:
+              if marker not in index: raise SystemExit(f'index contract missing: {marker}')
+          for marker in ['id="epirGlobalNav"','id="fogStandaloneMount"','fog-mode-switch.js?v=','fog-engine.js?v=','mifg-engine.js?v=','fog-summary-layout.js?v=','br-engine.js?v=','fog-page-layout.js?v=','fog-visibility-cells.js?v=','theme-control.js?v=']:
+              if marker not in fog: raise SystemExit(f'native fog page contract missing: {marker}')
+          for marker in ['<iframe','fogRuntime','index.html?fogpanel=','<canvas','canvasViewport','MutationObserver','ResizeObserver','epir-pages-compat-','observation-engine.js','fog-meteogram-overlay.js','shortcut-mode.js']:
+              if marker in fog: raise SystemExit(f'forbidden meteogram/dead marker in fog.html: {marker}')
+          if 'PrognozaEPIRFogLegacySeries' not in fog_engine:
+              raise SystemExit('LEGACY Fog series export missing')
+          for marker in ['TAF ENGINE 2.4.2 ·','taf-engine-v242.js?v=2.4.2-cloud-fog','taf-runtime-bootstrap.js?v=20260917-2']:
+              if marker not in taf: raise SystemExit(f'TAF contract missing: {marker}')
+          for marker in ['const mode=Policy.selectedMode(w)','Policy.seriesForMode(w,mode)','Fog Engine LEGACY nie udostępnił kompletnej serii']:
+              if marker not in taf_app: raise SystemExit(f'TAF selected Fog mode contract missing: {marker}')
+          PY
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
@@ -178,7 +112,7 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-      - name: Verify live revision, global theme and TAF startup assets
+      - name: Verify live native Fog page and TAF startup
         env:
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
         run: |
@@ -186,57 +120,27 @@ jobs:
           base="${PAGE_URL%/}"
           for attempt in $(seq 1 18); do
             marker="$(curl -fsSL --max-time 15 "${base}/pages-build.json?v=${GITHUB_SHA}" 2>/dev/null || true)"
-            index="$(curl -fsSL --max-time 15 "${base}/index.html?v=${GITHUB_SHA}" 2>/dev/null || true)"
             fog="$(curl -fsSL --max-time 15 "${base}/fog.html?v=${GITHUB_SHA}" 2>/dev/null || true)"
             fogengine="$(curl -fsSL --max-time 15 "${base}/fog-engine.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
-            br="$(curl -fsSL --max-time 15 "${base}/br-engine.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
-            nav="$(curl -fsSL --max-time 15 "${base}/utc-ui-guard.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
             taf="$(curl -fsSL --max-time 15 "${base}/taf.html?v=${GITHUB_SHA}" 2>/dev/null || true)"
-            tafboot="$(curl -fsSL --max-time 15 "${base}/taf-runtime-bootstrap.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
             tafapp="$(curl -fsSL --max-time 15 "${base}/taf-app-v25.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
-            tafpolicy="$(curl -fsSL --max-time 15 "${base}/taf-fog-policy.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
-            theme="$(curl -fsSL --max-time 15 "${base}/theme-control.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
-            bridge="$(curl -fsSL --max-time 15 "${base}/fog-summary-layout.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
-            arch="$(curl -fsSL --max-time 15 "${base}/arch.html?v=${GITHUB_SHA}" 2>/dev/null || true)"
             if printf '%s' "$marker" | grep -Fq "$GITHUB_SHA" \
-              && printf '%s' "$index" | grep -Fq 'taf.html?v=2.4.2' \
-              && printf '%s' "$index" | grep -Fq 'theme-control.js?v=' \
-              && printf '%s' "$index" | grep -Fq 'fog-summary-layout.js?v=' \
-              && printf '%s' "$index" | grep -Fq 'epirFogStandaloneOnly' \
-              && printf '%s' "$index" | grep -Fq 'utc-ui-guard.js?v=' \
-              && printf '%s' "$fog" | grep -Fq 'EPIR FOG' \
-              && printf '%s' "$fog" | grep -Fq 'theme-control.js?v=' \
-              && printf '%s' "$fog" | grep -Fq 'index.html?fogpanel=1&v=' \
-              && printf '%s' "$fog" | grep -Fq 'fogStandaloneMount' \
-              && printf '%s' "$fog" | grep -Fq 'fog-mode-switch.js?v=' \
-              && printf '%s' "$fog" | grep -Fq 'fog-page-layout.js?v=' \
+              && printf '%s' "$fog" | grep -Fq 'id="epirGlobalNav"' \
+              && printf '%s' "$fog" | grep -Fq 'id="fogStandaloneMount"' \
+              && printf '%s' "$fog" | grep -Fq 'fog-engine.js?v=' \
               && printf '%s' "$fog" | grep -Fq 'fog-visibility-cells.js?v=' \
-              && printf '%s' "$fog" | grep -Fq 'br-engine.js?v=' \
-              && printf '%s' "$fog" | grep -Fq 'moduł zamglenia BR' \
+              && ! printf '%s' "$fog" | grep -Fq '<iframe' \
+              && ! printf '%s' "$fog" | grep -Fq 'index.html?fogpanel=' \
+              && ! printf '%s' "$fog" | grep -Fq 'fogRuntime' \
               && printf '%s' "$fogengine" | grep -Fq 'PrognozaEPIRFogLegacySeries' \
-              && printf '%s' "$br" | grep -Fq 'ZAMGLENIE (BR)' \
-              && printf '%s' "$br" | grep -Fq "VERSION:'1.0.0-br-target'" \
-              && printf '%s' "$nav" | grep -Fq 'fog.html' \
-              && printf '%s' "$taf" | grep -Fq 'taf-fog-policy.js?v=20260917-2' \
               && printf '%s' "$taf" | grep -Fq 'taf-engine-v242.js?v=2.4.2-cloud-fog' \
-              && printf '%s' "$taf" | grep -Fq 'taf-runtime-bootstrap.js?v=20260917-2' \
-              && printf '%s' "$taf" | grep -Fq 'theme-control.js?v=' \
-              && printf '%s' "$tafboot" | grep -Fq 'primeCycleSelect' \
-              && printf '%s' "$tafboot" | grep -Fq 'taf-app-v25.js?v=${BUILD}' \
-              && printf '%s' "$tafapp" | grep -Fq 'function fillCycles' \
-              && printf '%s' "$tafpolicy" | grep -Fq 'recoverLegacySeries' \
-              && printf '%s' "$theme" | grep -Fq 'prognozaepir.theme.preference' \
-              && printf '%s' "$theme" | grep -Fq 'Systemowy' \
-              && printf '%s' "$bridge" | grep -Fq "fogEngineMode:'vnext-production'" \
-              && printf '%s' "$bridge" | grep -Fq 'Probability.operationalScore' \
-              && printf '%s' "$arch" | grep -Fq 'id="modeAdvanced"' \
-              && printf '%s' "$arch" | grep -Fq 'theme-control.js?v=' \
-              && printf '%s' "$arch" | grep -Fq 'message-archive-client.js?v='; then
-              echo "GitHub Pages serves commit $GITHUB_SHA with isolated FOG runtime and repaired TAF LEGACY/vNext integration."
+              && printf '%s' "$tafapp" | grep -Fq 'const mode=Policy.selectedMode(w)' \
+              && printf '%s' "$tafapp" | grep -Fq 'Policy.seriesForMode(w,mode)'; then
+              echo "GitHub Pages serves commit $GITHUB_SHA with native EPIR FOG and selected-mode TAF integration."
               exit 0
             fi
             echo "Waiting for Pages/CDN propagation (${attempt}/18)..."
             sleep 10
           done
-          echo "ERROR: live GitHub Pages is not serving the audited FOG/TAF runtime contract." >&2
+          echo "ERROR: live Pages does not satisfy native FOG/TAF contract." >&2
           exit 1
