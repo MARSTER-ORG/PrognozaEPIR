@@ -62,7 +62,7 @@ def validate_v242() -> None:
     required = [
         "index.html", "radar.html", "taf.html", "sat-fog.html", "arch.html",
         "taf-engine-v2.js", "taf-engine-v24.js", "taf-engine-v241.js", "taf-engine-v242.js",
-        "taf-fog-policy.js", "taf-app-v25.js", "message-archive-client.js",
+        "taf-fog-policy.js", "taf-app-v25.js", "taf-runtime-bootstrap.js", "message-archive-client.js",
         "fog-engine.js", "observation-engine.js", "mifg-engine.js",
         "meteogram-tap-details.js", "theme-control.js",
         "radar-risk-policy.js", "lightning-alerts.html", "lightning-alert-sw.js",
@@ -90,16 +90,24 @@ def validate_v242() -> None:
             raise RuntimeError(f"legacy TAF runtime in deployed taf.html: {legacy}")
     for marker in (
         "TAF ENGINE 2.4.2 ·",
-        "taf-fog-policy.js?v=20260917-1",
+        "taf-fog-policy.js?v=20260917-2",
         "taf-engine-v2.js?v=2.3.0-kernel",
         "taf-engine-v24.js?v=2.4.0",
         "taf-engine-v241.js?v=2.4.1-audit",
         "taf-engine-v242.js?v=2.4.2-cloud-fog",
-        "taf-app-v25.js?v=20260917-1",
+        "taf-runtime-bootstrap.js?v=20260917-2",
         "prognozaepir-taf-engine-v2",
     ):
         if marker not in taf:
             raise RuntimeError(f"missing TAF 2.4.2 marker: {marker}")
+
+    bootstrap = p.rd(p.SITE / "taf-runtime-bootstrap.js")
+    for marker in (
+        "primeCycleSelect", "taf-app-v25.js?v=${BUILD}", "TAF Fog Policy nie został załadowany",
+        "Interfejs generatora TAF nie uruchomił się",
+    ):
+        if marker not in bootstrap:
+            raise RuntimeError(f"TAF runtime bootstrap contract missing: {marker}")
 
     index = p.rd(p.SITE / "index.html")
     if "fog-summary-layout.js" in index:
