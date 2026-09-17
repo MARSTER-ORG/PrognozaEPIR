@@ -4,18 +4,38 @@
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   if(root)root.PrognozaEPIRFogVNextProbabilityLayer=api;
 
-  // Rendering authority for the main meteogram. The chart may redraw for many
-  // unrelated reasons (tap/click, resize, zoom). FG bars must always come from
-  // one completed vNext snapshot, never from the mutable legacy/intermediate
-  // series. Marginal 50-59/100 remains available in diagnostics, but the main
-  // meteogram only draws operationally useful >=60/100 FG bars.
   if(root&&root.document){
     const d=root.document;
-    const FOG_RENDER_THRESHOLD=60;
+    const MODE_KEY='prognozaepir-fog-engine-mode';
+    const VNEXT_THRESHOLD=60;
+    const LEGACY_THRESHOLD=50;
     const path=String(root.location?.pathname||'').toLowerCase();
     const mainMeteogram=/\/(?:index\.html)?$/.test(path);
     let guardedDraw=null;
     let guardedBase=null;
+
+    const selectedMode=()=>{
+      try{return root.localStorage?.getItem(MODE_KEY)==='vnext'?'vnext':'legacy';}
+      catch(_){return 'legacy';}
+    };
+
+    const copyRows=rows=>(rows||[]).map(row=>({
+      ...row,
+      models:Array.isArray(row?.models)?row.models.slice():row?.models
+    }));
+
+    const legacyRowsFrom=rows=>(rows||[]).map(row=>{
+      const legacy=Number(row?.fogScoreLegacy);
+      const raw=Number(row?.score);
+      return {
+        ...row,
+        score:Number.isFinite(legacy)?legacy:(Number.isFinite(raw)?raw:row?.score),
+        fogEngineMode:'legacy',
+        fogEngineSource:'legacy',
+        fogEngineFallback:false,
+        models:Array.isArray(row?.models)?row.models.slice():row?.models
+      };
+    });
 
     const installFogNavLink=()=>{
       const nav=d.querySelector('#epirGlobalNav .epir-global-nav-inner');
@@ -28,27 +48,32 @@
       if(meteo)meteo.insertAdjacentElement('afterend',a);else nav.appendChild(a);
     };
 
+    const currentThreshold=()=>selectedMode()==='vnext'?VNEXT_THRESHOLD:LEGACY_THRESHOLD;
+
     const patchMeteogramLegend=()=>{
       const legend=d.getElementById('fogMeteogramLegend');
-      if(legend&&/od 50\/100/.test(legend.innerHTML))legend.innerHTML=legend.innerHTML.replace(/od 50\/100/g,'od 60/100');
+      if(!legend)return;
+      const thr=currentThreshold();
+      legend.innerHTML=legend.innerHTML.replace(/od (?:50|60)\/100/g,`od ${thr}/100`);
     };
 
     const patchCanvasFogLabel=()=>{
       const proto=root.CanvasRenderingContext2D?.prototype;
-      if(!proto||proto.__epirFog60LabelPatched||typeof proto.fillText!=='function')return;
+      if(!proto||proto.__epirFogModeLabelPatched||typeof proto.fillText!=='function')return;
       const native=proto.fillText;
       proto.fillText=function(text,...args){
-        return native.call(this,text==='FOG 50'?'FOG 60':text,...args);
+        if(text==='FOG 50'||text==='FOG 60')text=`FOG ${currentThreshold()}`;
+        return native.call(this,text,...args);
       };
-      try{Object.defineProperty(proto,'__epirFog60LabelPatched',{value:true});}catch(_){proto.__epirFog60LabelPatched=true;}
+      try{Object.defineProperty(proto,'__epirFogModeLabelPatched',{value:true});}catch(_){proto.__epirFogModeLabelPatched=true;}
     };
 
     const installUiAuthority=()=>{
       if(!d.getElementById('fogVNextUiAuthority')){
         const style=d.createElement('style');
         style.id='fogVNextUiAuthority';
-        style.textContent=(mainMeteogram?'#fogEngine{display:none!important}':'')+
-          '#fogSummaryStructured,#fogAuxStructured{display:none!important}#fogSummary{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}@media(max-width:700px){#fogSummary{grid-template-columns:repeat(2,minmax(0,1fr))}}';
+        style.textContent=(mainMeteogram?'#fogEngine,#fogVNextDiagnostics,#fogSummaryStructured,#fogAuxStructured{display:none!important}':'')+
+          (!mainMeteogram?'#fogSummaryStructured,#fogAuxStructured{display:none!important}#fogSummary{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}@media(max-width:700px){#fogSummary{grid-template-columns:repeat(2,minmax(0,1fr))}}':'');
         d.head?.appendChild(style);
       }
       if(!mainMeteogram){
@@ -60,9 +85,9 @@
       patchCanvasFogLabel();
     };
 
-    const cloneRenderSeries=rows=>Object.freeze((rows||[]).map(row=>{
+    const cloneRenderSeries=(rows,threshold)=>Object.freeze((rows||[]).map(row=>{
       const operationalScore=Number(row?.score);
-      const displayScore=Number.isFinite(operationalScore)&&operationalScore<FOG_RENDER_THRESHOLD
+      const displayScore=Number.isFinite(operationalScore)&&operationalScore<threshold
         ? Math.min(49,operationalScore)
         : operationalScore;
       return Object.freeze({
@@ -91,37 +116,69 @@
     const redrawStable=()=>{
       installUiAuthority();
       installDrawGuard();
+      patchMeteogramLegend();
       root.queueMicrotask?.(()=>{try{if(typeof root.draw==='function')root.draw();}catch(_){}});
     };
 
-    const clearRenderSnapshot=()=>{
-      root.PrognozaEPIRFogRenderSeries=Object.freeze([]);
-      redrawStable();
-    };
-
-    const commitRenderSnapshot=()=>{
-      const rows=root.PrognozaEPIRFogSeries;
-      root.PrognozaEPIRFogRenderSeries=Array.isArray(rows)&&rows.length?cloneRenderSeries(rows):Object.freeze([]);
+    const publishSelected=(rows,mode,threshold)=>{
+      const selected=copyRows(rows);
+      root.PrognozaEPIRFogSeries=selected;
+      root.PrognozaEPIRFogRenderSeries=selected.length?cloneRenderSeries(selected,threshold):Object.freeze([]);
       root.PrognozaEPIRFogRenderRevision=(root.PrognozaEPIRFogRenderRevision||0)+1;
-      root.PrognozaEPIRFogRenderThreshold=FOG_RENDER_THRESHOLD;
+      root.PrognozaEPIRFogRenderThreshold=threshold;
+      root.PrognozaEPIRFogSelectedMode=mode;
+      root.PrognozaEPIRFogEngineMode=mode==='vnext'?'vnext-production':'legacy';
       redrawStable();
+      try{root.dispatchEvent(new CustomEvent('prognozaepir:fog-engine-mode-applied',{detail:{mode,threshold}}));}catch(_){ }
     };
 
-    // Capture listener runs before the overlay's normal listener on subsequent
-    // engine refreshes, so a raw/legacy series cannot flash onto the meteogram.
-    root.addEventListener?.('prognozaepir:fog-series-updated',clearRenderSnapshot,true);
-    root.addEventListener?.('prognozaepir:fog-vnext-updated',commitRenderSnapshot);
+    const captureLegacyAndRender=()=>{
+      const rows=root.PrognozaEPIRFogSeries;
+      if(Array.isArray(rows)&&rows.length)root.PrognozaEPIRFogLegacySeries=legacyRowsFrom(rows);
+      if(selectedMode()==='legacy'&&Array.isArray(root.PrognozaEPIRFogLegacySeries)&&root.PrognozaEPIRFogLegacySeries.length){
+        publishSelected(root.PrognozaEPIRFogLegacySeries,'legacy',LEGACY_THRESHOLD);
+      }else{
+        root.PrognozaEPIRFogRenderSeries=Object.freeze([]);
+        root.PrognozaEPIRFogRenderThreshold=VNEXT_THRESHOLD;
+        redrawStable();
+      }
+    };
 
-    // The first raw event may have fired before this dynamically loaded module
-    // existed. Clear it as soon as the module is installed and wait for vNext.
+    const commitVNextSnapshot=()=>{
+      const rows=root.PrognozaEPIRFogSeries;
+      if(Array.isArray(rows)&&rows.length){
+        root.PrognozaEPIRFogVNextSeries=copyRows(rows);
+        if(!Array.isArray(root.PrognozaEPIRFogLegacySeries)||!root.PrognozaEPIRFogLegacySeries.length)
+          root.PrognozaEPIRFogLegacySeries=legacyRowsFrom(rows);
+      }
+      if(selectedMode()==='legacy'){
+        publishSelected(root.PrognozaEPIRFogLegacySeries||[],'legacy',LEGACY_THRESHOLD);
+      }else{
+        publishSelected(root.PrognozaEPIRFogVNextSeries||rows||[],'vnext',VNEXT_THRESHOLD);
+      }
+    };
+
+    const applyStoredMode=()=>{
+      const mode=selectedMode();
+      if(mode==='legacy'&&Array.isArray(root.PrognozaEPIRFogLegacySeries)&&root.PrognozaEPIRFogLegacySeries.length)
+        publishSelected(root.PrognozaEPIRFogLegacySeries,'legacy',LEGACY_THRESHOLD);
+      else if(mode==='vnext'&&Array.isArray(root.PrognozaEPIRFogVNextSeries)&&root.PrognozaEPIRFogVNextSeries.length)
+        publishSelected(root.PrognozaEPIRFogVNextSeries,'vnext',VNEXT_THRESHOLD);
+      else redrawStable();
+    };
+
+    root.addEventListener?.('prognozaepir:fog-series-updated',captureLegacyAndRender,true);
+    root.addEventListener?.('prognozaepir:fog-vnext-updated',commitVNextSnapshot);
+    root.addEventListener?.('prognozaepir:fog-engine-mode-changed',()=>setTimeout(applyStoredMode,0));
+
     root.PrognozaEPIRFogRenderSeries=Object.freeze([]);
     setTimeout(redrawStable,0);
-    setTimeout(()=>{installUiAuthority();installFogNavLink();patchMeteogramLegend();},600);
+    setTimeout(()=>{installUiAuthority();installFogNavLink();patchMeteogramLegend();applyStoredMode();},600);
   }
 })(typeof window!=='undefined'?window:globalThis,function(){
   'use strict';
 
-  const VERSION='1.4.0-state-gated-authoritative-render';
+  const VERSION='1.5.0-state-gated-engine-switch';
   const finite=Number.isFinite;
   const num=v=>v!==null&&v!==undefined&&v!==''&&finite(Number(v))?Number(v):null;
   const clamp=(v,a=0,b=1)=>Math.max(a,Math.min(b,v));
@@ -131,6 +188,7 @@
     const t=clamp((x-a)/(b-a));
     return t*t*(3-2*t);
   };
+
   function weightedAvailable(items){
     let s=0,w=0,full=0;
     for(const p of items||[]){
@@ -141,8 +199,7 @@
   }
 
   function mechanismPotential(v={}){
-    const ranked=[v.RAD,v.ADV,v.CBL,v.PCP]
-      .map(num).filter(finite).map(x=>clamp(x)).sort((a,b)=>b-a);
+    const ranked=[v.RAD,v.ADV,v.CBL,v.PCP].map(num).filter(finite).map(x=>clamp(x)).sort((a,b)=>b-a);
     if(!ranked.length)return {value:null,coverage:0,primary:null,secondary:null};
     const names=[['RAD',num(v.RAD)],['ADV',num(v.ADV)],['CBL',num(v.CBL)],['PCP',num(v.PCP)]]
       .filter(x=>finite(x[1])).sort((a,b)=>b[1]-a[1]);
@@ -157,13 +214,11 @@
       {v:finite(sat)?clamp(sat):null,w:.60},
       {v:finite(pbl)?clamp(pbl):null,w:.18},
       {v:finite(sfc)?clamp(sfc):null,w:.12},
-      {v:inverseDiss,w:.10},
+      {v:inverseDiss,w:.10}
     ]);
     return {value:out.value,coverage:out.coverage,saturation:sat,pbl,surfaceCooling:sfc,dissipation:diss,inverseDiss};
   }
 
-  // Mechanism strength says that a fog-forming process exists. Operational FG
-  // additionally requires a near-surface thermodynamic state capable of sustaining it.
   function physicsSignal(v={}){
     const potential=mechanismPotential(v);
     if(!finite(potential.value))return {...potential,potential:null,readiness:null,readinessCoverage:0,dissipationPenalty:0};
@@ -188,9 +243,6 @@
     };
   }
 
-  // NWP visibility is not allowed to veto a strong, saturated internal fog
-  // signal. It is only a contradiction check for marginal FG when the internal
-  // near-surface state is simultaneously weak or drying.
   function visibilityContradiction(input={},physicsOutput={},physics={}){
     const vis=num(input.visibility);
     const sat=num(physicsOutput.SATURATION);
@@ -219,7 +271,7 @@
       {v:visSignal,w:.62},
       {v:cloud2mSignal,w:.18},
       {v:cbhSignal,w:.12},
-      {v:weatherFog,w:.08},
+      {v:weatherFog,w:.08}
     ]);
     return {value:out.value,coverage:out.coverage,visibility:visSignal,cloud2m:cloud2mSignal,cloudBase:cbhSignal,weatherFog};
   }
@@ -253,8 +305,6 @@
       contradictionPenalty=.45*contradiction.value;
       final=clamp(final*(1-contradictionPenalty));
     }
-    // Hard operational guard only for a clearly marginal, daytime, unsaturated
-    // case with very high visibility. Strong/saturated physics never reaches it.
     const sat=num(physicsOutput.SATURATION),vis=num(input.visibility),isDay=num(input.isDay);
     if(finite(final)&&isDay===1&&finite(vis)&&vis>=12000&&finite(sat)&&sat<.45&&finite(p.value)&&p.value<.65)
       final=Math.min(final,.49);
@@ -268,7 +318,7 @@
       physicsCoverage:p.coverage,directCoverage:d.coverage,mechanism1:p.primary,mechanism2:p.secondary,
       leadBucket:combined.weights.bucket,blendWeights:{physics:1,direct:combined.weights.directConfirm,directConfirm:combined.weights.directConfirm},
       directRole:combined.directRole,usedDirectFallback:combined.usedDirectFallback,directContribution:combined.directContribution,
-      diagnostics:{direct:d,state:p.diagnostics?.state||null,contradiction},
+      diagnostics:{direct:d,state:p.diagnostics?.state||null,contradiction}
     };
   }
 
