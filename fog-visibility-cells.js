@@ -59,13 +59,6 @@
     return x >= 10000 ? `${(x / 1000).toFixed(1)} km` : `${x} m`;
   }
 
-  function fmtUtc(t) {
-    if (!finite(t)) return '—';
-    try {
-      return new Intl.DateTimeFormat('pl-PL', {timeZone:'UTC', hour:'2-digit', minute:'2-digit', hourCycle:'h23'}).format(new Date(t)) + ' UTC';
-    } catch (_) { return new Date(t).toISOString().slice(11, 16) + ' UTC'; }
-  }
-
   function fmtUtcDate(t) {
     if (!finite(t)) return '—';
     try {
@@ -84,6 +77,7 @@
       el.className = className;
       host.appendChild(el);
     }
+    el.hidden = false;
     return el;
   }
 
@@ -97,10 +91,12 @@
     });
     const card = ensureCard(host, 'fgEstimatedVisCard', 'fog-card');
     if (!card) return;
-    if (!rows.length) { card.hidden = true; return; }
+    if (!rows.length) {
+      card.innerHTML = `<small>FG · szacowana VIS</small><strong>—</strong><em>brak aktywnego FG w 48 h · ${mode() === 'vnext' ? 'vNEXT' : 'LEGACY'}</em>`;
+      return;
+    }
     const min = rows.reduce((a, b) => fogVisibility(b) < fogVisibility(a) ? b : a, rows[0]);
-    card.hidden = false;
-    card.innerHTML = `<small>Szacowana VIS przy FG</small><strong>${fmtVis(fogVisibility(min))}</strong><em>minimum przy aktywnym FG · ${fmtUtcDate(num(min.t))} · ${mode() === 'vnext' ? 'vNEXT' : 'LEGACY'}</em>`;
+    card.innerHTML = `<small>FG · szacowana VIS</small><strong>${fmtVis(fogVisibility(min))}</strong><em>minimum przy aktywnym FG · ${fmtUtcDate(num(min.t))} · ${mode() === 'vnext' ? 'vNEXT' : 'LEGACY'}</em>`;
   }
 
   function updateBr() {
@@ -114,7 +110,10 @@
     const active = brSeries().filter(r => finite(num(r?.t)) && num(r.t) >= now - HOUR && num(r.t) <= now + 24 * HOUR && finite(num(r?.score)) && num(r.score) >= 50);
     const card = ensureCard(host, 'brEstimatedVisCard', 'br-card');
     if (!card) return;
-    if (!active.length) { card.hidden = true; return; }
+    if (!active.length) {
+      card.innerHTML = '<small>BR · szacowana VIS</small><strong>—</strong><em>brak aktywnego BR w 24 h</em>';
+      return;
+    }
 
     const withBandVis = active.filter(r => finite(num(r?.visibility)) && num(r.visibility) >= 1000 && num(r.visibility) <= 5000);
     const ref = withBandVis.length
@@ -124,8 +123,7 @@
     const estimate = finite(actual) && actual >= 1000 && actual <= 5000
       ? fmtVis(actual)
       : (window.PrognozaEPIRBREngine?.expectedVis?.(ref) || '—');
-    card.hidden = false;
-    card.innerHTML = `<small>Szacowana VIS przy BR</small><strong>${estimate}</strong><em>${fmtUtcDate(num(ref.t))} · zakres BR 1000–5000 m</em>`;
+    card.innerHTML = `<small>BR · szacowana VIS</small><strong>${estimate}</strong><em>${fmtUtcDate(num(ref.t))} · zakres BR 1000–5000 m</em>`;
   }
 
   function updateMifg() {
@@ -135,19 +133,15 @@
     const active = mifgSeries().filter(r => finite(num(r?.t)) && num(r.t) >= now - HOUR && num(r.t) <= now + 48 * HOUR && finite(num(r?.score)) && num(r.score) >= 50);
     const card = ensureCard(host, 'mifgVisibilityContextCard', 'mifg-card');
     if (!card) return;
-    if (!active.length) { card.hidden = true; return; }
+    if (!active.length) {
+      card.innerHTML = '<small>MIFG · VIS standardowa</small><strong>—</strong><em>brak aktywnego MIFG w 48 h</em>';
+      return;
+    }
 
     const peak = active.reduce((a,b) => num(b.score) > num(a.score) ? b : a, active[0]);
     const fog = nearest(fogSeries(), num(peak.t));
     const stdVis = fogVisibility(fog);
-    card.hidden = false;
-    card.innerHTML = `<small>VIS standardowa przy MIFG</small><strong>${fmtVis(stdVis)}</strong><em>${fmtUtcDate(num(peak.t))} · nie jest to VIS warstwy &lt;2 m</em>`;
-
-    const note = document.getElementById('mifgStandaloneNote');
-    if (note && !note.dataset.visContext) {
-      note.dataset.visContext = '1';
-      note.insertAdjacentHTML('beforeend', ' <b>Ważne:</b> MIFG nie jest sztucznie przeliczane ze score na metry; pokazana VIS jest standardową widzialnością w tej samej godzinie.');
-    }
+    card.innerHTML = `<small>MIFG · VIS standardowa</small><strong>${fmtVis(stdVis)}</strong><em>${fmtUtcDate(num(peak.t))} · nie jest to VIS warstwy &lt;2 m</em>`;
   }
 
   function render() {
