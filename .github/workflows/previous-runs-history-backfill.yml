@@ -53,7 +53,7 @@ jobs:
           MAX_MONTHS: ${{ github.event.inputs.max_months || '1' }}
         run: |
           python3 scripts/backfill_previous_runs_history.py --max-months "$MAX_MONTHS"
-          if git diff --quiet -- data/learning/model-forecasts data/learning/previous-runs-backfill-state.json; then
+          if [ -z "$(git status --porcelain -- data/learning/model-forecasts data/learning/previous-runs-backfill-state.json)" ]; then
             echo 'changed=false' >> "$GITHUB_OUTPUT"
           else
             echo 'changed=true' >> "$GITHUB_OUTPUT"
