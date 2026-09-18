@@ -78,8 +78,12 @@
       if (finite(p)) return p;
       const f = asFraction(row?.fogProbabilityVNext);
       if (finite(f)) return f;
+      return asFraction(row?.score);
     }
-    return asFraction(row?.score);
+    // fog-summary-layout enriches the active series in-place for vNext and
+    // preserves the original LEGACY score in fogScoreLegacy.  BR in LEGACY
+    // mode must never consume the enriched vNext score by accident.
+    return asFraction(row?.fogScoreLegacy ?? row?.score);
   }
 
   function weighted(parts) {
@@ -161,10 +165,16 @@
     return 'legacy';
   }
 
+  function legacySeries() {
+    if (typeof window === 'undefined') return [];
+    if (Array.isArray(window.PrognozaEPIRFogLegacySeries) && window.PrognozaEPIRFogLegacySeries.length) return window.PrognozaEPIRFogLegacySeries;
+    return Array.isArray(window.PrognozaEPIRFogSeries) ? window.PrognozaEPIRFogSeries : [];
+  }
+
   function selectedSeries(mode) {
     if (typeof window === 'undefined') return [];
     if (mode === 'vnext' && Array.isArray(window.PrognozaEPIRFogVNextSeries) && window.PrognozaEPIRFogVNextSeries.length) return window.PrognozaEPIRFogVNextSeries;
-    return Array.isArray(window.PrognozaEPIRFogSeries) ? window.PrognozaEPIRFogSeries : [];
+    return legacySeries();
   }
 
   function scoreSeries(src, mode, now, horizonHours) {
@@ -174,12 +184,12 @@
       .filter(r => !finite(r.t) || (r.t >= now - HOUR && r.t <= now + horizonHours * HOUR));
   }
 
-  // The meteogram FOG bars are always based on PrognozaEPIRFogSeries (the
-  // consensus/LEGACY series). BR drawn on the same meteogram must use the same
-  // time base and source, regardless of a vNEXT selection remembered from fog.html.
+  // The meteogram BR target is locked to the authoritative LEGACY fog signal.
+  // Prefer the dedicated immutable snapshot; fall back to the active series only
+  // when running outside the production Pages bridge.
   function meteogramSeries(now) {
     if (typeof window === 'undefined') return [];
-    return scoreSeries(window.PrognozaEPIRFogSeries, 'legacy', now, 48);
+    return scoreSeries(legacySeries(), 'legacy', now, 48);
   }
 
   function localHour(t) {
@@ -297,7 +307,7 @@
 
   return Object.freeze({
     VERSION:'1.0.0-br-target',
-    BUILD:'1.0.1-br-meteogram-sync',
+    BUILD:'1.0.2-br-legacy-source',
     scoreRow,
     classify,
     expectedVis,
