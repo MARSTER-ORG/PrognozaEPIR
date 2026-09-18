@@ -98,6 +98,27 @@ def wire_meteogram_bridge() -> None:
     s = p.read_text(encoding="utf-8")
     s = re.sub(r'utc-ui-guard\.js(?:\?v=[^\"]*)?', f'utc-ui-guard.js?v={ASSET_V}', s)
 
+    # BR on the meteogram must come from the same build as the overlay.  The
+    # source index historically carried a hand-written ?v= token for br-engine,
+    # which let browsers/CDN keep an older BR runtime while the overlay was new.
+    # Remove every legacy BR tag and reinsert exactly one cache-busted tag
+    # immediately before the overlay.
+    s = re.sub(
+        r'\s*<script\s+src=["\']br-engine\.js(?:\?[^"\']*)?["\'][^>]*></script>',
+        '',
+        s,
+        flags=re.I,
+    )
+    overlay_re = re.compile(
+        r'<script\s+src=["\']fog-meteogram-overlay\.js(?:\?[^"\']*)?["\'][^>]*></script>',
+        flags=re.I,
+    )
+    if not overlay_re.search(s):
+        raise SystemExit("meteogram Fog overlay tag missing before BR wiring")
+    br_tag = f'<script src="br-engine.js?v={ASSET_V}"></script>'
+    overlay_tag = f'<script src="fog-meteogram-overlay.js?v={ASSET_V}"></script>'
+    s = overlay_re.sub(br_tag + '\n' + overlay_tag, s, count=1)
+
     hide = '<style id="epirFogStandaloneOnly">#fogEngine,#fogEngineModeSwitch,#fogVNextDiagnostics,#fogSummaryStructured,#fogAuxStructured{display:none!important}</style>'
     if 'id="epirFogStandaloneOnly"' not in s:
         if '</head>' not in s:
@@ -140,6 +161,15 @@ def validate() -> None:
         raise SystemExit("meteogram Fog bridge contract missing")
     if f'utc-ui-guard.js?v={ASSET_V}' not in index:
         raise SystemExit("global navigation runtime is not cache-busted")
+
+    br_tag = f'br-engine.js?v={ASSET_V}'
+    overlay_tag = f'fog-meteogram-overlay.js?v={ASSET_V}'
+    if index.count('br-engine.js?v=') != 1 or br_tag not in index:
+        raise SystemExit("meteogram BR runtime is missing, duplicated or cache-stale")
+    if index.count('fog-meteogram-overlay.js?v=') != 1 or overlay_tag not in index:
+        raise SystemExit("meteogram Fog/BR overlay is missing, duplicated or cache-stale")
+    if index.find(br_tag) > index.find(overlay_tag):
+        raise SystemExit("meteogram BR runtime must load before Fog/BR overlay")
 
     if "fogEngineMode:'vnext-production'" not in bridge or 'Probability.operationalScore' not in bridge:
         raise SystemExit("Fog vNext bridge is not in production mode")
