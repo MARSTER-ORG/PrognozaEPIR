@@ -1,0 +1,46 @@
+name: Cache-bust fog meteogram assets once
+
+on:
+  push:
+    paths:
+      - '.github/workflows/cache-bust-fog-meteogram-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  cache-bust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Update fog asset versions
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('index.html')
+          s = p.read_text(encoding='utf-8')
+          replacements = {
+              'fog-engine.js?v=20260911-7': 'fog-engine.js?v=20260918-fog1',
+              'mifg-engine.js?v=20260911-7': 'mifg-engine.js?v=20260918-mifg2',
+              'br-engine.js?v=20260917-brsync1': 'br-engine.js?v=20260918-brsync2',
+              'fog-meteogram-overlay.js?v=20260917-brsync1': 'fog-meteogram-overlay.js?v=20260918-panel-sync2',
+              'fog-summary-layout.js?v=20260911-7': 'fog-summary-layout.js?v=20260918-fog1',
+          }
+          for old, new in replacements.items():
+              if old not in s:
+                  raise SystemExit(f'missing expected asset reference: {old}')
+              s = s.replace(old, new)
+          p.write_text(s, encoding='utf-8')
+          PY
+      - name: Commit cache-bust
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html
+          git diff --cached --quiet && exit 0
+          git commit -m 'fix: refresh fog meteogram browser assets'
+          git push origin HEAD:main
