@@ -8,6 +8,21 @@ const legacy = BR.scoreRow({t:now, sat:92, score:62, vis:2600, obsPhenomenon:nul
 assert(legacy && legacy.score >= 60, `legacy BR should activate in saturated 1-5 km regime, got ${legacy?.score}`);
 assert.strictEqual(BR.classify(legacy.score) === 'PRAWDOPODOBNE' || BR.classify(legacy.score) === 'BARDZO PRAWDOPODOBNE', true);
 
+// Production vNext enrichment mutates the active Fog series in place and keeps
+// the original LEGACY score in fogScoreLegacy. BR in LEGACY mode must consume
+// that preserved score, never the enriched active score.
+const enrichedLegacy = BR.scoreRow({
+  t:now,
+  sat:92,
+  score:91,
+  fogScoreLegacy:38,
+  vis:2600,
+  obsPhenomenon:null
+}, 'legacy', now);
+assert(enrichedLegacy, 'legacy BR should score an enriched Fog row');
+assert(Math.abs(enrichedLegacy.fogPotential - 0.38) < 1e-12,
+  `legacy BR must use fogScoreLegacy after vNext enrichment, got ${enrichedLegacy?.fogPotential}`);
+
 const vnext = BR.scoreRow({
   t:now,
   vnext:{SATURATION:.93},
