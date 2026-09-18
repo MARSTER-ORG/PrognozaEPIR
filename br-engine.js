@@ -296,7 +296,8 @@
   }
 
   return Object.freeze({
-    VERSION:'1.0.1-br-meteogram-sync',
+    VERSION:'1.0.0-br-target',
+    BUILD:'1.0.1-br-meteogram-sync',
     scoreRow,
     classify,
     expectedVis,
