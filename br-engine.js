@@ -167,6 +167,21 @@
     return Array.isArray(window.PrognozaEPIRFogSeries) ? window.PrognozaEPIRFogSeries : [];
   }
 
+  function scoreSeries(src, mode, now, horizonHours) {
+    return (Array.isArray(src) ? src : [])
+      .map(r => scoreRow(r, mode, now))
+      .filter(Boolean)
+      .filter(r => !finite(r.t) || (r.t >= now - HOUR && r.t <= now + horizonHours * HOUR));
+  }
+
+  // The meteogram FOG bars are always based on PrognozaEPIRFogSeries (the
+  // consensus/LEGACY series). BR drawn on the same meteogram must use the same
+  // time base and source, regardless of a vNEXT selection remembered from fog.html.
+  function meteogramSeries(now) {
+    if (typeof window === 'undefined') return [];
+    return scoreSeries(window.PrognozaEPIRFogSeries, 'legacy', now, 48);
+  }
+
   function localHour(t) {
     try { return new Intl.DateTimeFormat('pl-PL', {timeZone:'UTC', hour:'2-digit', minute:'2-digit'}).format(new Date(t)) + ' UTC'; }
     catch (_) { return new Date(t).toISOString().slice(11, 16) + ' UTC'; }
@@ -228,15 +243,24 @@
     const mode = selectMode();
     const src = selectedSeries(mode);
     const now = Date.now();
-    const rows = src.map(r => scoreRow(r, mode, now)).filter(Boolean).filter(r => !finite(r.t) || (r.t >= now - HOUR && r.t <= now + 24 * HOUR));
+    const rows = scoreSeries(src, mode, now, 24);
+    const meteogramRows = meteogramSeries(now);
+    const publishedRows = meteogramRows.length ? meteogramRows : rows;
+
+    // Publish before rendering the standalone panel. On the meteogram the BR
+    // overlay must still receive data even when the selected vNEXT panel series
+    // is temporarily empty during startup.
+    window.PrognozaEPIRBRSeries = publishedRows;
+    window.dispatchEvent(new CustomEvent('prognozaepir:br-series-updated', {detail:{mode:'meteogram-legacy',panelMode:mode,count:publishedRows.length}}));
+
     const summary = document.getElementById('brSummary');
     const hours = document.getElementById('brHours');
     const note = document.getElementById('brNote');
-    if (!summary) return false;
+    if (!summary) return Boolean(publishedRows.length);
     if (!rows.length) {
       summary.innerHTML = `<div class="br-card"><small>Status</small><strong>Ładowanie…</strong><em>oczekiwanie na serię ${mode === 'vnext' ? 'vNEXT' : 'LEGACY'}</em></div>`;
       if (hours) hours.hidden = true;
-      return false;
+      return Boolean(publishedRows.length);
     }
     const current = rows.reduce((a, b) => Math.abs((b.t ?? now) - now) < Math.abs((a.t ?? now) - now) ? b : a, rows[0]);
     const peak = rows.reduce((a, b) => !a || b.score > a.score ? b : a, null) || current;
@@ -252,8 +276,6 @@
       hours.innerHTML = rows.slice(0, 13).map(r => `<div class="br-hour ${riskClass(r.score)}"><b>${localHour(r.t)}</b><strong>${classify(r.score)}</strong><small>${Math.round(r.score)}/100</small><small>VIS ${expectedVis(r)}</small></div>`).join('');
     }
     if (note) note.innerHTML = `<b>BR jest osobnym targetem, nie mechanizmem FG.</b> Aktywny silnik: ${mode === 'vnext' ? 'vNEXT' : 'LEGACY'}. Wynik /100 jest wskaźnikiem operacyjnym BR, nie skalibrowanym procentem prawdopodobieństwa. Gdy wybrany silnik wskazuje VIS &lt;1000 m i operacyjną FG, moduł ogranicza BR zamiast dublować mgłę.`;
-    window.PrognozaEPIRBRSeries = rows;
-    window.dispatchEvent(new CustomEvent('prognozaepir:br-series-updated', {detail:{mode,count:rows.length}}));
     return true;
   }
 
@@ -274,7 +296,7 @@
   }
 
   return Object.freeze({
-    VERSION:'1.0.0-br-target',
+    VERSION:'1.0.1-br-meteogram-sync',
     scoreRow,
     classify,
     expectedVis,
