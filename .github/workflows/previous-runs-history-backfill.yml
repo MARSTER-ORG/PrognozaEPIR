@@ -1,0 +1,119 @@
+name: Previous-runs historical consensus backfill
+
+on:
+  schedule:
+    - cron: '13 * * * *'
+  workflow_dispatch:
+    inputs:
+      max_months:
+        description: Historical months to process this run
+        required: false
+        default: '1'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/backfill_previous_runs_history.py'
+      - '.github/workflows/previous-runs-history-backfill.yml'
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: previous-runs-history-backfill-main
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate backfill code
+        run: |
+          python3 -m py_compile \
+            scripts/backfill_previous_runs_history.py \
+            scripts/model_verification.py \
+            scripts/consensus_diagnostics.py \
+            scripts/build_adaptive_weights.py \
+            scripts/build_historical_model_skill.py \
+            scripts/embed_model_verification.py
+
+      - name: Acquire one historical Previous Runs month
+        id: acquire
+        env:
+          MAX_MONTHS: ${{ github.event.inputs.max_months || '1' }}
+        run: |
+          python3 scripts/backfill_previous_runs_history.py --max-months "$MAX_MONTHS"
+          if git diff --quiet -- data/learning/model-forecasts data/learning/previous-runs-backfill-state.json; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Rebuild consensus learning
+        if: steps.acquire.outputs.changed == 'true'
+        run: |
+          python3 scripts/model_verification.py
+          python3 scripts/consensus_diagnostics.py
+          python3 scripts/build_adaptive_weights.py
+          python3 scripts/build_historical_model_skill.py
+          python3 scripts/embed_model_verification.py
+
+      - name: Validate rebuilt learning
+        if: steps.acquire.outputs.changed == 'true'
+        run: |
+          python3 -m json.tool data/learning/previous-runs-backfill-state.json >/dev/null
+          python3 -m json.tool data/learning/model-verification.json >/dev/null
+          python3 -m json.tool data/learning/adaptive-weights.json >/dev/null
+          python3 -m json.tool data/learning/historical-model-skill.json >/dev/null
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          state=json.loads(Path('data/learning/previous-runs-backfill-state.json').read_text(encoding='utf-8'))
+          weights=json.loads(Path('data/learning/adaptive-weights.json').read_text(encoding='utf-8'))
+          hist=json.loads(Path('data/learning/historical-model-skill.json').read_text(encoding='utf-8'))
+          assert state.get('schema') == 'prognozaepir-previous-runs-backfill-v1'
+          assert state.get('archive_start') == '2024-01-01'
+          assert len(weights.get('models') or {}) >= 8
+          assert hist.get('schema') == 'prognozaepir-historical-model-skill-v1'
+          print('processed months:', state.get('selected_months'))
+          print('remaining months:', state.get('remaining_pending_months'))
+          print('historical usable cases:', (hist.get('archive') or {}).get('usable_forecast_cases'))
+          PY
+
+      - name: Commit historical learning
+        if: steps.acquire.outputs.changed == 'true'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          rm -rf scripts/__pycache__
+          git add data/learning
+          git commit -m 'weather: extend consensus learning with Previous Runs history'
+          git reset --hard HEAD
+          git clean -fd
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            if git rebase origin/main && git push origin HEAD:main; then
+              exit 0
+            fi
+            git rebase --abort 2>/dev/null || true
+            sleep $((attempt * 3))
+          done
+          exit 1
+
+      - name: Redeploy refreshed learning
+        if: steps.acquire.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run pages.yml --repo "${{ github.repository }}" --ref main
+          gh workflow run model-snapshot.yml --repo "${{ github.repository }}" --ref main
