@@ -131,6 +131,39 @@
     return (1-obsWeight)*score+obsWeight*100;
   }
 
+  // Raw MIFG scores close to 50 can form unrealistically long, flat episodes.
+  // Keep the peak-centred operational core of each contiguous >=50 episode and
+  // retain the original score for diagnostics. This trims weak temporal shoulders
+  // without imposing a fixed maximum duration on genuinely persistent MIFG.
+  function shapeOperationalWindows(rows){
+    const out=(Array.isArray(rows)?rows:[]).map(r=>({...r,rawScore:finite(r?.score)?r.score:null}));
+    let i=0;
+    while(i<out.length){
+      if(!finite(out[i]?.score)||out[i].score<50){i++;continue;}
+      const a=i;
+      let b=i;
+      while(b+1<out.length&&finite(out[b+1]?.score)&&out[b+1].score>=50&&finite(out[b+1]?.t)&&finite(out[b]?.t)&&out[b+1].t-out[b].t<=1.6*HOUR)b++;
+
+      let pi=a;
+      for(let k=a+1;k<=b;k++)if(out[k].score>out[pi].score)pi=k;
+      const peak=out[pi].score;
+      const coreThreshold=Math.max(52,peak-7,peak*.88);
+      let left=pi,right=pi;
+      while(left>a&&out[left-1].score>=coreThreshold)left--;
+      while(right<b&&out[right+1].score>=coreThreshold)right++;
+
+      for(let k=a;k<=b;k++){
+        if(k<left||k>right){
+          out[k]={...out[k],score:Math.min(out[k].score,49),temporalTrimmed:true,coreThreshold};
+        }else{
+          out[k]={...out[k],operationalCore:true,coreThreshold};
+        }
+      }
+      i=b+1;
+    }
+    return out;
+  }
+
   async function fetchObs(){
     try{
       const r=await fetch('data/messages/latest.json?v='+Date.now(),{cache:'no-store'});
@@ -264,7 +297,7 @@
     let dmiError=null;
     try{
       const rows=await fetchDmiRows();
-      const scored=scoreDmiRows(rows);
+      const scored=shapeOperationalWindows(scoreDmiRows(rows));
       if(scored.some(x=>finite(x.score))){
         series=scored;
         engineStatus={source:'DMI HARMONIE AROME',error:null,updated:Date.now(),count:series.length};
@@ -274,7 +307,7 @@
     }catch(e){dmiError=e;}
 
     const fallback=await waitConsensus(10000);
-    const scored=scoreConsensus(fallback);
+    const scored=shapeOperationalWindows(scoreConsensus(fallback));
     if(scored.some(x=>finite(x.score))){
       series=scored;
       engineStatus={source:'PrognozaEPIR multimodel fallback',error:String(dmiError?.message||dmiError||''),updated:Date.now(),count:series.length};
@@ -325,7 +358,7 @@
     }
     if(n){
       const fallback=engineStatus.source.includes('fallback')?' · fallback multimodel aktywny':'';
-      n.innerHTML='<b>MIFG:</b> osobny score płytkiej mgły &lt;2 m; VIS nie jest głównym predyktorem. Kluczowe są nasycenie przy powierzchni, wiatr, inwersja, wychładzanie i wilgotność podłoża'+fallback+'.';
+      n.innerHTML='<b>MIFG:</b> osobny score płytkiej mgły &lt;2 m; VIS nie jest głównym predyktorem. Kluczowe są nasycenie przy powierzchni, wiatr, inwersja, wychładzanie i wilgotność podłoża. Okno operacyjne jest zawężane do rdzenia lokalnego maksimum, żeby słabe wartości progowe nie wydłużały sztucznie zjawiska'+fallback+'.';
     }
   }
 
