@@ -40,33 +40,31 @@ def patch_taf_v243() -> None:
 
 
 def patch_global_theme() -> None:
-    """Install one shared System/Light/Dark control on every deployed HTML page."""
-    script = f'<script src="theme-control.js?v={p.ASSET_V}"></script>'
+    """Wire the shared app.css/theme.js pair on every deployed HTML page."""
+    theme = f'<script src="theme.js?v={p.ASSET_V}"></script>'
+    style = f'<link rel="stylesheet" href="app.css?v={p.ASSET_V}">'
     html_pages = sorted(p.SITE.glob("*.html"))
     if not html_pages:
-        raise RuntimeError("no HTML pages available for global theme wiring")
+        raise RuntimeError("no HTML pages available for shared UI wiring")
 
     for path in html_pages:
         s = p.rd(path)
-        s = re.sub(
+        for pattern in (
             r'\s*<script\s+src=["\']theme-control\.js(?:\?[^"\']*)?["\'][^>]*></script>',
-            '',
-            s,
-            flags=re.I,
-        )
+            r'\s*<script\s+src=["\']theme\.js(?:\?[^"\']*)?["\'][^>]*></script>',
+            r'\s*<link\s+[^>]*href=["\']app\.css(?:\?[^"\']*)?["\'][^>]*>',
+        ):
+            s = re.sub(pattern, '', s, flags=re.I)
 
-        color_meta = re.compile(
-            r'<meta\b[^>]*\bname=["\']color-scheme["\'][^>]*>',
-            flags=re.I,
-        )
+        color_meta = re.compile(r'<meta\b[^>]*\bname=["\']color-scheme["\'][^>]*>', flags=re.I)
         if color_meta.search(s):
             s = color_meta.sub('<meta name="color-scheme" content="light dark">', s, count=1)
         elif re.search(r'</head>', s, re.I):
             s = re.sub(r'</head>', '  <meta name="color-scheme" content="light dark">\n</head>', s, count=1, flags=re.I)
         else:
-            raise RuntimeError(f"HTML page has no </head> for theme wiring: {path.name}")
+            raise RuntimeError(f"HTML page has no </head> for shared UI wiring: {path.name}")
 
-        s = re.sub(r'</head>', f'  {script}\n</head>', s, count=1, flags=re.I)
+        s = re.sub(r'</head>', f'  {theme}\n  {style}\n</head>', s, count=1, flags=re.I)
         p.wr(path, s)
 
 
@@ -76,7 +74,7 @@ def validate_v243() -> None:
         "taf-engine-v2.js", "taf-engine-v24.js", "taf-engine-v241.js", "taf-engine-v242.js", "taf-engine-v243.js",
         "taf-fog-policy.js", "taf-app-v25.js", "taf-runtime-bootstrap.js", "message-archive-client.js",
         "fog-engine.js", "observation-engine.js", "mifg-engine.js",
-        "meteogram-tap-details.js", "theme-control.js",
+        "meteogram-tap-details.js", "theme.js", "app.css",
         "radar-risk-policy.js", "lightning-alerts.html", "lightning-alert-sw.js",
     ]
     missing = [x for x in required if not (p.SITE / x).is_file()]
@@ -88,8 +86,12 @@ def validate_v243() -> None:
         raise RuntimeError("no deployed HTML pages found")
     for page in html_pages:
         html = p.rd(page)
-        if html.count('theme-control.js?v=') != 1:
-            raise RuntimeError(f"global theme control must be wired exactly once: {page.name}")
+        if html.count('theme.js?v=') != 1:
+            raise RuntimeError(f"shared theme controller must be wired exactly once: {page.name}")
+        if html.count('app.css?v=') != 1:
+            raise RuntimeError(f"shared stylesheet must be wired exactly once: {page.name}")
+        if 'theme-control.js' in html:
+            raise RuntimeError(f"legacy theme-control.js leaked into deployed page: {page.name}")
         if '<meta name="color-scheme" content="light dark">' not in html:
             raise RuntimeError(f"global light/dark color scheme missing: {page.name}")
 
@@ -153,7 +155,7 @@ def main() -> int:
     p.patch_radar()
     patch_global_theme()
     validate_v243()
-    print(f"prepared canonical Pages artifact with TAF 2.4.3 and global theme control: {p.SITE}")
+    print(f"prepared canonical Pages artifact with TAF 2.4.3 and shared UI: {p.SITE}")
     return 0
 
 

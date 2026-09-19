@@ -35,7 +35,7 @@ def copy_assets() -> None:
     if SITE.exists():
         shutil.rmtree(SITE)
     SITE.mkdir(parents=True)
-    allowed = {".html", ".js", ".png", ".svg", ".webmanifest", ".ico"}
+    allowed = {".html", ".js", ".css", ".png", ".svg", ".webmanifest", ".ico"}
     for src in ROOT.iterdir():
         if src.is_file() and src.suffix.lower() in allowed:
             shutil.copy2(src, SITE / src.name)
