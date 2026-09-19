@@ -146,10 +146,51 @@ jobs:
               && printf '%s' "$tafapp" | grep -Fq 'const mode=Policy.selectedMode(w)' \
               && printf '%s' "$tafapp" | grep -Fq 'Policy.seriesForMode(w,mode)'; then
               echo "GitHub Pages serves commit $GITHUB_SHA with native EPIR FOG and TAF 2.4.3 prevailing-wind integration."
-              exit 0
+              break
+            fi
+            if [ "$attempt" -eq 18 ]; then
+              echo "ERROR: live Pages does not satisfy native FOG/TAF 2.4.3 contract." >&2
+              exit 1
             fi
             echo "Waiting for Pages/CDN propagation (${attempt}/18)..."
             sleep 10
           done
-          echo "ERROR: live Pages does not satisfy native FOG/TAF 2.4.3 contract." >&2
-          exit 1
+
+      - name: Browser smoke test TAF cycles and hourly data
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          set -euo pipefail
+          base="${PAGE_URL%/}"
+          browser="$(command -v google-chrome || command -v chromium || command -v chromium-browser || true)"
+          if [ -z "$browser" ]; then
+            echo "ERROR: no Chromium/Chrome binary on runner" >&2
+            exit 1
+          fi
+
+          "$browser" --headless --no-sandbox --disable-gpu --disable-dev-shm-usage \
+            --virtual-time-budget=8000 --dump-dom \
+            "${base}/taf.html?v=${GITHUB_SHA}" > /tmp/taf-ui.html 2>/tmp/taf-ui.err || true
+
+          if ! grep -Eq '<option value="[0-9]+">' /tmp/taf-ui.html; then
+            echo "ERROR: TAF cycle selector has no generated UTC cycles." >&2
+            grep -o '<span id="st"[^>]*>[^<]*' /tmp/taf-ui.html || true
+            grep -o '<pre id="taf"[^>]*>[^<]*' /tmp/taf-ui.html || true
+            cat /tmp/taf-ui.err || true
+            exit 1
+          fi
+
+          "$browser" --headless --no-sandbox --disable-gpu --disable-dev-shm-usage \
+            --virtual-time-budget=45000 --dump-dom \
+            "${base}/taf.html?autogen=1&v=${GITHUB_SHA}" > /tmp/taf-autogen.html 2>/tmp/taf-autogen.err || true
+
+          if ! grep -Eq '<tbody id="hours">[[:space:]]*<tr>' /tmp/taf-autogen.html && ! grep -Fq ' h danych · FOG ' /tmp/taf-autogen.html; then
+            echo "ERROR: TAF autogeneration produced no hourly rows." >&2
+            grep -o '<span id="st"[^>]*>[^<]*' /tmp/taf-autogen.html || true
+            grep -o '<pre id="taf"[^>]*>[^<]*' /tmp/taf-autogen.html || true
+            grep -o '<span id="badge"[^>]*>[^<]*' /tmp/taf-autogen.html || true
+            cat /tmp/taf-autogen.err || true
+            exit 1
+          fi
+
+          echo "TAF browser smoke test: UTC cycles and hourly data are present."
