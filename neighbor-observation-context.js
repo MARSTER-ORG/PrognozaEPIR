@@ -1,6 +1,7 @@
 /* PrognozaEPIR neighbor observation context.
  * Reads neighbour METAR/SPECI only through the shared MessageArchive boundary.
  * Supabase is primary; Railway/GitHub fallback policy belongs to that client.
+ * Also loads and applies the conservative neighbouring-TAF context after observations.
  */
 'use strict';
 (() => {
@@ -13,7 +14,7 @@
   };
   const MAX_AGE_H=3.0, MAX_WEIGHT=.35;
   const SECTOR_WIND_DIR={from:0,to:360,offset:-30,minSpeedMs:1.5};
-  let snapshot=null,lastLoaded=0;
+  let snapshot=null,lastLoaded=0,tafLoaderPromise=null,neighborTafError=null;
   const finite=Number.isFinite,rad=x=>x*Math.PI/180,deg=x=>(x*180/Math.PI+360)%360;
   function circular(a,b){let x=Math.abs((a||0)-(b||0))%360;return x>180?360-x:x}
   function geo(a,b){
@@ -30,6 +31,30 @@
   function timeOf(row){const t=Date.parse(row?.message_time||row?.obs_time||'');return finite(t)?t:NaN}
   function metaFor(id){return snapshot?.stations_meta?.[id]||FALLBACK_META[id]||null}
   function normDir(value){const d=Number(value);return finite(d)?((d%360)+360)%360:NaN}
+
+  function ensureNeighborTafContext(){
+    if(window.PrognozaEPIRNeighborTafContext)return Promise.resolve(window.PrognozaEPIRNeighborTafContext);
+    if(tafLoaderPromise)return tafLoaderPromise;
+    tafLoaderPromise=new Promise((resolve,reject)=>{
+      let s=document.querySelector('script[data-epir-neighbor-taf-context="1"]');
+      const done=()=>window.PrognozaEPIRNeighborTafContext?resolve(window.PrognozaEPIRNeighborTafContext):reject(new Error('neighbor-taf-context.js załadowany bez API'));
+      if(s){
+        if(window.PrognozaEPIRNeighborTafContext)return done();
+        s.addEventListener('load',done,{once:true});
+        s.addEventListener('error',()=>reject(new Error('Nie udało się załadować neighbor-taf-context.js')),{once:true});
+        return;
+      }
+      s=document.createElement('script');
+      s.src='neighbor-taf-context.js?v=neighbor-taf-v2';
+      s.async=false;
+      s.dataset.epirNeighborTafContext='1';
+      s.addEventListener('load',done,{once:true});
+      s.addEventListener('error',()=>reject(new Error('Nie udało się załadować neighbor-taf-context.js')),{once:true});
+      (document.head||document.documentElement).appendChild(s);
+    }).catch(error=>{tafLoaderPromise=null;throw error;});
+    return tafLoaderPromise;
+  }
+
   function applySectorWindDirection(z){
     if(!z||!finite(Number(z.WS)))return z;
     const speed=Number(z.WS),raw=normDir(z.WD);
@@ -51,13 +76,23 @@
     rows.forEach((row,i)=>{if(row)stations[STATIONS[i]]=row;});
     const times=Object.values(stations).map(timeOf).filter(finite);
     snapshot={
-      schema:'prognozaepir-neighbor-observations-latest-v2',
+      schema:'prognozaepir-neighbor-observations-latest-v3',
       updated_at:times.length?new Date(Math.max(...times)).toISOString():new Date().toISOString(),
       stations,
       stations_meta:{...FALLBACK_META},
       source:'MessageArchive/Supabase-primary'
     };
     lastLoaded=Date.now();
+    try{
+      const T=await ensureNeighborTafContext();
+      await T?.refresh?.(force);
+      neighborTafError=null;
+      snapshot.neighbor_taf={active:true,version:T?.version||null};
+    }catch(error){
+      neighborTafError=String(error?.message||error);
+      snapshot.neighbor_taf={active:false,error:neighborTafError};
+      console.warn('TAF sąsiednie niedostępne:',error);
+    }
     return snapshot;
   }
   function candidate(row,z,now){
@@ -106,7 +141,7 @@
     o.neighborObsRaw=r.canonical_raw||r.raw||null;
     return o;
   }
-  function applySeries(series){
+  function applyObservationSeries(series){
     if(!Array.isArray(series)||!series.length)return series;
     const now=Date.now(),records=snapshot?.stations?Object.values(snapshot.stations).filter(Boolean):[];
     return series.map(z=>{
@@ -115,11 +150,24 @@
       return candidates.length?applyOne(z,candidates[0]):z;
     });
   }
+  function applySeries(series){
+    let out=applyObservationSeries(series);
+    const T=window.PrognozaEPIRNeighborTafContext;
+    if(T?.applySeries){
+      try{out=T.applySeries(out)||out}
+      catch(error){neighborTafError=String(error?.message||error);console.warn('Błąd zastosowania TAF sąsiednich:',error)}
+    }
+    return out;
+  }
   function latest(){return snapshot}
   function contextFor(z){
     if(!snapshot?.stations)return[];
     const now=Date.now();
     return Object.values(snapshot.stations).map(r=>candidate(r,z,now)).filter(Boolean).sort((a,b)=>b.score-a.score);
   }
-  window.PrognozaEPIRNeighborObservations={refresh,applySeries,latest,contextFor,applySectorWindDirection,sectorWindDirectionRule:{...SECTOR_WIND_DIR},version:'1.5.0'};
+  function tafStatus(){
+    const T=window.PrognozaEPIRNeighborTafContext;
+    return{active:!!T,error:neighborTafError,version:T?.version||null,snapshot:T?.latest?.()||null};
+  }
+  window.PrognozaEPIRNeighborObservations={refresh,applySeries,latest,contextFor,tafStatus,applySectorWindDirection,sectorWindDirectionRule:{...SECTOR_WIND_DIR},version:'1.6.0'};
 })();
