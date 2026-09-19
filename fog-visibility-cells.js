@@ -18,11 +18,18 @@
 
   function fogSeries() {
     const m = mode();
+    let rows;
     if (m === 'vnext' && Array.isArray(window.PrognozaEPIRFogVNextSeries) && window.PrognozaEPIRFogVNextSeries.length)
-      return window.PrognozaEPIRFogVNextSeries;
-    if (m === 'legacy' && Array.isArray(window.PrognozaEPIRFogLegacySeries) && window.PrognozaEPIRFogLegacySeries.length)
-      return window.PrognozaEPIRFogLegacySeries;
-    return Array.isArray(window.PrognozaEPIRFogSeries) ? window.PrognozaEPIRFogSeries : [];
+      rows = window.PrognozaEPIRFogVNextSeries;
+    else if (m === 'legacy' && Array.isArray(window.PrognozaEPIRFogLegacySeries) && window.PrognozaEPIRFogLegacySeries.length)
+      rows = window.PrognozaEPIRFogLegacySeries;
+    else
+      rows = Array.isArray(window.PrognozaEPIRFogSeries) ? window.PrognozaEPIRFogSeries : [];
+    if (m !== 'legacy') return rows;
+    return rows.map(r => {
+      const legacy = num(r?.fogScoreLegacy);
+      return finite(legacy) && legacy !== num(r?.score) ? {...r, score:legacy} : r;
+    });
   }
 
   function brSeries() {
@@ -85,18 +92,26 @@
     const host = document.getElementById('fogSummary');
     if (!host) return;
     const now = Date.now();
-    const rows = fogSeries().filter(r => {
-      const t = num(r?.t), s = num(r?.score), v = fogVisibility(r);
-      return finite(t) && t >= now - HOUR && t <= now + 48 * HOUR && finite(s) && s >= 50 && finite(v) && v < 1000;
+    const active = fogSeries().filter(r => {
+      const t = num(r?.t), s = num(r?.score);
+      return finite(t) && t >= now - HOUR && t <= now + 48 * HOUR && finite(s) && s >= 50;
     });
     const card = ensureCard(host, 'fgEstimatedVisCard', 'fog-card');
     if (!card) return;
-    if (!rows.length) {
-      card.innerHTML = `<small>FG · szacowana VIS</small><strong>—</strong><em>brak aktywnego FG w 48 h · ${mode() === 'vnext' ? 'vNEXT' : 'LEGACY'}</em>`;
+    if (!active.length) {
+      card.innerHTML = `<small>FG · szacowana VIS</small><strong>—</strong><em>brak aktywnego FG ≥50/100 w 48 h · ${mode() === 'vnext' ? 'vNEXT' : 'LEGACY'}</em>`;
       return;
     }
-    const min = rows.reduce((a, b) => fogVisibility(b) < fogVisibility(a) ? b : a, rows[0]);
-    card.innerHTML = `<small>FG · szacowana VIS</small><strong>${fmtVis(fogVisibility(min))}</strong><em>minimum przy aktywnym FG · ${fmtUtcDate(num(min.t))} · ${mode() === 'vnext' ? 'vNEXT' : 'LEGACY'}</em>`;
+    const withVis = active.filter(r => finite(fogVisibility(r)));
+    if (!withVis.length) {
+      const peak = active.reduce((a,b) => num(b.score) > num(a.score) ? b : a, active[0]);
+      card.innerHTML = `<small>FG · szacowana VIS</small><strong>—</strong><em>FG aktywne ${Math.round(num(peak.score))}/100 · brak wyliczonej VIS · ${mode() === 'vnext' ? 'vNEXT' : 'LEGACY'}</em>`;
+      return;
+    }
+    const min = withVis.reduce((a, b) => fogVisibility(b) < fogVisibility(a) ? b : a, withVis[0]);
+    const v = fogVisibility(min);
+    const consistency = v < 1000 ? 'VIS zgodna z FG' : 'uwaga: score FG ≥50, ale VIS nie spada <1000 m';
+    card.innerHTML = `<small>FG · szacowana VIS</small><strong>${fmtVis(v)}</strong><em>minimum przy aktywnym FG · ${fmtUtcDate(num(min.t))} · ${consistency} · ${mode() === 'vnext' ? 'vNEXT' : 'LEGACY'}</em>`;
   }
 
   function updateBr() {
@@ -111,7 +126,7 @@
     const card = ensureCard(host, 'brEstimatedVisCard', 'br-card');
     if (!card) return;
     if (!active.length) {
-      card.innerHTML = '<small>BR · szacowana VIS</small><strong>—</strong><em>brak aktywnego BR w 24 h</em>';
+      card.innerHTML = '<small>BR · szacowana VIS</small><strong>—</strong><em>brak aktywnego BR ≥50/100 w 24 h</em>';
       return;
     }
 
@@ -134,7 +149,7 @@
     const card = ensureCard(host, 'mifgVisibilityContextCard', 'mifg-card');
     if (!card) return;
     if (!active.length) {
-      card.innerHTML = '<small>MIFG · VIS standardowa</small><strong>—</strong><em>brak aktywnego MIFG w 48 h</em>';
+      card.innerHTML = '<small>MIFG · VIS standardowa</small><strong>—</strong><em>brak aktywnego MIFG ≥50/100 w 48 h</em>';
       return;
     }
 
@@ -155,7 +170,7 @@
     timer = setTimeout(render, delay);
   }
 
-  for (const ev of ['prognozaepir:fog-series-updated','prognozaepir:fog-vnext-updated','prognozaepir:br-series-updated','prognozaepir:mifg-series-updated','prognozaepir:fog-engine-mode-applied']) {
+  for (const ev of ['prognozaepir:fog-series-updated','prognozaepir:fog-vnext-updated','prognozaepir:br-series-updated','prognozaepir:mifg-series-updated','prognozaepir:fog-engine-mode-changed','prognozaepir:fog-engine-mode-applied']) {
     window.addEventListener(ev, () => schedule());
   }
 
