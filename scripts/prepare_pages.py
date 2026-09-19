@@ -63,7 +63,6 @@ def patch_index() -> None:
     icm = '<a class="control-link" href="https://www.meteo.pl/um/php/meteorogram_id_um.php?ntype=0n&amp;id=2077" target="_blank" rel="noopener noreferrer">ICM UM meteogram ↗</a>'
     for link in reversed([
         '<a class="control-link" href="radar.html">RADAR / SAT / AI</a>',
-        '<a class="control-link" href="taf.html?v=2.4.0">GENERATOR TAF</a>',
         '<a class="control-link" href="sat-fog.html">SAT / FOG EUMETSAT</a>',
     ]):
         if link not in s and icm in s:
