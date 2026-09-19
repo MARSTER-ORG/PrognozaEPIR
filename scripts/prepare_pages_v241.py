@@ -7,7 +7,9 @@ import prepare_pages as p
 
 
 def patch_taf_v243() -> None:
-    p.patch_taf()
+    # Patch only real script/src attributes. Do not call the historical
+    # p.patch_taf() helper here because its broad regexes also matched marker
+    # comments and could consume the inline TAF startup runtime.
     path = p.SITE / "taf.html"
     s = p.rd(path)
     s = re.sub(
@@ -16,9 +18,18 @@ def patch_taf_v243() -> None:
         s,
         count=1,
     )
-    s = re.sub(r'taf-engine-v241\.js\?v=[^"]+', 'taf-engine-v241.js?v=2.4.1-audit', s)
-    s = re.sub(r'taf-engine-v242\.js\?v=[^"]+', 'taf-engine-v242.js?v=2.4.2-cloud-fog', s)
-    s = re.sub(r'taf-runtime-bootstrap\.js\?v=[^"]+', 'taf-runtime-bootstrap.js?v=20260919-1', s)
+    s = re.sub(r'(src="taf-engine-v2\.js\?v=)[^"]+', r'\g<1>2.3.0-kernel', s)
+    s = re.sub(r'(src="taf-engine-v24\.js\?v=)[^"]+', r'\g<1>2.4.0', s)
+    s = re.sub(r'(src="taf-engine-v241\.js\?v=)[^"]+', r'\g<1>2.4.1-audit', s)
+    s = re.sub(r'(src="taf-engine-v242\.js\?v=)[^"]+', r'\g<1>2.4.2-cloud-fog', s)
+    # Cache-bust the hidden model iframe without changing its mode query.
+    s = re.sub(
+        r'(<iframe\b[^>]*\bid="engine"[^>]*\bsrc=")([^"]+)(")',
+        lambda m: m.group(1) + re.sub(r'([?&])v=[^&"]+', r'\1v=' + p.ASSET_V, m.group(2)) + m.group(3),
+        s,
+        count=1,
+        flags=re.I,
+    )
     p.wr(path, s)
 
     # Cache-bust the entry point shown on the main meteogram page as well.
@@ -98,6 +109,9 @@ def validate_v243() -> None:
         "taf-engine-v242.js?v=2.4.2-cloud-fog",
         "taf-runtime-bootstrap.js?v=20260919-1",
         "prognozaepir-taf-engine-v2",
+        "id=\"tafFogModeSwitch\"",
+        "data-taf-fog-mode=\"legacy\"",
+        "data-taf-fog-mode=\"vnext\"",
     ):
         if marker not in taf:
             raise RuntimeError(f"missing TAF 2.4.3 marker: {marker}")
