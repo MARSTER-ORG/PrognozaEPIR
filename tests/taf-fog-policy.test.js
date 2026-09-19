@@ -18,6 +18,23 @@ assert.ok(lp.fogScore>60&&lp.fogScore<70);
 assert.equal(lp.vis,900);
 assert.equal(lp.vis1000,62);
 assert.equal(lp.type,'radiacyjna');
+assert.equal(lp.fgVisibilitySupported,true);
+assert.ok(lp.fgOperationalScore>0);
+assert.equal(lp.fogAltVisM,900);
+
+const legacyBrRange={score:67,vis:2500,vis1000:7,vis500:5,vis1500:38,confidence:.9,type:{text:'adwekcyjna'},fogEngineMode:'legacy'};
+const lb=P.normalizeFogHour(legacyBrRange,'legacy');
+assert.equal(lb.vis,2500);
+assert.equal(lb.fgVisibilitySupported,false);
+assert.equal(lb.fgOperationalScore,0);
+assert.equal(lb.fogAltVisM,null);
+assert.ok(lb.brOperationalScore>0);
+
+const legacyNoVis={score:68,vis:null,vis1000:64,vis500:22,vis1500:74,confidence:.7,type:{text:'radiacyjna'},fogEngineMode:'legacy'};
+const ln=P.normalizeFogHour(legacyNoVis,'legacy');
+assert.equal(ln.fgVisibilitySupported,true);
+assert.ok(ln.fgOperationalScore>=64);
+assert.equal(ln.fogAltVisM,800);
 
 const vnext={
   score:68,vis:7000,vis1000:5,fogEngineMode:'vnext-production',
@@ -31,6 +48,8 @@ assert.equal(vp.vis,650);
 assert.equal(vp.vis1000,72);
 assert.equal(vp.type,'CBL/RAD');
 assert.equal(vp.confidence,.82);
+assert.equal(vp.fgVisibilitySupported,true);
+assert.ok(vp.fgOperationalScore>=72);
 
 const wLegacy={PrognozaEPIRFogLegacySeries:[legacy],PrognozaEPIRFogSeries:[vnext]};
 assert.equal(P.seriesForMode(wLegacy,'legacy')[0].score,55);
