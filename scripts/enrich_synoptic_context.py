@@ -3,6 +3,8 @@
 
 Only Open-Meteo Single Runs is used. No reanalysis is substituted. Existing
 forecast rows are updated in-place, preserving their original surface values.
+Fixed-lead Previous Runs rows are deliberately excluded because they are not
+complete individual runs and may predate Single Runs archive availability.
 """
 from __future__ import annotations
 
@@ -21,8 +23,9 @@ import model_verification as mv
 import synoptic_regime as sr
 
 API = "https://single-runs-api.open-meteo.com/v1/forecast"
-USER_AGENT = "PrognozaEPIR-SynopticContextEnrichment/1.0"
+USER_AGENT = "PrognozaEPIR-SynopticContextEnrichment/1.1"
 STATE = mv.LEARNING / "synoptic-context-enrichment-state.json"
+PREVIOUS_RUNS_SOURCE = "open-meteo-previous-runs"
 PROFILE_VARS = tuple(
     f"{name}_{p}hPa"
     for p in sr.LEVELS
@@ -150,6 +153,8 @@ def candidate_runs(files, now):
     groups = defaultdict(list)
     for path, rows in files.items():
         for idx, row in enumerate(rows):
+            if row.get("archive_source") == PREVIOUS_RUNS_SOURCE:
+                continue
             model = row.get("model")
             run = mv.parse_dt(row.get("run_time"))
             valid = mv.parse_dt(row.get("valid_time"))
@@ -227,7 +232,7 @@ def main():
         "schema": "prognozaepir-synoptic-context-enrichment-v1",
         "generated_at": mv.iso(now),
         "regime_version": sr.VERSION,
-        "source": "Open-Meteo Single Runs operational archive; no reanalysis substitution",
+        "source": "Open-Meteo Single Runs operational archive; Previous Runs excluded; no reanalysis substitution",
         "pending_before": len(pending_all),
         "attempted_runs": len(selected),
         "enriched_runs": success,
