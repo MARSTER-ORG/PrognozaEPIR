@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Incrementally backfill multi-model forecast skill from Open-Meteo Previous Runs.
+"""Incrementally backfill consensus forecast skill from Open-Meteo Previous Runs.
 
-The Previous Runs API stores fixed lead-time forecasts (1-7 days before valid
-time) for most models from January 2024. This complements the Single Runs
-archive, which is much shorter for most models. Rows are written into the same
-forecast archive consumed by model_verification.py and adaptive consensus
-learning, but are explicitly tagged with their source.
+Coverage is source-aware:
+- from 2024-01: use the configured multi-model set and the normal Previous Runs
+  variable bundle;
+- 2021-03..2023-12: use only the documented GFS 2 m temperature archive;
+- before 2021-03: do not retry, because the current PrognozaEPIR model set has
+  no documented Previous Runs forecast field suitable for consensus learning.
 
-To keep the repository compact, only 00/06/12/18 UTC verification hours that
-have a real EPIR observation are retained. No reanalysis is used as truth.
+Rows are written into the same forecast archive consumed by model_verification.py
+and adaptive consensus learning, with explicit source/scope tags. Reanalysis is
+never substituted for a missing operational forecast.
 """
 from __future__ import annotations
 
@@ -26,11 +28,14 @@ import model_verification as mv
 
 API = "https://previous-runs-api.open-meteo.com/v1/forecast"
 STATE = mv.LEARNING / "previous-runs-backfill-state.json"
-ARCHIVE_START = date(2024, 1, 1)
+LIMITED_ARCHIVE_START = date(2021, 3, 1)
+FULL_ARCHIVE_START = date(2024, 1, 1)
+ARCHIVE_START = LIMITED_ARCHIVE_START
 LEAD_DAYS = (1, 2, 3, 4, 5)
 VERIFY_HOURS = {0, 6, 12, 18}
 MAX_ATTEMPTS_PER_MONTH = 4
-USER_AGENT = "PrognozaEPIR-PreviousRunsBackfill/1.0"
+USER_AGENT = "PrognozaEPIR-PreviousRunsBackfill/1.1"
+GFS_MODEL_ID = "ncep_gfs_global"
 
 BASE_VARS = (
     "temperature_2m",
@@ -43,6 +48,7 @@ BASE_VARS = (
     "wind_speed_10m",
     "wind_direction_10m",
 )
+LIMITED_GFS_VARS = ("temperature_2m",)
 
 
 def month_key(d: date) -> str:
@@ -119,9 +125,27 @@ def observation_hours(start: date, end: date):
     return out
 
 
-def request_model_month(model_id: str, start: date, end: date):
+def model_policy_for_month(d: date):
+    if d < FULL_ARCHIVE_START:
+        meta = mv.MODEL_META.get(GFS_MODEL_ID)
+        models = [(GFS_MODEL_ID, meta[0], meta[1])] if meta else []
+        return {
+            "scope": "limited-gfs-temperature",
+            "models": models,
+            "variables": LIMITED_GFS_VARS,
+            "minimum_models": 1,
+        }
+    return {
+        "scope": "full-multimodel",
+        "models": list(mv.MODELS),
+        "variables": BASE_VARS,
+        "minimum_models": 5,
+    }
+
+
+def request_model_month(model_id: str, start: date, end: date, variables):
     hourly = []
-    for base in BASE_VARS:
+    for base in variables:
         hourly.extend(f"{base}_previous_day{lead}" for lead in LEAD_DAYS)
     params = {
         "latitude": mv.LAT,
@@ -141,10 +165,11 @@ def at(hourly, key, idx):
     return values[idx] if idx < len(values) else None
 
 
-def convert_model_month(model_id, name, weight, payload, allowed_hours):
+def convert_model_month(model_id, name, weight, payload, allowed_hours, variables, scope):
     hourly = payload.get("hourly") or {}
     times = hourly.get("time") or []
     rows = []
+    available = set(variables)
     for idx, ts in enumerate(times):
         valid = mv.parse_dt(ts)
         if not valid:
@@ -159,12 +184,16 @@ def convert_model_month(model_id, name, weight, payload, allowed_hours):
             if not bucket:
                 continue
             suffix = f"_previous_day{lead_day}"
-            temp = at(hourly, "temperature_2m" + suffix, idx)
-            dew = at(hourly, "dew_point_2m" + suffix, idx)
-            pressure = at(hourly, "pressure_msl" + suffix, idx)
-            wind = at(hourly, "wind_speed_10m" + suffix, idx)
-            cloud = at(hourly, "cloud_cover" + suffix, idx)
-            precip = at(hourly, "precipitation" + suffix, idx)
+
+            def value(base):
+                return at(hourly, base + suffix, idx) if base in available else None
+
+            temp = value("temperature_2m")
+            dew = value("dew_point_2m")
+            pressure = value("pressure_msl")
+            wind = value("wind_speed_10m")
+            cloud = value("cloud_cover")
+            precip = value("precipitation")
             if not any(mv.finite(v) for v in (temp, dew, pressure, wind, cloud, precip)):
                 continue
             run = valid - timedelta(days=lead_day)
@@ -179,18 +208,19 @@ def convert_model_month(model_id, name, weight, payload, allowed_hours):
                 "archive_source": "open-meteo-previous-runs",
                 "archive_backfill": True,
                 "archive_fixed_lead_day": lead_day,
-                "archive_partial_fields": True,
+                "archive_partial_fields": set(variables) != set(BASE_VARS),
+                "archive_learning_scope": scope,
                 "valid_time": valid_iso,
                 "temperature_c": temp,
                 "dew_point_c": dew,
-                "relative_humidity_pct": at(hourly, "relative_humidity_2m" + suffix, idx),
+                "relative_humidity_pct": value("relative_humidity_2m"),
                 "precipitation_mm": precip,
                 "pressure_hpa": pressure,
                 "visibility_m": None,
                 "wind_speed_ms": wind,
-                "wind_direction_deg": at(hourly, "wind_direction_10m" + suffix, idx),
+                "wind_direction_deg": value("wind_direction_10m"),
                 "wind_gust_ms": None,
-                "weather_code": at(hourly, "weather_code" + suffix, idx),
+                "weather_code": value("weather_code"),
                 "cloud_total_pct": cloud,
                 "low_pct": None,
                 "mid_pct": None,
@@ -230,6 +260,8 @@ def choose_months(state, first: date, last: date, limit: int):
         if status != "complete" and attempts < MAX_ATTEMPTS_PER_MONTH:
             candidates.append((attempts, cur))
         cur = add_month(cur)
+    # First passes advance from the oldest supported month forward. Retries are
+    # spread behind untouched months so provider gaps cannot block chronology.
     candidates.sort(key=lambda item: (item[0], item[1]))
     return [d for _attempts, d in candidates[:max(0, limit)]]
 
@@ -238,13 +270,16 @@ def process_month(d: date):
     start = d
     end = min(month_end(d), (utcnow() - timedelta(days=1)).date())
     allowed = observation_hours(start, end)
+    policy = model_policy_for_month(d)
     all_rows = []
     model_rows = {}
     failures = []
-    for model_id, name, weight in mv.MODELS:
+    for model_id, name, weight in policy["models"]:
         try:
-            payload = request_model_month(model_id, start, end)
-            rows = convert_model_month(model_id, name, weight, payload, allowed)
+            payload = request_model_month(model_id, start, end, policy["variables"])
+            rows = convert_model_month(
+                model_id, name, weight, payload, allowed, policy["variables"], policy["scope"]
+            )
             all_rows.extend(rows)
             model_rows[model_id] = len(rows)
         except Exception as exc:
@@ -255,6 +290,10 @@ def process_month(d: date):
     return {
         "start": start.isoformat(),
         "end": end.isoformat(),
+        "learning_scope": policy["scope"],
+        "eligible_models": [m[0] for m in policy["models"]],
+        "requested_variables": list(policy["variables"]),
+        "minimum_models_for_complete": policy["minimum_models"],
         "observation_hours": len(allowed),
         "rows": total,
         "new_rows_received": len(all_rows),
@@ -268,7 +307,7 @@ def process_month(d: date):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--max-months", type=int, default=1)
-    ap.add_argument("--start-month", default="2024-01")
+    ap.add_argument("--start-month", default=month_key(ARCHIVE_START))
     ap.add_argument("--end-month", default="", help="YYYY-MM; default=current UTC month")
     args = ap.parse_args()
 
@@ -292,7 +331,7 @@ def main():
         result = process_month(d)
         old = dict(months.get(key) or {})
         attempts = int(old.get("attempts") or 0) + 1
-        complete = int(result["models_with_rows"]) >= 5
+        complete = int(result["models_with_rows"]) >= int(result["minimum_models_for_complete"])
         months[key] = {
             "attempts": attempts,
             "last_attempt_utc": now_s,
@@ -315,11 +354,20 @@ def main():
         "generated_at_utc": now_s,
         "source": "Open-Meteo Previous Runs API",
         "archive_start": ARCHIVE_START.isoformat(),
+        "full_multimodel_archive_start": FULL_ARCHIVE_START.isoformat(),
+        "unsupported_before": ARCHIVE_START.isoformat(),
+        "unsupported_reason": (
+            "For the current PrognozaEPIR model set, no documented Previous Runs field is used before 2021-03; "
+            "2021-03..2023-12 is intentionally limited to GFS temperature_2m."
+        ),
         "requested_start_month": month_key(requested_start),
         "requested_end_month": month_key(requested_end),
         "lead_days": list(LEAD_DAYS),
         "verification_hours_utc": sorted(VERIFY_HOURS),
-        "field_policy": "Only variables natively provided by Previous Runs are stored; no reanalysis substitution or synthetic visibility/cloud layers.",
+        "field_policy": (
+            "2024+ uses the configured multi-model Previous Runs fields; 2021-03..2023-12 uses only documented "
+            "GFS temperature_2m history. No reanalysis substitution or synthetic fields."
+        ),
         "selected_months": processed,
         "remaining_pending_months": len(pending),
         "next_pending_months": pending[:12],
