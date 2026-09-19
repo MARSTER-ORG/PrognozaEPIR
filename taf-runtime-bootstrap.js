@@ -3,7 +3,8 @@
   if (window.__PROGNOZA_EPIR_TAF_RUNTIME_BOOTSTRAP__) return;
   window.__PROGNOZA_EPIR_TAF_RUNTIME_BOOTSTRAP__ = true;
 
-  const BUILD = '20260917-2';
+  const BUILD = '20260919-1';
+  const ENGINE_LABEL = '2.4.3';
   const HOUR = 3600000;
   const ISSUE_HOURS = [5, 11, 17, 23];
   const $ = id => document.getElementById(id);
@@ -56,12 +57,20 @@
     return true;
   }
 
+  function syncVersionLabels() {
+    const meta = document.querySelector('meta[name="prognozaepir-taf-engine-v2"]');
+    if (meta) meta.setAttribute('content', ENGINE_LABEL);
+    for (const el of [document.querySelector('.brand'), document.querySelector('.footer')]) {
+      if (el) el.innerHTML = el.innerHTML.replace(/TAF ENGINE 2\.4\.2/g, `TAF ENGINE ${ENGINE_LABEL}`);
+    }
+  }
+
   function setStatus(text, bad = false) {
     const st = $('st');
     const badge = $('badge');
     if (st) st.textContent = text;
     if (badge) {
-      badge.textContent = bad ? 'TAF ENGINE 2.4.2 · BŁĄD STARTU' : 'TAF ENGINE 2.4.2 · START';
+      badge.textContent = bad ? `TAF ENGINE ${ENGINE_LABEL} · BŁĄD STARTU` : `TAF ENGINE ${ENGINE_LABEL} · START`;
       badge.className = bad ? 'badge bad' : 'badge';
     }
   }
@@ -97,12 +106,18 @@
 
   async function boot() {
     primeCycleSelect();
+    syncVersionLabels();
     setStatus('inicjalizacja interfejsu TAF');
 
     if (!(await waitForPolicy())) {
       await loadScript(`taf-fog-policy.js?v=${BUILD}`, 'taf-fog-policy-recovery');
     }
     if (!window.PrognozaEPIRTAFFogPolicy) throw new Error('TAF Fog Policy nie został załadowany');
+
+    await loadScript(`taf-engine-v243.js?v=${BUILD}`, 'taf-engine-v243-runtime');
+    if (!window.__PROGNOZA_EPIR_TAF_ENGINE_V243__ || window.PrognozaEPIRTAFEngine?.QUALITY_VERSION !== ENGINE_LABEL) {
+      throw new Error('TAF Engine 2.4.3 nie został załadowany');
+    }
 
     window.__PROGNOZA_EPIR_TAF_APP_V25__ = false;
     await loadScript(`taf-app-v25.js?v=${BUILD}`, 'taf-app-v25-runtime');
@@ -118,6 +133,7 @@
 
   function start() {
     primeCycleSelect();
+    syncVersionLabels();
     boot().catch(err => {
       console.error('[TAF bootstrap]', err);
       setStatus(err && err.message ? err.message : 'Błąd uruchamiania generatora', true);
