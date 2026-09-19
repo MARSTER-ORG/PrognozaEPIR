@@ -1,0 +1,61 @@
+name: Remove duplicate index TAF button
+
+on:
+  push:
+    branches: [fix/remove-index-taf-button-20260919]
+    paths:
+      - '.github/workflows/remove-index-taf-button.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/remove-index-taf-button-20260919
+          fetch-depth: 0
+
+      - name: Remove duplicate TAF control and update validation
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('scripts/prepare_pages.py')
+          s = p.read_text(encoding='utf-8')
+          old = '''    for link in reversed([\n        '<a class="control-link" href="radar.html">RADAR / SAT / AI</a>',\n        '<a class="control-link" href="taf.html?v=2.4.0">GENERATOR TAF</a>',\n        '<a class="control-link" href="sat-fog.html">SAT / FOG EUMETSAT</a>',\n    ]):'''
+          new = '''    for link in reversed([\n        '<a class="control-link" href="radar.html">RADAR / SAT / AI</a>',\n        '<a class="control-link" href="sat-fog.html">SAT / FOG EUMETSAT</a>',\n    ]):'''
+          if old not in s:
+              raise SystemExit('TAF control injection block not found')
+          p.write_text(s.replace(old, new, 1), encoding='utf-8')
+
+          p = Path('scripts/prepare_pages_v241.py')
+          s = p.read_text(encoding='utf-8')
+          old = '''    # Cache-bust the entry point shown on the main meteogram page as well.\n    index = p.SITE / "index.html"\n    x = p.rd(index)\n    x = re.sub(r'href="taf\\.html(?:\\?v=[^"]*)?"', 'href="taf.html?v=2.4.3"', x)\n    p.wr(index, x)\n'''
+          if old not in s:
+              raise SystemExit('index TAF cache-bust block not found')
+          s = s.replace(old, '', 1)
+          old = '''    if 'href="taf.html?v=2.4.3"' not in index:\n        raise RuntimeError("main page does not link to cache-busted TAF 2.4.3")\n'''
+          new = '''    theme = p.rd(p.SITE / "theme.js")\n    if '["taf.html","TAF GENERATOR","taf"]' not in theme:\n        raise RuntimeError("shared navigation does not expose TAF Generator")\n    if re.search(r'<a[^>]+class="control-link"[^>]+href="taf\\.html', index, re.I):\n        raise RuntimeError("duplicate TAF control leaked into meteogram controls")\n'''
+          if old not in s:
+              raise SystemExit('old static TAF link validation not found')
+          p.write_text(s.replace(old, new, 1), encoding='utf-8')
+          PY
+
+      - name: Validate
+        run: |
+          python3 -m py_compile scripts/prepare_pages.py scripts/prepare_pages_v241.py
+          python3 scripts/prepare_pages_v241.py
+          ! grep -Fq '>GENERATOR TAF</a>' _site/index.html
+          grep -Fq '["taf.html","TAF GENERATOR","taf"]' _site/theme.js
+
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scripts/prepare_pages.py scripts/prepare_pages_v241.py
+          git commit -m "fix(ui): remove duplicate TAF button from meteogram controls"
+          git push origin HEAD:fix/remove-index-taf-button-20260919
