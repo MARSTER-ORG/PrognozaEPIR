@@ -168,7 +168,7 @@
         name: String(window.PLACE?.name || 'EPIR'),
         lat: num(window.PLACE?.lat),
         lon: num(window.PLACE?.lon),
-        tz: String(window.PLACE?.tz || 'Europe/Warsaw')
+        tz: String(window.PLACE?.tz || 'UTC')
       },
       model_ids: ids,
       readiness: {
