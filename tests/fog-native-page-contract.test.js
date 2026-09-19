@@ -17,6 +17,7 @@ assert(html.includes('const datasets=new Map();'), 'standalone Fog dataset regis
 const scripts = [...html.matchAll(/<script\b[^>]*\bsrc="([^"]+)"[^>]*><\/script>/gi)].map(m => m[1].split('?')[0]);
 const expectedScripts = [
   'utc-ui-guard.js',
+  'theme.js',
   'fog-mode-switch.js',
   'fog-engine.js',
   'mifg-engine.js',

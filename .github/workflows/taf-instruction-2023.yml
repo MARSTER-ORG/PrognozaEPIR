@@ -1,4 +1,4 @@
-name: TAF Engine 2.4.2 / Instruction 11.2023 compliance
+name: TAF Engine 2.4.3 / Instruction 11.2023 compliance
 
 on:
   push:
@@ -9,6 +9,7 @@ on:
       - 'taf-engine-v24.js'
       - 'taf-engine-v241.js'
       - 'taf-engine-v242.js'
+      - 'taf-engine-v243.js'
       - 'taf-fog-policy.js'
       - 'taf-app-v25.js'
       - 'taf-runtime-bootstrap.js'
@@ -17,6 +18,7 @@ on:
       - 'tests/taf-engine-v24.test.js'
       - 'tests/taf-engine-v241.test.js'
       - 'tests/taf-engine-v242.test.js'
+      - 'tests/taf-engine-v243.test.js'
       - 'data/learning/adaptive-weights.json'
       - 'data/learning/fog-event-skill.json'
       - 'data/learning/model-verification.json'
@@ -28,6 +30,7 @@ on:
       - 'taf-engine-v24.js'
       - 'taf-engine-v241.js'
       - 'taf-engine-v242.js'
+      - 'taf-engine-v243.js'
       - 'taf-fog-policy.js'
       - 'taf-app-v25.js'
       - 'taf-runtime-bootstrap.js'
@@ -36,6 +39,7 @@ on:
       - 'tests/taf-engine-v24.test.js'
       - 'tests/taf-engine-v241.test.js'
       - 'tests/taf-engine-v242.test.js'
+      - 'tests/taf-engine-v243.test.js'
       - 'data/learning/adaptive-weights.json'
       - 'data/learning/fog-event-skill.json'
       - 'data/learning/model-verification.json'
@@ -61,6 +65,7 @@ jobs:
           node --check taf-engine-v24.js
           node --check taf-engine-v241.js
           node --check taf-engine-v242.js
+          node --check taf-engine-v243.js
           node --check taf-fog-policy.js
           node --check taf-app-v25.js
           node --check taf-runtime-bootstrap.js
@@ -69,6 +74,7 @@ jobs:
           node --check tests/taf-engine-v24.test.js
           node --check tests/taf-engine-v241.test.js
           node --check tests/taf-engine-v242.test.js
+          node --check tests/taf-engine-v243.test.js
 
       - name: Formal kernel regression and Instruction 11.2023 gate
         run: node tests/taf-engine-v2.test.js
@@ -82,17 +88,22 @@ jobs:
       - name: TAF Engine 2.4.2 low-cloud/fog coherence regression
         run: node tests/taf-engine-v242.test.js
 
+      - name: TAF Engine 2.4.3 prevailing-wind regression
+        run: node tests/taf-engine-v243.test.js
+
       - name: Confirm sole public production engine stack
         run: |
-          grep -F 'TAF ENGINE 2.4.2 ·' taf.html
-          grep -F 'taf-fog-policy.js?v=20260917-2' taf.html
+          grep -F 'TAF ENGINE 2.4.3 · ACTIVE FOG MODE SYNC · INSTRUCTION FIRST' taf.html
+          grep -F 'taf-fog-policy.js?v=20260919-4' taf.html
           grep -F 'taf-engine-v2.js?v=2.3.0-kernel' taf.html
           grep -F 'taf-engine-v24.js?v=2.4.0' taf.html
           grep -F 'taf-engine-v241.js?v=2.4.1-audit' taf.html
           grep -F 'taf-engine-v242.js?v=2.4.2-cloud-fog' taf.html
-          grep -F 'taf-runtime-bootstrap.js?v=20260917-2' taf.html
+          grep -F 'taf-runtime-bootstrap.js?v=20260919-1' taf.html
           grep -F 'primeCycleSelect' taf-runtime-bootstrap.js
+          grep -F 'taf-engine-v243.js?v=${BUILD}' taf-runtime-bootstrap.js
           grep -F 'taf-app-v25.js?v=${BUILD}' taf-runtime-bootstrap.js
           grep -F "const VERSION='2.4.2'" taf-engine-v242.js
           grep -F 'lowCloudFogCoherence:true' taf-engine-v242.js
+          grep -F 'prevailingWindFullPeriodWhenNoSignificantChange' taf-engine-v243.js
           ! grep -E '<script[^>]+src="taf-(hybrid-engine|hybrid-adapter|generator-policy|cloud-policy|weather-policy|gust-policy|cavok-nsc-policy|instruction-guard|output-sanitizer)\.js' taf.html

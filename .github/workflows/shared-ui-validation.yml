@@ -1,0 +1,59 @@
+name: Shared UI validation
+
+on:
+  push:
+    paths:
+      - 'app.css'
+      - 'theme.js'
+      - '*.html'
+      - 'docs/UI_STYLE_GUIDE.md'
+      - '.github/workflows/shared-ui-validation.yml'
+  pull_request:
+    paths:
+      - 'app.css'
+      - 'theme.js'
+      - '*.html'
+      - 'docs/UI_STYLE_GUIDE.md'
+      - '.github/workflows/shared-ui-validation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check theme JavaScript
+        run: node --check theme.js
+
+      - name: Check shared UI wiring
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          pages = {
+              'index.html': 'index',
+              'fog.html': 'fog',
+              'radar.html': 'radar',
+              'sat-fog.html': 'sat-fog',
+              'lightning-alerts.html': 'lightning-alerts',
+              'taf.html': 'taf',
+              'arch.html': 'arch',
+          }
+          css = Path('app.css').read_text(encoding='utf-8')
+          assert 'EPIR-SHARED-START' in css, 'app.css: missing shared design-system section'
+
+          for filename, page in pages.items():
+              text = Path(filename).read_text(encoding='utf-8')
+              head = text.split('</head>', 1)[0].lower()
+              assert '<style' not in head, f'{filename}: inline <style> in <head>'
+              assert 'app.css' in head, f'{filename}: app.css not linked'
+              assert 'theme.js' in head, f'{filename}: theme.js not linked'
+              assert f'data-epir-page="{page}"' in text, f'{filename}: page scope missing'
+              assert f'EPIR-PAGE-START:{page}' in css, f'app.css: {page} section missing'
+
+          print('Shared UI architecture: OK')
+          PY

@@ -119,12 +119,7 @@ def wire_meteogram_bridge() -> None:
     overlay_tag = f'<script src="fog-meteogram-overlay.js?v={ASSET_V}"></script>'
     s = overlay_re.sub(br_tag + '\n' + overlay_tag, s, count=1)
 
-    hide = '<style id="epirFogStandaloneOnly">#fogEngine,#fogEngineModeSwitch,#fogVNextDiagnostics,#fogSummaryStructured,#fogAuxStructured{display:none!important}</style>'
-    if 'id="epirFogStandaloneOnly"' not in s:
-        if '</head>' not in s:
-            raise SystemExit("index.html head marker missing")
-        s = s.replace('</head>', hide + '\n</head>', 1)
-
+    # Meteogram-only Fog panel hiding is defined in shared app.css.
     tag = f'<script src="fog-summary-layout.js?v={ASSET_V}"></script>'
     if 'fog-summary-layout.js?v=' not in s:
         if '</body>' not in s:
@@ -147,7 +142,8 @@ def validate() -> None:
     mifg = (SITE / "mifg-engine.js").read_text(encoding="utf-8")
     br = (SITE / "br-engine.js").read_text(encoding="utf-8")
     index = (SITE / "index.html").read_text(encoding="utf-8")
-    nav = (SITE / "utc-ui-guard.js").read_text(encoding="utf-8")
+    theme = (SITE / "theme.js").read_text(encoding="utf-8")
+    app_css = (SITE / "app.css").read_text(encoding="utf-8")
     bridge = (SITE / "fog-summary-layout.js").read_text(encoding="utf-8")
     probability = (SITE / "fog-vnext-probability-layer.js").read_text(encoding="utf-8")
     fog_html = (SITE / "fog.html").read_text(encoding="utf-8")
@@ -157,8 +153,10 @@ def validate() -> None:
     if "PrognozaEPIRFogLegacySeries" not in fog:
         raise SystemExit("dedicated LEGACY fog series is not exported for TAF")
 
-    if 'fog-summary-layout.js?v=' not in index or 'id="epirFogStandaloneOnly"' not in index:
-        raise SystemExit("meteogram Fog bridge contract missing")
+    if 'fog-summary-layout.js?v=' not in index or 'app.css?v=' not in index:
+        raise SystemExit("meteogram Fog bridge/shared stylesheet contract missing")
+    if '#fogEngine' not in app_css or 'data-epir-page="index"' not in app_css:
+        raise SystemExit("shared stylesheet is missing the meteogram-only Fog panel rule")
     if f'utc-ui-guard.js?v={ASSET_V}' not in index:
         raise SystemExit("global navigation runtime is not cache-busted")
 
@@ -206,8 +204,8 @@ def validate() -> None:
     for asset in FOG_PAGE_ASSETS:
         if f'{asset}?v={ASSET_V}' not in fog_html:
             raise SystemExit(f"native EPIR FOG asset missing/cache stale: {asset}")
-    if 'href:\'fog.html\'' not in nav and 'href:"fog.html"' not in nav and "href:'fog.html'" not in nav:
-        raise SystemExit("EPIR FOG missing from canonical navigation")
+    if '["fog.html","EPIR FOG","fog"]' not in theme:
+        raise SystemExit("EPIR FOG missing from shared theme navigation")
 
 
 def main() -> int:
