@@ -11,6 +11,10 @@ on:
       - 'scripts/backfill_model_history.py'
       - 'scripts/enrich_synoptic_context.py'
       - 'scripts/synoptic_regime.py'
+      - 'scripts/learning_quality_gate.py'
+      - 'scripts/run_quality_gated_learning.py'
+      - 'scripts/build_out_of_sample_validation.py'
+      - 'scripts/build_learning_status.py'
       - '.github/workflows/historical-learning-autofill.yml'
 
 permissions:
@@ -45,7 +49,12 @@ jobs:
             scripts/model_verification.py \
             scripts/build_adaptive_weights.py \
             scripts/build_historical_model_skill.py \
-            scripts/build_synoptic_regime_learning.py
+            scripts/build_synoptic_regime_learning.py \
+            scripts/build_fog_event_learning.py \
+            scripts/learning_quality_gate.py \
+            scripts/build_out_of_sample_validation.py \
+            scripts/build_learning_status.py \
+            scripts/run_quality_gated_learning.py
 
       - name: Acquire missing operational history and pressure-level context
         id: acquire
@@ -59,14 +68,7 @@ jobs:
 
       - name: Rebuild learning after historical acquisition
         if: steps.acquire.outputs.changed == 'true'
-        run: |
-          python3 scripts/model_verification.py
-          python3 scripts/cloud_learning_backfill.py
-          python3 scripts/build_adaptive_weights.py
-          python3 scripts/build_historical_model_skill.py
-          python3 scripts/build_synoptic_regime_learning.py
-          python3 scripts/build_fog_event_learning.py
-          python3 scripts/embed_model_verification.py
+        run: python3 scripts/run_quality_gated_learning.py --profile historical
 
       - name: Validate rebuilt learning
         if: steps.acquire.outputs.changed == 'true'
@@ -76,18 +78,27 @@ jobs:
           python3 -m json.tool data/learning/historical-model-skill.json >/dev/null
           python3 -m json.tool data/learning/synoptic-regime-skill.json >/dev/null
           python3 -m json.tool data/learning/model-verification.json >/dev/null
+          python3 -m json.tool data/learning/out-of-sample-validation.json >/dev/null
+          python3 -m json.tool data/learning/learning-status.json >/dev/null
           python3 - <<'PY'
           import json
           from pathlib import Path
           state=json.loads(Path('data/learning/observation-history-autofill-state.json').read_text(encoding='utf-8'))
           syn=json.loads(Path('data/learning/synoptic-regime-skill.json').read_text(encoding='utf-8'))
+          oos=json.loads(Path('data/learning/out-of-sample-validation.json').read_text(encoding='utf-8'))
+          status=json.loads(Path('data/learning/learning-status.json').read_text(encoding='utf-8'))
           assert state.get('schema') == 'prognozaepir-observation-history-autofill-v1'
           assert state.get('source_policy')
           assert syn.get('schema') == 'prognozaepir-synoptic-regime-learning-v1'
           assert len(syn.get('models') or {}) >= 8
+          assert oos.get('schema') == 'prognozaepir-consensus-oos-validation-v1'
+          assert (oos.get('leakage_guard') or {}).get('test_data_used_for_factor_learning') is False
+          assert status.get('schema') == 'prognozaepir-learning-status-v1'
           print('selected run days:', state.get('selected_run_days'))
           print('remaining pending days:', state.get('remaining_pending_days'))
           print('synoptic usable cases:', syn.get('usable_cases'))
+          print('quality counts:', (status.get('quality_gate') or {}).get('counts'))
+          print('OOS delta:', (status.get('out_of_sample') or {}).get('learned_minus_base_pct_points'))
           PY
 
       - name: Commit acquired history and rebuilt learning
