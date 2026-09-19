@@ -12,6 +12,11 @@
       return localStorage.getItem('prognozaepir-fog-engine-mode')==='vnext'?'vnext':'legacy';
     }catch(_){return 'legacy';}
   }
+  function fogDrawThreshold(){
+    const configured=Number(window.PrognozaEPIRFogRenderThreshold);
+    if(finite(configured))return configured;
+    return selectedMode()==='vnext'?60:50;
+  }
   function visibilityPanel(meta){
     const panels=Array.isArray(meta?.panelYs)?meta.panelYs:[];
     return panels.find(p=>p?.id==='visfog')||panels.find(p=>p?.id==='cloud')||null;
@@ -87,7 +92,10 @@
     const pad=Math.min(VIS_INNER_PAD,Math.max(7,p.h*.09)),usable=Math.max(1,p.h-2*pad);
     return p.y+p.h-pad-(clip(km,0,VIS_SCALE_MAX_KM)/VIS_SCALE_MAX_KM)*usable;
   }
-  function yOnRiskScale(score,p){return yOnVisibilityScale(FOG_FULL_SCALE_KM*clip(score,0,100)/100,p);}
+  function yOnRiskScale(score,p,threshold=50){
+    const span=Math.max(1,100-threshold),frac=clip((Number(score)-threshold)/span,0,1);
+    return yOnVisibilityScale(FOG_FULL_SCALE_KM*frac,p);
+  }
 
   function pressureStops(){return[
     {p:990,c:[30,102,214]},{p:995,c:[22,166,190]},{p:1000,c:[20,190,115]},
@@ -135,54 +143,56 @@
     const p=visibilityPanel(m);if(!p)return;
     const x0=m.x0,x1=m.x1,plotW=x1-x0,step=Math.max(3,plotW/Math.max(1,m.data.length-1)),barW=Math.max(2.5,step*.58);
     const baseY=yOnVisibilityScale(0,p),fullY=yOnVisibilityScale(FOG_FULL_SCALE_KM,p),fog100LabelY=yOnVisibilityScale(20,p),maxBarH=Math.max(12,baseY-fullY);
-    const x=t=>clip(x0+(t-m.t0)/(m.t1-m.t0)*plotW,x0,x1);
+    const x=t=>clip(x0+(t-m.t0)/(m.t1-m.t0)*plotW,x0,x1),fogThreshold=fogDrawThreshold();
     ctx.save();ctx.beginPath();ctx.rect(x0,p.y,plotW,p.h);ctx.clip();
 
-    for(const z of m.data){
-      const fog=fogAt(z.t);if(!fog||Number(fog.score)<FOG_DRAW_THRESHOLD)continue;
-      const score=Number(fog.score),frac=clip((score-FOG_DRAW_THRESHOLD)/(100-FOG_DRAW_THRESHOLD),0,1),h=Math.max(2,frac*maxBarH),xx=x(z.t);
+    const fogSeries=fogRows().filter(r=>r&&finite(Number(r.t))&&finite(Number(r.score))&&Number(r.score)>=fogThreshold&&Number(r.t)>=m.t0&&Number(r.t)<=m.t1);
+    for(const fog of fogSeries){
+      const score=Number(fog.score),frac=clip((score-fogThreshold)/Math.max(1,100-fogThreshold),0,1),h=Math.max(2,frac*maxBarH),xx=x(Number(fog.t));
       ctx.fillStyle=fogColor(score);ctx.fillRect(xx-barW/2,baseY-h,barW,h);
     }
 
     const mifg=mifgSeries().filter(r=>r&&finite(Number(r.t))&&finite(Number(r.score))&&Number(r.score)>=MIFG_DRAW_THRESHOLD&&Number(r.t)>=m.t0&&Number(r.t)<=m.t1);
     ctx.font='bold 7.5px Arial';ctx.textAlign='center';ctx.textBaseline='bottom';
-    for(const row of mifg){const score=Number(row.score),xx=x(Number(row.t)),yy=yOnRiskScale(score,p);ctx.beginPath();ctx.arc(xx,yy,3.2,0,Math.PI*2);ctx.fillStyle='rgba(214,52,52,.98)';ctx.fill();ctx.lineWidth=1;ctx.strokeStyle='rgba(255,235,235,.95)';ctx.stroke();ctx.fillStyle='rgba(205,38,38,.99)';ctx.fillText(String(Math.round(score)),xx,yy-5);}
+    for(const row of mifg){const score=Number(row.score),xx=x(Number(row.t)),yy=yOnRiskScale(score,p,MIFG_DRAW_THRESHOLD);ctx.beginPath();ctx.arc(xx,yy,3.2,0,Math.PI*2);ctx.fillStyle='rgba(214,52,52,.98)';ctx.fill();ctx.lineWidth=1;ctx.strokeStyle='rgba(255,235,235,.95)';ctx.stroke();ctx.fillStyle='rgba(205,38,38,.99)';ctx.fillText(String(Math.round(score)),xx,yy-5);}
 
     const br=brSeries().filter(r=>finite(Number(r.t))&&finite(Number(r.score))&&Number(r.score)>=BR_DRAW_THRESHOLD&&Number(r.t)>=m.t0&&Number(r.t)<=m.t1);
     ctx.strokeStyle=BR_COLOR;ctx.lineWidth=2.1;ctx.setLineDash([6,3]);ctx.lineJoin='round';ctx.lineCap='round';
     const groups=[];let group=[];for(const row of br){const prev=group.at(-1);if(!prev||Number(row.t)-Number(prev.t)<=1.6*HOUR)group.push(row);else{groups.push(group);group=[row];}}if(group.length)groups.push(group);
-    for(const g of groups){ctx.beginPath();if(g.length===1){const row=g[0],xx=x(Number(row.t)),yy=yOnRiskScale(Number(row.score),p),half=Math.max(5,Math.min(step*.45,14));ctx.moveTo(xx-half,yy);ctx.lineTo(xx+half,yy);}else g.forEach((row,i)=>{const xx=x(Number(row.t)),yy=yOnRiskScale(Number(row.score),p);if(i===0)ctx.moveTo(xx,yy);else ctx.lineTo(xx,yy);});ctx.stroke();}
+    for(const g of groups){ctx.beginPath();if(g.length===1){const row=g[0],xx=x(Number(row.t)),yy=yOnRiskScale(Number(row.score),p,BR_DRAW_THRESHOLD),half=Math.max(5,Math.min(step*.45,14));ctx.moveTo(xx-half,yy);ctx.lineTo(xx+half,yy);}else g.forEach((row,i)=>{const xx=x(Number(row.t)),yy=yOnRiskScale(Number(row.score),p,BR_DRAW_THRESHOLD);if(i===0)ctx.moveTo(xx,yy);else ctx.lineTo(xx,yy);});ctx.stroke();}
     ctx.setLineDash([]);ctx.font='bold 7.5px Arial';ctx.textAlign='center';ctx.textBaseline='bottom';
-    for(const row of br){const score=Number(row.score),xx=x(Number(row.t)),yy=yOnRiskScale(score,p),r=4.1;ctx.save();ctx.translate(xx,yy);ctx.rotate(Math.PI/4);ctx.fillStyle='rgba(192,132,252,.96)';ctx.strokeStyle='rgba(248,240,255,.98)';ctx.lineWidth=1;ctx.fillRect(-r,-r,2*r,2*r);ctx.strokeRect(-r,-r,2*r,2*r);ctx.restore();ctx.fillStyle='rgba(218,180,255,.99)';ctx.fillText('BR '+Math.round(score),xx,yy-7);}
+    for(const row of br){const score=Number(row.score),xx=x(Number(row.t)),yy=yOnRiskScale(score,p,BR_DRAW_THRESHOLD),r=4.1;ctx.save();ctx.translate(xx,yy);ctx.rotate(Math.PI/4);ctx.fillStyle='rgba(192,132,252,.96)';ctx.strokeStyle='rgba(248,240,255,.98)';ctx.lineWidth=1;ctx.fillRect(-r,-r,2*r,2*r);ctx.strokeRect(-r,-r,2*r,2*r);ctx.restore();ctx.fillStyle='rgba(218,180,255,.99)';ctx.fillText('BR '+Math.round(score),xx,yy-7);}
 
     const cp=typeof canvasPalette==='function'?canvasPalette():{muted:'#666',grid2:'#999'};
     ctx.strokeStyle=cp.grid2||'#999';ctx.globalAlpha=.52;ctx.setLineDash([3,3]);ctx.lineWidth=.8;ctx.beginPath();ctx.moveTo(x0,baseY);ctx.lineTo(x1,baseY);ctx.stroke();ctx.beginPath();ctx.moveTo(x0,fullY);ctx.lineTo(x1,fullY);ctx.stroke();ctx.setLineDash([]);ctx.restore();
-    ctx.save();ctx.globalAlpha=.96;ctx.fillStyle=cp.muted||'#666';ctx.font='bold 8px Arial';ctx.textBaseline='middle';ctx.textAlign='right';ctx.fillText('FOG 50',x0-24,baseY);ctx.fillText('FOG 100',x0-24,fog100LabelY);ctx.restore();
+    ctx.save();ctx.globalAlpha=.96;ctx.fillStyle=cp.muted||'#666';ctx.font='bold 8px Arial';ctx.textBaseline='middle';ctx.textAlign='right';ctx.fillText('FOG '+fogThreshold,x0-24,baseY);ctx.fillText('FOG 100',x0-24,fog100LabelY);ctx.restore();
   }
 
   function addFogToSectionInfo(z,panelId){
     if(!isVisibilityPanelId(panelId))return;
     const fog=fogAt(z?.t),mifg=mifgAt(z?.t),br=brAt(z?.t),box=document.getElementById('sectionInfo');if(!box||(!fog&&!mifg&&!br))return;
-    const values=box.querySelector('.section-values');if(!values)return;const help=box.querySelector('.section-help');if(help)help.textContent='Pomarańczowa linia pokazuje widzialność konsensusu. FOG, MIFG i BR są rysowane od 50/100.';
+    const values=box.querySelector('.section-values');if(!values)return;const help=box.querySelector('.section-help');if(help)help.textContent=`Pomarańczowa linia pokazuje widzialność konsensusu. FOG jest rysowany od ${fogDrawThreshold()}/100, MIFG i BR od 50/100.`;
     if(fog&&Number(fog.score)>=FOG_INFO_THRESHOLD&&!values.querySelector('[data-fog-risk="1"]')){const cell=document.createElement('div');cell.className='section-value';cell.dataset.fogRisk='1';cell.innerHTML='<small>Ryzyko mgły · FOG ENGINE</small><strong>'+Math.round(Number(fog.score))+'/100</strong>';values.appendChild(cell);}
     if(mifg&&Number(mifg.score)>=MIFG_INFO_THRESHOLD&&!values.querySelector('[data-mifg-risk="1"]')){const cell=document.createElement('div');cell.className='section-value';cell.dataset.mifgRisk='1';cell.innerHTML='<small>Niska mgła &lt;2 m · MIFG</small><strong>'+Math.round(Number(mifg.score))+'/100</strong>';values.appendChild(cell);}
     if(br&&Number(br.score)>=BR_INFO_THRESHOLD&&!values.querySelector('[data-br-risk="1"]')){const cell=document.createElement('div');cell.className='section-value';cell.dataset.brRisk='1';cell.innerHTML='<small>Zamglenie · BR</small><strong>'+Math.round(Number(br.score))+'/100</strong>';values.appendChild(cell);}
   }
 
   function installLegendNote(){
-    const legend=document.querySelector('.legend');if(!legend||document.getElementById('fogMeteogramLegend'))return;
-    const el=document.createElement('span');el.id='fogMeteogramLegend';el.style.display='inline-flex';el.style.flexWrap='wrap';el.style.gap='8px';el.style.alignItems='center';
-    el.innerHTML='<b>Widzialność / mgła:</b><span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:16px;height:3px;border-radius:2px;background:#d97706"></i>linia = widzialność konsensusu</span><span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:8px;height:12px;border-radius:1px;background:rgba(216,108,47,.72)"></i>słupki = FOG ENGINE, od 50/100</span><span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#d63434;border:1px solid #ffdede"></i>czerwone punkty = MIFG &lt;2 m, od 50/100</span><span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:16px;height:0;border-top:2px dashed '+BR_COLOR+'"></i>linia BR = zamglenie, od 50/100</span>';
-    legend.appendChild(el);
+    const legend=document.querySelector('.legend');if(!legend)return;
+    let el=document.getElementById('fogMeteogramLegend');
+    if(!el){el=document.createElement('span');el.id='fogMeteogramLegend';legend.appendChild(el);}else if(el.parentElement!==legend)legend.appendChild(el);
+    el.style.display='inline-flex';el.style.flexWrap='wrap';el.style.gap='8px';el.style.alignItems='center';
+    const fogThreshold=fogDrawThreshold();
+    el.innerHTML='<b>Widzialność / mgła:</b><span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:16px;height:3px;border-radius:2px;background:#d97706"></i>linia = widzialność konsensusu</span><span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:8px;height:12px;border-radius:1px;background:rgba(216,108,47,.72)"></i>słupki = FOG ENGINE, od '+fogThreshold+'/100</span><span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#d63434;border:1px solid #ffdede"></i>czerwone punkty = MIFG &lt;2 m, od 50/100</span><span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:16px;height:0;border-top:2px dashed '+BR_COLOR+'"></i>linia BR = zamglenie, od 50/100</span>';
   }
   function install(){
     if(typeof draw!=='function'||typeof showSectionInfo!=='function')return false;
     if(!window.__epirFogMeteogramDrawWrapped){const baseDraw=draw;draw=function(){baseDraw();drawPressureFill();drawFogBars();try{if(typeof window.PrognozaEPIRRedrawWindForeground==='function')window.PrognozaEPIRRedrawWindForeground();}catch(_){}};window.__epirFogMeteogramDrawWrapped=true;}
     if(!window.__epirFogMeteogramInfoWrapped){const baseInfo=showSectionInfo;showSectionInfo=function(z,panelId){baseInfo(z,panelId);addFogToSectionInfo(z,panelId);};window.__epirFogMeteogramInfoWrapped=true;}
-    installLegendNote();window.__EPIR_FOG_METEOGRAM_OVERLAY_VERSION__='2026-09-19-mode-sync4';return true;
+    installLegendNote();window.__EPIR_FOG_METEOGRAM_OVERLAY_VERSION__='2026-09-19-mode-sync5';return true;
   }
   function redraw(){if(!install())return;try{if(typeof consensus!=='undefined'&&Array.isArray(consensus)&&consensus.length)draw();}catch(_) {}}
   for(const ev of ['prognozaepir:fog-series-updated','prognozaepir:fog-vnext-updated','prognozaepir:mifg-series-updated','prognozaepir:br-series-updated','prognozaepir:fog-engine-mode-changed','prognozaepir:fog-engine-mode-applied'])window.addEventListener(ev,()=>setTimeout(redraw,0));
-  window.PrognozaEPIRFogMeteogramOverlay=Object.freeze({version:'2026-09-19-mode-sync4',selectedMode,fogRows,brSeries,redraw});
+  window.PrognozaEPIRFogMeteogramOverlay=Object.freeze({version:'2026-09-19-mode-sync5',selectedMode,fogDrawThreshold,fogRows,brSeries,redraw});
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>{install();setTimeout(redraw,0);},{once:true});else{install();setTimeout(redraw,0);}
 })();
