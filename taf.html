@@ -73,6 +73,26 @@
   </div>
 
   <iframe id="engine" class="engine-frame" src="index.html?v=20260917-taf-fog-mode-sync" title="Silnik danych modeli" aria-hidden="true" tabindex="-1"></iframe>
+  <script>
+  (()=>{
+    const H=3600000,issueHours=[5,11,17,23],$=id=>document.getElementById(id),pad=n=>String(n).padStart(2,'0');
+    const fail=message=>{const st=$('st'),badge=$('badge');if(st)st.textContent='STARTUP: '+message;if(badge){badge.textContent='TAF ENGINE 2.4.3 · BŁĄD STARTU';badge.className='badge bad';}};
+    window.addEventListener('error',e=>fail(e?.message||'błąd JavaScript'));
+    window.addEventListener('unhandledrejection',e=>fail(e?.reason?.message||String(e?.reason||'odrzucona operacja')));
+    try{
+      const select=$('cycle'),now=Date.now(),base=new Date(now-18*H),list=[];base.setUTCMinutes(0,0,0);
+      for(let i=0;i<72;i++){
+        const issue=base.getTime()+i*H;if(!issueHours.includes(new Date(issue).getUTCHours()))continue;
+        const start=issue+H,end=start+12*H;if(issue<now-8*H||issue>now+30*H)continue;
+        list.push({issue,start,end});
+      }
+      let best=0,bestScore=Infinity;
+      const fmt=(ms,date=true)=>{const d=new Date(ms),hm=`${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;return date?`${pad(d.getUTCDate())}.${pad(d.getUTCMonth()+1)}.${d.getUTCFullYear()} ${hm}`:hm;};
+      select.innerHTML=list.map((c,i)=>{let score=c.issue>=now?c.issue-now:(now-c.issue)+12*H;if(now>=c.issue-20*60000&&now<=c.issue+5*60000)score=0;if(score<bestScore){bestScore=score;best=i;}return `<option value="${i}">${fmt(c.issue)} → ${fmt(c.start,false)}–${fmt(c.end,false)}</option>`;}).join('');
+      select.value=String(best);select.dataset.cycles=JSON.stringify(list);document.documentElement.dataset.tafStartup='cycles-ready';$('st').textContent='ładowanie silnika TAF…';
+    }catch(e){fail(e?.message||String(e));}
+  })();
+  </script>
   <script src="utc-ui-guard.js"></script>
   <script src="message-archive-client.js?v=live-jsonl-v7"></script>
   <script src="taf-fog-policy.js?v=20260917-2"></script>
@@ -81,9 +101,8 @@
   <script src="taf-engine-v241.js?v=2.4.1-audit"></script>
   <script src="taf-engine-v242.js?v=2.4.2-cloud-fog"></script>
   <!-- Formal 2.3-kernel regression compatibility marker only; not executed or loaded: taf-app-v2.js?v=2.4.0-ui -->
-  <!-- Production runtime: defer guarantees execution after the page controls are parsed. -->
-  <script defer src="taf-engine-v243.js?v=20260919-2"></script>
-  <script defer src="taf-app-v25.js?v=20260919-2"></script>
+  <script defer src="taf-engine-v243.js?v=20260919-3"></script>
+  <script defer src="taf-app-v25.js?v=20260919-3"></script>
   <!-- Compatibility/build marker only; bootstrap is intentionally not executed: taf-runtime-bootstrap.js?v=20260919-1 -->
 </body>
 </html>
