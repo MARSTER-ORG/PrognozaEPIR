@@ -33,11 +33,11 @@ jobs:
         run: |
           python3 -m py_compile scripts/prepare_pages.py scripts/prepare_pages_v241.py scripts/wire_fog_mifg_utc_runtime.py
           for f in \
-            theme-control.js taf-engine-v2.js taf-engine-v24.js taf-engine-v241.js taf-engine-v242.js taf-fog-policy.js taf-app-v25.js taf-runtime-bootstrap.js \
+            theme-control.js taf-engine-v2.js taf-engine-v24.js taf-engine-v241.js taf-engine-v242.js taf-engine-v243.js taf-fog-policy.js taf-app-v25.js taf-runtime-bootstrap.js \
             message-archive-client.js neighbor-observation-context.js fog-engine.js observation-engine.js mifg-engine.js br-engine.js fog-meteogram-overlay.js \
             fog-mode-switch.js fog-summary-layout.js fog-page-layout.js fog-visibility-cells.js fog-physics-vnext.js fog-vnext-probability-layer.js fog-vnext-transition-risk.js \
             radar-risk-policy.js lightning-alert-sw.js opera-nowcast.js opera-convection-bridge.js \
-            _site/theme-control.js _site/taf-engine-v2.js _site/taf-engine-v24.js _site/taf-engine-v241.js _site/taf-engine-v242.js _site/taf-fog-policy.js _site/taf-app-v25.js _site/taf-runtime-bootstrap.js \
+            _site/theme-control.js _site/taf-engine-v2.js _site/taf-engine-v24.js _site/taf-engine-v241.js _site/taf-engine-v242.js _site/taf-engine-v243.js _site/taf-fog-policy.js _site/taf-app-v25.js _site/taf-runtime-bootstrap.js \
             _site/fog-engine.js _site/observation-engine.js _site/mifg-engine.js _site/br-engine.js _site/fog-mode-switch.js _site/fog-summary-layout.js _site/fog-page-layout.js _site/fog-visibility-cells.js \
             _site/fog-physics-vnext.js _site/fog-vnext-probability-layer.js _site/fog-vnext-transition-risk.js _site/radar-risk-policy.js _site/lightning-alert-sw.js; do
             node --check "$f"
@@ -46,6 +46,7 @@ jobs:
           node tests/taf-engine-v24.test.js
           node tests/taf-engine-v241.test.js
           node tests/taf-engine-v242.test.js
+          node tests/taf-engine-v243.test.js
           node tests/fog-vnext-production.test.js
           node tests/br-engine.test.js
           node tests/runtime-integration-contract.test.js
@@ -59,7 +60,7 @@ jobs:
           site = Path('_site')
           required = [
               'index.html','fog.html','radar.html','taf.html','sat-fog.html','arch.html','theme-control.js',
-              'taf-engine-v2.js','taf-engine-v24.js','taf-engine-v241.js','taf-engine-v242.js','taf-fog-policy.js','taf-app-v25.js','taf-runtime-bootstrap.js',
+              'taf-engine-v2.js','taf-engine-v24.js','taf-engine-v241.js','taf-engine-v242.js','taf-engine-v243.js','taf-fog-policy.js','taf-app-v25.js','taf-runtime-bootstrap.js',
               'fog-engine.js','mifg-engine.js','br-engine.js','fog-mode-switch.js','fog-summary-layout.js','fog-page-layout.js','fog-visibility-cells.js',
               'fog-physics-vnext.js','fog-vnext-probability-layer.js','fog-vnext-transition-risk.js','radar-risk-policy.js','lightning-alert-sw.js',
               'pages-build.json','data/messages/latest.json','data/messages/recent.json','data/messages/status.json',
@@ -77,8 +78,9 @@ jobs:
           fog_engine = (site / 'fog-engine.js').read_text(encoding='utf-8')
           taf = (site / 'taf.html').read_text(encoding='utf-8')
           taf_app = (site / 'taf-app-v25.js').read_text(encoding='utf-8')
+          taf_bootstrap = (site / 'taf-runtime-bootstrap.js').read_text(encoding='utf-8')
 
-          for marker in ['taf.html?v=2.4.2','theme-control.js?v=','fog-summary-layout.js?v=','epirFogStandaloneOnly','utc-ui-guard.js?v=']:
+          for marker in ['taf.html?v=2.4.3','theme-control.js?v=','fog-summary-layout.js?v=','epirFogStandaloneOnly','utc-ui-guard.js?v=']:
               if marker not in index: raise SystemExit(f'index contract missing: {marker}')
           for marker in ['id="epirGlobalNav"','id="fogStandaloneMount"','fog-mode-switch.js?v=','fog-engine.js?v=','mifg-engine.js?v=','fog-summary-layout.js?v=','br-engine.js?v=','fog-page-layout.js?v=','fog-visibility-cells.js?v=','theme-control.js?v=']:
               if marker not in fog: raise SystemExit(f'native fog page contract missing: {marker}')
@@ -86,8 +88,10 @@ jobs:
               if marker in fog: raise SystemExit(f'forbidden meteogram/dead marker in fog.html: {marker}')
           if 'PrognozaEPIRFogLegacySeries' not in fog_engine:
               raise SystemExit('LEGACY Fog series export missing')
-          for marker in ['TAF ENGINE 2.4.2 ·','taf-engine-v242.js?v=2.4.2-cloud-fog','taf-runtime-bootstrap.js?v=20260917-2']:
+          for marker in ['TAF ENGINE 2.4.3 ·','taf-engine-v242.js?v=2.4.2-cloud-fog','taf-runtime-bootstrap.js?v=20260919-1']:
               if marker not in taf: raise SystemExit(f'TAF contract missing: {marker}')
+          for marker in ['taf-engine-v243.js?v=${BUILD}', "QUALITY_VERSION !== ENGINE_LABEL"]:
+              if marker not in taf_bootstrap: raise SystemExit(f'TAF 2.4.3 bootstrap contract missing: {marker}')
           for marker in ['const mode=Policy.selectedMode(w)','Policy.seriesForMode(w,mode)','Fog Engine LEGACY nie udostępnił kompletnej serii']:
               if marker not in taf_app: raise SystemExit(f'TAF selected Fog mode contract missing: {marker}')
           PY
@@ -123,6 +127,8 @@ jobs:
             fog="$(curl -fsSL --max-time 15 "${base}/fog.html?v=${GITHUB_SHA}" 2>/dev/null || true)"
             fogengine="$(curl -fsSL --max-time 15 "${base}/fog-engine.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
             taf="$(curl -fsSL --max-time 15 "${base}/taf.html?v=${GITHUB_SHA}" 2>/dev/null || true)"
+            tafbootstrap="$(curl -fsSL --max-time 15 "${base}/taf-runtime-bootstrap.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
+            taf243="$(curl -fsSL --max-time 15 "${base}/taf-engine-v243.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
             tafapp="$(curl -fsSL --max-time 15 "${base}/taf-app-v25.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
             if printf '%s' "$marker" | grep -Fq "$GITHUB_SHA" \
               && printf '%s' "$fog" | grep -Fq 'id="epirGlobalNav"' \
@@ -133,14 +139,17 @@ jobs:
               && ! printf '%s' "$fog" | grep -Fq 'index.html?fogpanel=' \
               && ! printf '%s' "$fog" | grep -Fq 'fogRuntime' \
               && printf '%s' "$fogengine" | grep -Fq 'PrognozaEPIRFogLegacySeries' \
+              && printf '%s' "$taf" | grep -Fq 'TAF ENGINE 2.4.3 ·' \
               && printf '%s' "$taf" | grep -Fq 'taf-engine-v242.js?v=2.4.2-cloud-fog' \
+              && printf '%s' "$tafbootstrap" | grep -Fq 'taf-engine-v243.js?v=${BUILD}' \
+              && printf '%s' "$taf243" | grep -Fq 'prevailingWindFullPeriodWhenNoSignificantChange' \
               && printf '%s' "$tafapp" | grep -Fq 'const mode=Policy.selectedMode(w)' \
               && printf '%s' "$tafapp" | grep -Fq 'Policy.seriesForMode(w,mode)'; then
-              echo "GitHub Pages serves commit $GITHUB_SHA with native EPIR FOG and selected-mode TAF integration."
+              echo "GitHub Pages serves commit $GITHUB_SHA with native EPIR FOG and TAF 2.4.3 prevailing-wind integration."
               exit 0
             fi
             echo "Waiting for Pages/CDN propagation (${attempt}/18)..."
             sleep 10
           done
-          echo "ERROR: live Pages does not satisfy native FOG/TAF contract." >&2
+          echo "ERROR: live Pages does not satisfy native FOG/TAF 2.4.3 contract." >&2
           exit 1
