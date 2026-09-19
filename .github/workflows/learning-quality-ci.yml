@@ -1,0 +1,79 @@
+name: Learning quality CI
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/learning_quality_gate.py'
+      - 'scripts/build_out_of_sample_validation.py'
+      - 'scripts/build_learning_status.py'
+      - 'scripts/run_quality_gated_learning.py'
+      - '.github/workflows/previous-runs-history-backfill.yml'
+      - '.github/workflows/historical-learning-autofill.yml'
+      - '.github/workflows/learning-quality-ci.yml'
+      - 'learning-status.html'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compile learning scripts
+        run: |
+          python3 -m py_compile \
+            scripts/learning_quality_gate.py \
+            scripts/build_out_of_sample_validation.py \
+            scripts/build_learning_status.py \
+            scripts/run_quality_gated_learning.py
+
+      - name: Check current quality classification
+        run: |
+          python3 - <<'PY'
+          import sys
+          sys.path.insert(0, 'scripts')
+          from learning_quality_gate import quality_report
+          q=quality_report()
+          assert q.get('schema') == 'prognozaepir-learning-quality-gate-v1'
+          c=q.get('counts') or {}
+          assert int(c.get('training') or 0) >= 1, c
+          assert all((m.get('classification') in {'training','auxiliary','excluded','unknown'}) for m in (q.get('months') or {}).values())
+          print('quality counts:', c)
+          PY
+
+      - name: Run strict OOS validation behind gate
+        run: |
+          python3 - <<'PY'
+          import subprocess, sys
+          sys.path.insert(0, 'scripts')
+          from learning_quality_gate import training_only_previous_runs
+          with training_only_previous_runs() as q:
+              print('quarantined:', q.get('temporarily_quarantined_files'))
+              subprocess.run([sys.executable, 'scripts/build_out_of_sample_validation.py'], check=True)
+              subprocess.run([sys.executable, 'scripts/build_learning_status.py'], check=True)
+          PY
+
+      - name: Validate generated reports and restoration
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          o=json.loads(Path('data/learning/out-of-sample-validation.json').read_text(encoding='utf-8'))
+          s=json.loads(Path('data/learning/learning-status.json').read_text(encoding='utf-8'))
+          assert o.get('schema') == 'prognozaepir-consensus-oos-validation-v1'
+          guard=o.get('leakage_guard') or {}
+          assert guard.get('test_data_used_for_factor_learning') is False
+          assert guard.get('training_cutoff_exclusive') == '2026-01-01T00:00:00Z'
+          assert s.get('schema') == 'prognozaepir-learning-status-v1'
+          assert (s.get('quality_gate') or {}).get('counts')
+          print('OOS:', (o.get('test') or {}).get('learned_minus_base_pct_points'))
+          print('test cases:', (o.get('test') or {}).get('eligible_cases'))
+          PY
+          test -z "$(git status --porcelain -- data/learning/model-forecasts)"
