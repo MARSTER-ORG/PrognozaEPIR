@@ -78,6 +78,101 @@ def patch_fog() -> None:
     p.write_text(s, encoding="utf-8")
 
 
+def patch_fg_semantics() -> None:
+    """Do not label BR-range visibility as operational FG in the LEGACY UI."""
+    p = SITE / "fog-engine.js"
+    s = p.read_text(encoding="utf-8")
+
+    old_event = """  function onsetAndDissipation(series){
+    const idx=series.findIndex(x=>finite(x?.score)&&x.score>=50);
+    const onset=idx>=0?series[idx].t:null;
+    let end=null;
+    if(idx>=0){
+      let last=idx;
+      while(last+1<series.length&&finite(series[last+1]?.score)&&series[last+1].score>=50)last++;
+      end=series[last+1]?.t??null;
+    }
+    const peak=series.reduce((a,b)=>!a||b.score>a.score?b:a,null);
+    let peakFrom=null,peakTo=null;
+    if(peak&&peak.score>=50){
+      const thr=Math.max(50,.85*peak.score),pi=series.indexOf(peak);let a=pi,b=pi;
+      while(a>0&&series[a-1].score>=thr)a--;
+      while(b<series.length-1&&series[b+1].score>=thr)b++;
+      peakFrom=series[a].t;peakTo=series[b].t;
+    }
+    return {onset,end,peak,peakFrom,peakTo};
+  }"""
+    new_event = """  function isOperationalFg(x){
+    if(!finite(x?.score)||x.score<50)return false;
+    if(finite(x?.vis))return x.vis<1000;
+    return finite(x?.vis1000)&&x.vis1000>=50;
+  }
+  function onsetAndDissipation(series){
+    const idx=series.findIndex(isOperationalFg);
+    const onset=idx>=0?series[idx].t:null;
+    let end=null;
+    if(idx>=0){
+      let last=idx;
+      while(last+1<series.length&&isOperationalFg(series[last+1]))last++;
+      end=series[last+1]?.t??null;
+    }
+    const fgRows=series.filter(isOperationalFg);
+    const peak=fgRows.reduce((a,b)=>!a||b.score>a.score?b:a,null);
+    let peakFrom=null,peakTo=null;
+    if(peak){
+      const thr=Math.max(50,.85*peak.score),pi=series.indexOf(peak);let a=pi,b=pi;
+      while(a>0&&isOperationalFg(series[a-1])&&series[a-1].score>=thr)a--;
+      while(b<series.length-1&&isOperationalFg(series[b+1])&&series[b+1].score>=thr)b++;
+      peakFrom=series[a].t;peakTo=series[b].t;
+    }
+    return {onset,end,peak,peakFrom,peakTo};
+  }"""
+    if old_event not in s:
+        raise SystemExit("FOG operational event marker not found")
+    s = s.replace(old_event, new_event, 1)
+
+    old_threshold = """      <div class=\"fog-thresholds\"><b>Interpretacja operacyjna:</b> &lt;50 = MGŁA: NIE (wynik pomijany) · 50–59 = MOŻLIWA · 60–79 = PRAWDOPODOBNA · 80–100 = BARDZO PRAWDOPODOBNA. <b>Kolor i komunikat wynikają wyłącznie z końcowego EPIR score.</b> Wynik /100 jest score ryzyka, nie skalibrowanym procentem P(FG).</div>"""
+    new_threshold = """      <div class=\"fog-thresholds\"><b>Interpretacja operacyjna FG:</b> score EPIR opisuje potencjał procesu, ale <b>FG wymaga także prognozowanej VIS &lt;1000 m</b>. VIS 1000–5000 m należy do BR. Wynik /100 nie jest skalibrowanym procentem P(FG).</div>"""
+    if old_threshold not in s:
+        raise SystemExit("FOG threshold explanation marker not found")
+    s = s.replace(old_threshold, new_threshold, 1)
+
+    old_summary = """    const type=peak.type?.text||current.type?.text||'—';
+    const freeze=peak.fzfg;
+    summary.innerHTML=`
+      <div class=\"fog-card ${riskCss(current.score)}\"><small>MGŁA W CIĄGU NAJBLIŻSZEJ GODZINY</small><strong>${scoreClass(current.score)}</strong><em>${current.score>=50?fmt0(current.score)+'/100':'wynik <50/100 pominięty'}</em></div>
+      <div class=\"fog-card\"><small>Typ procesu</small><strong>${type}</strong><em>${peak.type?.secondary?'wtórny: '+mechanismName(peak.type.secondary):'dominujący mechanizm'}</em></div>
+      <div class=\"fog-card\"><small>Kiedy mgła?</small><strong>${ev.onset?localDateTime(ev.onset)+' UTC → '+(ev.end?localDateTime(ev.end)+' UTC':'dalej'):'brak sygnału ≥50 w 48 h'}</strong><em>próg operacyjny 50/100</em></div>
+      <div class=\"fog-card ${riskCss(peak.score)}\"><small>Maksimum w 48 h</small><strong>${peak.score>=50?scoreClass(peak.score):'PONIŻEJ PROGU'}</strong><em>${peak.score>=50?fmt0(peak.score)+'/100 · '+(ev.peakFrom?localDateTime(ev.peakFrom)+' UTC – '+localDateTime(ev.peakTo)+' UTC':localDateTime(peak.t)+' UTC'):'brak operacyjnej mgły'}</em></div>
+      <div class=\"fog-card\"><small>VIS &lt;1000 / &lt;500 m</small><strong>${fmt0(current.vis1000)}/100 · ${fmt0(current.vis500)}/100</strong><em>VIS EPIR ${fmtM(current.vis)}</em></div>
+      <div class=\"fog-card\"><small>VIS &lt;1500 / &lt;200 m</small><strong>${fmt0(current.vis1500)}/100 · ${fmt0(current.vis200)}/100</strong><em>osobne zagrożenia</em></div>
+      <div class=\"fog-card\"><small>Mgła marznąca</small><strong>${freeze}</strong><em>T przy maksimum ${fmt1(peak.T)}°C</em></div>
+      <div class=\"fog-card\"><small>Pewność prognozy</small><strong>${confidenceLabel(current.confidence)}</strong><em>${fmt0((current.confidence??0)*100)}% wskaźnika CONF</em></div>`;"""
+    new_summary = """    const type=peak.type?.text||current.type?.text||'—';
+    const currentFg=isOperationalFg(current),peakFg=isOperationalFg(peak);
+    const freeze=peakFg?peak.fzfg:'NIE';
+    summary.innerHTML=`
+      <div class=\"fog-card ${riskCss(currentFg?current.score:null)}\"><small>MGŁA W CIĄGU NAJBLIŻSZEJ GODZINY</small><strong>${currentFg?scoreClass(current.score):'NIE'}</strong><em>${currentFg?fmt0(current.score)+'/100 · VIS '+fmtM(current.vis):current.score>=50?'score '+fmt0(current.score)+'/100 · VIS '+fmtM(current.vis)+' → brak FG':'wynik <50/100 pominięty'}</em></div>
+      <div class=\"fog-card\"><small>Typ procesu</small><strong>${type}</strong><em>${peak.type?.secondary?'wtórny: '+mechanismName(peak.type.secondary):'dominujący mechanizm'}</em></div>
+      <div class=\"fog-card\"><small>Kiedy FG?</small><strong>${ev.onset?localDateTime(ev.onset)+' → '+(ev.end?localDateTime(ev.end):'dalej'):'brak FG w 48 h'}</strong><em>wymagane score ≥50 i VIS &lt;1000 m</em></div>
+      <div class=\"fog-card ${riskCss(peakFg?peak.score:null)}\"><small>Maksimum FG w 48 h</small><strong>${peakFg?scoreClass(peak.score):'BRAK FG'}</strong><em>${peakFg?fmt0(peak.score)+'/100 · '+(ev.peakFrom?localDateTime(ev.peakFrom)+' – '+localDateTime(ev.peakTo):localDateTime(peak.t)):'score procesu bez VIS <1000 m nie jest FG'}</em></div>
+      <div class=\"fog-card\"><small>VIS &lt;1000 / &lt;500 m</small><strong>${fmt0(current.vis1000)}/100 · ${fmt0(current.vis500)}/100</strong><em>VIS EPIR ${fmtM(current.vis)}</em></div>
+      <div class=\"fog-card\"><small>VIS &lt;1500 / &lt;200 m</small><strong>${fmt0(current.vis1500)}/100 · ${fmt0(current.vis200)}/100</strong><em>osobne zagrożenia</em></div>
+      <div class=\"fog-card\"><small>Mgła marznąca</small><strong>${freeze}</strong><em>${peakFg?'T przy maksimum '+fmt1(peak.T)+'°C':'brak operacyjnego FG'}</em></div>
+      <div class=\"fog-card\"><small>Pewność prognozy</small><strong>${confidenceLabel(current.confidence)}</strong><em>${fmt0((current.confidence??0)*100)}% wskaźnika CONF</em></div>`;"""
+    if old_summary not in s:
+        raise SystemExit("FOG summary semantics marker not found")
+    s = s.replace(old_summary, new_summary, 1)
+
+    old_hours = """      hours.innerHTML=future.slice(0,13).map(x=>`<div class=\"fog-hour ${riskCss(x.score)}\"><b>${localHour(x.t)}</b><div class=\"p\">${scoreClass(x.score)}</div><small>${x.score>=50?fmt0(x.score)+'/100':'&lt;50 · pominięte'}</small><small>${x.score>=50?(x.type?.text||'—'):'bez sygnału operacyjnego'}</small><small>VIS ${fmtM(x.vis)}</small><small>&lt;1km ${fmt0(x.vis1000)}/100</small></div>`).join('');"""
+    new_hours = """      hours.innerHTML=future.slice(0,13).map(x=>{const fg=isOperationalFg(x);return `<div class=\"fog-hour ${riskCss(fg?x.score:null)}\"><b>${localHour(x.t)}</b><div class=\"p\">${fg?scoreClass(x.score):'NIE'}</div><small>${x.score>=50?fmt0(x.score)+'/100':'&lt;50 · pominięte'}</small><small>${fg?(x.type?.text||'—'):x.score>=50?'score bez VIS <1 km':'bez sygnału operacyjnego'}</small><small>VIS ${fmtM(x.vis)}</small><small>&lt;1km ${fmt0(x.vis1000)}/100</small></div>`;}).join('');"""
+    if old_hours not in s:
+        raise SystemExit("FOG hourly semantics marker not found")
+    s = s.replace(old_hours, new_hours, 1)
+
+    p.write_text(s, encoding="utf-8")
+
+
 def patch_mifg() -> None:
     p = SITE / "mifg-engine.js"
     s = p.read_text(encoding="utf-8")
@@ -158,6 +253,9 @@ def validate() -> None:
         raise SystemExit("local timezone reference remains in deployed FOG/MIFG")
     if "PrognozaEPIRFogLegacySeries" not in fog:
         raise SystemExit("dedicated LEGACY fog series is not exported for TAF")
+    for marker in ("function isOperationalFg", "Kiedy FG?", "score bez VIS <1 km"):
+        if marker not in fog:
+            raise SystemExit(f"FOG visibility semantics missing: {marker}")
 
     if 'app.css?v=' not in index:
         raise SystemExit("meteogram shared stylesheet contract missing")
@@ -226,12 +324,13 @@ def validate() -> None:
 
 def main() -> int:
     patch_fog()
+    patch_fg_semantics()
     patch_mifg()
     cache_bust_bridge()
     wire_meteogram_bridge()
     wire_standalone_page()
     validate()
-    print("wired canonical fog.html runtime provider for meteogram plus native EPIR FOG page")
+    print("wired canonical fog.html runtime provider with strict FG visibility semantics")
     return 0
 
 
