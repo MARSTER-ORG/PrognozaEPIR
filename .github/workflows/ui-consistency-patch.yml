@@ -1,0 +1,82 @@
+name: UI consistency patch
+
+on:
+  push:
+    branches: [fix/ui-consistency-20260919]
+    paths:
+      - '.github/workflows/ui-consistency-patch.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/ui-consistency-20260919
+          fetch-depth: 0
+
+      - name: Normalize navigation and TAF action colors
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          fog = Path('fog.html')
+          s = fog.read_text(encoding='utf-8')
+          old = '<nav id="epirGlobalNav" class="local-nav epir-global-nav" aria-label="Główna nawigacja PrognozaEPIR">'
+          new = '<nav id="epirGlobalNav" class="epir-global-nav" aria-label="Główna nawigacja PrognozaEPIR">'
+          if old not in s:
+              raise SystemExit('fog.html: expected legacy local-nav class not found')
+          fog.write_text(s.replace(old, new, 1), encoding='utf-8')
+
+          css = Path('app.css')
+          s = css.read_text(encoding='utf-8')
+
+          old_mobile = '''@media(max-width:700px){\n  html[data-epir-page] .epir-global-nav{padding:5px;gap:4px}\n  html[data-epir-page] .epir-global-nav>a{flex:1 1 calc(33.333% - 4px);min-height:32px;padding:6px 4px;font-size:9px}\n  html[data-epir-page] .epir-theme-slot{width:100%;justify-content:flex-end;padding-top:1px}\n}\n@media(max-width:430px){html[data-epir-page] .epir-global-nav>a{flex-basis:calc(50% - 4px)}}'''
+          new_mobile = '''@media(max-width:700px){\n  html[data-epir-page] .epir-global-nav{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));padding:5px;gap:4px}\n  html[data-epir-page] .epir-global-nav>a{display:flex;flex:none;width:auto;min-width:0;min-height:32px;padding:6px 4px;font-size:9px}\n  html[data-epir-page] .epir-global-nav>a:nth-of-type(7){grid-column:1/-1}\n  html[data-epir-page] .epir-theme-slot{grid-column:1/-1;width:100%;justify-content:flex-end;padding-top:3px}\n}'''
+          if old_mobile not in s:
+              raise SystemExit('app.css: expected shared mobile navigation block not found')
+          s = s.replace(old_mobile, new_mobile, 1)
+
+          marker = '''/* TAF had historically hard-coded dark surfaces; make it obey the global theme. */'''
+          consistency = '''/* Shared action colors: TAF uses the same accent as FOG and active navigation. */\nhtml[data-epir-page="taf"] .btn{background:var(--blueText);border-color:var(--blueText);color:#fff}\nhtml[data-epir-page="taf"] .btn:hover{background:var(--blue);border-color:var(--blue)}\nhtml[data-epir-page="taf"] .fog-mode-buttons button{background:var(--surface2);border-color:var(--border);color:var(--ink)}\nhtml[data-epir-page="taf"] .fog-mode-buttons button:hover{background:var(--soft)}\nhtml[data-epir-page="taf"] .fog-mode-buttons button.active{background:var(--blueText);border-color:var(--blueText);color:#fff}\n\n'''
+          if marker not in s:
+              raise SystemExit('app.css: TAF shared marker not found')
+          if 'Shared action colors: TAF uses the same accent as FOG' not in s:
+              s = s.replace(marker, consistency + marker, 1)
+
+          css.write_text(s, encoding='utf-8')
+          print('UI consistency patch applied.')
+          PY
+
+      - name: Validate patch
+        run: |
+          node --check theme.js
+          python3 - <<'PY'
+          from pathlib import Path
+          fog = Path('fog.html').read_text(encoding='utf-8')
+          css = Path('app.css').read_text(encoding='utf-8')
+          assert 'class="local-nav epir-global-nav"' not in fog
+          assert 'class="epir-global-nav"' in fog
+          assert 'grid-template-columns:repeat(2,minmax(0,1fr))' in css
+          assert '.epir-global-nav>a:nth-of-type(7){grid-column:1/-1}' in css
+          assert 'html[data-epir-page="taf"] .btn{background:var(--blueText)' in css
+          assert 'html[data-epir-page="taf"] .fog-mode-buttons button.active{background:var(--blueText)' in css
+          print('UI consistency validation: OK')
+          PY
+          python3 scripts/prepare_pages_v241.py
+          python3 scripts/wire_fog_mifg_utc_runtime.py
+          node tests/fog-native-page-contract.test.js
+          node tests/runtime-integration-contract.test.js
+
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.css fog.html
+          git commit -m "fix(ui): unify mobile navigation and TAF action colors"
+          git push origin HEAD:fix/ui-consistency-20260919
