@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>PrognozaEPIR — stan nauki Consensus</title>
+<style>
+:root{--bg:#f4f4f2;--ink:#232323;--muted:#686868;--surface:#fff;--surface2:#f3f3f1;--border:#b8b8b8;--blue:#1f2a75;--good:#217a3d;--warn:#9a6515;--bad:#a23a36}
+@media(prefers-color-scheme:dark){:root{--bg:#111418;--ink:#e7e9ed;--muted:#a6acb5;--surface:#181c21;--surface2:#20252b;--border:#4e5660;--blue:#9aabff;--good:#76ca91;--warn:#e3b865;--bad:#ef8e89}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Arial,Helvetica,sans-serif}.app{max-width:1120px;margin:0 auto;padding:14px}.top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}.top h1{font-size:20px;margin:0 0 5px}.muted{color:var(--muted)}a{color:var(--blue)}.back{display:inline-block;border:1px solid var(--border);background:var(--surface);border-radius:7px;padding:7px 10px;text-decoration:none;color:var(--ink)}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:11px}.card h2{font-size:12px;margin:0 0 8px;color:var(--muted);font-weight:600}.big{font-size:25px;font-weight:700}.small{font-size:11px;line-height:1.45}.wide{grid-column:1/-1}.half{grid-column:span 2}.kv{display:grid;grid-template-columns:minmax(140px,1fr) minmax(90px,1fr);gap:4px 14px;font-size:12px;line-height:1.45}.kv div:nth-child(odd){color:var(--muted)}.pill{display:inline-block;border:1px solid var(--border);border-radius:999px;padding:3px 7px;font-size:11px;margin:2px 3px 2px 0}.good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}table{width:100%;border-collapse:collapse;font-size:11px}th,td{text-align:left;padding:6px;border-bottom:1px solid var(--border)}th{color:var(--muted)}.bar{height:8px;background:var(--surface2);border-radius:999px;overflow:hidden;margin-top:6px}.bar>i{display:block;height:100%;background:currentColor}.error{display:none;padding:12px;border:1px solid var(--bad);color:var(--bad);background:var(--surface)}@media(max-width:760px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.half{grid-column:1/-1}.top{flex-direction:column}.big{font-size:22px}}@media(max-width:440px){.grid{grid-template-columns:1fr}.half,.wide{grid-column:1}.kv{grid-template-columns:1fr}.kv div:nth-child(even){margin-bottom:5px}}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="top">
+    <div><h1>Stan nauki PrognozaEPIR CONSENSUS</h1><div id="stamp" class="muted small">Ładowanie danych…</div></div>
+    <a class="back" href="index.html">← Meteogram</a>
+  </div>
+  <div id="error" class="error"></div>
+  <div id="content" class="grid" hidden>
+    <section class="card"><h2>CONSENSUS — weryfikacja</h2><div id="score" class="big">—</div><div id="samples" class="small muted">—</div></section>
+    <section class="card"><h2>Przypadki użyteczne</h2><div id="usable" class="big">—</div><div id="rows" class="small muted">—</div></section>
+    <section class="card"><h2>Previous Runs</h2><div id="months" class="big">—</div><div class="small muted">miesiące treningowe / oczekujące</div></section>
+    <section class="card"><h2>Single Runs</h2><div id="complete" class="big">—</div><div id="completeText" class="small muted">—</div><div class="bar"><i id="completeBar" style="width:0%"></i></div></section>
+
+    <section class="card half"><h2>Zakres danych uczących</h2><div id="archive" class="kv"></div></section>
+    <section class="card half"><h2>Bramka jakości Previous Runs</h2><div id="quality"></div><div class="small muted" style="margin-top:7px">≥5 modeli: trening · 3–4: pomocnicze · &lt;3: tylko backfill</div></section>
+
+    <section class="card half"><h2>Walidacja out-of-sample 2024–2025 → 2026</h2><div id="oos" class="kv"></div></section>
+    <section class="card half"><h2>Uczenie historyczne obserwacji</h2><div id="obs" class="kv"></div></section>
+
+    <section class="card wide"><h2>Składowe bieżącej weryfikacji Consensus</h2><div id="components"></div></section>
+    <section class="card wide"><h2>Walidacja OOS według horyzontu</h2><div style="overflow:auto"><table><thead><tr><th>Horyzont</th><th>Consensus uczony</th><th>Consensus bazowy</th><th>Różnica</th></tr></thead><tbody id="leadRows"></tbody></table></div></section>
+    <section class="card wide"><h2>Ostrzeżenia / stan uzupełniania</h2><div id="warnings" class="small"></div></section>
+  </div>
+</div>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const num=(v,d=0)=>Number.isFinite(Number(v))?Number(v).toLocaleString('pl-PL',{minimumFractionDigits:d,maximumFractionDigits:d}):'—';
+const date=v=>{if(!v)return'—';const x=new Date(v);return Number.isNaN(x.getTime())?String(v):x.toLocaleString('pl-PL',{timeZone:'UTC',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})+' UTC'};
+const kv=(pairs)=>pairs.map(([k,v])=>`<div>${k}</div><div>${v??'—'}</div>`).join('');
+function clsDelta(v){const n=Number(v);return !Number.isFinite(n)?'':n>0?'good':n<0?'bad':''}
+async function load(){
+  try{
+    const r=await fetch('data/learning/learning-status.json?ts='+Date.now(),{cache:'no-store'});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const s=await r.json();
+    $('stamp').textContent='Aktualizacja: '+date(s.generated_at);
+    const cv=s.consensus_verification||{}, ar=s.training_archive||{}, q=s.quality_gate||{}, pc=s.previous_runs_backfill||{}, sr=s.single_runs_backfill||{}, oo=s.out_of_sample||{}, ob=s.observation_history||{};
+    $('score').textContent=cv.score_pct==null?'—':num(cv.score_pct)+'%';
+    $('samples').textContent='próbek: '+num(cv.forecast_samples);
+    $('usable').textContent=num(ar.usable_forecast_cases);
+    $('rows').textContent='rekordów załadowanych: '+num(ar.forecast_rows_loaded);
+    const qc=q.counts||{};
+    $('months').textContent=num(qc.training)+' / '+num(pc.remaining_pending_months);
+    const cp=Number(sr.completeness_pct);
+    $('complete').textContent=Number.isFinite(cp)?num(cp,1)+'%':'—';
+    $('completeText').textContent=num(sr.complete_runs)+' / '+num(sr.expected_runs)+' runów';
+    $('completeBar').style.width=Number.isFinite(cp)?Math.max(0,Math.min(100,cp))+'%':'0%';
+    $('archive').innerHTML=kv([
+      ['Początek prognoz',date(ar.valid_time_start)],['Koniec prognoz',date(ar.valid_time_end)],['Backfill Single Runs',(ar.single_run_backfill_start||'—')+' → '+(ar.single_run_backfill_end||'—')],['Aktualizacja wag',date((s.adaptive_learning||{}).generated_at)]
+    ]);
+    $('quality').innerHTML=[['training','Trening','good'],['auxiliary','Pomocnicze','warn'],['excluded','Wyłączone','bad'],['unknown','Nieznane','bad']].map(([k,l,c])=>`<span class="pill ${c}">${l}: <b>${num(qc[k]||0)}</b></span>`).join('');
+    const delta=oo.learned_minus_base_pct_points;
+    $('oos').innerHTML=kv([
+      ['Przypadki testowe',num(oo.test_cases)],['Consensus uczony',oo.learned_consensus_score_pct==null?'—':num(oo.learned_consensus_score_pct,2)+'%'],['Consensus bazowy',oo.base_weight_consensus_score_pct==null?'—':num(oo.base_weight_consensus_score_pct,2)+'%'],['Różnica',`<span class="${clsDelta(delta)}">${delta==null?'—':(Number(delta)>0?'+':'')+num(delta,2)+' pp'}</span>`],['Przeciek danych testowych',(oo.leakage_guard||{}).test_data_used_for_factor_learning===false?'<span class="good">NIE</span>':'—']
+    ]);
+    $('obs').innerHTML=kv([
+      ['Dni obserwacyjnych',num(ob.observation_days)],['Wymagane dni runów',num(ob.required_run_days)],['Pozostało do wzbogacenia',num(ob.remaining_pending_days)],['Następne dni',(ob.next_pending_days||[]).slice(0,5).join(', ')||'—']
+    ]);
+    const comps=cv.components||{};
+    $('components').innerHTML=Object.entries(comps).map(([k,v])=>`<span class="pill">${k}: <b>${v&&v.score_pct!=null?num(v.score_pct)+'%':'—'}</b> <span class="muted">n=${num(v&&v.n)}</span></span>`).join('')||'<span class="muted">Brak danych</span>';
+    const leads=oo.by_lead_bucket||{};
+    $('leadRows').innerHTML=Object.entries(leads).map(([lead,v])=>{const a=v.learned_consensus||{},b=v.base_weight_consensus||{},d=v.delta_pct_points;return `<tr><td><b>${lead}</b></td><td>${a.composite_score_pct==null?'—':num(a.composite_score_pct,2)+'%'}</td><td>${b.composite_score_pct==null?'—':num(b.composite_score_pct,2)+'%'}</td><td class="${clsDelta(d)}">${d==null?'—':(Number(d)>0?'+':'')+num(d,2)+' pp'}</td></tr>`}).join('')||'<tr><td colspan="4">Brak wyniku OOS</td></tr>';
+    const warns=s.warnings||[];
+    $('warnings').innerHTML=warns.length?warns.map(x=>`<div class="warn">• ${String(x)}</div>`).join(''):'<span class="good">Brak ostrzeżeń.</span>';
+    $('content').hidden=false;
+  }catch(e){$('error').style.display='block';$('error').textContent='Nie udało się wczytać data/learning/learning-status.json: '+e.message;}
+}
+load();setInterval(load,60000);
+</script>
+</body>
+</html>
