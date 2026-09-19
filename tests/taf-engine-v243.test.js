@@ -180,7 +180,7 @@ assert.equal(E.helpers.simplifyCloudTokens('9999 FEW020CB SCT025 BKN030'),'9999 
   const g=q.groups.find(x=>/\b(?:FEW|SCT|BKN|OVC)\d{3}CB\b/.test(x.payload||''));
   assert.ok(g,q.taf);
   assert.ok(g.kind==='TEMPO'||g.kind==='PROB30 TEMPO',g.text);
-  assert.match(g.payload,/\b-SHRA\b/,g.payload);
+  assert.match(g.payload,/(?:^|\s)-SHRA\b/,g.payload);
   assert.ok(!/\b(?:9999|\d{4})\b/.test(g.payload),g.payload);
   assert.ok((g.fields||[]).includes('weather'),g.text);
   assert.equal(q.checks.ok,true);
