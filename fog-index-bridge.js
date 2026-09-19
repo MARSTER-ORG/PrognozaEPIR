@@ -2,7 +2,8 @@
 (() => {
   const FRAME_ID='epirFogCanonicalRuntime';
   const MODE_KEY='prognozaepir-fog-engine-mode';
-  const VERSION='2026-09-19-canonical-fog-page-1';
+  const VERSION='2026-09-19-canonical-fog-page-2';
+  const SECTION_FIX='fog-section-info-fix.js';
   const finite=Number.isFinite;
   let frame=null,lastSync=0,lastCounts={legacy:0,vnext:0,br:0,mifg:0};
 
@@ -81,6 +82,14 @@
       try{cw.addEventListener(ev,()=>setTimeout(sync,0));}catch(_){}
     }
   }
+  function loadSectionFix(){
+    if(document.querySelector('script[data-epir-fog-section-fix="1"]'))return;
+    const s=document.createElement('script');
+    s.src=SECTION_FIX+'?v='+encodeURIComponent(VERSION);
+    s.dataset.epirFogSectionFix='1';
+    s.async=false;
+    (document.body||document.head||document.documentElement).appendChild(s);
+  }
   function loadFrame(){
     if(frame?.isConnected)return frame;
     frame=document.createElement('iframe');
@@ -108,6 +117,7 @@
     }catch(_){loadFrame();}
   }
   function start(){
+    loadSectionFix();
     loadFrame();
     window.addEventListener('storage',ev=>{if(ev.key===MODE_KEY)reloadCanonical();});
     document.addEventListener('visibilitychange',()=>{if(!document.hidden)setTimeout(sync,0);});
