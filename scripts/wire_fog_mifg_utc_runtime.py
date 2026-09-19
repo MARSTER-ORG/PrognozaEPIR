@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Wire the deployed FOG/BR/MIFG runtimes.
 
-The meteogram and TAF keep their existing model runtime. ``fog.html`` is a
-native standalone page and must never embed or hide ``index.html``.
+``fog.html`` is the canonical Fog runtime.  The meteogram must not execute its
+own copy of Fog/BR/MIFG engines because its global model state differs from the
+standalone Fog page.  ``index.html`` therefore consumes the canonical same-
+origin ``fog.html`` runtime through ``fog-index-bridge.js`` and only draws the
+published series.
 """
 import os
 import re
@@ -19,6 +22,16 @@ FOG_PAGE_ASSETS = (
     "br-engine.js",
     "fog-page-layout.js",
     "fog-visibility-cells.js",
+)
+INDEX_FOG_RUNTIME_ASSETS = (
+    "fog-engine.js",
+    "observation-engine.js",
+    "mifg-engine.js",
+    "br-engine.js",
+    "fog-summary-layout.js",
+    "fog-mode-switch.js",
+    "fog-index-bridge.js",
+    "fog-meteogram-overlay.js",
 )
 
 
@@ -52,8 +65,6 @@ def patch_fog() -> None:
         raise SystemExit("FOG datetime-local parser marker not found")
     s = s.replace(old_parse, new_parse, 1)
 
-    # Preserve the untouched LEGACY series before vNEXT enriches the active
-    # series. TAF in LEGACY mode consumes only this dedicated snapshot.
     active_export = "fogSeries=out;window.PrognozaEPIRFogSeries=fogSeries;"
     legacy_export = (
         "fogSeries=out;"
@@ -93,38 +104,32 @@ def cache_bust_bridge() -> None:
     bridge.write_text(b, encoding="utf-8")
 
 
+def strip_script(html: str, asset: str) -> str:
+    return re.sub(
+        rf'\s*<script\s+src=["\']{re.escape(asset)}(?:\?[^"\']*)?["\'][^>]*></script>',
+        '',
+        html,
+        flags=re.I,
+    )
+
+
 def wire_meteogram_bridge() -> None:
     p = SITE / "index.html"
     s = p.read_text(encoding="utf-8")
     s = re.sub(r'utc-ui-guard\.js(?:\?v=[^\"]*)?', f'utc-ui-guard.js?v={ASSET_V}', s)
 
-    # BR on the meteogram must come from the same build as the overlay.  The
-    # source index historically carried a hand-written ?v= token for br-engine,
-    # which let browsers/CDN keep an older BR runtime while the overlay was new.
-    # Remove every legacy BR tag and reinsert exactly one cache-busted tag
-    # immediately before the overlay.
-    s = re.sub(
-        r'\s*<script\s+src=["\']br-engine\.js(?:\?[^"\']*)?["\'][^>]*></script>',
-        '',
-        s,
-        flags=re.I,
-    )
-    overlay_re = re.compile(
-        r'<script\s+src=["\']fog-meteogram-overlay\.js(?:\?[^"\']*)?["\'][^>]*></script>',
-        flags=re.I,
-    )
-    if not overlay_re.search(s):
-        raise SystemExit("meteogram Fog overlay tag missing before BR wiring")
-    br_tag = f'<script src="br-engine.js?v={ASSET_V}"></script>'
-    overlay_tag = f'<script src="fog-meteogram-overlay.js?v={ASSET_V}"></script>'
-    s = overlay_re.sub(br_tag + '\n' + overlay_tag, s, count=1)
+    # Remove every in-page Fog runtime.  The old chain let fog-engine.js see
+    # meteogram globals (MODELS/datasets) and later fog-summary-layout.js could
+    # overwrite the selected series.  The meteogram must only consume the
+    # isolated canonical fog.html runtime.
+    for asset in INDEX_FOG_RUNTIME_ASSETS:
+        s = strip_script(s, asset)
 
-    # Meteogram-only Fog panel hiding is defined in shared app.css.
-    tag = f'<script src="fog-summary-layout.js?v={ASSET_V}"></script>'
-    if 'fog-summary-layout.js?v=' not in s:
-        if '</body>' not in s:
-            raise SystemExit("index.html body marker missing")
-        s = s.replace('</body>', tag + '\n</body>', 1)
+    if '</body>' not in s:
+        raise SystemExit("index.html body marker missing")
+    provider = f'<script src="fog-index-bridge.js?v={ASSET_V}"></script>'
+    overlay = f'<script src="fog-meteogram-overlay.js?v={ASSET_V}"></script>'
+    s = s.replace('</body>', provider + '\n' + overlay + '\n</body>', 1)
     p.write_text(s, encoding="utf-8")
 
 
@@ -142,6 +147,7 @@ def validate() -> None:
     mifg = (SITE / "mifg-engine.js").read_text(encoding="utf-8")
     br = (SITE / "br-engine.js").read_text(encoding="utf-8")
     index = (SITE / "index.html").read_text(encoding="utf-8")
+    index_bridge = (SITE / "fog-index-bridge.js").read_text(encoding="utf-8")
     theme = (SITE / "theme.js").read_text(encoding="utf-8")
     app_css = (SITE / "app.css").read_text(encoding="utf-8")
     bridge = (SITE / "fog-summary-layout.js").read_text(encoding="utf-8")
@@ -153,21 +159,33 @@ def validate() -> None:
     if "PrognozaEPIRFogLegacySeries" not in fog:
         raise SystemExit("dedicated LEGACY fog series is not exported for TAF")
 
-    if 'fog-summary-layout.js?v=' not in index or 'app.css?v=' not in index:
-        raise SystemExit("meteogram Fog bridge/shared stylesheet contract missing")
+    if 'app.css?v=' not in index:
+        raise SystemExit("meteogram shared stylesheet contract missing")
     if '#fogEngine' not in app_css or 'data-epir-page="index"' not in app_css:
         raise SystemExit("shared stylesheet is missing the meteogram-only Fog panel rule")
     if f'utc-ui-guard.js?v={ASSET_V}' not in index:
         raise SystemExit("global navigation runtime is not cache-busted")
 
-    br_tag = f'br-engine.js?v={ASSET_V}'
+    provider_tag = f'fog-index-bridge.js?v={ASSET_V}'
     overlay_tag = f'fog-meteogram-overlay.js?v={ASSET_V}'
-    if index.count('br-engine.js?v=') != 1 or br_tag not in index:
-        raise SystemExit("meteogram BR runtime is missing, duplicated or cache-stale")
+    if index.count('fog-index-bridge.js?v=') != 1 or provider_tag not in index:
+        raise SystemExit("canonical fog.html provider is missing, duplicated or cache-stale")
     if index.count('fog-meteogram-overlay.js?v=') != 1 or overlay_tag not in index:
         raise SystemExit("meteogram Fog/BR overlay is missing, duplicated or cache-stale")
-    if index.find(br_tag) > index.find(overlay_tag):
-        raise SystemExit("meteogram BR runtime must load before Fog/BR overlay")
+    if index.find(provider_tag) > index.find(overlay_tag):
+        raise SystemExit("canonical Fog provider must load before meteogram overlay")
+    for asset in ("fog-engine.js", "observation-engine.js", "mifg-engine.js", "br-engine.js", "fog-summary-layout.js", "fog-mode-switch.js"):
+        if re.search(rf'<script\s+src=["\']{re.escape(asset)}(?:\?[^"\']*)?["\']', index, re.I):
+            raise SystemExit(f"duplicate Fog runtime leaked into meteogram: {asset}")
+    for marker in (
+        "frame.src='fog.html?runtime-provider=1",
+        'PrognozaEPIRFogLegacySeries',
+        'PrognozaEPIRFogVNextSeries',
+        'PrognozaEPIRBRSeries',
+        'PrognozaEPIRMIFGSeries',
+    ):
+        if marker not in index_bridge:
+            raise SystemExit(f"canonical Fog index bridge contract missing: {marker}")
 
     if "fogEngineMode:'vnext-production'" not in bridge or 'Probability.operationalScore' not in bridge:
         raise SystemExit("Fog vNext bridge is not in production mode")
@@ -184,8 +202,6 @@ def validate() -> None:
         if marker not in br:
             raise SystemExit(f"BR target contract missing: {marker}")
 
-    # Native standalone page: no iframe, no meteogram markup/runtime and no
-    # compatibility-only metadata. Only the Fog modules may be loaded here.
     forbidden = (
         '<iframe', 'index.html?fogpanel=', 'fogRuntime', 'runtime-wrap',
         'canvasViewport', '<canvas', 'MutationObserver', 'ResizeObserver',
@@ -215,7 +231,7 @@ def main() -> int:
     wire_meteogram_bridge()
     wire_standalone_page()
     validate()
-    print("wired native EPIR FOG page, UTC Fog runtimes and dedicated LEGACY/vNext TAF series")
+    print("wired canonical fog.html runtime provider for meteogram plus native EPIR FOG page")
     return 0
 
 
