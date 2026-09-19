@@ -68,11 +68,19 @@
     const fogScore=operationalScoreForTaf(rawScore,mode)??0;
     const vis1000=thresholdRisk(f,1000,mode),vis1500=thresholdRisk(f,1500,mode),vis500=thresholdRisk(f,500,mode),vis200=thresholdRisk(f,200,mode);
     const vis=activeVisibility(f,mode);
-    const fgOperationalScore=Math.max(fogScore,finite(vis1000)?vis1000:0);
+
+    // FG is an operational weather code only when the forecast visibility is
+    // below 1000 m. A high process score alone must not convert BR-range
+    // visibility (1000-5000 m) into FG. If visibility itself is unavailable,
+    // a strong explicit P(VIS<1000) signal may be used as the fallback gate.
+    const fgVisibilitySupported=finite(vis)?vis<1000:(finite(vis1000)&&vis1000>=50);
+    const fgOperationalScore=fgVisibilitySupported?Math.max(fogScore,finite(vis1000)?vis1000:0):0;
     const brOperationalScore=finite(vis)&&vis>=1000&&vis<=5000?Math.max(fogScore,finite(vis1500)?vis1500:0):null;
-    const fogAltVisM=finite(vis)&&vis<1000?Math.max(100,Math.min(900,vis)):(rawScore>=40?(finite(vis500)&&vis500>=50?500:(finite(vis1000)&&vis1000>=50?800:900)):null);
+    const fogAltVisM=finite(vis)
+      ? (vis<1000?Math.max(100,Math.min(900,vis)):null)
+      : (finite(vis1000)&&vis1000>=50?(finite(vis500)&&vis500>=50?500:800):null);
     return {
-      mode,rawScore,fogScore,fgOperationalScore,brOperationalScore,
+      mode,rawScore,fogScore,fgOperationalScore,brOperationalScore,fgVisibilitySupported,
       vis,vis1500,vis1000,vis500,vis200,fogAltVisM,
       confidence:mode==='vnext'?(num(f?.visGuidance?.confidence)??num(f?.visConfidence)??num(f?.confidence)):num(f?.confidence),
       type:mechanismType(f,mode),
