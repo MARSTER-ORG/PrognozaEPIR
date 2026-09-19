@@ -68,7 +68,10 @@ function fakeStorage(mode) {
   assert(js.includes('FG · szacowana VIS'));
   assert(js.includes('BR · szacowana VIS'));
   assert(js.includes('MIFG · VIS standardowa'));
-  assert(js.includes('brak aktywnego FG ≥50/100 w 48 h'));
+  assert(js.includes('function isOperationalFg(row)'));
+  assert(js.includes('brak sygnału FOG ≥50/100 w 48 h'));
+  assert(js.includes('BRAK FG'));
+  assert(js.includes('bez VIS &lt;1000 m nie oznaczam FG'));
   assert(js.includes('brak aktywnego BR ≥50/100 w 24 h'));
   assert(js.includes('brak aktywnego MIFG ≥50/100 w 48 h'));
 })();
@@ -119,6 +122,8 @@ function fakeStorage(mode) {
   assert(wire.includes("'<iframe'"));
   assert(wire.includes("'index.html?fogpanel='"));
   assert(wire.includes('FOG_PAGE_ASSETS'));
+  assert(wire.includes('function isOperationalFg'));
+  assert(wire.includes('Kiedy FG?'));
 })();
 
 (function testTafUsesExactlySelectedFogMode() {
@@ -137,6 +142,7 @@ function fakeStorage(mode) {
   assert(!app.includes("mode==='legacy'?'vnext'"));
 })();
 
+require('./taf-fog-policy.test.js');
 require('./fog-native-page-contract.test.js');
 require('./site-asset-integrity.test.js');
 console.log('runtime integration contract: OK');
