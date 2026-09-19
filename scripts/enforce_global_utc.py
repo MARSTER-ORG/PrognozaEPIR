@@ -201,7 +201,7 @@ def validate() -> list[str]:
     required = {
         'index.html': ["tz:'UTC'", "?value+' UTC':value", "Aktualizacja: '+fmt(Date.now()"],
         'arch.html': ["replace('T',' ')+' UTC'"],
-        'taf.html': ['TAF ENGINE 2.4.2 ·', 'Cykl TAF — wszystkie czasy UTC', '<th>Czas UTC</th>', 'czasy prezentowane wyłącznie w UTC'],
+        'taf.html': ['TAF ENGINE 2.4.3 ·', 'Cykl TAF — wszystkie czasy UTC', '<th>Czas UTC</th>', 'czasy prezentowane wyłącznie w UTC'],
         'taf-app-v25.js': ['function fmtUtc(ms,withDate=true)', 'getUTCHours()', 'getUTCMinutes()', '} UTC`'],
         'radar.html': ["function fmtTime(ms)", "timeZone:'UTC'", ".format(new Date(ms))+' UTC'", 'function fmtUtc(sec)', 'fmtExternalUtc(od)', '<th>Czas UTC</th>'],
         'sat-fog.html': ["timeZone:'UTC'", "+' UTC'"],
