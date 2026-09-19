@@ -13,6 +13,10 @@ on:
     branches: [main]
     paths:
       - 'scripts/backfill_previous_runs_history.py'
+      - 'scripts/learning_quality_gate.py'
+      - 'scripts/run_quality_gated_learning.py'
+      - 'scripts/build_out_of_sample_validation.py'
+      - 'scripts/build_learning_status.py'
       - '.github/workflows/previous-runs-history-backfill.yml'
 
 permissions:
@@ -45,6 +49,10 @@ jobs:
             scripts/consensus_diagnostics.py \
             scripts/build_adaptive_weights.py \
             scripts/build_historical_model_skill.py \
+            scripts/learning_quality_gate.py \
+            scripts/build_out_of_sample_validation.py \
+            scripts/build_learning_status.py \
+            scripts/run_quality_gated_learning.py \
             scripts/embed_model_verification.py
 
       - name: Acquire one historical Previous Runs month
@@ -59,14 +67,9 @@ jobs:
             echo 'changed=true' >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Rebuild consensus learning
+      - name: Rebuild consensus learning behind quality gate
         if: steps.acquire.outputs.changed == 'true'
-        run: |
-          python3 scripts/model_verification.py
-          python3 scripts/consensus_diagnostics.py
-          python3 scripts/build_adaptive_weights.py
-          python3 scripts/build_historical_model_skill.py
-          python3 scripts/embed_model_verification.py
+        run: python3 scripts/run_quality_gated_learning.py --profile previous-runs
 
       - name: Validate rebuilt learning
         if: steps.acquire.outputs.changed == 'true'
@@ -75,19 +78,28 @@ jobs:
           python3 -m json.tool data/learning/model-verification.json >/dev/null
           python3 -m json.tool data/learning/adaptive-weights.json >/dev/null
           python3 -m json.tool data/learning/historical-model-skill.json >/dev/null
+          python3 -m json.tool data/learning/out-of-sample-validation.json >/dev/null
+          python3 -m json.tool data/learning/learning-status.json >/dev/null
           python3 - <<'PY'
           import json
           from pathlib import Path
           state=json.loads(Path('data/learning/previous-runs-backfill-state.json').read_text(encoding='utf-8'))
           weights=json.loads(Path('data/learning/adaptive-weights.json').read_text(encoding='utf-8'))
           hist=json.loads(Path('data/learning/historical-model-skill.json').read_text(encoding='utf-8'))
+          oos=json.loads(Path('data/learning/out-of-sample-validation.json').read_text(encoding='utf-8'))
+          status=json.loads(Path('data/learning/learning-status.json').read_text(encoding='utf-8'))
           assert state.get('schema') == 'prognozaepir-previous-runs-backfill-v1'
           assert state.get('archive_start') == '2024-01-01'
           assert len(weights.get('models') or {}) >= 8
           assert hist.get('schema') == 'prognozaepir-historical-model-skill-v1'
+          assert oos.get('schema') == 'prognozaepir-consensus-oos-validation-v1'
+          assert (oos.get('leakage_guard') or {}).get('test_data_used_for_factor_learning') is False
+          assert status.get('schema') == 'prognozaepir-learning-status-v1'
           print('processed months:', state.get('selected_months'))
           print('remaining months:', state.get('remaining_pending_months'))
+          print('quality counts:', (status.get('quality_gate') or {}).get('counts'))
           print('historical usable cases:', (hist.get('archive') or {}).get('usable_forecast_cases'))
+          print('OOS delta:', (status.get('out_of_sample') or {}).get('learned_minus_base_pct_points'))
           PY
 
       - name: Commit historical learning
