@@ -1,0 +1,129 @@
+name: Shared UI pipeline patch
+
+on:
+  push:
+    branches: [refactor/shared-ui-20260919]
+    paths:
+      - '.github/workflows/shared-ui-pipeline-patch.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/shared-ui-20260919
+          fetch-depth: 0
+
+      - name: Align canonical Pages build with app.css and theme.js
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def read(path): return Path(path).read_text(encoding='utf-8')
+          def write(path, text): Path(path).write_text(text, encoding='utf-8')
+          def replace_once(text, old, new, label):
+              if old not in text:
+                  raise SystemExit(f'missing patch marker: {label}')
+              return text.replace(old, new, 1)
+
+          # CSS must be copied into _site alongside HTML/JS.
+          path='scripts/prepare_pages.py'; s=read(path)
+          s=replace_once(s,
+              'allowed = {".html", ".js", ".png", ".svg", ".webmanifest", ".ico"}',
+              'allowed = {".html", ".js", ".css", ".png", ".svg", ".webmanifest", ".ico"}',
+              'prepare_pages CSS allowlist')
+          write(path,s)
+
+          # Canonical builder: retire theme-control injection, cache-bust the shared assets.
+          path='scripts/prepare_pages_v241.py'; s=read(path)
+          start=s.index('def patch_global_theme() -> None:')
+          end=s.index('\ndef validate_v243() -> None:', start)
+          replacement='''def patch_global_theme() -> None:\n    """Wire the shared app.css/theme.js pair on every deployed HTML page."""\n    theme = f'<script src="theme.js?v={p.ASSET_V}"></script>'\n    style = f'<link rel="stylesheet" href="app.css?v={p.ASSET_V}">'\n    html_pages = sorted(p.SITE.glob("*.html"))\n    if not html_pages:\n        raise RuntimeError("no HTML pages available for shared UI wiring")\n\n    for path in html_pages:\n        s = p.rd(path)\n        for pattern in (\n            r'\\s*<script\\s+src=["\\\']theme-control\\.js(?:\\?[^"\\\']*)?["\\\'][^>]*></script>',\n            r'\\s*<script\\s+src=["\\\']theme\\.js(?:\\?[^"\\\']*)?["\\\'][^>]*></script>',\n            r'\\s*<link\\s+[^>]*href=["\\\']app\\.css(?:\\?[^"\\\']*)?["\\\'][^>]*>',\n        ):\n            s = re.sub(pattern, '', s, flags=re.I)\n\n        color_meta = re.compile(r'<meta\\b[^>]*\\bname=["\\\']color-scheme["\\\'][^>]*>', flags=re.I)\n        if color_meta.search(s):\n            s = color_meta.sub('<meta name="color-scheme" content="light dark">', s, count=1)\n        elif re.search(r'</head>', s, re.I):\n            s = re.sub(r'</head>', '  <meta name="color-scheme" content="light dark">\\n</head>', s, count=1, flags=re.I)\n        else:\n            raise RuntimeError(f"HTML page has no </head> for shared UI wiring: {path.name}")\n\n        s = re.sub(r'</head>', f'  {theme}\\n  {style}\\n</head>', s, count=1, flags=re.I)\n        p.wr(path, s)\n\n'''
+          s=s[:start]+replacement+s[end:]
+          s=replace_once(s,
+              '"meteogram-tap-details.js", "theme-control.js",',
+              '"meteogram-tap-details.js", "theme.js", "app.css",',
+              'canonical required shared assets')
+          old='''        if html.count('theme-control.js?v=') != 1:\n            raise RuntimeError(f"global theme control must be wired exactly once: {page.name}")\n        if '<meta name="color-scheme" content="light dark">' not in html:\n            raise RuntimeError(f"global light/dark color scheme missing: {page.name}")'''
+          new='''        if html.count('theme.js?v=') != 1:\n            raise RuntimeError(f"shared theme controller must be wired exactly once: {page.name}")\n        if html.count('app.css?v=') != 1:\n            raise RuntimeError(f"shared stylesheet must be wired exactly once: {page.name}")\n        if 'theme-control.js' in html:\n            raise RuntimeError(f"legacy theme-control.js leaked into deployed page: {page.name}")\n        if '<meta name="color-scheme" content="light dark">' not in html:\n            raise RuntimeError(f"global light/dark color scheme missing: {page.name}")'''
+          s=replace_once(s,old,new,'canonical theme validation')
+          s=s.replace('prepared canonical Pages artifact with TAF 2.4.3 and global theme control:',
+                      'prepared canonical Pages artifact with TAF 2.4.3 and shared UI:')
+          write(path,s)
+
+          # UTC guard keeps UTC/runtime duties; visual styling and navigation now belong to theme.js/app.css.
+          path='utc-ui-guard.js'; s=read(path)
+          start=s.index('  function installGlobalNavigation() {')
+          end_marker='  installUnifiedVisualStyle();\n'
+          end=s.index(end_marker,start)+len(end_marker)
+          s=s[:start]+'''  // Shared navigation, theme and visual tokens are owned by theme.js/app.css.\n  // Keep this file focused on the global UTC/runtime invariant.\n\n'''+s[end:]
+          write(path,s)
+
+          # Deployment Fog wiring must not inject a new <style>; app.css already owns this rule.
+          path='scripts/wire_fog_mifg_utc_runtime.py'; s=read(path)
+          start=s.index('    hide = \'<style id="epirFogStandaloneOnly"')
+          end=s.index("    tag = f'<script src=\"fog-summary-layout.js",start)
+          s=s[:start]+'''    # Meteogram-only Fog panel hiding is defined in shared app.css.\n'''+s[end:]
+          s=replace_once(s,
+              '    nav = (SITE / "utc-ui-guard.js").read_text(encoding="utf-8")\n',
+              '    theme = (SITE / "theme.js").read_text(encoding="utf-8")\n    app_css = (SITE / "app.css").read_text(encoding="utf-8")\n',
+              'wire validation shared UI assets')
+          s=replace_once(s,
+              '''    if 'fog-summary-layout.js?v=' not in index or 'id="epirFogStandaloneOnly"' not in index:\n        raise SystemExit("meteogram Fog bridge contract missing")''',
+              '''    if 'fog-summary-layout.js?v=' not in index or 'app.css?v=' not in index:\n        raise SystemExit("meteogram Fog bridge/shared stylesheet contract missing")\n    if '#fogEngine' not in app_css or 'data-epir-page="index"' not in app_css:\n        raise SystemExit("shared stylesheet is missing the meteogram-only Fog panel rule")''',
+              'wire index CSS validation')
+          old="""    if 'href:\\'fog.html\\'' not in nav and 'href:\"fog.html\"' not in nav and \"href:'fog.html'\" not in nav:\n        raise SystemExit(\"EPIR FOG missing from canonical navigation\")"""
+          new="""    if '[\"fog.html\",\"EPIR FOG\",\"fog\"]' not in theme:\n        raise SystemExit(\"EPIR FOG missing from shared theme navigation\")"""
+          s=replace_once(s,old,new,'wire shared navigation validation')
+          write(path,s)
+
+          # Fog page runtime contract permits the presentation-only shared theme controller.
+          path='tests/fog-native-page-contract.test.js'; s=read(path)
+          s=replace_once(s,
+              "  'utc-ui-guard.js',\n  'fog-mode-switch.js',",
+              "  'utc-ui-guard.js',\n  'theme.js',\n  'fog-mode-switch.js',",
+              'fog expected theme controller')
+          write(path,s)
+
+          # Pages workflow validates the new assets instead of theme-control.js.
+          path='.github/workflows/pages-v2.yml'; s=read(path)
+          s=s.replace('theme-control.js taf-engine-v2.js', 'theme.js taf-engine-v2.js')
+          s=s.replace('_site/theme-control.js _site/taf-engine-v2.js', '_site/theme.js _site/taf-engine-v2.js')
+          s=s.replace("'index.html','fog.html','radar.html','taf.html','sat-fog.html','arch.html','theme-control.js',",
+                      "'index.html','fog.html','radar.html','taf.html','sat-fog.html','arch.html','theme.js','app.css',")
+          s=s.replace("'taf.html?v=2.4.3','theme-control.js?v=','fog-summary-layout.js?v='",
+                      "'taf.html?v=2.4.3','theme.js?v=','app.css?v=','fog-summary-layout.js?v='")
+          s=s.replace("'fog-visibility-cells.js?v=','theme-control.js?v='",
+                      "'fog-visibility-cells.js?v=','theme.js?v=','app.css?v='")
+          write(path,s)
+
+          print('Shared UI deployment pipeline patched.')
+          PY
+
+      - name: Validate patched files
+        run: |
+          python3 -m py_compile scripts/prepare_pages.py scripts/prepare_pages_v241.py scripts/wire_fog_mifg_utc_runtime.py
+          node --check theme.js
+          node --check utc-ui-guard.js
+          node tests/fog-native-page-contract.test.js
+          python3 scripts/prepare_pages_v241.py
+          python3 scripts/wire_fog_mifg_utc_runtime.py
+          node tests/runtime-integration-contract.test.js
+          test -s _site/app.css
+          test -s _site/theme.js
+          ! grep -R -F 'theme-control.js' _site/*.html
+
+      - name: Commit pipeline alignment
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scripts/prepare_pages.py scripts/prepare_pages_v241.py scripts/wire_fog_mifg_utc_runtime.py utc-ui-guard.js tests/fog-native-page-contract.test.js .github/workflows/pages-v2.yml
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "refactor(ui): make shared UI canonical in Pages build"
+          git push origin HEAD:refactor/shared-ui-20260919
