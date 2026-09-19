@@ -1,0 +1,134 @@
+name: Fog LEGACY forecast archive and verification
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/fog_legacy_capture_browser.js'
+      - 'scripts/fog_legacy_archive.py'
+      - 'tests/test_fog_legacy_archive.py'
+      - '.github/workflows/fog-legacy-archive.yml'
+      - 'fog-engine.js'
+      - 'br-engine.js'
+      - 'mifg-engine.js'
+      - 'taf-fog-policy.js'
+  workflow_dispatch:
+  schedule:
+    - cron: '37 */3 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fog-legacy-archive-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    if: github.event_name != 'schedule' || github.ref_name == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Validate archive code
+        run: |
+          python3 -m py_compile scripts/fog_legacy_archive.py
+          node --check scripts/fog_legacy_capture_browser.js
+          python3 tests/test_fog_legacy_archive.py
+
+      - name: Setup Chrome
+        id: chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: stable
+          install-dependencies: true
+
+      - name: Build isolated capture page
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          src = Path('index.html').read_text(encoding='utf-8')
+          force = "<script>try{localStorage.setItem('prognozaepir-fog-engine-mode','legacy')}catch(e){}</script>"
+          capture = '<script src="scripts/fog_legacy_capture_browser.js"></script>'
+          if '<head>' not in src or '</body>' not in src:
+              raise SystemExit('index.html structure not suitable for LEGACY capture')
+          src = src.replace('<head>', '<head>' + force, 1)
+          src = src.replace('</body>', capture + '</body>', 1)
+          Path('index-legacy-archive.html').write_text(src, encoding='utf-8')
+          PY
+
+      - name: Run canonical LEGACY frontend in headless Chrome
+        env:
+          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+        run: |
+          python3 -m http.server 8765 --bind 127.0.0.1 >/tmp/fog-legacy-http.log 2>&1 &
+          server_pid=$!
+          trap 'kill $server_pid 2>/dev/null || true' EXIT
+          sleep 2
+          "$CHROME_PATH" \
+            --headless=new \
+            --no-sandbox \
+            --disable-dev-shm-usage \
+            --disable-gpu \
+            --virtual-time-budget=45000 \
+            --run-all-compositor-stages-before-draw \
+            --dump-dom \
+            'http://127.0.0.1:8765/index-legacy-archive.html?fog_archive=1' \
+            > /tmp/fog-legacy-dom.html
+          test -s /tmp/fog-legacy-dom.html
+          grep -q 'fogLegacyArchivePayload' /tmp/fog-legacy-dom.html || {
+            echo 'LEGACY payload missing from captured DOM'
+            tail -100 /tmp/fog-legacy-http.log || true
+            exit 1
+          }
+
+      - name: Persist issued LEGACY forecast
+        run: python3 scripts/fog_legacy_archive.py ingest-dom /tmp/fog-legacy-dom.html
+
+      - name: Verify matured forecasts against METAR and SPECI
+        run: python3 scripts/fog_legacy_archive.py verify
+
+      - name: Validate generated archive
+        run: |
+          python3 -m json.tool data/learning/fog-legacy-verification/summary.json >/dev/null
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          summary = json.loads(Path('data/learning/fog-legacy-verification/summary.json').read_text(encoding='utf-8'))
+          assert summary['schema'] == 'prognozaepir-fog-legacy-verification-summary-v1'
+          assert summary['policy']['forecast_must_precede_valid_time'] is True
+          assert summary['policy']['threshold_score'] == 50
+          files = sorted(Path('data/learning/fog-legacy-forecasts').glob('*.jsonl'))
+          assert files, 'no LEGACY forecast archive created'
+          last = json.loads(files[-1].read_text(encoding='utf-8').splitlines()[-1])
+          assert last['schema'] == 'prognozaepir-fog-legacy-browser-snapshot-v1'
+          assert len(last.get('hours') or []) >= 6
+          assert last.get('engine_mode') == 'legacy'
+          print('latest snapshot:', last.get('snapshot_id'), 'hours:', len(last.get('hours') or []))
+          print('verification cases:', summary.get('forecast_observation_cases'))
+          print('FG:', (summary.get('metrics') or {}).get('FG', {}).get('all', {}))
+          print('BR:', (summary.get('metrics') or {}).get('BR', {}).get('all', {}))
+          print('MIFG:', (summary.get('metrics') or {}).get('MIFG', {}).get('all', {}))
+          PY
+
+      - name: Commit archive and verification
+        run: |
+          rm -f index-legacy-archive.html
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/learning/fog-legacy-forecasts data/learning/fog-legacy-verification
+          if git diff --cached --quiet; then
+            echo 'No LEGACY archive changes'
+            exit 0
+          fi
+          git commit -m 'weather: archive and verify Fog LEGACY forecast'
+          for attempt in 1 2 3 4; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            echo "LEGACY archive push retry $attempt"
+            sleep $((attempt*3))
+          done
+          exit 1
