@@ -12,23 +12,24 @@
 })(typeof window!=='undefined'?window:globalThis,function(base,root){
   'use strict';
 
-  // Public/API version remains unchanged because taf.html and taf-app-v25.js
-  // intentionally pin the 2.4.3 runtime marker. This file carries the
-  // 2026-09-19 operational weather/cloud policy revision.
   const API_VERSION='2.4.0';
   const VERSION='2.4.3';
-  const POLICY_REVISION='2026-09-19d';
+  const POLICY_REVISION='2026-09-19e';
   const NAME='TAF Engine 2.4.3 — Prevailing Wind + Operational Weather/Cloud Priority + Instruction First';
   const GUST_PREVAILING_MIN_FRACTION=.50;
   const WEAK_PRECIP_VIS_LIMIT_M=5000;
+  const MODERATE_RR_MIN=.15;
   const finite=Number.isFinite;
   const num=v=>v!==null&&v!==undefined&&v!==''&&finite(Number(v));
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const prob=v=>!num(v)?0:(+v>1?clamp(+v/100,0,1):clamp(+v,0,1));
   const WIND_RE=/\b(?:VRB|\d{3})(?:P99|\d{2,3})(?:G(?:P99|\d{2,3}))?KT\b/;
   const CLOUD_TOKEN_RE=/^(FEW|SCT|BKN|OVC)(\d{3})(CB|TCU)?$/;
   const CONVECTIVE_CLOUD_RE=/\b(?:FEW|SCT|BKN|OVC)\d{3}(?:CB|TCU)\b/;
   const SHRA_TOKEN_RE=/^(?:\+|-)?SHRA$/;
-  const WEAK_ORDINARY_PRECIP_RE=/^-(?:(?:DZ|RA|SN|SG|PL)){1,3}$/;
+  const ORDINARY_PRECIP_CODES=new Set([51,53,55,61,63,65,71,73,75,77]);
+  const PRECIP_CODES=new Set([51,53,55,56,57,61,63,65,66,67,71,73,75,77,80,81,82,85,86,95,96,99]);
+  const EXEMPT_CHANGE_CODES=new Set([56,57,66,67,80,81,82,85,86,95,96,99]);
 
   function circ(a,b){
     if(!finite(a)||!finite(b))return 180;
@@ -44,10 +45,21 @@
     return a[lo]+(a[hi]-a[lo])*(x-lo);
   }
 
-  // Instruction 3.7.9/3.7.11a: the main/initial TAF section may contain
-  // precipitation of any intensity even when visibility remains >=5 km.
-  // Therefore v2.4.3 must not pre-filter RA/DZ/SN from model input. Change-
-  // group significance is handled after the formal kernel builds its groups.
+  function memberWeight(m){return num(m?.w)&&+m.w>0?+m.w:1;}
+  function weightedShare(members,pred){
+    let n=0,d=0;
+    for(const m of members||[]){const w=memberWeight(m);d+=w;if(pred(m))n+=w;}
+    return d?n/d:0;
+  }
+  function codeOf(m){return num(m?.code)?Math.round(+m.code):0;}
+  function memberVisibility(m,row){
+    if(num(m?.vis))return +m.vis;
+    if(num(row?.VIS))return +row.VIS;
+    return Infinity;
+  }
+
+  // 3.7.9 and 3.7.11a: do not remove precipitation from the data used for the
+  // main/initial TAF section solely because visibility is >=5 km.
   function prepareOperationalWeatherInput(input={}){
     const rows=(input.rows||[]).map(src=>({
       ...src,
@@ -55,10 +67,51 @@
     }));
     return {
       ...input,rows,
-      taf243WeatherPolicy:{
-        basePrecipitationVisibilityIndependent:true,
-        weakOrdinaryStandaloneChangeVisLimitM:WEAK_PRECIP_VIS_LIMIT_M
-      }
+      taf243WeatherPolicy:{basePrecipitationVisibilityIndependent:true}
+    };
+  }
+
+  // Separate input used ONLY to select change groups. Weak ordinary
+  // precipitation at good visibility is suppressed here so it cannot create a
+  // standalone PROB30/TEMPO/BECMG or consume the limited PROB30 slot. Moderate
+  // and heavy precipitation remains untouched; freezing precipitation,
+  // showers and thunderstorms are exempt. This intentionally omits the optional
+  // 3.7.11b weak-precipitation add-on at VIS >5 km to keep change groups minimal.
+  function prepareChangeGroupWeatherInput(input={}){
+    let suppressedMembers=0,suppressedRows=0;
+    const rows=(input.rows||[]).map(src=>{
+      const originalMv=Array.isArray(src?.mv)?src.mv:[];
+      const rr=num(src?.RR)?+src.RR:0;
+      const weakIntensity=rr<MODERATE_RR_MIN;
+      let rowSuppressed=0;
+      const mv=originalMv.map(m=>{
+        const c=codeOf(m),vis=memberVisibility(m,src);
+        if(weakIntensity&&ORDINARY_PRECIP_CODES.has(c)&&vis>=WEAK_PRECIP_VIS_LIMIT_M){
+          rowSuppressed++;suppressedMembers++;
+          return {...m,taf243OriginalWeatherCode:c,taf243WeakOrdinaryChangeSuppressed:true,code:0};
+        }
+        return {...m};
+      });
+      if(rowSuppressed)suppressedRows++;
+      if(!rowSuppressed)return {...src,mv};
+
+      const remainingPrecip=weightedShare(mv,m=>PRECIP_CODES.has(codeOf(m)));
+      const rowVis=num(src?.VIS)?+src.VIS:Infinity;
+      const rawWet=prob(src?.wet);
+      const exemptSignal=prob(src?.storm)>=.30||originalMv.some(m=>EXEMPT_CHANGE_CODES.has(codeOf(m)));
+      const keepGenericWet=rowVis<WEAK_PRECIP_VIS_LIMIT_M||exemptSignal;
+      const wet=Math.max(remainingPrecip,keepGenericWet?rawWet:0);
+      const RR=(remainingPrecip>0||keepGenericWet)?src?.RR:0;
+      return {
+        ...src,mv,wet,RR,
+        taf243RawWet:src?.wet??null,
+        taf243RawRR:src?.RR??null,
+        taf243WeakOrdinaryChangeSuppressedMembers:rowSuppressed
+      };
+    });
+    return {
+      ...input,rows,
+      taf243ChangeWeatherPolicy:{suppressedMembers,suppressedRows,visLimitM:WEAK_PRECIP_VIS_LIMIT_M}
     };
   }
 
@@ -67,9 +120,6 @@
     return m?{cover:m[1],height:+m[2],type:m[3]||''}:null;
   }
 
-  // If a prevailing ordinary BKN/OVC layer exists in the same forecast state,
-  // weaker ordinary FEW/SCT layers are omitted. FEW/SCT are retained when there
-  // is no BKN/OVC, and CB/TCU are always retained.
   function simplifyCloudTokens(text){
     const tokens=String(text||'').trim().split(/\s+/).filter(Boolean);
     const parsed=tokens.map(t=>({token:t,cloud:parseCloudToken(t)}));
@@ -83,6 +133,35 @@
     const hasOrdinaryCeiling=a.some(c=>!String(c?.type||'')&&(c?.cover==='BKN'||c?.cover==='OVC'));
     if(!hasOrdinaryCeiling)return a;
     return a.filter(c=>String(c?.type||'')||!(c?.cover==='FEW'||c?.cover==='SCT'));
+  }
+
+  function rebuildTaf(first,groups){
+    return [first,...(groups||[]).slice().sort((a,b)=>(+a.s)-(+b.s)||(+a.e)-(+b.e)).map(g=>g.text)].filter(Boolean).join('\n')+'=';
+  }
+
+  function mergeBaseWithChangeSelection(fullResult,changeResult,input,engine){
+    const first=String(fullResult?.taf||'').replace(/=$/,'').split(/\n+/).filter(Boolean)[0]||'';
+    const groups=(changeResult?.groups||[]).map(g=>({...g,fields:[...(g.fields||[])]}));
+    const taf=rebuildTaf(first,groups);
+    const checks=engine.validate(taf,{issue:+input.issue,start:+input.start,end:+input.end,msaFt:input.msaFt});
+    if(!checks.ok){
+      const e=Error('TAF 2.4.3 odrzucony po rozdzieleniu części głównej i grup zmian: '+checks.errors.join(' | '));
+      e.validation=checks;throw e;
+    }
+    const cp=input?.taf243ChangeWeatherPolicy||{};
+    const reasons=[...(changeResult?.diagnostics?.reasons||[])];
+    if((cp.suppressedMembers||0)>0)reasons.push(`Grupy zmian: pominięto ${cp.suppressedMembers} sygnałów słabego zwykłego opadu w ${cp.suppressedRows} h przy VIS >= ${WEAK_PRECIP_VIS_LIMIT_M} m. Nie wpływa to na część główną TAF. Opady umiarkowane/silne oraz konwekcyjne i marznące zachowują własne kryteria.`);
+    return {
+      ...fullResult,taf,groups,
+      checks:{...fullResult.checks,...changeResult.checks,...checks},
+      diagnostics:{
+        ...fullResult.diagnostics,
+        ...changeResult.diagnostics,
+        reasons,
+        basePrecipitationPolicy:'3.7.9/3.7.11a: precipitation in the main TAF section is independent of the 5 km visibility threshold',
+        changePrecipitationPolicy:'weak ordinary precipitation is omitted from change-group selection at VIS >=5 km; moderate/heavy ordinary precipitation remains significant; freezing, showers and thunderstorm precipitation are exempt; optional 3.7.11b weak add-on above 5 km is intentionally omitted'
+      }
+    };
   }
 
   function normalizeCloudPresentation(result,input,engine){
@@ -114,7 +193,7 @@
     const firstLines=String(result?.taf||'').replace(/=$/,'').split(/\n+/).filter(Boolean);
     let first=firstLines[0]||'';
     if(oldBase&&baseText!==oldBase&&first.includes(oldBase))first=first.replace(oldBase,baseText);
-    const taf=[first,...groups.sort((a,b)=>(+a.s)-(+b.s)||(+a.e)-(+b.e)).map(g=>g.text)].filter(Boolean).join('\n')+'=';
+    const taf=rebuildTaf(first,groups);
     const checks=engine.validate(taf,{issue:+input.issue,start:+input.start,end:+input.end,msaFt:input.msaFt});
     if(!checks.ok){
       const e=Error('TAF 2.4.3 odrzucony po priorytetyzacji zachmurzenia: '+checks.errors.join(' | '));
@@ -126,73 +205,6 @@
       base:{...(result.base||{}),text:baseText},
       checks:{...result.checks,...checks},
       diagnostics:{...result.diagnostics,reasons,cloudPriorityPolicy:'ordinary BKN/OVC suppresses ordinary FEW/SCT in the same state; FEW/SCT remains when no BKN/OVC; CB/TCU always retained'}
-    };
-  }
-
-  function payloadTokens(payload){
-    return String(payload||'').trim().split(/\s+/).filter(Boolean);
-  }
-
-  function weakOrdinaryPrecipTokens(payload){
-    return payloadTokens(payload).filter(t=>WEAK_ORDINARY_PRECIP_RE.test(t));
-  }
-
-  function groupEffectiveVisibilityM(g,hourly){
-    const explicit=payloadTokens(g?.payload).find(t=>/^(?:9999|\d{4})$/.test(t));
-    if(explicit)return explicit==='9999'?10000:+explicit;
-    const vals=(hourly||[])
-      .filter(h=>num(h?.t)&&+h.t>=+g.s&&+h.t<+g.e&&num(h?.visM))
-      .map(h=>+h.visM);
-    return vals.length?quantile(vals,.50):Infinity;
-  }
-
-  // Instruction 3.7.9/3.7.10/3.7.11:
-  // - all precipitation intensities are allowed in the main TAF section;
-  // - moderate/heavy precipitation is itself a change criterion;
-  // - freezing precipitation and thunderstorm precipitation are always kept;
-  // - weak ordinary precipitation should not create a standalone change group
-  //   at VIS >=5 km. It may still be carried when another significant change is
-  //   being described (3.7.11b). Convective SHRA/TSRA are handled separately.
-  function applyInstructionPrecipitationPolicy(result,input,engine){
-    const reasons=[...(result?.diagnostics?.reasons||[])];
-    let removed=0;
-    const groups=[];
-    for(const g0 of result?.groups||[]){
-      const g={...g0};
-      const weak=weakOrdinaryPrecipTokens(g.payload);
-      if(!weak.length){groups.push(g);continue;}
-      const otherFields=(g.fields||[]).filter(f=>f!=='weather');
-      const vis=groupEffectiveVisibilityM(g,result?.hourly||[]);
-      const standaloneWeather=otherFields.length===0;
-      if(standaloneWeather&&vis>=WEAK_PRECIP_VIS_LIMIT_M){
-        removed++;
-        continue;
-      }
-      groups.push(g);
-    }
-    if(!removed)return {
-      ...result,
-      diagnostics:{
-        ...result.diagnostics,reasons,
-        precipitationPlacementPolicy:'main section: precipitation independent of VIS; change groups: moderate/heavy, freezing and thunderstorm precipitation remain significant; standalone weak ordinary precipitation requires VIS <5 km, while 3.7.11b allows it alongside another significant change'
-      }
-    };
-
-    const first=String(result?.taf||'').replace(/=$/,'').split(/\n+/).filter(Boolean)[0]||'';
-    const taf=[first,...groups.sort((a,b)=>(+a.s)-(+b.s)||(+a.e)-(+b.e)).map(g=>g.text)].filter(Boolean).join('\n')+'=';
-    const checks=engine.validate(taf,{issue:+input.issue,start:+input.start,end:+input.end,msaFt:input.msaFt});
-    if(!checks.ok){
-      const e=Error('TAF 2.4.3 odrzucony po zastosowaniu zasad opadów w grupach zmian: '+checks.errors.join(' | '));
-      e.validation=checks;throw e;
-    }
-    reasons.push(`Opady: usunięto ${removed} samodzielne grupy zmian ze słabym zwykłym opadem przy VIS >= ${WEAK_PRECIP_VIS_LIMIT_M} m. Opad w części głównej pozostaje niezależny od VIS; opady umiarkowane/silne, marznące i burzowe zachowują własne kryteria istotności.`);
-    return {
-      ...result,taf,groups,
-      checks:{...result.checks,...checks},
-      diagnostics:{
-        ...result.diagnostics,reasons,
-        precipitationPlacementPolicy:'main section: precipitation independent of VIS; change groups: moderate/heavy, freezing and thunderstorm precipitation remain significant; standalone weak ordinary precipitation requires VIS <5 km, while 3.7.11b allows it alongside another significant change'
-      }
     };
   }
 
@@ -224,11 +236,9 @@
     return tokens.join(' ');
   }
 
-  // Instruction 3.7.11b + 3.11.6a: weak precipitation may be signalled in a
-  // change group when another significant change is present; isolated CB/TCU
-  // and associated convective showers belong in TEMPO. Therefore -SHRA/SHRA
-  // may be present with CB/TCU without repeating a visibility group when VIS
-  // itself has not changed significantly.
+  // 3.11.6a: isolated CB/TCU and associated convective showers belong in a
+  // temporary group. SHRA can therefore be present without a significant VIS
+  // reduction; VIS is repeated only when visibility itself changes significantly.
   function applyConvectiveShowerPolicy(result,input,engine){
     let changed=0;
     const reasons=[...(result?.diagnostics?.reasons||[])];
@@ -249,7 +259,7 @@
     };
 
     const first=String(result?.taf||'').replace(/=$/,'').split(/\n+/).filter(Boolean)[0]||'';
-    const taf=[first,...groups.sort((a,b)=>(+a.s)-(+b.s)||(+a.e)-(+b.e)).map(g=>g.text)].filter(Boolean).join('\n')+'=';
+    const taf=rebuildTaf(first,groups);
     const checks=engine.validate(taf,{issue:+input.issue,start:+input.start,end:+input.end,msaFt:input.msaFt});
     if(!checks.ok){
       const e=Error('TAF 2.4.3 odrzucony po zastosowaniu reguły SHRA/CB-TCU: '+checks.errors.join(' | '));
@@ -320,8 +330,8 @@
       prevailingWindFullPeriodWhenNoSignificantChange:true,
       prevailingGustMinFraction:GUST_PREVAILING_MIN_FRACTION,
       basePrecipitationIndependentOfVisibility:true,
-      weakOrdinaryPrecipStandaloneChangeRequiresVisibilityBelowM:WEAK_PRECIP_VIS_LIMIT_M,
-      weakOrdinaryPrecipMayAccompanyOtherSignificantChange:true,
+      weakOrdinaryPrecipChangeRequiresVisibilityBelowM:WEAK_PRECIP_VIS_LIMIT_M,
+      optionalWeakPrecipAbove5kmWithOtherChange:false,
       moderateHeavyPrecipChangeIndependentOfVisibility:true,
       freezingThunderstormPrecipChangeIndependentOfVisibility:true,
       convectiveShowerWithCbTcuMayOmitVisibility:true,
@@ -392,21 +402,16 @@
       rules:ruleSet(),
       generate(input={}){
         const prepared=prepareOperationalWeatherInput(input);
-        let result=engine.generate(prepared);
-        result={
-          ...result,
-          diagnostics:{
-            ...result.diagnostics,
-            basePrecipitationPolicy:'Instruction 3.7.9/3.7.11a: precipitation in the initial/main TAF section is not suppressed solely because VIS is >=5 km'
-          }
-        };
+        const fullResult=engine.generate(prepared);
+        const changePrepared=prepareChangeGroupWeatherInput(prepared);
+        const changeResult=engine.generate(changePrepared);
+        let result=mergeBaseWithChangeSelection(fullResult,changeResult,changePrepared,engine);
         result=normalizeCloudPresentation(result,prepared,engine);
-        result=applyInstructionPrecipitationPolicy(result,prepared,engine);
         result=applyConvectiveShowerPolicy(result,prepared,engine);
         return applyPrevailingWind(result,prepared,engine);
       },
       validate:(taf,meta)=>engine.validate(taf,meta),
-      helpers:Object.freeze({...engine.helpers,representativeWind,replaceWindToken,prepareOperationalWeatherInput,simplifyCloudTokens,simplifyCloudLayers,applyInstructionPrecipitationPolicy,applyConvectiveShowerPolicy,representativeShowerForGroup,insertWeatherBeforeCloud,groupEffectiveVisibilityM,weakOrdinaryPrecipTokens})
+      helpers:Object.freeze({...engine.helpers,representativeWind,replaceWindToken,prepareOperationalWeatherInput,prepareChangeGroupWeatherInput,simplifyCloudTokens,simplifyCloudLayers,applyConvectiveShowerPolicy,representativeShowerForGroup,insertWeatherBeforeCloud})
     });
   }
 
@@ -423,6 +428,6 @@
     ready:base.ready,
     setLearningData:base.setLearningData,
     learningStatus:base.learningStatus,
-    helpers:Object.freeze({...base.helpers,representativeWind,replaceWindToken,prepareOperationalWeatherInput,simplifyCloudTokens,simplifyCloudLayers,applyInstructionPrecipitationPolicy,applyConvectiveShowerPolicy,representativeShowerForGroup,insertWeatherBeforeCloud,groupEffectiveVisibilityM,weakOrdinaryPrecipTokens})
+    helpers:Object.freeze({...base.helpers,representativeWind,replaceWindToken,prepareOperationalWeatherInput,prepareChangeGroupWeatherInput,simplifyCloudTokens,simplifyCloudLayers,applyConvectiveShowerPolicy,representativeShowerForGroup,insertWeatherBeforeCloud})
   });
 });
