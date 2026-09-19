@@ -68,9 +68,20 @@ function fakeStorage(mode) {
   assert(js.includes('FG · szacowana VIS'));
   assert(js.includes('BR · szacowana VIS'));
   assert(js.includes('MIFG · VIS standardowa'));
-  assert(js.includes('brak aktywnego FG w 48 h'));
-  assert(js.includes('brak aktywnego BR w 24 h'));
-  assert(js.includes('brak aktywnego MIFG w 48 h'));
+  assert(js.includes('brak aktywnego FG ≥50/100 w 48 h'));
+  assert(js.includes('brak aktywnego BR ≥50/100 w 24 h'));
+  assert(js.includes('brak aktywnego MIFG ≥50/100 w 48 h'));
+})();
+
+(function testMeteogramUsesSelectedFogSeries() {
+  const overlay = read('fog-meteogram-overlay.js');
+  assert(overlay.includes('function selectedMode()'));
+  assert(overlay.includes('PrognozaEPIRFogLegacySeries'));
+  assert(overlay.includes('PrognozaEPIRFogVNextSeries'));
+  assert(overlay.includes('fogScoreLegacy'));
+  assert(overlay.includes('prognozaepir:fog-engine-mode-changed'));
+  assert(/FOG_DRAW_THRESHOLD\s*=\s*50/.test(overlay));
+  assert(/BR_DRAW_THRESHOLD\s*=\s*50/.test(overlay));
 })();
 
 (function testMifgUsesSameSeriesOnFogPageAndMeteogram() {
@@ -80,7 +91,7 @@ function fakeStorage(mode) {
   assert(page.includes('window.PrognozaEPIRMIFG?.getSeries?.()'));
   assert(overlay.includes('window.PrognozaEPIRMIFG?.getSeries?.()'));
   assert(engine.includes('window.PrognozaEPIRMIFG='));
-  assert(overlay.includes("const MIFG_DRAW_THRESHOLD = 50"));
+  assert(/MIFG_DRAW_THRESHOLD\s*=\s*50/.test(overlay));
   assert(page.includes('score < 50'));
 })();
 
