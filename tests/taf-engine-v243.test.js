@@ -33,26 +33,23 @@ assert.equal(E.ENGINE_VERSION,'2.4.0');
 assert.equal(E.QUALITY_VERSION,'2.4.3');
 assert.equal(E.RULES.prevailingWindFullPeriodWhenNoSignificantChange,true);
 assert.equal(E.RULES.prevailingGustMinFraction,.50);
-assert.equal(E.RULES.ordinaryRainRequiresVisibilityBelowM,5000);
-assert.equal(E.RULES.ordinaryRainVisibilityGateExcludesShowers,true);
+assert.equal(E.RULES.basePrecipitationIndependentOfVisibility,true);
+assert.equal(E.RULES.weakOrdinaryPrecipStandaloneChangeRequiresVisibilityBelowM,5000);
+assert.equal(E.RULES.weakOrdinaryPrecipMayAccompanyOtherSignificantChange,true);
+assert.equal(E.RULES.moderateHeavyPrecipChangeIndependentOfVisibility,true);
+assert.equal(E.RULES.freezingThunderstormPrecipChangeIndependentOfVisibility,true);
 assert.equal(E.RULES.convectiveShowerWithCbTcuMayOmitVisibility,true);
 assert.equal(E.RULES.cloudPriorityBknOvcOverFewSct,true);
 
-// Helper-level weather gate: high-VIS ordinary RA/DZ remains an operational
-// suppression, but SHRA is explicitly exempt so convective groups can carry it.
+// Instruction 3.7.9 / 3.7.11a: preparation must not delete high-VIS ordinary
+// precipitation, because the main TAF section may contain it.
 {
-  const rain={rows:[row(0,{vis:9000,code:61,RR:1,wet:1})]};
+  const rain={rows:[row(0,{vis:9000,code:61,RR:.4,wet:1})]};
   const q=E.helpers.prepareOperationalWeatherInput(rain);
-  assert.equal(q.rows[0].mv.every(m=>m.code===0),true);
-  assert.equal(q.rows[0].wet,0);
-  assert.equal(q.rows[0].RR,0);
-  assert.equal(q.taf243WeatherPolicy.suppressedMembers,3);
-
-  const shower={rows:[row(0,{vis:9000,code:80,RR:.05,wet:1})]};
-  const s=E.helpers.prepareOperationalWeatherInput(shower);
-  assert.equal(s.rows[0].mv.every(m=>m.code===80),true);
-  assert.ok(s.rows[0].wet>0);
-  assert.equal(s.taf243WeatherPolicy.suppressedMembers,0);
+  assert.equal(q.rows[0].mv.every(m=>m.code===61),true);
+  assert.equal(q.rows[0].wet,1);
+  assert.equal(q.rows[0].RR,.4);
+  assert.equal(q.taf243WeatherPolicy.basePrecipitationVisibilityIndependent,true);
 }
 
 // Helper-level cloud hierarchy: FEW/SCT are removed only when ordinary BKN/OVC
@@ -98,18 +95,48 @@ assert.equal(E.helpers.simplifyCloudTokens('9999 FEW020CB SCT025 BKN030'),'9999 
   assert.equal(q.checks.ok,true);
 }
 
-// High-VIS ordinary RA/DZ is still omitted by the project operational preference.
-// With no significant weather/cloud below CAVOK limits, CAVOK is allowed.
+// Instruction 3.7.9 / 3.7.11a: high-VIS precipitation belongs in the main
+// section when it is prevailing. It must not be converted to CAVOK merely
+// because VIS stays >=10 km.
 {
   const rows=Array.from({length:12},(_,i)=>row(i,{vis:10000,code:61,RR:.4,wet:1}));
   const q=gen(rows);
-  assert.ok(!/\b(?:\+|-)?RA\b/.test(q.taf),q.taf);
-  assert.match(q.base.text,/\bCAVOK\b/,q.base.text);
-  assert.equal(q.groups.some(g=>/\b(?:\+|-)?RA\b/.test(g.payload||'')),false,q.taf);
+  assert.match(q.base.text,/\bRA\b/,q.base.text);
+  assert.match(q.base.text,/\b9999\b/,q.base.text);
+  assert.ok(!/\bCAVOK\b/.test(q.base.text),q.base.text);
   assert.equal(q.checks.ok,true);
 }
 
-// Rain remains when precipitation-bearing members forecast VIS below 5 km.
+// A 30-49% signal of weak ordinary rain at good visibility must not create a
+// standalone PROB30 -RA. This was the regression seen in the live generator.
+{
+  const rows=Array.from({length:12},(_,i)=>{
+    if(i<3)return row(i,{vis:10000});
+    const mv=[
+      model({vis:10000,code:61}),
+      model({vis:10000,code:0}),
+      model({vis:10000,code:0})
+    ];
+    return row(i,{vis:10000,RR:.05,wet:0,mv});
+  });
+  const q=gen(rows);
+  assert.equal(q.groups.some(g=>/\b-RA\b/.test(g.payload||'')),false,q.taf);
+  assert.ok(!/\bPROB30(?:\s+TEMPO)?\s+\d{4}\/\d{4}\s+-RA\b/.test(q.taf),q.taf);
+  assert.equal(q.checks.ok,true);
+}
+
+// Instruction 3.7.9 / 3.7.a.1: moderate ordinary rain is itself a significant
+// change criterion, so a high-VIS BECMG/PROB30 RA must not be removed.
+{
+  const rows=Array.from({length:12},(_,i)=>i<3
+    ? row(i,{vis:10000})
+    : row(i,{vis:10000,code:61,RR:.4,wet:1}));
+  const q=gen(rows);
+  assert.ok(q.groups.some(g=>/\bRA\b/.test(g.payload||'')),q.taf);
+  assert.equal(q.checks.ok,true);
+}
+
+// Rain remains normally encoded when visibility is below 5 km.
 {
   const rows=Array.from({length:12},(_,i)=>row(i,{vis:4000,code:61,RR:.4,wet:1}));
   const q=gen(rows);
@@ -118,7 +145,7 @@ assert.equal(E.helpers.simplifyCloudTokens('9999 FEW020CB SCT025 BKN030'),'9999 
   assert.equal(q.checks.ok,true);
 }
 
-// Instrukcja 3.7.11b / 3.11.6a: when a temporary CB/TCU change is forecast,
+// Instruction 3.7.11b / 3.11.6a: when a temporary CB/TCU change is forecast,
 // associated weak SHRA may be coded even with VIS >=5 km. If visibility itself
 // does not cross a criterion, it is inherited and is not repeated in the group.
 {
@@ -159,4 +186,4 @@ assert.equal(E.helpers.simplifyCloudTokens('9999 FEW020CB SCT025 BKN030'),'9999 
   assert.equal(q.checks.ok,true);
 }
 
-console.log('TAF Engine 2.4.3 prevailing wind + weather/cloud priority tests: OK');
+console.log('TAF Engine 2.4.3 prevailing wind + instruction precipitation/cloud priority tests: OK');
