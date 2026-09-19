@@ -62,9 +62,9 @@ assert.equal(E.RULES.cloudPriorityBknOvcOverFewSct,true);
   assert.equal(w.rows[0].RR,0);
   assert.equal(w.taf243ChangeWeatherPolicy.suppressedMembers,3);
 
-  const moderate={rows:[row(0,{vis:9000,code:61,RR:.4,wet:1})]};
+  const moderate={rows:[row(0,{vis:9000,code:63,RR:.4,wet:1})]};
   const m=E.helpers.prepareChangeGroupWeatherInput(moderate);
-  assert.equal(m.rows[0].mv.every(x=>x.code===61),true);
+  assert.equal(m.rows[0].mv.every(x=>x.code===63),true);
   assert.equal(m.rows[0].RR,.4);
 
   const shower={rows:[row(0,{vis:9000,code:80,RR:.05,wet:1})]};
@@ -152,7 +152,7 @@ assert.equal(E.helpers.simplifyCloudTokens('9999 FEW020CB SCT025 BKN030'),'9999 
 {
   const rows=Array.from({length:12},(_,i)=>i<3
     ? row(i,{vis:10000})
-    : row(i,{vis:10000,code:61,RR:.4,wet:1}));
+    : row(i,{vis:10000,code:63,RR:.4,wet:1}));
   const q=gen(rows);
   assert.ok(q.groups.some(g=>/\bRA\b/.test(g.payload||'')),q.taf);
   assert.equal(q.checks.ok,true);
