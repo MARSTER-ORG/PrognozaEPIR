@@ -75,14 +75,19 @@ jobs:
               json.loads((site / p).read_text(encoding='utf-8'))
 
           index = (site / 'index.html').read_text(encoding='utf-8')
+          theme = (site / 'theme.js').read_text(encoding='utf-8')
           fog = (site / 'fog.html').read_text(encoding='utf-8')
           fog_engine = (site / 'fog-engine.js').read_text(encoding='utf-8')
           taf = (site / 'taf.html').read_text(encoding='utf-8')
           taf_app = (site / 'taf-app-v25.js').read_text(encoding='utf-8')
           taf_bootstrap = (site / 'taf-runtime-bootstrap.js').read_text(encoding='utf-8')
 
-          for marker in ['taf.html?v=2.4.3','theme.js?v=','app.css?v=','fog-index-bridge.js?v=','fog-meteogram-overlay.js?v=','utc-ui-guard.js?v=']:
+          for marker in ['theme.js?v=','app.css?v=','fog-index-bridge.js?v=','fog-meteogram-overlay.js?v=','utc-ui-guard.js?v=']:
               if marker not in index: raise SystemExit(f'index contract missing: {marker}')
+          if '["taf.html","TAF GENERATOR","taf"]' not in theme:
+              raise SystemExit('shared navigation is missing TAF Generator')
+          if re.search(r'<a[^>]+class="control-link"[^>]+href="taf\.html', index, re.I):
+              raise SystemExit('duplicate TAF control leaked into meteogram controls')
           for asset in ['fog-engine.js','observation-engine.js','mifg-engine.js','br-engine.js','fog-summary-layout.js','fog-mode-switch.js']:
               if re.search(rf'<script\s+src=["\']{re.escape(asset)}(?:\?[^"\']*)?["\']', index, re.I):
                   raise SystemExit(f'duplicate Fog runtime leaked into index: {asset}')
@@ -150,6 +155,8 @@ jobs:
               && printf '%s' "$fog" | grep -Fq 'app.css?v=' \
               && ! printf '%s' "$fog" | grep -Fq 'theme-control.js' \
               && printf '%s' "$theme" | grep -Fq 'prognozaepir.theme.preference' \
+              && printf '%s' "$theme" | grep -Fq '["taf.html","TAF GENERATOR","taf"]' \
+              && ! printf '%s' "$index" | grep -Fq '>GENERATOR TAF</a>' \
               && printf '%s' "$css" | grep -Fq 'EPIR-SHARED-START' \
               && printf '%s' "$fog" | grep -Fq 'fog-engine.js?v=' \
               && printf '%s' "$fog" | grep -Fq 'fog-visibility-cells.js?v=' \

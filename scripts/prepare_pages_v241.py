@@ -32,11 +32,6 @@ def patch_taf_v243() -> None:
     )
     p.wr(path, s)
 
-    # Cache-bust the entry point shown on the main meteogram page as well.
-    index = p.SITE / "index.html"
-    x = p.rd(index)
-    x = re.sub(r'href="taf\.html(?:\?v=[^"]*)?"', 'href="taf.html?v=2.4.3"', x)
-    p.wr(index, x)
 
 
 def patch_global_theme() -> None:
@@ -134,8 +129,11 @@ def validate_v243() -> None:
         raise RuntimeError("fog-engine.js must be loaded only by observation-engine.js")
     if index.count("observation-engine.js") != 1:
         raise RuntimeError("observation-engine.js must be wired exactly once")
-    if 'href="taf.html?v=2.4.3"' not in index:
-        raise RuntimeError("main page does not link to cache-busted TAF 2.4.3")
+    theme = p.rd(p.SITE / "theme.js")
+    if '["taf.html","TAF GENERATOR","taf"]' not in theme:
+        raise RuntimeError("shared navigation does not expose TAF Generator")
+    if re.search(r'<a[^>]+class="control-link"[^>]+href="taf\.html', index, re.I):
+        raise RuntimeError("duplicate TAF control leaked into meteogram controls")
 
     radar = p.rd(p.SITE / "radar.html")
     if "radar-risk-policy.js" not in radar or "lightning-alerts.html" not in radar:
