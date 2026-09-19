@@ -113,9 +113,12 @@ function fakeStorage(mode) {
 (function testTafUsesExactlySelectedFogMode() {
   const html = read('taf.html');
   const app = read('taf-app-v25.js');
+  const bootstrap = read('taf-runtime-bootstrap.js');
   assert(html.includes('id="engine"'));
   assert(html.includes('taf-engine-v242.js?v=2.4.2-cloud-fog'));
-  assert(html.includes('taf-runtime-bootstrap.js?v=20260917-2'));
+  assert(html.includes('taf-runtime-bootstrap.js?v=20260919-1'));
+  assert(bootstrap.includes('taf-engine-v243.js?v=${BUILD}'));
+  assert(bootstrap.includes("QUALITY_VERSION !== ENGINE_LABEL"));
   assert(app.includes('const mode=Policy.selectedMode(w)'));
   assert(app.includes('Policy.seriesForMode(w,mode)'));
   assert(app.includes("if(mode==='vnext')throw Error"));
