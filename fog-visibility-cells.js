@@ -60,6 +60,11 @@
     return num(row?.vis);
   }
 
+  function isOperationalFg(row) {
+    const score = num(row?.score), vis = fogVisibility(row);
+    return finite(score) && score >= 50 && finite(vis) && vis < 1000;
+  }
+
   function fmtVis(v) {
     if (!finite(v)) return '—';
     const x = Math.max(0, Math.round(v));
@@ -92,26 +97,35 @@
     const host = document.getElementById('fogSummary');
     if (!host) return;
     const now = Date.now();
-    const active = fogSeries().filter(r => {
+    const candidates = fogSeries().filter(r => {
       const t = num(r?.t), s = num(r?.score);
       return finite(t) && t >= now - HOUR && t <= now + 48 * HOUR && finite(s) && s >= 50;
     });
     const card = ensureCard(host, 'fgEstimatedVisCard', 'fog-card');
     if (!card) return;
+    if (!candidates.length) {
+      card.innerHTML = `<small>FG · szacowana VIS</small><strong>—</strong><em>brak sygnału FOG ≥50/100 w 48 h · FG wymaga VIS &lt;1000 m · ${mode() === 'vnext' ? 'vNEXT' : 'LEGACY'}</em>`;
+      return;
+    }
+
+    const active = candidates.filter(isOperationalFg);
     if (!active.length) {
-      card.innerHTML = `<small>FG · szacowana VIS</small><strong>—</strong><em>brak aktywnego FG ≥50/100 w 48 h · ${mode() === 'vnext' ? 'vNEXT' : 'LEGACY'}</em>`;
+      const withVis = candidates.filter(r => finite(fogVisibility(r)));
+      if (!withVis.length) {
+        const peak = candidates.reduce((a,b) => num(b.score) > num(a.score) ? b : a, candidates[0]);
+        card.innerHTML = `<small>FG · szacowana VIS</small><strong>—</strong><em>score FOG ${Math.round(num(peak.score))}/100, ale brak prognozowanej VIS; bez VIS &lt;1000 m nie oznaczam FG · ${mode() === 'vnext' ? 'vNEXT' : 'LEGACY'}</em>`;
+        return;
+      }
+      const min = withVis.reduce((a, b) => fogVisibility(b) < fogVisibility(a) ? b : a, withVis[0]);
+      const v = fogVisibility(min);
+      const range = v <= 5000 ? 'zakres BR 1000–5000 m' : 'widzialność >5000 m';
+      card.innerHTML = `<small>FG · szacowana VIS</small><strong>BRAK FG</strong><em>minimum VIS ${fmtVis(v)} · ${fmtUtcDate(num(min.t))} · ${range}; score ≥50 oznacza potencjał procesu, nie FG bez VIS &lt;1000 m · ${mode() === 'vnext' ? 'vNEXT' : 'LEGACY'}</em>`;
       return;
     }
-    const withVis = active.filter(r => finite(fogVisibility(r)));
-    if (!withVis.length) {
-      const peak = active.reduce((a,b) => num(b.score) > num(a.score) ? b : a, active[0]);
-      card.innerHTML = `<small>FG · szacowana VIS</small><strong>—</strong><em>FG aktywne ${Math.round(num(peak.score))}/100 · brak wyliczonej VIS · ${mode() === 'vnext' ? 'vNEXT' : 'LEGACY'}</em>`;
-      return;
-    }
-    const min = withVis.reduce((a, b) => fogVisibility(b) < fogVisibility(a) ? b : a, withVis[0]);
+
+    const min = active.reduce((a, b) => fogVisibility(b) < fogVisibility(a) ? b : a, active[0]);
     const v = fogVisibility(min);
-    const consistency = v < 1000 ? 'VIS zgodna z FG' : 'uwaga: score FG ≥50, ale VIS nie spada <1000 m';
-    card.innerHTML = `<small>FG · szacowana VIS</small><strong>${fmtVis(v)}</strong><em>minimum przy aktywnym FG · ${fmtUtcDate(num(min.t))} · ${consistency} · ${mode() === 'vnext' ? 'vNEXT' : 'LEGACY'}</em>`;
+    card.innerHTML = `<small>FG · szacowana VIS</small><strong>${fmtVis(v)}</strong><em>minimum przy operacyjnym FG · ${fmtUtcDate(num(min.t))} · VIS &lt;1000 m · ${mode() === 'vnext' ? 'vNEXT' : 'LEGACY'}</em>`;
   }
 
   function updateBr() {
