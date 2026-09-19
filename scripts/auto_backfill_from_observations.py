@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-"""Automatically acquire historical model runs and pressure-level context for observed EPIR days.
+"""Automatically acquire historical Single Runs and pressure-level context.
 
-The user only needs to provide METAR/SYNOP history. This script discovers those
-observation dates, adds the preceding model-run days needed for long-lead
-verification, downloads missing archived operational runs from Open-Meteo
-Single Runs, enriches those runs with 925/850/700/500 hPa context, and records
+The user only needs to provide METAR/SYNOP history. This script discovers
+observation dates, adds preceding model-run days needed for long-lead
+verification, downloads only runs that Open-Meteo Single Runs can actually
+provide, enriches those runs with 925/850/700/500 hPa context, and records
 bounded retry state. Reanalysis is never substituted for an operational run.
+
+Availability policy:
+- ECMWF IFS: 2024-03-14 onward;
+- other configured models: 2026-04-02 onward;
+- earlier days are excluded from this Single Runs queue and are handled, where
+  possible, by the separate Previous Runs historical backfill.
 """
 from __future__ import annotations
 
@@ -26,6 +32,11 @@ LOOKBACK_DAYS = 3
 TARGET_MODELS = 8
 MIN_USABLE_MODELS = 5
 MAX_ATTEMPTS_PER_DAY = 4
+ECMWF_SINGLE_RUNS_START = date(2024, 3, 14)
+ALL_MODELS_SINGLE_RUNS_START = date(2026, 4, 2)
+ECMWF_MODEL_ID = "ecmwf_ifs"
+PREVIOUS_RUNS_SOURCE = "open-meteo-previous-runs"
+SINGLE_RUNS_SOURCE = "open-meteo-single-runs"
 
 
 def parse_archive_day(root: Path, path: Path):
@@ -52,13 +63,22 @@ def observation_days():
     return {d for d in days if d < today}
 
 
+def eligible_models_for_day(d):
+    if d >= ALL_MODELS_SINGLE_RUNS_START:
+        return list(mv.MODELS)
+    if d >= ECMWF_SINGLE_RUNS_START:
+        meta = mv.MODEL_META.get(ECMWF_MODEL_ID)
+        return [(ECMWF_MODEL_ID, meta[0], meta[1])] if meta else []
+    return []
+
+
 def required_run_days(obs_days):
     out = set()
     today = mv.utcnow().date()
     for d in obs_days:
         for n in range(LOOKBACK_DAYS + 1):
             rd = d - timedelta(days=n)
-            if rd < today:
+            if rd < today and eligible_models_for_day(rd):
                 out.add(rd)
     return out
 
@@ -77,6 +97,10 @@ def archive_groups():
         return groups
     for path in sorted(mv.FORECAST_DIR.rglob("*.jsonl")):
         for row in mv.load_jsonl(path):
+            # Previous Runs rows are fixed-lead products, not complete Single
+            # Runs. They must not satisfy or block this archive's coverage.
+            if row.get("archive_source") == PREVIOUS_RUNS_SOURCE:
+                continue
             run = mv.parse_dt(row.get("run_time"))
             model = row.get("model")
             if not run or model not in mv.MODEL_META or run.hour != RUN_HOUR_UTC:
@@ -90,9 +114,10 @@ def coverage_for_days(days):
     now = mv.utcnow()
     out = {}
     for d in days:
+        eligible = {m[0] for m in eligible_models_for_day(d)}
         surface_models = set()
         context_models = set()
-        for model, _name, _weight in mv.MODELS:
+        for model in eligible:
             rows = groups.get((d, model)) or []
             if not rows:
                 continue
@@ -104,11 +129,16 @@ def coverage_for_days(days):
                 if valid and run and run < valid <= now:
                     elapsed.append(row)
             # Future valid times are deliberately ignored here. The pressure
-            # enrichment code also ignores them until they become verifiable,
-            # so they must not make a recent historical run look incomplete.
+            # enrichment code also ignores them until they become verifiable.
             if elapsed and all(esc.has_context(r) for r in elapsed):
                 context_models.add(model)
+        required_models = min(TARGET_MODELS, len(eligible))
+        minimum_usable = min(MIN_USABLE_MODELS, required_models)
         out[d] = {
+            "eligible_models": len(eligible),
+            "eligible_model_ids": sorted(eligible),
+            "required_models": required_models,
+            "minimum_usable_models": minimum_usable,
             "surface_models": len(surface_models),
             "context_models": len(context_models),
             "surface_model_ids": sorted(surface_models),
@@ -118,16 +148,21 @@ def coverage_for_days(days):
 
 
 def day_complete(cov):
+    required = int(cov.get("required_models") or 0)
+    if required <= 0:
+        return True
     surface = int(cov.get("surface_models") or 0)
     context = int(cov.get("context_models") or 0)
-    return surface >= TARGET_MODELS and context >= min(surface, TARGET_MODELS)
+    return surface >= required and context >= required
 
 
 def day_usable_after_retries(cov, attempts):
+    minimum = int(cov.get("minimum_usable_models") or 0)
     return (
-        attempts >= MAX_ATTEMPTS_PER_DAY
-        and int(cov.get("surface_models") or 0) >= MIN_USABLE_MODELS
-        and int(cov.get("context_models") or 0) >= MIN_USABLE_MODELS
+        minimum > 0
+        and attempts >= MAX_ATTEMPTS_PER_DAY
+        and int(cov.get("surface_models") or 0) >= minimum
+        and int(cov.get("context_models") or 0) >= minimum
     )
 
 
@@ -144,10 +179,9 @@ def select_days(required, state, max_days):
         if attempts >= MAX_ATTEMPTS_PER_DAY:
             continue
         candidates.append((attempts, d))
-    # Newly discovered/recent observation periods are handled first; retries
-    # are spread behind first-attempt days so a stubborn provider gap cannot
-    # block a newly imported month.
-    candidates.sort(key=lambda x: (x[0], -x[1].toordinal()))
+    # Process the oldest supported untouched days first. Retry attempts remain
+    # behind first-attempt days so one provider gap cannot stall chronology.
+    candidates.sort(key=lambda x: (x[0], x[1].toordinal()))
     return [d for _attempts, d in candidates[:max(0, max_days)]], coverage
 
 
@@ -157,6 +191,8 @@ def existing_run_pairs():
         return pairs
     for path in mv.FORECAST_DIR.rglob("*.jsonl"):
         for row in mv.load_jsonl(path):
+            if row.get("archive_source") == PREVIOUS_RUNS_SOURCE:
+                continue
             run = mv.parse_dt(row.get("run_time"))
             model = row.get("model")
             if run and model in mv.MODEL_META and run.hour == RUN_HOUR_UTC:
@@ -168,7 +204,7 @@ def backfill_surface(days, workers):
     existing = existing_run_pairs()
     tasks = []
     for d in days:
-        for model, name, weight in mv.MODELS:
+        for model, name, weight in eligible_models_for_day(d):
             if (d, model) not in existing:
                 tasks.append((model, name, weight, d, RUN_HOUR_UTC))
 
@@ -197,9 +233,14 @@ def enrich_context(days, workers):
     files = esc.load_files()
     now = mv.utcnow()
     selected_days = set(days)
+    eligible_pairs = {
+        (d, model[0])
+        for d in selected_days
+        for model in eligible_models_for_day(d)
+    }
     pending = [
         item for item in esc.candidate_runs(files, now)
-        if item[0].date() in selected_days and item[0].hour == RUN_HOUR_UTC
+        if item[0].hour == RUN_HOUR_UTC and (item[0].date(), item[1]) in eligible_pairs
     ]
     changed = set()
     success = 0
@@ -216,13 +257,15 @@ def enrich_context(days, workers):
                     unsupported_total[var] += 1
                 updated = 0
                 for path, idx, row in refs:
+                    if row.get("archive_source") == PREVIOUS_RUNS_SOURCE:
+                        continue
                     ctx = context.get(row.get("valid_time"))
                     if not ctx:
                         continue
                     new = dict(row)
                     new.update(ctx)
                     new["synoptic_context_version"] = esc.sr.VERSION
-                    new["synoptic_context_source"] = "open-meteo-single-runs"
+                    new["synoptic_context_source"] = SINGLE_RUNS_SOURCE
                     files[path][idx] = new
                     changed.add(path)
                     updated += 1
@@ -247,7 +290,7 @@ def enrich_context(days, workers):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--max-days", type=int, default=2, help="maximum model-run days processed per invocation")
+    ap.add_argument("--max-days", type=int, default=2, help="maximum supported model-run days processed per invocation")
     ap.add_argument("--workers", type=int, default=3)
     args = ap.parse_args()
 
@@ -261,7 +304,7 @@ def main():
             "status": "no-work",
             "observation_days": len(obs),
             "required_run_days": len(required),
-            "message": "All eligible historical observation days are already covered or have reached bounded retry state.",
+            "message": "All Single Runs-supported historical days are already covered or have reached bounded retry state.",
         }, ensure_ascii=False))
         return
 
@@ -288,6 +331,8 @@ def main():
             "attempts": attempts,
             "last_attempt_utc": now_s,
             "status": status,
+            "eligible_models": int(cov.get("eligible_models") or 0),
+            "required_models": int(cov.get("required_models") or 0),
             "surface_models": int(cov.get("surface_models") or 0),
             "context_models": int(cov.get("context_models") or 0),
         }
@@ -303,7 +348,15 @@ def main():
     report = {
         "schema": "prognozaepir-observation-history-autofill-v1",
         "generated_at_utc": now_s,
-        "source_policy": "User supplies METAR/SYNOP only; model runs and 925/850/700/500 hPa fields are fetched automatically from Open-Meteo Single Runs. No reanalysis substitution.",
+        "source_policy": (
+            "Open-Meteo Single Runs only where documented archive coverage exists: ECMWF IFS from 2024-03-14; "
+            "other configured models from 2026-04-02. Earlier history is delegated to Previous Runs. No reanalysis substitution."
+        ),
+        "single_runs_availability": {
+            "ecmwf_ifs_from": ECMWF_SINGLE_RUNS_START.isoformat(),
+            "all_configured_models_from": ALL_MODELS_SINGLE_RUNS_START.isoformat(),
+            "unsupported_days_are_skipped": True,
+        },
         "run_hour_utc": RUN_HOUR_UTC,
         "lookback_days": LOOKBACK_DAYS,
         "target_models_per_run_day": TARGET_MODELS,
