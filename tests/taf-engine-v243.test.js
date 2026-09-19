@@ -34,15 +34,15 @@ assert.equal(E.QUALITY_VERSION,'2.4.3');
 assert.equal(E.RULES.prevailingWindFullPeriodWhenNoSignificantChange,true);
 assert.equal(E.RULES.prevailingGustMinFraction,.50);
 assert.equal(E.RULES.basePrecipitationIndependentOfVisibility,true);
-assert.equal(E.RULES.weakOrdinaryPrecipStandaloneChangeRequiresVisibilityBelowM,5000);
-assert.equal(E.RULES.weakOrdinaryPrecipMayAccompanyOtherSignificantChange,true);
+assert.equal(E.RULES.weakOrdinaryPrecipChangeRequiresVisibilityBelowM,5000);
+assert.equal(E.RULES.optionalWeakPrecipAbove5kmWithOtherChange,false);
 assert.equal(E.RULES.moderateHeavyPrecipChangeIndependentOfVisibility,true);
 assert.equal(E.RULES.freezingThunderstormPrecipChangeIndependentOfVisibility,true);
 assert.equal(E.RULES.convectiveShowerWithCbTcuMayOmitVisibility,true);
 assert.equal(E.RULES.cloudPriorityBknOvcOverFewSct,true);
 
-// Instruction 3.7.9 / 3.7.11a: preparation must not delete high-VIS ordinary
-// precipitation, because the main TAF section may contain it.
+// Instruction 3.7.9 / 3.7.11a: the full/main path must not delete high-VIS
+// ordinary precipitation.
 {
   const rain={rows:[row(0,{vis:9000,code:61,RR:.4,wet:1})]};
   const q=E.helpers.prepareOperationalWeatherInput(rain);
@@ -50,6 +50,27 @@ assert.equal(E.RULES.cloudPriorityBknOvcOverFewSct,true);
   assert.equal(q.rows[0].wet,1);
   assert.equal(q.rows[0].RR,.4);
   assert.equal(q.taf243WeatherPolicy.basePrecipitationVisibilityIndependent,true);
+}
+
+// Change-group selection has a separate gate. Weak ordinary RA at VIS >=5 km
+// is removed there, while moderate RA and SHRA are retained.
+{
+  const weak={rows:[row(0,{vis:9000,code:61,RR:.05,wet:1})]};
+  const w=E.helpers.prepareChangeGroupWeatherInput(weak);
+  assert.equal(w.rows[0].mv.every(m=>m.code===0),true);
+  assert.equal(w.rows[0].wet,0);
+  assert.equal(w.rows[0].RR,0);
+  assert.equal(w.taf243ChangeWeatherPolicy.suppressedMembers,3);
+
+  const moderate={rows:[row(0,{vis:9000,code:61,RR:.4,wet:1})]};
+  const m=E.helpers.prepareChangeGroupWeatherInput(moderate);
+  assert.equal(m.rows[0].mv.every(x=>x.code===61),true);
+  assert.equal(m.rows[0].RR,.4);
+
+  const shower={rows:[row(0,{vis:9000,code:80,RR:.05,wet:1})]};
+  const s=E.helpers.prepareChangeGroupWeatherInput(shower);
+  assert.equal(s.rows[0].mv.every(x=>x.code===80),true);
+  assert.ok(s.rows[0].wet>0);
 }
 
 // Helper-level cloud hierarchy: FEW/SCT are removed only when ordinary BKN/OVC
@@ -108,7 +129,8 @@ assert.equal(E.helpers.simplifyCloudTokens('9999 FEW020CB SCT025 BKN030'),'9999 
 }
 
 // A 30-49% signal of weak ordinary rain at good visibility must not create a
-// standalone PROB30 -RA. This was the regression seen in the live generator.
+// standalone PROB30 -RA. It is removed before change-group selection, so it
+// also cannot consume the single plain-PROB30 slot.
 {
   const rows=Array.from({length:12},(_,i)=>{
     if(i<3)return row(i,{vis:10000});
@@ -186,4 +208,4 @@ assert.equal(E.helpers.simplifyCloudTokens('9999 FEW020CB SCT025 BKN030'),'9999 
   assert.equal(q.checks.ok,true);
 }
 
-console.log('TAF Engine 2.4.3 prevailing wind + instruction precipitation/cloud priority tests: OK');
+console.log('TAF Engine 2.4.3 prevailing wind + split precipitation/cloud priority tests: OK');
