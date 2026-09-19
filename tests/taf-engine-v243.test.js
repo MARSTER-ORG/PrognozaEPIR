@@ -9,7 +9,7 @@ function model({vis=12000,code=0,kt=8,dir=200,g=kt,w=1}={}){
   return {vis,code,ws:kt/KT,wd:dir,g:g/KT,w,ceil:null};
 }
 
-function row(i,{kt=8,dir=200,gust=kt,vis=12000,code=0,RR=0,wet=0,profile=null,ceiling=null,lowH=null,oktaL=0,mv=null}={}){
+function row(i,{kt=8,dir=200,gust=kt,vis=12000,code=0,RR=0,wet=0,profile=null,ceiling=null,lowH=null,oktaL=0,mv=null,clouds=[]}={}){
   const members=mv||[
     model({vis,code,kt,dir,g:gust}),
     model({vis,code,kt,dir,g:gust}),
@@ -19,7 +19,7 @@ function row(i,{kt=8,dir=200,gust=kt,vis=12000,code=0,RR=0,wet=0,profile=null,ce
     t:start+i*H,T:18,Td:9,RH:55,RR,VIS:vis,
     WS:kt/KT,WD:dir,G:gust/KT,wet,storm:0,dirSpread:10,
     profile:profile===null?[{agl:200,cc:0},{agl:2500,cc:0}]:profile,
-    ceiling,lowH,midH:null,highH:null,oktaL,oktaM:0,oktaH:0,
+    ceiling,lowH,midH:null,highH:null,oktaL,oktaM:0,oktaH:0,clouds,
     mv:members,
     fogRisk:0,fgRisk:null,brRisk:null,fogOperationalScore:null,fgOperationalScore:null,brOperationalScore:null
   };
@@ -34,17 +34,25 @@ assert.equal(E.QUALITY_VERSION,'2.4.3');
 assert.equal(E.RULES.prevailingWindFullPeriodWhenNoSignificantChange,true);
 assert.equal(E.RULES.prevailingGustMinFraction,.50);
 assert.equal(E.RULES.ordinaryRainRequiresVisibilityBelowM,5000);
+assert.equal(E.RULES.ordinaryRainVisibilityGateExcludesShowers,true);
+assert.equal(E.RULES.convectiveShowerWithCbTcuMayOmitVisibility,true);
 assert.equal(E.RULES.cloudPriorityBknOvcOverFewSct,true);
 
-// Helper-level weather gate: ordinary liquid precipitation with VIS >=5 km is
-// removed before the probability/change-group engine sees it.
+// Helper-level weather gate: high-VIS ordinary RA/DZ remains an operational
+// suppression, but SHRA is explicitly exempt so convective groups can carry it.
 {
-  const input={rows:[row(0,{vis:9000,code:61,RR:1,wet:1})]};
-  const q=E.helpers.prepareOperationalWeatherInput(input);
+  const rain={rows:[row(0,{vis:9000,code:61,RR:1,wet:1})]};
+  const q=E.helpers.prepareOperationalWeatherInput(rain);
   assert.equal(q.rows[0].mv.every(m=>m.code===0),true);
   assert.equal(q.rows[0].wet,0);
   assert.equal(q.rows[0].RR,0);
   assert.equal(q.taf243WeatherPolicy.suppressedMembers,3);
+
+  const shower={rows:[row(0,{vis:9000,code:80,RR:.05,wet:1})]};
+  const s=E.helpers.prepareOperationalWeatherInput(shower);
+  assert.equal(s.rows[0].mv.every(m=>m.code===80),true);
+  assert.ok(s.rows[0].wet>0);
+  assert.equal(s.taf243WeatherPolicy.suppressedMembers,0);
 }
 
 // Helper-level cloud hierarchy: FEW/SCT are removed only when ordinary BKN/OVC
@@ -90,7 +98,7 @@ assert.equal(E.helpers.simplifyCloudTokens('9999 FEW020CB SCT025 BKN030'),'9999 
   assert.equal(q.checks.ok,true);
 }
 
-// Ordinary rain which does not lower visibility below 5 km must not be coded.
+// High-VIS ordinary RA/DZ is still omitted by the project operational preference.
 // With no significant weather/cloud below CAVOK limits, CAVOK is allowed.
 {
   const rows=Array.from({length:12},(_,i)=>row(i,{vis:10000,code:61,RR:.4,wet:1}));
@@ -107,6 +115,25 @@ assert.equal(E.helpers.simplifyCloudTokens('9999 FEW020CB SCT025 BKN030'),'9999 
   const q=gen(rows);
   assert.match(q.base.text,/\b(?:-RA|RA|\+RA)\b/,q.base.text);
   assert.ok(!/\bCAVOK\b/.test(q.base.text),q.base.text);
+  assert.equal(q.checks.ok,true);
+}
+
+// Instrukcja 3.7.11b / 3.11.6a: when a temporary CB/TCU change is forecast,
+// associated weak SHRA may be coded even with VIS >=5 km. If visibility itself
+// does not cross a criterion, it is inherited and is not repeated in the group.
+{
+  const cb=[{cover:'FEW',ft:2000,type:'CB',okta:2}];
+  const rows=Array.from({length:12},(_,i)=>{
+    if(i===3||i===4)return row(i,{vis:10000,code:80,RR:.05,wet:1,clouds:cb});
+    return row(i,{vis:10000});
+  });
+  const q=gen(rows);
+  const g=q.groups.find(x=>/\b(?:FEW|SCT|BKN|OVC)\d{3}CB\b/.test(x.payload||''));
+  assert.ok(g,q.taf);
+  assert.ok(g.kind==='TEMPO'||g.kind==='PROB30 TEMPO',g.text);
+  assert.match(g.payload,/\b-SHRA\b/,g.payload);
+  assert.ok(!/\b(?:9999|\d{4})\b/.test(g.payload),g.payload);
+  assert.ok((g.fields||[]).includes('weather'),g.text);
   assert.equal(q.checks.ok,true);
 }
 
