@@ -13,10 +13,11 @@
     .wrap{width:min(1500px,calc(100% - 20px));margin:0 auto;padding:12px 0 40px}.top{display:flex;align-items:center;margin:0 0 10px;padding:4px 2px}.brand{font-size:18px;font-weight:700;line-height:1.25}.brand small{font-weight:400;color:var(--muted);font-size:.78em;margin-left:5px}
     .card{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:12px;padding:14px;box-shadow:0 8px 25px rgba(0,0,0,.18)}.controls{display:grid;grid-template-columns:minmax(300px,1fr) auto auto;gap:10px;align-items:end}.controls label{display:block;color:var(--muted);font-size:12px}.controls select{display:block;width:100%;margin-top:5px;background:#081723;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px}.btn{border:1px solid #35617a;background:#17384b;color:white;border-radius:8px;padding:9px 13px;cursor:pointer}.btn:hover{background:#1c465e}.statusline{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px;color:var(--muted)}
     .badge,.pill{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;padding:4px 8px;font-size:12px;background:#0a1720}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+    .fog-mode-control{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:#091822}.fog-mode-copy{flex:1 1 300px;min-width:220px}.fog-mode-copy b{display:block;font-size:12px;color:var(--accent)}.fog-mode-copy span{display:block;margin-top:2px;font-size:10px;color:var(--muted);line-height:1.35}.fog-mode-buttons{display:flex;gap:6px;flex-wrap:wrap}.fog-mode-buttons button{border:1px solid #35617a;background:#0b1d28;color:var(--text);border-radius:8px;padding:7px 10px;font-weight:700;font-size:11px;cursor:pointer}.fog-mode-buttons button.active{background:#285b78;border-color:#77bfe8;color:#fff}.fog-mode-state{font-size:10px;color:var(--muted);white-space:nowrap}
     h2{font-size:15px;margin:0 0 10px}h3{font-size:13px;margin:0 0 7px;color:#c9dae3}.grid2{display:grid;grid-template-columns:1.25fr .75fr;gap:12px;margin-top:12px}.stack{display:grid;gap:12px}.taf{white-space:pre-wrap;word-break:break-word;margin:0;background:#061018;border:1px solid #203844;border-radius:9px;padding:14px;min-height:92px;font:600 15px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}.raw{white-space:pre-wrap;word-break:break-word;margin:0;background:#07131b;border:1px solid #203844;border-radius:8px;padding:10px;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}.muted{color:var(--muted)}
     ul{margin:8px 0 0;padding-left:21px}.checklist{list-style:none;padding:0;margin:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.checklist li{border:1px solid #203c4a;border-radius:8px;padding:7px 9px;background:#091822}.sources{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0 0}.tablewrap{overflow:auto;border:1px solid #203c4a;border-radius:9px}table{width:100%;border-collapse:collapse;min-width:880px}th,td{padding:8px 9px;border-bottom:1px solid #1d3542;text-align:left;vertical-align:top}th{position:sticky;top:0;background:#0c1b26;color:#bed0d9;font-size:12px}td{font-size:12px}tr:last-child td{border-bottom:0}td pre{margin:0;white-space:pre-wrap;min-width:460px;font:11px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace}
     .note{margin-top:12px;color:var(--muted);font-size:12px;border-left:3px solid #345b70;padding-left:10px}.engine-frame{position:absolute;left:-10000px;width:1px;height:1px;border:0;opacity:0;pointer-events:none}.footer{margin-top:18px;color:var(--muted);font-size:11px;text-align:center}
-    @media(max-width:900px){.grid2{grid-template-columns:1fr}.controls{grid-template-columns:1fr 1fr}.controls label{grid-column:1/-1}.checklist{grid-template-columns:1fr}.wrap{width:min(100% - 14px,1500px)}.top{padding:3px 1px}.brand{font-size:15px}.brand small{display:block;margin:2px 0 0;font-size:11px}}
+    @media(max-width:900px){.grid2{grid-template-columns:1fr}.controls{grid-template-columns:1fr 1fr}.controls label{grid-column:1/-1}.checklist{grid-template-columns:1fr}.wrap{width:min(100% - 14px,1500px)}.top{padding:3px 1px}.brand{font-size:15px}.brand small{display:block;margin:2px 0 0;font-size:11px}.fog-mode-buttons{width:100%}.fog-mode-buttons button{flex:1 1 46%}.fog-mode-state{width:100%}}
   </style>
 </head>
 <body>
@@ -33,9 +34,17 @@
         <button id="gen" class="btn" type="button">Odśwież i generuj</button>
         <button id="copy" class="btn" type="button">Kopiuj TAF</button>
       </div>
+      <div id="tafFogModeSwitch" class="fog-mode-control" aria-label="Wybór silnika mgły dla generatora TAF">
+        <div class="fog-mode-copy"><b>Silnik mgły używany przez TAF</b><span>Wybór jest wspólny z EPIR FOG. LEGACY używa poprzedniego silnika; vNEXT używa nowej fizyki i prognozy VIS. Po zmianie przeładowywane jest ukryte źródło danych generatora.</span></div>
+        <div class="fog-mode-buttons">
+          <button type="button" data-taf-fog-mode="legacy">LEGACY</button>
+          <button type="button" data-taf-fog-mode="vnext">vNEXT</button>
+        </div>
+        <div id="tafFogModeState" class="fog-mode-state">—</div>
+      </div>
       <div class="statusline"><span id="badge" class="badge">TAF ENGINE 2.4.3 · START</span><span id="st">inicjalizacja</span></div>
       <div id="sources" class="sources"></div>
-      <div id="conf" class="note">Instrukcja TAF 11.2023 jest nadrzędną kontrolą końcową. Generator automatycznie synchronizuje się z aktualnie wybranym Fog Engine: LEGACY albo vNEXT, razem z właściwym score, prognozą widzialności i progami operacyjnymi.</div>
+      <div id="conf" class="note">Instrukcja TAF 11.2023 jest nadrzędną kontrolą końcową. Generator synchronizuje się z wybranym Fog Engine i używa właściwego score, prognozy widzialności oraz progów operacyjnych.</div>
     </section>
 
     <div class="grid2">
@@ -72,37 +81,89 @@
     <footer class="footer">PrognozaEPIR · TAF Engine 2.4.3 · czasy prezentowane wyłącznie w UTC</footer>
   </div>
 
-  <iframe id="engine" class="engine-frame" src="index.html?v=20260917-taf-fog-mode-sync" title="Silnik danych modeli" aria-hidden="true" tabindex="-1"></iframe>
-  <script>
-  (()=>{
-    const H=3600000,issueHours=[5,11,17,23],$=id=>document.getElementById(id),pad=n=>String(n).padStart(2,'0');
-    const fail=message=>{const st=$('st'),badge=$('badge');if(st)st.textContent='STARTUP: '+message;if(badge){badge.textContent='TAF ENGINE 2.4.3 · BŁĄD STARTU';badge.className='badge bad';}};
-    window.addEventListener('error',e=>fail(e?.message||'błąd JavaScript'));
-    window.addEventListener('unhandledrejection',e=>fail(e?.reason?.message||String(e?.reason||'odrzucona operacja')));
-    try{
-      const select=$('cycle'),now=Date.now(),base=new Date(now-18*H),list=[];base.setUTCMinutes(0,0,0);
-      for(let i=0;i<72;i++){
-        const issue=base.getTime()+i*H;if(!issueHours.includes(new Date(issue).getUTCHours()))continue;
-        const start=issue+H,end=start+12*H;if(issue<now-8*H||issue>now+30*H)continue;
-        list.push({issue,start,end});
-      }
-      let best=0,bestScore=Infinity;
-      const fmt=(ms,date=true)=>{const d=new Date(ms),hm=`${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;return date?`${pad(d.getUTCDate())}.${pad(d.getUTCMonth()+1)}.${d.getUTCFullYear()} ${hm}`:hm;};
-      select.innerHTML=list.map((c,i)=>{let score=c.issue>=now?c.issue-now:(now-c.issue)+12*H;if(now>=c.issue-20*60000&&now<=c.issue+5*60000)score=0;if(score<bestScore){bestScore=score;best=i;}return `<option value="${i}">${fmt(c.issue)} → ${fmt(c.start,false)}–${fmt(c.end,false)}</option>`;}).join('');
-      select.value=String(best);select.dataset.cycles=JSON.stringify(list);document.documentElement.dataset.tafStartup='cycles-ready';$('st').textContent='ładowanie silnika TAF…';
-    }catch(e){fail(e?.message||String(e));}
-  })();
-  </script>
+  <iframe id="engine" class="engine-frame" src="index.html?taf-engine=1&amp;v=20260919-4" title="Silnik danych modeli" aria-hidden="true" tabindex="-1"></iframe>
+
   <script src="utc-ui-guard.js"></script>
   <script src="message-archive-client.js?v=live-jsonl-v7"></script>
-  <script src="taf-fog-policy.js?v=20260917-2"></script>
+  <script src="taf-fog-policy.js?v=20260919-4"></script>
   <script src="taf-engine-v2.js?v=2.3.0-kernel"></script>
   <script src="taf-engine-v24.js?v=2.4.0"></script>
   <script src="taf-engine-v241.js?v=2.4.1-audit"></script>
   <script src="taf-engine-v242.js?v=2.4.2-cloud-fog"></script>
   <!-- Formal 2.3-kernel regression compatibility marker only; not executed or loaded: taf-app-v2.js?v=2.4.0-ui -->
-  <script defer src="taf-engine-v243.js?v=20260919-3"></script>
-  <script defer src="taf-app-v25.js?v=20260919-3"></script>
   <!-- Compatibility/build marker only; bootstrap is intentionally not executed: taf-runtime-bootstrap.js?v=20260919-1 -->
+
+  <script>
+  (()=>{
+    'use strict';
+    const H=3600000, ISSUE_HOURS=[5,11,17,23], MODE_KEY='prognozaepir-fog-engine-mode';
+    const $=id=>document.getElementById(id), pad=n=>String(n).padStart(2,'0');
+    const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+    function setStatus(text,bad=false){
+      const st=$('st'),badge=$('badge');
+      if(st)st.textContent=text;
+      if(badge){badge.textContent=bad?'TAF ENGINE 2.4.3 · BŁĄD STARTU':'TAF ENGINE 2.4.3 · START';badge.className=bad?'badge bad':'badge';}
+    }
+    function fail(message){setStatus('STARTUP: '+message,true);console.error('[TAF startup]',message);}
+    window.addEventListener('error',e=>{if(e?.message)fail(e.message);});
+    window.addEventListener('unhandledrejection',e=>fail(e?.reason?.message||String(e?.reason||'odrzucona operacja')));
+
+    function fmt(ms,date=true){const d=new Date(ms),hm=`${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;return date?`${pad(d.getUTCDate())}.${pad(d.getUTCMonth()+1)}.${d.getUTCFullYear()} ${hm}`:hm;}
+    function fillCycles(){
+      const select=$('cycle'),now=Date.now(),base=new Date(now-18*H),list=[];base.setUTCMinutes(0,0,0);
+      for(let i=0;i<72;i++){
+        const issue=base.getTime()+i*H;if(!ISSUE_HOURS.includes(new Date(issue).getUTCHours()))continue;
+        const start=issue+H,end=start+12*H;if(issue<now-8*H||issue>now+30*H)continue;list.push({issue,start,end});
+      }
+      let best=0,bestScore=Infinity;
+      select.innerHTML=list.map((c,i)=>{let score=c.issue>=now?c.issue-now:(now-c.issue)+12*H;if(now>=c.issue-20*60000&&now<=c.issue+5*60000)score=0;if(score<bestScore){bestScore=score;best=i;}return `<option value="${i}">${fmt(c.issue)} → ${fmt(c.start,false)}–${fmt(c.end,false)}</option>`;}).join('');
+      select.value=String(best);select.dataset.cycles=JSON.stringify(list);document.documentElement.dataset.tafStartup='cycles-ready';
+    }
+
+    function readMode(){try{return localStorage.getItem(MODE_KEY)==='vnext'?'vnext':'legacy';}catch(_){return'legacy';}}
+    function updateModeUi(){
+      const mode=readMode();window.PrognozaEPIRFogSelectedMode=mode;
+      document.querySelectorAll('[data-taf-fog-mode]').forEach(b=>{const active=b.dataset.tafFogMode===mode;b.classList.toggle('active',active);b.setAttribute('aria-pressed',active?'true':'false');});
+      const state=$('tafFogModeState');if(state)state.textContent=mode==='vnext'?'AKTYWNY: vNEXT':'AKTYWNY: LEGACY';
+    }
+    function setMode(mode){
+      const next=mode==='vnext'?'vnext':'legacy';try{localStorage.setItem(MODE_KEY,next);}catch(_){}
+      window.PrognozaEPIRFogSelectedMode=next;updateModeUi();
+      const frame=$('engine');if(frame)frame.src=`index.html?taf-engine=1&fog-mode=${next}&v=${Date.now()}`;
+      const hours=$('hours');if(hours)hours.innerHTML='';
+      const taf=$('taf');if(taf)taf.textContent='Silnik danych przeładowuje się po zmianie trybu. Kliknij „Odśwież i generuj”, gdy status będzie gotowy.';
+      const st=$('st');if(st)st.textContent=`przełączono Fog Engine na ${next==='vnext'?'vNEXT':'LEGACY'} · przeładowywanie danych`;
+      window.dispatchEvent(new CustomEvent('prognozaepir:fog-engine-mode-changed',{detail:{mode:next}}));
+    }
+    document.querySelectorAll('[data-taf-fog-mode]').forEach(b=>b.addEventListener('click',()=>setMode(b.dataset.tafFogMode)));
+    updateModeUi();
+
+    function loadScript(src,id){
+      return new Promise((resolve,reject)=>{
+        const old=document.getElementById(id);if(old?.dataset.loaded==='1')return resolve();
+        const s=old||document.createElement('script');s.id=id;s.src=src;s.async=false;
+        s.onload=()=>{s.dataset.loaded='1';resolve();};s.onerror=()=>reject(new Error(`nie udało się załadować ${src}`));
+        if(!old)(document.body||document.documentElement).appendChild(s);
+      });
+    }
+
+    async function boot(){
+      fillCycles();setStatus('ładowanie TAF Engine 2.4.3…');
+      await loadScript('taf-engine-v243.js?v=20260919-4','taf-engine-v243-runtime');
+      if(!window.__PROGNOZA_EPIR_TAF_ENGINE_V243__||window.PrognozaEPIRTAFEngine?.QUALITY_VERSION!=='2.4.3')throw new Error('TAF Engine 2.4.3 nie wystartował');
+      await loadScript('taf-app-v25.js?v=20260919-4','taf-app-v25-runtime');
+      const deadline=Date.now()+4000;
+      while(Date.now()<deadline&&!window.__PROGNOZA_EPIR_TAF_APP_V25__)await sleep(50);
+      if(!window.__PROGNOZA_EPIR_TAF_APP_V25__)throw new Error('interfejs generatora TAF nie wystartował');
+      document.documentElement.dataset.tafStartup='app-ready';
+      if($('st')?.textContent?.startsWith('ładowanie TAF Engine'))$('st').textContent='silnik TAF gotowy';
+      const autogen=new URLSearchParams(location.search).get('autogen')==='1';
+      if(autogen)setTimeout(()=>$('gen')?.click(),700);
+    }
+
+    boot().catch(e=>fail(e?.message||String(e)));
+  })();
+  </script>
 </body>
 </html>
