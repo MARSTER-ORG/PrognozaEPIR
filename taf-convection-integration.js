@@ -144,7 +144,7 @@
     const nearby=(result.groups||[]).some(g=>hasConvectiveToken(g.text)&&(+peak.t)>=g.s-HOUR&&(+peak.t)<=g.e+HOUR);if(nearby)return result;
     const storm=asProb(peak.storm),precip=Math.max(asProb(peak.wet),asProb(peak.precipRisk),Number(peak.RR||0)>=.05?.30:0);
     let wx='';if(storm>=.30&&type==='CB')wx=precip>=.30?'TSRA':'TS';else if(precip>=.30)wx='SHRA';
-    const payload=[cloud,wx].filter(Boolean).join(' '),text=`PROB30 TEMPO ${fmtPeriod(w.s)}/${fmtPeriod(w.e)} ${payload}`;
+    const payload=[wx,cloud].filter(Boolean).join(' '),text=`PROB30 TEMPO ${fmtPeriod(w.s)}/${fmtPeriod(w.e)} ${payload}`;
     const outTaf=taf.replace(/=\s*$/,`\n${text}=`),check=validator(outTaf,{issue:+input.issue,start:+input.start,end:+input.end,msaFt:input.msaFt});
     if(!check?.ok)return result;
     return{...result,taf:outTaf,groups:[...(result.groups||[]),{kind:'PROB30 TEMPO',s:w.s,e:w.e,fields:['clouds',...(wx?['weather']:[])],payload,probability:risk,text}],checks:{...(result.checks||{}),...check,noProb40:!outTaf.includes('PROB40'),noVV:!/\bVV/.test(outTaf),max5:true},diagnostics:{...(result.diagnostics||{}),reasons:[...(result.diagnostics?.reasons||[]),`${text}: TCu/Cb nowcast ${Math.round(risk*100)}%; TAF sąsiadów użyty wyłącznie jako dodatnie potwierdzenie.`]}};
@@ -164,11 +164,17 @@
     if(!root.document)return null;
     const old=root.document.getElementById('tafConvectionBridgeFrame');if(old)old.remove();
     const f=root.document.createElement('iframe');f.id='tafConvectionBridgeFrame';f.tabIndex=-1;f.setAttribute('aria-hidden','true');f.style.cssText='position:absolute;width:1px;height:1px;left:-10000px;top:-10000px;border:0;visibility:hidden';f.src='radar.html?taf-convection-bridge=1&v='+Date.now();root.document.body.appendChild(f);
-    const deadline=Date.now()+16000;
+    const deadline=Date.now()+24000;
     while(Date.now()<deadline){
-      try{const x=f.contentWindow?.PrognozaEPIRConvectionNowcast;if(freshNowcast(x)){snapshot=x;try{root.localStorage?.setItem(CACHE_KEY,JSON.stringify(x));}catch(_){}break;}}catch(_){}
-      snapshot=readCache();if(snapshot)break;await new Promise(r=>setTimeout(r,300));
+      try{
+        const w=f.contentWindow,radar=w?.PrognozaEPIRRadarNowcast,x=w?.PrognozaEPIRConvectionNowcast;
+        const rt=Date.parse(radar?.updatedAt||''),xt=Date.parse(x?.updatedAt||'');
+        const radarReady=radar&&!radar.error&&finite(Number(radar.frameEnd))&&finite(rt);
+        if(radarReady&&freshNowcast(x)&&finite(xt)&&xt>=rt-5000){snapshot=x;try{root.localStorage?.setItem(CACHE_KEY,JSON.stringify(x));}catch(_){}break;}
+      }catch(_){}
+      await new Promise(r=>setTimeout(r,300));
     }
+    if(!snapshot)snapshot=readCache();
     f.remove();return snapshot;
   }
   async function refresh(){
@@ -181,9 +187,10 @@
     setTimeout(()=>{
       const badge=root.document.getElementById('badge');if(badge)badge.textContent=badge.textContent.replace('2.4.2','2.4.3');
       const src=root.document.getElementById('sources');if(src&&!src.querySelector('[data-source="tcu-cb"]')){
-        const active=(result.hourly||[]).some(h=>(h.prob?.tcu||0)>0||(h.prob?.cb||0)>0),stations=[...new Set((result.hourly||[]).flatMap(h=>h.sourceRow?.neighborConvectiveStations||[]))];
-        src.insertAdjacentHTML('beforeend',`<span class="pill ${active?'ok':'warn'}" data-source="tcu-cb">TCu/Cb ${active?'✓':'—'}${stations.length?' · TAF '+stations.join('/'):''}</span>`);
+        const loaded=(result.hourly||[]).some(h=>h.sourceRow?.convectionNowcastHorizonMin!==null&&h.sourceRow?.convectionNowcastHorizonMin!==undefined),stations=[...new Set((result.hourly||[]).flatMap(h=>h.sourceRow?.neighborConvectiveStations||[]))];
+        src.insertAdjacentHTML('beforeend',`<span class="pill ${loaded?'ok':'warn'}" data-source="tcu-cb">TCu/Cb ${loaded?'✓':'—'}${stations.length?' · TAF '+stations.join('/'):''}</span>`);
       }
+      const conf=root.document.getElementById('conf');if(conf&&!/TCu\/Cb 0–3 h/.test(conf.textContent))conf.textContent+=' TCu/Cb 0–3 h jest oddzielone od TS; TAF sąsiadów działa tylko jako dodatnie potwierdzenie.';
       const head=[...root.document.querySelectorAll('#hours')][0]?.closest('table')?.querySelector('thead th:nth-child(7)');if(head)head.textContent='Opad / TS / TCu / Cb';
       [...root.document.querySelectorAll('#hours tr')].forEach((tr,i)=>{const h=result.hourly?.[i],cell=tr.children?.[6];if(!h||!cell)return;const t=Math.round((h.prob?.tcu||0)*100),c=Math.round((h.prob?.cb||0)*100);if(!cell.querySelector('.conv-prob-taf'))cell.insertAdjacentHTML('beforeend',`<span class="conv-prob-taf"><br>TCu ${t}% · Cb ${c}%</span>`);});
     },0);
