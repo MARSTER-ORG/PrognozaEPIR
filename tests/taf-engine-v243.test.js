@@ -37,6 +37,7 @@ assert.equal(E.RULES.basePrecipitationIndependentOfVisibility,true);
 assert.equal(E.RULES.weakOrdinaryPrecipChangeRequiresVisibilityBelowM,5000);
 assert.equal(E.RULES.optionalWeakPrecipAbove5kmWithOtherChange,false);
 assert.equal(E.RULES.moderateHeavyPrecipChangeIndependentOfVisibility,true);
+assert.equal(E.RULES.prob30ModerateRainMayOmitVisibility,true);
 assert.equal(E.RULES.freezingThunderstormPrecipChangeIndependentOfVisibility,true);
 assert.equal(E.RULES.convectiveShowerWithCbTcuMayOmitVisibility,true);
 assert.equal(E.RULES.cloudPriorityBknOvcOverFewSct,true);
@@ -66,6 +67,15 @@ assert.equal(E.RULES.cloudPriorityBknOvcOverFewSct,true);
   const m=E.helpers.prepareChangeGroupWeatherInput(moderate);
   assert.equal(m.rows[0].mv.every(x=>x.code===63),true);
   assert.equal(m.rows[0].RR,.4);
+
+  // Explicit moderate WMO weather-code support is authoritative enough to
+  // classify the TAF change as RA even when the averaged RR is diluted below
+  // the internal 0.15 threshold.
+  const codedModerate={rows:[row(0,{vis:9000,code:63,RR:.05,wet:1})]};
+  const cm=E.helpers.prepareChangeGroupWeatherInput(codedModerate);
+  assert.equal(cm.rows[0].mv.every(x=>x.code===63),true);
+  assert.ok(cm.rows[0].RR>=.15,cm.rows[0].RR);
+  assert.equal(cm.taf243ChangeWeatherPolicy.intensityPromotedRows,1);
 
   const shower={rows:[row(0,{vis:9000,code:80,RR:.05,wet:1})]};
   const s=E.helpers.prepareChangeGroupWeatherInput(shower);
@@ -155,6 +165,24 @@ assert.equal(E.helpers.simplifyCloudTokens('9999 FEW020CB SCT025 BKN030'),'9999 
     : row(i,{vis:10000,code:63,RR:.4,wet:1}));
   const q=gen(rows);
   assert.ok(q.groups.some(g=>/\bRA\b/.test(g.payload||'')),q.taf);
+  assert.equal(q.checks.ok,true);
+}
+
+// Exact operational contract requested for PROB30: 30-49% moderate RA may be
+// the only changed weather element while visibility remains >=5 km. The group
+// must contain RA but must not invent/repeat a low-visibility value.
+{
+  const rows=Array.from({length:12},(_,i)=>row(i,{vis:10000}));
+  rows[5]=row(5,{vis:10000,RR:.05,wet:0,mv:[
+    model({vis:10000,code:63}),
+    model({vis:10000,code:0}),
+    model({vis:10000,code:0})
+  ]});
+  const q=gen(rows);
+  const g=q.groups.find(x=>x.kind==='PROB30'&&/(?:^|\s)RA(?:\s|$)/.test(x.payload||''));
+  assert.ok(g,q.taf);
+  assert.ok(!/(?:^|\s)-RA(?:\s|$)/.test(g.payload),g.payload);
+  assert.ok(!/\b(?:9999|\d{4})\b/.test(g.payload),g.payload);
   assert.equal(q.checks.ok,true);
 }
 
