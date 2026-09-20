@@ -10,6 +10,17 @@
   const page=file==="index"?"index":file;
   document.documentElement.dataset.epirPage=page;
 
+  const EPIR_LOCATION="Dla Lotniska EPIR · 52.828611, 18.330278";
+  const LOCATION_SUFFIX={
+    index:" · meteogram lotniczy multimodelowy",
+    fog:" · FG / BR / MIFG · UTC",
+    radar:" · radar / satelita / wyładowania",
+    "sat-fog":" · EUMETSAT · mgła / niskie chmury",
+    taf:" · generator TAF",
+    arch:" · archiwum depesz",
+    "lightning-alerts":" · alarm wyładowań 50 km"
+  };
+
   const media=window.matchMedia?window.matchMedia("(prefers-color-scheme: dark)"):null;
   const read=()=>{
     try{
@@ -71,8 +82,30 @@
     ["taf.html","TAF GENERATOR","taf"],
     ["arch.html","ARCHIWUM","arch"]
   ];
+
+  const syncLocationHeader=()=>{
+    const top=document.querySelector(".top");
+    if(!top)return;
+    let place=top.querySelector(".place");
+    if(!place){
+      const brand=top.querySelector(".brand");
+      if(!brand)return;
+      let host=brand.parentElement;
+      if(host===top){
+        host=document.createElement("div");
+        top.insertBefore(host,brand);
+        host.appendChild(brand);
+      }
+      place=document.createElement("div");
+      place.className="place";
+      host.appendChild(place);
+    }
+    place.textContent=EPIR_LOCATION+(LOCATION_SUFFIX[page]||"");
+  };
+
   const mount=()=>{
     if(new URLSearchParams(location.search).has("taf-engine"))return;
+    syncLocationHeader();
     let nav=document.getElementById("epirGlobalNav");
     if(!nav){
       nav=document.createElement("nav");
