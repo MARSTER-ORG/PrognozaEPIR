@@ -37,9 +37,10 @@
     for (const p of Object.keys(PRODUCTS)) {
       if ($('polrad_' + p)?.classList.contains('active')) return p;
     }
-    const p = String(detail?.product || window.PrognozaEPIRPolradState?.product || '').toLowerCase();
-    if (PRODUCTS[p] && $('polrad_' + p)) return p;
-    return null;
+    // A frame-change event is authoritative even if the class mutation reaches
+    // observers one task later. Outside that event never trust stale state.
+    const p = String(detail?.product || '').toLowerCase();
+    return PRODUCTS[p] ? p : null;
   }
 
   function fmt(v,p) {
@@ -65,6 +66,7 @@
     const p=detectProduct(detail);
     if(!p)return false;
     const pr=PRODUCTS[p];
+    const changed=activeProduct!==p;
     activeProduct=p;
 
     const heading=$('echoHeading'),label=$('echoThresholdLabel'),input=$('echoThreshold'),analyze=$('echoAnalyze');
@@ -77,8 +79,7 @@
     if(input){
       input.min=String(pr.min);input.max=String(pr.max);input.step=String(pr.step);
       const current=Number(input.value);
-      if(activeProduct!==p || !Number.isFinite(current) || current<pr.min || current>pr.max)input.value=String(pr.def);
-      if(!Number.isFinite(Number(input.value)) || Number(input.value)<pr.min || Number(input.value)>pr.max)input.value=String(pr.def);
+      if(changed || !Number.isFinite(current) || current<pr.min || current>pr.max)input.value=String(pr.def);
     }
 
     const presets=$('echoPresets');
