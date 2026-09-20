@@ -7,6 +7,10 @@ The browser reads each neighbor exclusively through the shared MessageArchive
 API, the main consensus applies the bounded upwind correction, and TAF Engine
 2.4 preserves that provenance when it reads consensus from the hidden
 meteogram iframe.
+
+GitHub is the hot mirror for neighbor history. Once the repository storage
+threshold is reached, historical neighbor JSONL may use a rolling Git window
+only after the durable Supabase copy is verified.
 """
 from pathlib import Path
 import re
@@ -28,6 +32,7 @@ context=text('neighbor-observation-context.js')
 index=text('index.html')
 taf_app=text('taf-app-v2.js')
 mirror=text('.github/workflows/mirror-central-archive.yml')
+storage_guard=text('scripts/repository_storage_guard.py')
 
 for station in ('EPBY','EPPW','EPKS'):
     if f'"{station}"' not in helper:
@@ -40,8 +45,12 @@ if 'capture_pilothub_page' not in collector or 'neighbor_obs.capture_pilothub_pa
     errors.append('neighbor TAF collector must capture observations from the already-fetched PilotHub page')
 if 'neighbors/latest.json' not in event or 'neighbors/{station}/{day_rel}' not in event:
     errors.append('Railway bootstrap must restore neighbor latest/history from GitHub')
-if "rel.startswith(('metar/','speci/','synop/','taf/','neighbors/'))" not in mirror:
-    errors.append('GitHub archive mirror must include neighbors/')
+if "rel.startswith('neighbors/')" not in mirror or 'neighbors/latest.json' not in mirror:
+    errors.append('GitHub archive mirror must include neighbor current/history handling')
+if 'NEIGHBOR_ARCHIVE_MODE' not in mirror or 'repository_storage_guard.py' not in mirror:
+    errors.append('GitHub neighbor mirror must obey repository storage guard mode')
+if 'Supabase does not contain every local message' not in storage_guard:
+    errors.append('storage guard must refuse neighbor deletion without complete Supabase coverage')
 if 'neighbor_observations' not in mirror:
     errors.append('archive status must document contextual neighbor observations')
 
@@ -87,4 +96,4 @@ if errors:
     for e in errors:
         print(' -',e)
     sys.exit(1)
-print('Neighbor observation architecture check OK: EPBY/EPPW/EPKS are server-acquired, MessageArchive-backed, bounded, applied to consensus and preserved in TAF 2.4 provenance.')
+print('Neighbor observation architecture check OK: EPBY/EPPW/EPKS are server-acquired, MessageArchive-backed, bounded, storage-guarded, applied to consensus and preserved in TAF 2.4 provenance.')
