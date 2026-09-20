@@ -14,11 +14,12 @@
 
   const API_VERSION='2.4.0';
   const VERSION='2.4.3';
-  const POLICY_REVISION='2026-09-19e';
+  const POLICY_REVISION='2026-09-20a';
   const NAME='TAF Engine 2.4.3 — Prevailing Wind + Operational Weather/Cloud Priority + Instruction First';
   const GUST_PREVAILING_MIN_FRACTION=.50;
   const WEAK_PRECIP_VIS_LIMIT_M=5000;
   const MODERATE_RR_MIN=.15;
+  const HEAVY_RR_MIN=.70;
   const finite=Number.isFinite;
   const num=v=>v!==null&&v!==undefined&&v!==''&&finite(Number(v));
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -28,6 +29,8 @@
   const CONVECTIVE_CLOUD_RE=/\b(?:FEW|SCT|BKN|OVC)\d{3}(?:CB|TCU)\b/;
   const SHRA_TOKEN_RE=/^(?:\+|-)?SHRA$/;
   const ORDINARY_PRECIP_CODES=new Set([51,53,55,61,63,65,71,73,75,77]);
+  const MODERATE_ORDINARY_CODES=new Set([53,63,73]);
+  const HEAVY_ORDINARY_CODES=new Set([55,65,75]);
   const PRECIP_CODES=new Set([51,53,55,56,57,61,63,65,66,67,71,73,75,77,80,81,82,85,86,95,96,99]);
   const EXEMPT_CHANGE_CODES=new Set([56,57,66,67,80,81,82,85,86,95,96,99]);
 
@@ -75,14 +78,21 @@
   // precipitation at good visibility is suppressed here so it cannot create a
   // standalone PROB30/TEMPO/BECMG or consume the limited PROB30 slot. Moderate
   // and heavy precipitation remains untouched; freezing precipitation,
-  // showers and thunderstorms are exempt. This intentionally omits the optional
-  // 3.7.11b weak-precipitation add-on at VIS >5 km to keep change groups minimal.
+  // showers and thunderstorms are exempt. A >=30% explicit model signal of
+  // moderate/heavy ordinary precipitation sets the minimum operational
+  // intensity used by the formal kernel, so PROB30 RA/+RA does not depend on
+  // forcing visibility below 5 km or on a diluted consensus RR value.
   function prepareChangeGroupWeatherInput(input={}){
-    let suppressedMembers=0,suppressedRows=0;
+    let suppressedMembers=0,suppressedRows=0,intensityPromotedRows=0;
     const rows=(input.rows||[]).map(src=>{
       const originalMv=Array.isArray(src?.mv)?src.mv:[];
       const rr=num(src?.RR)?+src.RR:0;
-      const weakIntensity=rr<MODERATE_RR_MIN;
+      const moderateShare=weightedShare(originalMv,m=>MODERATE_ORDINARY_CODES.has(codeOf(m)));
+      const heavyShare=weightedShare(originalMv,m=>HEAVY_ORDINARY_CODES.has(codeOf(m)));
+      const intensityFloor=heavyShare>=.30?HEAVY_RR_MIN:moderateShare>=.30?MODERATE_RR_MIN:0;
+      const effectiveRr=Math.max(rr,intensityFloor);
+      const weakIntensity=effectiveRr<MODERATE_RR_MIN;
+      if(intensityFloor>rr)intensityPromotedRows++;
       let rowSuppressed=0;
       const mv=originalMv.map(m=>{
         const c=codeOf(m),vis=memberVisibility(m,src);
@@ -93,7 +103,13 @@
         return {...m};
       });
       if(rowSuppressed)suppressedRows++;
-      if(!rowSuppressed)return {...src,mv};
+      if(!rowSuppressed)return {
+        ...src,mv,
+        RR:intensityFloor>rr?effectiveRr:src?.RR,
+        taf243ChangeIntensityFloor:intensityFloor||0,
+        taf243ModerateOrdinaryShare:moderateShare,
+        taf243HeavyOrdinaryShare:heavyShare
+      };
 
       const remainingPrecip=weightedShare(mv,m=>PRECIP_CODES.has(codeOf(m)));
       const rowVis=num(src?.VIS)?+src.VIS:Infinity;
@@ -101,17 +117,20 @@
       const exemptSignal=prob(src?.storm)>=.30||originalMv.some(m=>EXEMPT_CHANGE_CODES.has(codeOf(m)));
       const keepGenericWet=rowVis<WEAK_PRECIP_VIS_LIMIT_M||exemptSignal;
       const wet=Math.max(remainingPrecip,keepGenericWet?rawWet:0);
-      const RR=(remainingPrecip>0||keepGenericWet)?src?.RR:0;
+      const RR=(remainingPrecip>0||keepGenericWet)?effectiveRr:0;
       return {
         ...src,mv,wet,RR,
         taf243RawWet:src?.wet??null,
         taf243RawRR:src?.RR??null,
+        taf243ChangeIntensityFloor:intensityFloor||0,
+        taf243ModerateOrdinaryShare:moderateShare,
+        taf243HeavyOrdinaryShare:heavyShare,
         taf243WeakOrdinaryChangeSuppressedMembers:rowSuppressed
       };
     });
     return {
       ...input,rows,
-      taf243ChangeWeatherPolicy:{suppressedMembers,suppressedRows,visLimitM:WEAK_PRECIP_VIS_LIMIT_M}
+      taf243ChangeWeatherPolicy:{suppressedMembers,suppressedRows,intensityPromotedRows,visLimitM:WEAK_PRECIP_VIS_LIMIT_M,moderateRrMin:MODERATE_RR_MIN,heavyRrMin:HEAVY_RR_MIN}
     };
   }
 
@@ -151,6 +170,7 @@
     const cp=input?.taf243ChangeWeatherPolicy||{};
     const reasons=[...(changeResult?.diagnostics?.reasons||[])];
     if((cp.suppressedMembers||0)>0)reasons.push(`Grupy zmian: pominięto ${cp.suppressedMembers} sygnałów słabego zwykłego opadu w ${cp.suppressedRows} h przy VIS >= ${WEAK_PRECIP_VIS_LIMIT_M} m. Nie wpływa to na część główną TAF. Opady umiarkowane/silne oraz konwekcyjne i marznące zachowują własne kryteria.`);
+    if((cp.intensityPromotedRows||0)>0)reasons.push(`Grupy zmian: w ${cp.intensityPromotedRows} h jawny sygnał modelowy opadu umiarkowanego/silnego >=30% miał pierwszeństwo przed zaniżonym uśrednionym RR przy klasyfikacji natężenia TAF.`);
     return {
       ...fullResult,taf,groups,
       checks:{...fullResult.checks,...changeResult.checks,...checks},
@@ -159,7 +179,7 @@
         ...changeResult.diagnostics,
         reasons,
         basePrecipitationPolicy:'3.7.9/3.7.11a: precipitation in the main TAF section is independent of the 5 km visibility threshold',
-        changePrecipitationPolicy:'weak ordinary precipitation is omitted from change-group selection at VIS >=5 km; moderate/heavy ordinary precipitation remains significant; freezing, showers and thunderstorm precipitation are exempt; optional 3.7.11b weak add-on above 5 km is intentionally omitted'
+        changePrecipitationPolicy:'3.7.9/3.7.a.1: moderate/heavy ordinary precipitation may independently create a change group and does not require VIS <5 km; explicit >=30% moderate/heavy weather-code support may set the minimum TAF intensity. Weak ordinary precipitation is suppressed as a standalone high-VIS change; freezing, showers and thunderstorm precipitation retain their own rules.'
       }
     };
   }
@@ -333,6 +353,7 @@
       weakOrdinaryPrecipChangeRequiresVisibilityBelowM:WEAK_PRECIP_VIS_LIMIT_M,
       optionalWeakPrecipAbove5kmWithOtherChange:false,
       moderateHeavyPrecipChangeIndependentOfVisibility:true,
+      prob30ModerateRainMayOmitVisibility:true,
       freezingThunderstormPrecipChangeIndependentOfVisibility:true,
       convectiveShowerWithCbTcuMayOmitVisibility:true,
       cloudPriorityBknOvcOverFewSct:true
