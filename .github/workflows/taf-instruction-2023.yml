@@ -14,6 +14,7 @@ on:
       - 'taf-app-v25.js'
       - 'taf-runtime-bootstrap.js'
       - 'message-archive-client.js'
+      - 'tests/taf-fog-policy.test.js'
       - 'tests/taf-engine-v2.test.js'
       - 'tests/taf-engine-v24.test.js'
       - 'tests/taf-engine-v241.test.js'
@@ -35,6 +36,7 @@ on:
       - 'taf-app-v25.js'
       - 'taf-runtime-bootstrap.js'
       - 'message-archive-client.js'
+      - 'tests/taf-fog-policy.test.js'
       - 'tests/taf-engine-v2.test.js'
       - 'tests/taf-engine-v24.test.js'
       - 'tests/taf-engine-v241.test.js'
@@ -70,11 +72,15 @@ jobs:
           node --check taf-app-v25.js
           node --check taf-runtime-bootstrap.js
           node --check message-archive-client.js
+          node --check tests/taf-fog-policy.test.js
           node --check tests/taf-engine-v2.test.js
           node --check tests/taf-engine-v24.test.js
           node --check tests/taf-engine-v241.test.js
           node --check tests/taf-engine-v242.test.js
           node --check tests/taf-engine-v243.test.js
+
+      - name: Fog visibility hard-gate regression
+        run: node tests/taf-fog-policy.test.js
 
       - name: Formal kernel regression and Instruction 11.2023 gate
         run: node tests/taf-engine-v2.test.js
