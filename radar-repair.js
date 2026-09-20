@@ -3,6 +3,8 @@
 // Runtime bootstrap. The stable radar repair core is preserved verbatim in
 // radar-repair-core-r6.js; LFL is deliberately loaded afterwards because the
 // legacy radar cleanup removes obsolete lightning controls during startup.
+// The r10 stability bridge is loaded last so it can enforce a single POLRAD
+// frame and make the canonical image readable by spatial echo analysis.
 (() => {
   if (window.__EPIR_RADAR_BOOTSTRAP_R8__) return;
   window.__EPIR_RADAR_BOOTSTRAP_R8__ = true;
@@ -48,8 +50,16 @@
     loadScript('lightning-layer.js?v=20260915-lfl-r8','epirLflRuntimeR8');
   };
 
+  const loadStability=()=>{
+    loadScript('radar-stability-r10.js?v=20260920-r10','epirRadarStabilityR10');
+  };
+
   loadScript('radar-repair-core-r6.js?v=20260915-core-r8','epirRadarRepairCoreR6',()=>{
-    // Let the repair core finish its synchronous control cleanup/bindings first.
-    setTimeout(loadLfl,0);
+    // Let the repair core finish its synchronous control cleanup/bindings first,
+    // then install the final runtime guard after the legacy owners are present.
+    setTimeout(()=>{
+      loadLfl();
+      loadStability();
+    },0);
   });
 })();
