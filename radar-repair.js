@@ -47,8 +47,18 @@
     loadScript('radar-ui-sync-r12.js?v=20260920-r12','epirRadarUiSyncR12');
   };
 
+  // The TCu/Cb module publishes one canonical nowcast object. Cache its fresh
+  // snapshot so the TAF page can consume exactly the same result without
+  // duplicating the convection algorithm.
+  const loadConvection=()=>{
+    const loadModule=()=>loadScript('warnings-readable.js?v=20260920-taf-conv1','epirConvectionNowcastV2');
+    loadScript('convection-cache-bridge.js?v=20260920-taf-conv1','epirConvectionCacheBridge',loadModule,loadModule);
+  };
+
+  const loadLate=()=>{loadUiSync();loadConvection();};
+
   const loadStability=()=>{
-    loadScript('radar-stability-r10.js?v=20260920-r11','epirRadarStabilityR11',loadUiSync,loadUiSync);
+    loadScript('radar-stability-r10.js?v=20260920-r11','epirRadarStabilityR11',loadLate,loadLate);
   };
 
   const loadLfl=()=>{
