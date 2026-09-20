@@ -6,6 +6,7 @@
 })(typeof window!=='undefined'?window:globalThis,function(){
   'use strict';
 
+  const BUILD='20260920-fg-vis-gate';
   const MODE_KEY='prognozaepir-fog-engine-mode';
   const finite=Number.isFinite;
   const num=v=>v!==null&&v!==undefined&&v!==''&&finite(Number(v))?Number(v):null;
@@ -118,5 +119,5 @@
     return [];
   }
 
-  return Object.freeze({MODE_KEY,normalizeMode,selectedMode,operationalScoreForTaf,activeVisibility,thresholdRisk,mechanismType,normalizeFogHour,seriesForMode,cloneSeries,recoverLegacySeries});
+  return Object.freeze({BUILD,MODE_KEY,normalizeMode,selectedMode,operationalScoreForTaf,activeVisibility,thresholdRisk,mechanismType,normalizeFogHour,seriesForMode,cloneSeries,recoverLegacySeries});
 });
