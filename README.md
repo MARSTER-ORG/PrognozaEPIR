@@ -1,6 +1,8 @@
 # PrognozaEPIR
 
-Multimodelowy meteogram lotniczy dla Inowrocławia.
+Multimodelowy meteogram lotniczy dla lotniska EPIR Inowrocław.
+
+**Kanoniczny punkt odniesienia projektu (ARP EPIR): `52.828611, 18.330278`.** Bieżące zapytania modelowe, obliczenia odległości i moduły lokalne powinny używać tego punktu. Współrzędne stacji sąsiednich oraz historyczne dane źródłowe zachowują własne, rzeczywiste lokalizacje.
 
 ## Centralne archiwum depesz
 
