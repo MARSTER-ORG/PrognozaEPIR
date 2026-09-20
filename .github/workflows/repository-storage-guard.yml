@@ -1,0 +1,81 @@
+name: Repository storage guard
+
+on:
+  schedule:
+    - cron: '19 3 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/repository-storage-guard.yml'
+      - 'scripts/repository_storage_guard.py'
+      - 'tests/test_repository_storage_guard.py'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: repository-storage-guard
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate guard
+        run: |
+          python3 -m py_compile scripts/repository_storage_guard.py tests/test_repository_storage_guard.py
+          python3 tests/test_repository_storage_guard.py
+
+      - name: Read GitHub repository size
+        id: repo_size
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SIZE_KB="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.size')"
+          test -n "$SIZE_KB"
+          echo "size_kb=$SIZE_KB" >> "$GITHUB_OUTPUT"
+          echo "GitHub repository size: ${SIZE_KB} KB"
+          python3 scripts/repository_storage_guard.py --repo-size-kb "$SIZE_KB" --mode-only
+
+      - name: Apply safe storage policy
+        env:
+          SUPABASE_PROJECT_REF: qozgntzeormujmqzkkmd
+        run: |
+          set -euo pipefail
+          python3 scripts/repository_storage_guard.py \
+            --repo-size-kb '${{ steps.repo_size.outputs.size_kb }}' \
+            --limit-mb 500 \
+            --apply | tee /tmp/repository-storage-guard.json
+
+      - name: Commit verified neighbor pruning
+        run: |
+          if git diff --quiet -- data/messages/neighbors; then
+            echo 'No neighbor history needs pruning.'
+            exit 0
+          fi
+          git config user.name 'prognozaepir-storage-guard'
+          git config user.email 'storage-guard@prognozaepir.invalid'
+          git add -A data/messages/neighbors
+          git commit -m 'storage: prune Supabase-backed neighbor history'
+          for n in 1 2 3 4 5; do
+            if git pull --rebase origin main && git push origin HEAD:main; then
+              exit 0
+            fi
+            git rebase --abort >/dev/null 2>&1 || true
+            sleep $((n*2))
+          done
+          echo 'Unable to publish repository storage cleanup after retries.' >&2
+          exit 1
