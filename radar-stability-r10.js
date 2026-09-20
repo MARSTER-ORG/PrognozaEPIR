@@ -1,163 +1,162 @@
 'use strict';
 
-// PrognozaEPIR POLRAD stability bridge r10 (2026-09-20)
-// - removes stale POLRAD image overlays after every successful frame swap,
-// - makes POLRAD ImageOverlay frames CORS-readable for echo-analysis.js,
-// - exposes the canonical POLRAD pane to the existing analysis selector,
-// - freezes animation while a spatial echo analysis is running.
+// PrognozaEPIR POLRAD stability bridge r11 (2026-09-20)
+// Keeps one canonical POLRAD frame, but leaves the lightning/LFL runtime alone.
+// A transparent CORS-enabled mirror in Leaflet's standard overlayPane is used
+// only by echo-analysis.js, which historically scans that pane for the raster.
 (() => {
-  if (window.__EPIR_RADAR_STABILITY_R10__) return;
+  if (window.__EPIR_RADAR_STABILITY_R11__) return;
   if (typeof L === 'undefined' || typeof map === 'undefined' || !map) return;
-  window.__EPIR_RADAR_STABILITY_R10__ = true;
+  window.__EPIR_RADAR_STABILITY_R11__ = true;
 
   const $ = id => document.getElementById(id);
   const PANE = 'polradImagePane';
+  const BOUNDS = L.latLngBounds([[48.5,13.5],[56.0,25.0]]);
   const normalize = value => String(value || '')
     .replace(/^http:\/\//i, 'https://')
+    .replace(/#.*$/, '')
     .replace(/[?&]_epir=\d+/g, '')
     .replace(/[?&]$/, '');
 
-  // Leaflet only sets the HTMLImageElement crossOrigin attribute when the
-  // ImageOverlay option is present before _initImage(). The POLRAD renderer did
-  // not set it, so echo-analysis.js could either not find the image (custom
-  // pane) or get a tainted canvas. Patch only the POLRAD pane.
-  const proto = L.ImageOverlay?.prototype;
-  if (proto && !proto.__epirPolradCorsR10) {
-    proto.__epirPolradCorsR10 = true;
-    const originalInitImage = proto._initImage;
-    proto._initImage = function() {
-      if (this?.options?.pane === PANE) this.options.crossOrigin = 'anonymous';
-      return originalInitImage.call(this);
-    };
+  let mirror = null;
+  let mirrorKey = '';
+  let mirrorReady = false;
+
+  function isCanonicalPolrad(layer) {
+    return layer instanceof L.ImageOverlay && String(layer?.options?.pane || '') === PANE;
   }
 
-  function preparePane() {
-    const pane = map.getPane(PANE);
-    if (!pane) return null;
-    // echo-analysis.js historically looked only inside .leaflet-overlay-pane.
-    // Keep the dedicated z-index/pointer policy, but make this pane discoverable
-    // by that selector as well.
-    pane.classList.add('leaflet-overlay-pane');
-    pane.style.zIndex = '470';
-    pane.style.pointerEvents = 'none';
-    return pane;
-  }
-
-  function isPolradLayer(layer) {
-    if (!(layer instanceof L.ImageOverlay)) return false;
-    const pane = String(layer?.options?.pane || '');
-    const attribution = String(layer?.options?.attribution || '').toLowerCase();
-    const url = normalize(layer?._url).toLowerCase();
-    if (pane === PANE) return true;
-    if (attribution.includes('polrad') || attribution.includes('imgw-pib / polrad')) return true;
-    return /imgw|polrad/.test(url) && /cmax|cappi|sri|pac|eht|hail|grad/.test(url);
-  }
-
-  function findCurrentLayer(currentUrl) {
-    const wanted = normalize(currentUrl);
+  function currentCanonical(url) {
+    const wanted = normalize(url);
     let exact = null;
     let newest = null;
     map.eachLayer(layer => {
-      if (!isPolradLayer(layer)) return;
+      if (!isCanonicalPolrad(layer)) return;
       if (normalize(layer?._url) === wanted) exact = layer;
       if (!newest || (layer?._leaflet_id || 0) > (newest?._leaflet_id || 0)) newest = layer;
     });
     return exact || newest;
   }
 
-  function sweep(currentUrl) {
-    preparePane();
-    const keeper = findCurrentLayer(currentUrl);
+  function pruneCanonical(url) {
+    const keep = currentCanonical(url);
     const stale = [];
     map.eachLayer(layer => {
-      if (isPolradLayer(layer) && layer !== keeper) stale.push(layer);
+      if (isCanonicalPolrad(layer) && layer !== keep) stale.push(layer);
     });
     for (const layer of stale) {
       try { map.removeLayer(layer); } catch (_) {}
     }
 
     const pane = map.getPane(PANE);
-    if (pane && keeper?._image) {
-      // A successful animation frame must correspond to exactly one visible
-      // image in the POLRAD pane. This removes detached/legacy DOM ghosts too.
+    if (pane && keep?._image) {
       for (const img of [...pane.querySelectorAll('img.leaflet-image-layer')]) {
-        if (img !== keeper._image) {
+        if (img !== keep._image) {
           try { img.remove(); } catch (_) {}
         }
       }
     }
-    return {keeper, removed: stale.length};
+    return {keep, removed: stale.length};
   }
 
-  let corsRefreshDone = false;
-  let corsRefreshPending = false;
-  function ensureCorsCurrent(detail) {
-    if (corsRefreshDone || corsRefreshPending) return;
-    const layer = findCurrentLayer(detail?.url);
-    const img = layer?._image;
-    const hasCorsAttribute = !!img?.hasAttribute?.('crossorigin');
-    const cors = String(img?.crossOrigin || '').toLowerCase();
-    if (hasCorsAttribute && (cors === 'anonymous' || cors === '')) {
-      corsRefreshDone = true;
-      return;
+  function removeMirror() {
+    if (mirror) {
+      try { if (map.hasLayer(mirror)) map.removeLayer(mirror); } catch (_) {}
     }
-    const product = String(detail?.product || '').toLowerCase();
-    if (!product || !window.PrognozaEPIRRadarLayers?.select) return;
-    if (!$('polrad_' + product)?.classList.contains('active')) return;
-    corsRefreshPending = true;
-    setTimeout(async () => {
-      try {
-        await window.PrognozaEPIRRadarLayers.select(product);
-        const refreshed = findCurrentLayer(window.PrognozaEPIRPolradState?.url || detail?.url)?._image;
-        corsRefreshDone = !!refreshed?.hasAttribute?.('crossorigin');
-      } catch (_) {
-        corsRefreshDone = false;
-      } finally {
-        corsRefreshPending = false;
-      }
-    }, 60);
+    mirror = null;
+    mirrorKey = '';
+    mirrorReady = false;
+  }
+
+  function ensureMirror(detail) {
+    const state = detail || window.PrognozaEPIRPolradState || {};
+    const product = String(state.product || '').toLowerCase();
+    const url = normalize(state.url);
+    if (!url || !['cmax','sri','pac'].includes(product)) {
+      removeMirror();
+      return Promise.resolve(false);
+    }
+    if (!$('polrad_' + product)?.classList.contains('active')) {
+      removeMirror();
+      return Promise.resolve(false);
+    }
+
+    const key = product + '|' + url;
+    if (mirror && mirrorKey === key && map.hasLayer(mirror) && mirrorReady) {
+      return Promise.resolve(true);
+    }
+
+    removeMirror();
+    mirrorKey = key;
+    const src = url + '#/_' + product + '.';
+    mirror = L.imageOverlay(src, BOUNDS, {
+      pane:'overlayPane',
+      opacity:0.001,
+      interactive:false,
+      crossOrigin:true,
+      attribution:''
+    });
+    mirror._epirAnalysisMirror = true;
+
+    return new Promise(resolve => {
+      let done = false;
+      const finish = ok => {
+        if (done) return;
+        done = true;
+        mirrorReady = ok;
+        if (!ok) removeMirror();
+        resolve(ok);
+      };
+      const timer = setTimeout(() => finish(false), 8000);
+      mirror.once('load', () => { clearTimeout(timer); finish(true); });
+      mirror.once('error', () => { clearTimeout(timer); finish(false); });
+      try { mirror.addTo(map); } catch (_) { clearTimeout(timer); finish(false); }
+    });
   }
 
   function onFrame(detail) {
     const state = detail || window.PrognozaEPIRPolradState || {};
-    // The canonical renderer dispatches this event only after the new frame has
-    // loaded. It is therefore safe to remove every older POLRAD overlay here.
-    sweep(state.url);
-    ensureCorsCurrent(state);
+    pruneCanonical(state.url);
+    ensureMirror(state).catch(() => {});
   }
 
   window.addEventListener('prognozaepir:polrad-frame-changed', e => onFrame(e.detail));
 
-  // If the patch loads after a frame is already visible, clean the pane now.
-  preparePane();
-  if (window.PrognozaEPIRPolradState) {
-    setTimeout(() => onFrame(window.PrognozaEPIRPolradState), 0);
-  }
-
-  // Stop the animation before echo-analysis zooms/fits the map and samples
-  // pixels. Otherwise a frame swap can occur halfway through the scan.
   document.addEventListener('click', e => {
     const target = e.target?.closest?.('#echoAnalyze,#echoPresets button');
     if (!target) return;
     try { window.PrognozaEPIRRadarLayers?.stop?.(); } catch (_) {}
-    setTimeout(() => {
-      const state = window.PrognozaEPIRPolradState;
-      if (state?.url) sweep(state.url);
-    }, 0);
+    const state = window.PrognozaEPIRPolradState || {};
+    pruneCanonical(state.url);
+    ensureMirror(state).catch(() => {});
   }, true);
 
-  // Re-assert the pane contract after map mode switches or late scripts.
-  const observer = new MutationObserver(() => preparePane());
-  const mapContainer = map.getContainer();
-  observer.observe(mapContainer, {childList:true, subtree:true});
+  document.addEventListener('click', e => {
+    const button = e.target?.closest?.('.mapbar button');
+    if (!button) return;
+    setTimeout(() => {
+      const state = window.PrognozaEPIRPolradState || {};
+      const product = String(state.product || '').toLowerCase();
+      if (!product || !$('polrad_' + product)?.classList.contains('active')) removeMirror();
+    }, 0);
+  });
+
+  if (window.PrognozaEPIRPolradState) {
+    setTimeout(() => onFrame(window.PrognozaEPIRPolradState), 0);
+  }
 
   window.PrognozaEPIRRadarStability = {
-    sweep: () => sweep(window.PrognozaEPIRPolradState?.url),
-    state: () => {
-      const current = window.PrognozaEPIRPolradState || null;
-      let count = 0;
-      map.eachLayer(layer => { if (isPolradLayer(layer)) count++; });
-      return {current, polradImageLayers:count, corsRefreshDone};
-    }
+    refreshAnalysisMirror: () => ensureMirror(window.PrognozaEPIRPolradState),
+    prune: () => pruneCanonical(window.PrognozaEPIRPolradState?.url),
+    state: () => ({
+      current: window.PrognozaEPIRPolradState || null,
+      mirrorReady,
+      mirrorKey,
+      canonicalLayers: (() => {
+        let n = 0;
+        map.eachLayer(layer => { if (isCanonicalPolrad(layer)) n++; });
+        return n;
+      })()
+    })
   };
 })();
