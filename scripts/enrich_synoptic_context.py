@@ -5,6 +5,10 @@ Only Open-Meteo Single Runs is used. No reanalysis is substituted. Existing
 forecast rows are updated in-place, preserving their original surface values.
 Fixed-lead Previous Runs rows are deliberately excluded because they are not
 complete individual runs and may predate Single Runs archive availability.
+
+A run is considered enriched only when the provider returned real finite
+pressure-level values. Payload rows containing only null pressure fields are
+ignored and never counted as successful enrichment.
 """
 from __future__ import annotations
 
@@ -23,7 +27,7 @@ import model_verification as mv
 import synoptic_regime as sr
 
 API = "https://single-runs-api.open-meteo.com/v1/forecast"
-USER_AGENT = "PrognozaEPIR-SynopticContextEnrichment/1.1"
+USER_AGENT = "PrognozaEPIR-SynopticContextEnrichment/1.2"
 STATE = mv.LEARNING / "synoptic-context-enrichment-state.json"
 PREVIOUS_RUNS_SOURCE = "open-meteo-previous-runs"
 PROFILE_VARS = tuple(
@@ -32,6 +36,12 @@ PROFILE_VARS = tuple(
     for name in ("temperature", "relative_humidity", "wind_speed", "wind_direction", "geopotential_height")
 )
 MODEL_FORECAST_HOURS = {"chmi_aladin_central_europe_2km": 73, "icon_d2": 49}
+CONTEXT_SENTINELS = (
+    "wind_direction_850hpa_deg",
+    "temperature_925hpa_c",
+    "relative_humidity_925hpa_pct",
+    "relative_humidity_850hpa_pct",
+)
 
 
 def transient_http(code):
@@ -109,6 +119,10 @@ def fetch_resilient(model_id, run, variables):
     return rec(list(variables)), failures
 
 
+def has_context(row):
+    return any(mv.finite(row.get(k)) for k in CONTEXT_SENTINELS)
+
+
 def context_from_payload(payload):
     h = (payload or {}).get("hourly") or {}
     times = h.get("time") or []
@@ -129,15 +143,12 @@ def context_from_payload(payload):
             for dst, src in mapping.items():
                 arr = h.get(src) or []
                 row[dst] = arr[i] if i < len(arr) else None
-        out[mv.iso(valid)] = row
+        # Do not manufacture a context record from an all-null provider row.
+        # Use the exact same criterion later used by coverage checks so the
+        # acquisition/enrichment status cannot disagree with verification.
+        if has_context(row):
+            out[mv.iso(valid)] = row
     return out
-
-
-def has_context(row):
-    return any(mv.finite(row.get(k)) for k in (
-        "wind_direction_850hpa_deg", "temperature_925hpa_c",
-        "relative_humidity_925hpa_pct", "relative_humidity_850hpa_pct",
-    ))
 
 
 def load_files():
@@ -174,7 +185,7 @@ def fetch_one(run, model_id):
     payload, unsupported = fetch_resilient(model_id, run, PROFILE_VARS)
     context = context_from_payload(payload)
     if not context:
-        raise RuntimeError("no pressure-level context returned")
+        raise RuntimeError("no finite pressure-level context returned")
     return context, unsupported
 
 
@@ -208,10 +219,12 @@ def main():
                 updated = 0
                 for path, idx, row in refs:
                     ctx = context.get(row.get("valid_time"))
-                    if not ctx:
+                    if not ctx or not has_context(ctx):
                         continue
                     new = dict(row)
                     new.update(ctx)
+                    if not has_context(new):
+                        continue
                     new["synoptic_context_version"] = sr.VERSION
                     new["synoptic_context_source"] = "open-meteo-single-runs"
                     files[path][idx] = new
@@ -220,7 +233,7 @@ def main():
                 if updated:
                     success += 1
                 else:
-                    failures.append((mv.iso(run), model, "no matching valid times"))
+                    failures.append((mv.iso(run), model, "no matching finite pressure-level context"))
             except Exception as exc:
                 failures.append((mv.iso(run), model, str(exc)))
 
@@ -232,7 +245,7 @@ def main():
         "schema": "prognozaepir-synoptic-context-enrichment-v1",
         "generated_at": mv.iso(now),
         "regime_version": sr.VERSION,
-        "source": "Open-Meteo Single Runs operational archive; Previous Runs excluded; no reanalysis substitution",
+        "source": "Open-Meteo Single Runs operational archive; Previous Runs excluded; all-null pressure profiles rejected; no reanalysis substitution",
         "pending_before": len(pending_all),
         "attempted_runs": len(selected),
         "enriched_runs": success,
