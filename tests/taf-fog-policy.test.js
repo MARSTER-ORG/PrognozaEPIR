@@ -2,6 +2,7 @@
 const assert=require('assert');
 const P=require('../taf-fog-policy.js');
 
+assert.equal(P.BUILD,'20260920-fg-vis-gate');
 assert.equal(P.normalizeMode('legacy'),'legacy');
 assert.equal(P.normalizeMode('vnext'),'vnext');
 assert.equal(P.normalizeMode('vnext-production'),'vnext');
@@ -29,6 +30,16 @@ assert.equal(lb.fgVisibilitySupported,false);
 assert.equal(lb.fgOperationalScore,0);
 assert.equal(lb.fogAltVisM,null);
 assert.ok(lb.brOperationalScore>0);
+
+// Regression from EPIR 20.09.2026: process score 52/100 with VIS 2640 m
+// is BR-range guidance, not operational FG and must never yield 0800 FG.
+const legacyEpIRCase={score:52,vis:2640,vis1000:25,vis500:16,vis1500:25,confidence:.98,type:{text:'mieszana ADV/RAD'},fogEngineMode:'legacy'};
+const le=P.normalizeFogHour(legacyEpIRCase,'legacy');
+assert.equal(le.vis,2640);
+assert.equal(le.fgVisibilitySupported,false);
+assert.equal(le.fgOperationalScore,0);
+assert.equal(le.fogAltVisM,null);
+assert.ok(le.brOperationalScore>=60);
 
 const legacyNoVis={score:68,vis:null,vis1000:64,vis500:22,vis1500:74,confidence:.7,type:{text:'radiacyjna'},fogEngineMode:'legacy'};
 const ln=P.normalizeFogHour(legacyNoVis,'legacy');
