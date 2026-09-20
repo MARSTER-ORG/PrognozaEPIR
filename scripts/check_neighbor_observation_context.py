@@ -31,7 +31,9 @@ event=text('scripts/railway_ingestor_event_server.py')
 context=text('neighbor-observation-context.js')
 index=text('index.html')
 taf_app=text('taf-app-v2.js')
-mirror=text('.github/workflows/mirror-central-archive.yml')
+mirror_workflow=text('.github/workflows/mirror-central-archive.yml')
+mirror_impl=text('scripts/mirror_central_archive.py')
+status_impl=text('scripts/rebuild_message_archive_status.py')
 storage_guard=text('scripts/repository_storage_guard.py')
 
 for station in ('EPBY','EPPW','EPKS'):
@@ -45,14 +47,14 @@ if 'capture_pilothub_page' not in collector or 'neighbor_obs.capture_pilothub_pa
     errors.append('neighbor TAF collector must capture observations from the already-fetched PilotHub page')
 if 'neighbors/latest.json' not in event or 'neighbors/{station}/{day_rel}' not in event:
     errors.append('Railway bootstrap must restore neighbor latest/history from GitHub')
-if "rel.startswith('neighbors/')" not in mirror or 'neighbors/latest.json' not in mirror:
-    errors.append('GitHub archive mirror must include neighbor current/history handling')
-if 'NEIGHBOR_ARCHIVE_MODE' not in mirror or 'repository_storage_guard.py' not in mirror:
+if 'neighbors/' not in mirror_impl or 'neighbors/latest.json' not in mirror_impl:
+    errors.append('GitHub archive mirror implementation must include neighbor current/history handling')
+if 'NEIGHBOR_ARCHIVE_MODE' not in mirror_workflow or 'repository_storage_guard.py' not in mirror_workflow:
     errors.append('GitHub neighbor mirror must obey repository storage guard mode')
 if 'Supabase does not contain every local message' not in storage_guard:
     errors.append('storage guard must refuse neighbor deletion without complete Supabase coverage')
-if 'neighbor_observations' not in mirror:
-    errors.append('archive status must document contextual neighbor observations')
+if 'neighbor_observations' not in status_impl:
+    errors.append('archive status builder must document contextual neighbor observations')
 
 if not re.search(r'<script\b[^>]*src=["\']message-archive-client\.js(?:\?[^"\']*)?["\']',index,re.I):
     errors.append('main consensus must load the shared MessageArchive client')
@@ -87,7 +89,7 @@ if 'OBS sąsiednie' not in taf_app or 'neighborObsStation' not in taf_app:
     errors.append('TAF Engine 2.4 UI must expose active neighbor observation signal')
 
 # Neighbor history is intentionally outside the four authoritative EPIR counts.
-count_folder_match=re.search(r"folders=\{(.*?)\n\s*\}",mirror,re.S)
+count_folder_match=re.search(r"folders\s*=\s*\{(.*?)\n\s*\}",status_impl,re.S)
 if count_folder_match and 'neighbors' in count_folder_match.group(1):
     errors.append('neighbor context must not be counted as EPIR METAR/SPECI/TAF/SYNOP archive')
 
