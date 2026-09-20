@@ -72,7 +72,7 @@ def ensure_utc_guard(text: str, rel: str) -> str:
 
 
 def patch_index(text: str) -> str:
-    text = text.replace("const PLACE={lat:52.7989,lon:18.2639,tz:'Europe/Warsaw'};", "const PLACE={lat:52.7989,lon:18.2639,tz:'UTC'};")
+    text = text.replace("const PLACE={lat:52.828611,lon:18.330278,tz:'Europe/Warsaw'};", "const PLACE={lat:52.828611,lon:18.330278,tz:'UTC'};")
     old = "const _fmtCache=new Map();function fmt(ms,opt){const k=JSON.stringify(opt);let x=_fmtCache.get(k);if(!x){x=new Intl.DateTimeFormat('pl-PL',{timeZone:PLACE.tz,...opt});_fmtCache.set(k,x)}return x.format(new Date(ms))}"
     new = "const _fmtCache=new Map();function fmt(ms,opt={}){const k=JSON.stringify(opt);let x=_fmtCache.get(k);if(!x){x=new Intl.DateTimeFormat('pl-PL',{timeZone:'UTC',...opt});_fmtCache.set(k,x)}const value=x.format(new Date(ms));return ('hour'in opt||'minute'in opt||'second'in opt)?value+' UTC':value}"
     text = text.replace(old, new)

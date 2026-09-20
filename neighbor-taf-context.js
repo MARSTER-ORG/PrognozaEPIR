@@ -4,7 +4,7 @@
  */
 'use strict';
 (() => {
-  const EPIR={lat:52.7989,lon:18.2639};
+  const EPIR={lat:52.828611,lon:18.330278};
   const META={
     EPBY:{name:'Bydgoszcz',lat:53.0968,lon:17.9777},
     EPPW:{name:'Powidz',lat:52.3792,lon:17.8539},

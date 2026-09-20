@@ -26,7 +26,7 @@
   function selectedPoint(){
     if(typeof point!=='undefined'&&Number.isFinite(Number(point?.lat))&&Number.isFinite(Number(point?.lon)))return{lat:Number(point.lat),lon:Number(point.lon)};
     const lat=Number(String($('lat')?.value||'').replace(',','.')),lon=Number(String($('lon')?.value||'').replace(',','.'));
-    return{lat:Number.isFinite(lat)?lat:52.8275,lon:Number.isFinite(lon)?lon:18.3175};
+    return{lat:Number.isFinite(lat)?lat:52.828611,lon:Number.isFinite(lon)?lon:18.330278};
   }
   function ageMinutes(p){
     const t=Date.parse(p?.time||'');if(Number.isFinite(t))return Math.max(0,(Date.now()-t)/60000);

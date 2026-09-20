@@ -1,4 +1,4 @@
-export const EPIR = Object.freeze({ lat: 52.8275, lon: 18.3175, name: 'EPIR' });
+export const EPIR = Object.freeze({ lat: 52.828611, lon: 18.330278, name: 'EPIR' });
 export const ALERT_RADIUS_KM = 50;
 export const MAX_POINT_AGE_MIN = 15;
 export const ALERT_COOLDOWN_MIN = 10;

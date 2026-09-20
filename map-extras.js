@@ -50,7 +50,7 @@
     }
     const lat = Number(String($('lat')?.value || '').replace(',','.'));
     const lon = Number(String($('lon')?.value || '').replace(',','.'));
-    return {lat:Number.isFinite(lat)?lat:52.7989,lon:Number.isFinite(lon)?lon:18.2639};
+    return {lat:Number.isFinite(lat)?lat:52.828611,lon:Number.isFinite(lon)?lon:18.330278};
   }
 
   function blitzUrl(){

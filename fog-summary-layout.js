@@ -46,7 +46,7 @@
     } finally { clearTimeout(timer); }
   }
   function apiUrl(model, vars) {
-    const p = window.PLACE || {lat:52.7989, lon:18.2639};
+    const p = window.PLACE || {lat:52.828611, lon:18.330278};
     const q = new URLSearchParams({latitude:String(p.lat), longitude:String(p.lon), hourly:vars.join(','), models:model, timezone:'UTC', forecast_hours:'60', past_hours:'6', wind_speed_unit:'ms'});
     return 'https://api.open-meteo.com/v1/forecast?' + q;
   }

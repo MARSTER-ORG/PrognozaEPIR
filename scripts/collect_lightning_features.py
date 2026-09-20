@@ -21,8 +21,8 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "data" / "lightning" / "latest.json"
 
-EPIR_LAT = float(os.environ.get("EPIR_LAT", "52.8275"))
-EPIR_LON = float(os.environ.get("EPIR_LON", "18.3175"))
+EPIR_LAT = float(os.environ.get("EPIR_LAT", "52.828611"))
+EPIR_LON = float(os.environ.get("EPIR_LON", "18.330278"))
 COLLECTION_ID = os.environ.get("EUMETSAT_COLLECTION_ID", "EO:EUM:DAT:0691")
 ENABLED = os.environ.get("LIGHTNING_FEATURES_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
 

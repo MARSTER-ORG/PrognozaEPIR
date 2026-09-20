@@ -82,7 +82,7 @@
   function currentPoint(){
     if(typeof point!=='undefined'&&Number.isFinite(Number(point?.lat))&&Number.isFinite(Number(point?.lon)))return{lat:Number(point.lat),lon:Number(point.lon)};
     const lat=Number(String($('lat')?.value||'').replace(',','.')),lon=Number(String($('lon')?.value||'').replace(',','.'));
-    return Number.isFinite(lat)&&Number.isFinite(lon)?{lat,lon}:{lat:52.8275,lon:18.3175};
+    return Number.isFinite(lat)&&Number.isFinite(lon)?{lat,lon}:{lat:52.828611,lon:18.330278};
   }
   function asNumber(id){
     const e=$(id);if(!e)return null;const m=String(e.textContent||'').replace(',','.').match(/-?\d+(?:\.\d+)?/);return m?Number(m[0]):null;
@@ -518,7 +518,7 @@
   if (window.__PrognozaEPIRAviationHazardsV1) return;
   window.__PrognozaEPIRAviationHazardsV1 = true;
 
-  const EPIR = {lat:52.8275, lon:18.3175};
+  const EPIR = {lat:52.828611, lon:18.330278};
   const LEVELS = [1000,975,950,925,900,850,800,750,700,650,600,550,500,450,400,350,300,275,250,200];
   const RAW = 'https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/runtime/models-latest.json';
   const API = 'https://api.github.com/repos/MARSTER-ORG/PrognozaEPIR/contents/data/runtime/models-latest.json?ref=main';

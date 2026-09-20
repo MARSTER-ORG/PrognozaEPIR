@@ -20,8 +20,8 @@ FORECAST_DIR = OUT / "forecasts"
 VERIFY_DIR = OUT / "verification"
 METAR_DIR = ROOT / "data" / "messages" / "metar"
 SPECI_DIR = ROOT / "data" / "messages" / "speci"
-LAT = 52.7989
-LON = 18.2639
+LAT = 52.828611
+LON = 18.330278
 
 MODELS = [
     ("ecmwf_ifs", "ECMWF", 0.17),

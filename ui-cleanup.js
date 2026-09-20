@@ -38,7 +38,7 @@
 
   const upstreamFetch = window.fetch.bind(window);
   // Correct EPIR point currently used by the radar page.
-  const EPIR = {lat: 52.8275, lon: 18.3175};
+  const EPIR = {lat: 52.828611, lon: 18.330278};
   const RAW = 'https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/runtime/models-latest.json';
   const API = 'https://api.github.com/repos/MARSTER-ORG/PrognozaEPIR/contents/data/runtime/models-latest.json?ref=main';
   const SAME_ORIGIN = new URL('data/runtime/models-latest.json', location.href).href;

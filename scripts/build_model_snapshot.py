@@ -18,8 +18,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "data" / "runtime" / "models-latest.json"
 API = "https://api.open-meteo.com/v1/forecast"
-LAT = 52.8275
-LON = 18.3175
+LAT = 52.828611
+LON = 18.330278
 USER_AGENT = "PrognozaEPIR-ModelSnapshot/1.1"
 
 MODELS = [

@@ -1,6 +1,6 @@
 # EPIR Lightning Alerts · 50 km
 
-Cloudflare Worker odpowiedzialny wyłącznie za alarmy Web Push o nowych wyładowaniach w promieniu 50 km od stałego punktu EPIR (`52.8275, 18.3175`). Telefon nie udostępnia GPS ani lokalizacji.
+Cloudflare Worker odpowiedzialny wyłącznie za alarmy Web Push o nowych wyładowaniach w promieniu 50 km od stałego punktu EPIR (`52.828611, 18.330278`). Telefon nie udostępnia GPS ani lokalizacji.
 
 ## Zasada działania
 

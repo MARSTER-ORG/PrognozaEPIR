@@ -10,7 +10,7 @@
   if (window.__PrognozaEPIRAviationHazardsV1) return;
   window.__PrognozaEPIRAviationHazardsV1 = true;
 
-  const EPIR = {lat:52.8275, lon:18.3175};
+  const EPIR = {lat:52.828611, lon:18.330278};
   const LEVELS = [1000,975,950,925,900,850,800,750,700,650,600,550,500,450,400,350,300,275,250,200];
   const RAW = 'https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/runtime/models-latest.json';
   const API = 'https://api.github.com/repos/MARSTER-ORG/PrognozaEPIR/contents/data/runtime/models-latest.json?ref=main';

@@ -143,7 +143,7 @@
     ctx.clearRect(0,0,W,H);ctx.fillStyle=cp.bg;ctx.fillRect(0,0,W,H);
 
     ctx.fillStyle=cp.title;ctx.font='11px Arial';ctx.textAlign='left';
-    ctx.fillText('Inowrocław (52.80, 18.26)',x0,14);
+    ctx.fillText('Inowrocław (52.828611, 18.330278)',x0,14);
     ctx.textAlign='right';
     ctx.fillText((selected==='consensus'?'PrognozaEPIR CONSENSUS':MODELS.find(m=>m.id===selected)?.name||selected)+'  '+horizon+'h',x1,14);
 
