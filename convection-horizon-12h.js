@@ -8,7 +8,7 @@
   const STORAGE_KEY = 'prognozaepir.convection12h.v1';
   const DEFAULT_POINT = {lat:52.828611, lon:18.330278, name:'EPIR'};
   const clamp = (v,a,b) => Math.max(a,Math.min(b,v));
-  const finite = v => Number.isFinite(Number(v));
+  const finite = v => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
   const num = (v,fallback=0) => finite(v) ? Number(v) : fallback;
   const page = document.documentElement.dataset.epirPage || (location.pathname.split('/').pop()||'index.html').replace(/\.html?$/i,'') || 'index';
   let baseRows = [];
