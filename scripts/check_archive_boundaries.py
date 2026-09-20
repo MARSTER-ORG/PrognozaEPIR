@@ -42,6 +42,17 @@ def compact(text: str) -> str:
     return re.sub(r"\s+", "", text)
 
 
+def validate_taf_archive_app(path: Path, label: str, violations: list[str]) -> None:
+    if not path.exists():
+        violations.append(f"{path.name}: missing {label}")
+        return
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if "window.PrognozaEPIRMessageArchive" not in text or "loadArchive()" not in text:
+        violations.append(f"{path.name}: generator bypasses shared archive API")
+    if "A.getLatest?.('TAF',id,true)" not in text:
+        violations.append(f"{path.name}: neighbour TAFs are not read through MessageArchive.getLatest")
+
+
 def main() -> int:
     violations: list[str] = []
     targets = sorted(set(TARGETS))
@@ -115,19 +126,16 @@ def main() -> int:
                     violations.append(f"{script_name}: compatibility read is not limited to data/messages/latest.json")
 
     taf = ROOT / "taf.html"
-    taf_app = ROOT / "taf-app-v2.js"
     if taf.exists():
         text = taf.read_text(encoding="utf-8", errors="replace")
-        if not re.search(r'<script\s+src=["\']taf-app-v2\.js(?:\?[^"\']*)?["\']\s*></script>', text, re.I):
-            violations.append("taf.html: TAF Engine 2.3 application bridge is not loaded")
-    if not taf_app.exists():
-        violations.append("taf-app-v2.js: missing TAF Engine 2.3 application bridge")
-    else:
-        text = taf_app.read_text(encoding="utf-8", errors="replace")
-        if "window.PrognozaEPIRMessageArchive" not in text or "loadArchive()" not in text:
-            violations.append("taf-app-v2.js: generator bypasses shared archive API")
-        if "A.getLatest?.('TAF',id,true)" not in text:
-            violations.append("taf-app-v2.js: neighbour TAFs are not read through MessageArchive.getLatest")
+        legacy_v2 = re.search(r'<script\s+src=["\']taf-app-v2\.js(?:\?[^"\']*)?["\']\s*></script>', text, re.I)
+        active_v25 = re.search(r"loadScript\(['\"]taf-app-v25\.js(?:\?[^'\"]*)?['\"]", text, re.I)
+        if active_v25:
+            validate_taf_archive_app(ROOT / "taf-app-v25.js", "active TAF v2.5 application bridge", violations)
+        elif legacy_v2:
+            validate_taf_archive_app(ROOT / "taf-app-v2.js", "TAF Engine 2.3 application bridge", violations)
+        else:
+            violations.append("taf.html: no MessageArchive-backed TAF application bridge is loaded")
 
     observation = ROOT / "observation-engine.js"
     if observation.exists():
