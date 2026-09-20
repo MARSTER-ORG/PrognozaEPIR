@@ -95,10 +95,10 @@
     if (corsRefreshDone || corsRefreshPending) return;
     const layer = findCurrentLayer(detail?.url);
     const img = layer?._image;
+    const hasCorsAttribute = !!img?.hasAttribute?.('crossorigin');
     const cors = String(img?.crossOrigin || '').toLowerCase();
-    if (cors === 'anonymous' || cors === '') {
-      // Empty string is how some browsers expose anonymous CORS mode.
-      if (img?.hasAttribute?.('crossorigin')) corsRefreshDone = true;
+    if (hasCorsAttribute && (cors === 'anonymous' || cors === '')) {
+      corsRefreshDone = true;
       return;
     }
     const product = String(detail?.product || '').toLowerCase();
@@ -108,7 +108,8 @@
     setTimeout(async () => {
       try {
         await window.PrognozaEPIRRadarLayers.select(product);
-        corsRefreshDone = true;
+        const refreshed = findCurrentLayer(window.PrognozaEPIRPolradState?.url || detail?.url)?._image;
+        corsRefreshDone = !!refreshed?.hasAttribute?.('crossorigin');
       } catch (_) {
         corsRefreshDone = false;
       } finally {
