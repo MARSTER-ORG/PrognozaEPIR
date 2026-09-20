@@ -13,7 +13,7 @@
 <body>
   <div class="wrap">
     <header class="top">
-      <div class="brand">PrognozaEPIR · TAF Generator <small>TAF ENGINE 2.4.3 · ACTIVE FOG MODE SYNC · INSTRUCTION FIRST</small></div>
+      <div class="brand">PrognozaEPIR · TAF Generator <small>TAF ENGINE 2.4.3 · FOG + TCu/CB SYNC · INSTRUCTION FIRST</small></div>
     </header>
 
     <section class="card">
@@ -34,7 +34,7 @@
       </div>
       <div class="statusline"><span id="badge" class="badge">TAF ENGINE 2.4.3 · START</span><span id="st">inicjalizacja</span></div>
       <div id="sources" class="sources"></div>
-      <div id="conf" class="note">Instrukcja TAF 11.2023 jest nadrzędną kontrolą końcową. Generator synchronizuje się z wybranym Fog Engine i używa właściwego score, prognozy widzialności oraz progów operacyjnych.</div>
+      <div id="conf" class="note">Instrukcja TAF 11.2023 jest nadrzędną kontrolą końcową. Generator synchronizuje się z wybranym Fog Engine oraz dedykowanym nowcastem TCu/Cb; TAF sąsiadów może wyłącznie podnieść wiarygodność istniejącego lokalnego sygnału konwekcyjnego.</div>
     </section>
 
     <div class="grid2">
@@ -56,18 +56,18 @@
     <section class="card" style="margin-top:12px">
       <h2>Godzinowy materiał wejściowy i interpretacja TAF</h2>
       <div class="tablewrap"><table>
-        <thead><tr><th>Czas UTC</th><th>Wiatr</th><th>Widzialność</th><th>Zjawiska</th><th>Chmury (m AGL)</th><th>Pułap BKN/OVC (m AGL)</th><th>Opad / TS</th><th>FG / niska VIS</th></tr></thead>
+        <thead><tr><th>Czas UTC</th><th>Wiatr</th><th>Widzialność</th><th>Zjawiska</th><th>Chmury (m AGL)</th><th>Pułap BKN/OVC (m AGL)</th><th>Opad / TS / TCu / Cb</th><th>FG / niska VIS</th></tr></thead>
         <tbody id="hours"></tbody>
       </table></div>
     </section>
 
     <section class="card" style="margin-top:12px">
       <h2>TAF stacji sąsiednich — informacja pomocnicza</h2>
-      <div class="muted" style="margin-bottom:8px;font-size:12px">Wyświetlane dla kontroli synoptycznej. Nie są osobnym skryptem zmieniającym gotową depeszę.</div>
+      <div class="muted" style="margin-bottom:8px;font-size:12px">TAF sąsiadów służą do kontroli synoptycznej. Jawne TCU/CB w dopasowanym okresie ważności jest dodatnim potwierdzeniem modułu TCu/Cb, ale nigdy samodzielnym źródłem zjawiska w TAF EPIR.</div>
       <div class="tablewrap"><table><thead><tr><th>Stacja</th><th>TAF</th></tr></thead><tbody id="neighborTafs"></tbody></table></div>
     </section>
 
-    <div class="note">Generator tworzy projekt operacyjny na podstawie modeli, lokalnego uczenia, aktywnego Fog Engine i obserwacji. W trybie LEGACY używa wyłącznie toru Legacy; w trybie vNEXT czeka na gotową serię vNext i wykorzystuje również VIS vNext. Nie ma cichego fallbacku z vNEXT do LEGACY. Każdy wynik przechodzi formalny kernel Instrukcji 11.2023.</div>
+    <div class="note">Generator tworzy projekt operacyjny na podstawie modeli, lokalnego uczenia, aktywnego Fog Engine, obserwacji oraz świeżego nowcastu TCu/Cb 0–3 h. TCU i CB pozostają oddzielone od prawdopodobieństwa TS: sam sygnał TCu/Cb nie tworzy burzy. W trybie LEGACY używany jest wyłącznie tor Legacy mgły; w trybie vNEXT generator czeka na gotową serię vNext i wykorzystuje również VIS vNext. Każdy wynik przechodzi formalny kernel Instrukcji 11.2023.</div>
     <footer class="footer">PrognozaEPIR · TAF Engine 2.4.3 · czasy prezentowane wyłącznie w UTC</footer>
   </div>
 
@@ -144,7 +144,9 @@
       if(window.PrognozaEPIRTAFFogPolicy?.BUILD!==REQUIRED_FOG_POLICY_BUILD)throw new Error(`niezgodna wersja TAF Fog Policy: ${window.PrognozaEPIRTAFFogPolicy?.BUILD||'brak'}`);
       await loadScript('taf-engine-v243.js?v=20260920-fg-vis-gate','taf-engine-v243-runtime');
       if(!window.__PROGNOZA_EPIR_TAF_ENGINE_V243__||window.PrognozaEPIRTAFEngine?.QUALITY_VERSION!=='2.4.3')throw new Error('TAF Engine 2.4.3 nie wystartował');
-      await loadScript('taf-app-v25.js?v=20260920-fg-vis-gate','taf-app-v25-runtime');
+      await loadScript('taf-convection-integration.js?v=20260920-taf-conv1','taf-convection-integration-runtime');
+      if(!window.PrognozaEPIRTAFConvection?.version)throw new Error('integracja TCu/Cb nie wystartowała');
+      await loadScript('taf-app-v25.js?v=20260920-taf-conv1','taf-app-v25-runtime');
       const deadline=Date.now()+4000;
       while(Date.now()<deadline&&!window.__PROGNOZA_EPIR_TAF_APP_V25__)await sleep(50);
       if(!window.__PROGNOZA_EPIR_TAF_APP_V25__)throw new Error('interfejs generatora TAF nie wystartował');
