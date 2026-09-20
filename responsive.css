@@ -10,15 +10,34 @@ html[data-epir-page]{
   text-size-adjust:100%;
 }
 html[data-epir-page] body{width:100%;max-width:100%;overflow-x:hidden}
-html[data-epir-page] :is(.app,.wrap,main,.layout,.grid,.card,.panel,.toolbar,.top,.controls,.section-info){min-width:0}
-html[data-epir-page] :is(img,svg,video){max-width:100%;height:auto}
+
+/* Geometry guard shared by every view.
+   A wide child must never enlarge a grid/flex track and make the whole page,
+   map or card disappear beyond the phone viewport. */
+html[data-epir-page] :is(.app,.wrap,main){width:100%;max-width:100%;min-width:0}
+html[data-epir-page] :is(.layout,.grid,.card,.panel,.toolbar,.top,.controls,.section-info,.mapwrap,.timeline,.tablewrap,.table-wrap){min-width:0;max-width:100%}
+html[data-epir-page] :is(.layout,.grid,.card,.panel,.toolbar,.top,.controls)>*{min-width:0;max-width:100%}
+html[data-epir-page] :is(#map,.leaflet-container){width:100%;max-width:100%;min-width:0}
+html[data-epir-page] :is(img,svg,video,iframe){max-width:100%}
+html[data-epir-page] :is(img,svg,video){height:auto}
 html[data-epir-page] :is(input,select,button,textarea){max-width:100%}
-html[data-epir-page] :is(.timeline,.tablewrap,.table-wrap){max-width:100%;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch}
+
+/* Wide data stays inside its own scroller instead of widening/cropping the page. */
+html[data-epir-page] :is(.timeline,.tablewrap,.table-wrap){
+  width:100%;
+  min-width:0;
+  max-width:100%;
+  overflow-x:auto;
+  overflow-y:hidden;
+  overscroll-behavior-x:contain;
+  -webkit-overflow-scrolling:touch;
+}
+html[data-epir-page] :is(.timeline,.tablewrap,.table-wrap)>table{max-width:none}
 html[data-epir-page] pre{max-width:100%;overflow:auto}
 
 @media (max-width:1100px){
-  html[data-epir-page="radar"] .layout{grid-template-columns:1fr!important}
-  html[data-epir-page="sat-fog"] .grid{grid-template-columns:1fr!important}
+  html[data-epir-page="radar"] .layout{grid-template-columns:minmax(0,1fr)!important}
+  html[data-epir-page="sat-fog"] .grid{grid-template-columns:minmax(0,1fr)!important}
   html[data-epir-page="sat-fog"] .panel{max-height:none!important}
 }
 
@@ -133,7 +152,7 @@ html[data-epir-page] pre{max-width:100%;overflow:auto}
   html[data-epir-page="fog"] .app{padding:4px 3px 14px!important}
   html[data-epir-page="fog"] .local-nav{grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:3px!important;padding:4px!important}
   html[data-epir-page="fog"] .local-nav a{min-height:29px!important;padding:3px 4px!important;font-size:8.5px!important;line-height:1.1!important}
-  html[data-epir-page="fog"] #fogStandaloneMount{min-width:0;overflow-x:hidden}
+  html[data-epir-page="fog"] #fogStandaloneMount{width:100%;max-width:100%;min-width:0;overflow-x:auto}
 
   /* Radar / satellite / AI */
   html[data-epir-page="radar"] .app{padding:4px 3px 14px!important}
@@ -148,7 +167,7 @@ html[data-epir-page] pre{max-width:100%;overflow:auto}
   html[data-epir-page="radar"] .toolbar .field label{font-size:8px!important}
   html[data-epir-page="radar"] .toolbar :is(input,button,a,select){width:100%!important;min-width:0!important;min-height:31px!important;padding:4px 6px!important;font-size:9.5px!important;text-align:center}
   html[data-epir-page="radar"] .toolbar .spacer{display:none!important}
-  html[data-epir-page="radar"] .layout{display:grid!important;grid-template-columns:1fr!important;gap:6px!important;margin-top:6px!important}
+  html[data-epir-page="radar"] .layout{display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:6px!important;margin-top:6px!important}
   html[data-epir-page="radar"] #map{height:clamp(320px,49vh,430px)!important;min-height:320px!important;width:100%!important}
   html[data-epir-page="radar"] .mapbar{
     display:grid!important;
@@ -176,6 +195,13 @@ html[data-epir-page] pre{max-width:100%;overflow:auto}
   }
   html[data-epir-page="radar"] .mapbar .time{grid-column:1/-1!important;margin-left:0!important;font-size:8.5px!important;line-height:1.2!important;text-align:center!important}
   html[data-epir-page="radar"] .grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:4px!important;padding:5px!important}
+  html[data-epir-page="radar"] .layout>*{width:100%;max-width:100%;min-width:0!important}
+  html[data-epir-page="radar"] .card{width:100%;max-width:100%;min-width:0!important}
+  html[data-epir-page="radar"] .radar-nowcast{width:100%;max-width:100%;min-width:0!important;padding-left:7px!important;padding-right:7px!important}
+  html[data-epir-page="radar"] .rn-horizons{grid-template-columns:repeat(5,minmax(0,1fr))!important;gap:3px!important;overflow:visible!important}
+  html[data-epir-page="radar"] .rn-h{min-width:0!important;padding:4px 2px!important}
+  html[data-epir-page="radar"] .rn-h b{font-size:9px!important;overflow-wrap:anywhere}
+  html[data-epir-page="radar"] .rn-h span{font-size:7px!important}
   html[data-epir-page="radar"] .metric{min-height:54px!important;padding:6px!important}
   html[data-epir-page="radar"] .metric small{font-size:8px!important;line-height:1.15!important}
   html[data-epir-page="radar"] .metric strong{font-size:13px!important;line-height:1.1!important;overflow-wrap:anywhere}
@@ -187,7 +213,7 @@ html[data-epir-page] pre{max-width:100%;overflow:auto}
   html[data-epir-page="radar"] .timeline table{min-width:610px!important;font-size:8.5px!important}
   html[data-epir-page="radar"] .warns{font-size:9.5px!important;line-height:1.35!important;padding:6px!important}
   html[data-epir-page="radar"] .sources{font-size:8.5px!important;line-height:1.35!important;padding:6px!important}
-  html[data-epir-page="radar"] #conv12hForecast{padding:6px!important;overflow:hidden}
+  html[data-epir-page="radar"] #conv12hForecast{width:100%!important;max-width:100%!important;min-width:0!important;padding:6px!important;overflow:hidden}
   html[data-epir-page="radar"] #conv12hForecast .c12-head b{font-size:10px!important}
   html[data-epir-page="radar"] #conv12hForecast .c12-head span{font-size:8px!important;line-height:1.2!important}
   html[data-epir-page="radar"] #conv12hForecast .c12-grid{grid-auto-columns:minmax(84px,1fr)!important;overflow-x:auto!important;-webkit-overflow-scrolling:touch}
@@ -214,7 +240,9 @@ html[data-epir-page] pre{max-width:100%;overflow:auto}
   html[data-epir-page="sat-fog"] #productSelect{grid-column:1/-1!important}
   html[data-epir-page="sat-fog"] #timeSelect{grid-column:span 2!important}
   html[data-epir-page="sat-fog"] .productbox,html[data-epir-page="sat-fog"] .timebox{min-width:0!important;max-width:none!important}
-  html[data-epir-page="sat-fog"] .grid{grid-template-columns:1fr!important;gap:6px!important}
+  html[data-epir-page="sat-fog"] .grid{grid-template-columns:minmax(0,1fr)!important;gap:6px!important}
+  html[data-epir-page="sat-fog"] .grid>*{width:100%;max-width:100%;min-width:0!important}
+  html[data-epir-page="sat-fog"] .mapwrap{width:100%;max-width:100%;min-width:0!important;overflow:hidden}
   html[data-epir-page="sat-fog"] #map{height:48vh!important;min-height:315px!important}
   html[data-epir-page="sat-fog"] .panel{max-height:none!important;font-size:10px!important;padding:8px!important}
   html[data-epir-page="sat-fog"] .panel h3{font-size:11px!important}
@@ -230,7 +258,7 @@ html[data-epir-page] pre{max-width:100%;overflow:auto}
   html[data-epir-page="taf"] .controls :is(select,button,input){min-height:31px!important;padding-top:4px!important;padding-bottom:4px!important;font-size:9.5px!important}
   html[data-epir-page="taf"] .grid2{grid-template-columns:1fr!important}
   html[data-epir-page="taf"] .checklist{grid-template-columns:1fr!important}
-  html[data-epir-page="taf"] .tablewrap{overflow-x:auto!important}
+  html[data-epir-page="taf"] .tablewrap{width:100%!important;max-width:100%!important;min-width:0!important;overflow-x:auto!important}
   html[data-epir-page="taf"] table{min-width:700px!important}
   html[data-epir-page="taf"] td pre{min-width:330px!important;white-space:pre-wrap!important;overflow-wrap:anywhere}
 
@@ -242,7 +270,7 @@ html[data-epir-page] pre{max-width:100%;overflow:auto}
   html[data-epir-page="arch"] .field :is(input,select){min-height:31px!important;font-size:9.5px!important}
   html[data-epir-page="arch"] .modebar button,html[data-epir-page="arch"] .types button,html[data-epir-page="arch"] .actions button,html[data-epir-page="arch"] .copybar button,html[data-epir-page="arch"] .events button,html[data-epir-page="arch"] .pager button{min-height:30px!important;font-size:9px!important;padding:4px 6px!important}
   html[data-epir-page="arch"] .stats{grid-template-columns:repeat(2,minmax(0,1fr))!important}
-  html[data-epir-page="arch"] .table-wrap{overflow-x:auto!important}
+  html[data-epir-page="arch"] .table-wrap{width:100%!important;max-width:100%!important;min-width:0!important;overflow-x:auto!important}
   html[data-epir-page="arch"] table{min-width:600px!important}
 
   /* Lightning */
