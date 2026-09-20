@@ -46,6 +46,31 @@ jobs:
             scripts/build_adaptive_weights.py \
             scripts/build_historical_model_skill.py \
             scripts/build_synoptic_regime_learning.py
+          python3 - <<'PY'
+          import sys
+          sys.path.insert(0, 'scripts')
+          import enrich_synoptic_context as esc
+
+          ts = '2024-03-14T01:00'
+          null_payload = {
+              'hourly': {
+                  'time': [ts],
+                  **{name: [None] for name in esc.PROFILE_VARS},
+              }
+          }
+          assert esc.context_from_payload(null_payload) == {}, 'null-only pressure context must be rejected'
+          assert not esc.has_context({k: None for k in esc.CONTEXT_SENTINELS})
+          assert esc.has_context({'temperature_925hpa_c': 4.5})
+          finite_payload = {
+              'hourly': {
+                  'time': [ts],
+                  'temperature_925hPa': [4.5],
+              }
+          }
+          parsed = esc.context_from_payload(finite_payload)
+          assert parsed and esc.has_context(next(iter(parsed.values())))
+          print('pressure-context null rejection: OK')
+          PY
 
       - name: Acquire missing operational history and pressure-level context
         id: acquire
