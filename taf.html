@@ -71,15 +71,15 @@
     <footer class="footer">PrognozaEPIR · TAF Engine 2.4.3 · czasy prezentowane wyłącznie w UTC</footer>
   </div>
 
-  <iframe id="engine" class="engine-frame" src="index.html?taf-engine=1&amp;v=20260919-4" title="Silnik danych modeli" aria-hidden="true" tabindex="-1"></iframe>
+  <iframe id="engine" class="engine-frame" src="index.html?taf-engine=1&amp;v=20260920-fg-vis-gate" title="Silnik danych modeli" aria-hidden="true" tabindex="-1"></iframe>
 
   <script src="utc-ui-guard.js"></script>
   <script src="message-archive-client.js?v=live-jsonl-v7"></script>
-  <script src="taf-fog-policy.js?v=20260919-4"></script>
-  <script src="taf-engine-v2.js?v=2.3.0-kernel"></script>
-  <script src="taf-engine-v24.js?v=2.4.0"></script>
-  <script src="taf-engine-v241.js?v=2.4.1-audit"></script>
-  <script src="taf-engine-v242.js?v=2.4.2-cloud-fog"></script>
+  <script src="taf-fog-policy.js?v=20260920-fg-vis-gate"></script>
+  <script src="taf-engine-v2.js?v=20260920-fg-vis-gate"></script>
+  <script src="taf-engine-v24.js?v=20260920-fg-vis-gate"></script>
+  <script src="taf-engine-v241.js?v=20260920-fg-vis-gate"></script>
+  <script src="taf-engine-v242.js?v=20260920-fg-vis-gate"></script>
   <!-- Formal 2.3-kernel regression compatibility marker only; not executed or loaded: taf-app-v2.js?v=2.4.0-ui -->
   <!-- Compatibility/build marker only; bootstrap is intentionally not executed: taf-runtime-bootstrap.js?v=20260919-1 -->
 
@@ -87,6 +87,7 @@
   (()=>{
     'use strict';
     const H=3600000, ISSUE_HOURS=[5,11,17,23], MODE_KEY='prognozaepir-fog-engine-mode';
+    const REQUIRED_FOG_POLICY_BUILD='20260920-fg-vis-gate';
     const $=id=>document.getElementById(id), pad=n=>String(n).padStart(2,'0');
     const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
@@ -140,9 +141,10 @@
 
     async function boot(){
       fillCycles();setStatus('ładowanie TAF Engine 2.4.3…');
-      await loadScript('taf-engine-v243.js?v=20260919-4','taf-engine-v243-runtime');
+      if(window.PrognozaEPIRTAFFogPolicy?.BUILD!==REQUIRED_FOG_POLICY_BUILD)throw new Error(`niezgodna wersja TAF Fog Policy: ${window.PrognozaEPIRTAFFogPolicy?.BUILD||'brak'}`);
+      await loadScript('taf-engine-v243.js?v=20260920-fg-vis-gate','taf-engine-v243-runtime');
       if(!window.__PROGNOZA_EPIR_TAF_ENGINE_V243__||window.PrognozaEPIRTAFEngine?.QUALITY_VERSION!=='2.4.3')throw new Error('TAF Engine 2.4.3 nie wystartował');
-      await loadScript('taf-app-v25.js?v=20260919-4','taf-app-v25-runtime');
+      await loadScript('taf-app-v25.js?v=20260920-fg-vis-gate','taf-app-v25-runtime');
       const deadline=Date.now()+4000;
       while(Date.now()<deadline&&!window.__PROGNOZA_EPIR_TAF_APP_V25__)await sleep(50);
       if(!window.__PROGNOZA_EPIR_TAF_APP_V25__)throw new Error('interfejs generatora TAF nie wystartował');
