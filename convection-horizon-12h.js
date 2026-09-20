@@ -4,8 +4,10 @@
   window.__EPIR_CONVECTION_12H__ = true;
 
   const HOUR = 3600000;
-  const VERSION = '20260920-conv12h1';
+  const VERSION = '20260920-conv12h5';
   const STORAGE_KEY = 'prognozaepir.convection12h.v1';
+  const NOWCAST_KEY = 'prognozaepir.convection-nowcast.shared.v1';
+  const NOWCAST_MAX_AGE = 20 * 60 * 1000;
   const DEFAULT_POINT = {lat:52.828611, lon:18.330278, name:'EPIR'};
   const clamp = (v,a,b) => Math.max(a,Math.min(b,v));
   const finite = v => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
@@ -106,10 +108,51 @@
     };
   }
 
-  function currentNowcast() {
+  function persistLiveNowcast() {
     const c=window.PrognozaEPIRConvectionNowcast;
     if (!c || !finite(c.tcuProbability) || !finite(c.cbProbability)) return null;
-    return {tcu:clamp(Number(c.tcuProbability),0,100),cb:clamp(Number(c.cbProbability),0,100)};
+    const saved={
+      updatedAt:new Date().toISOString(),
+      point:currentPoint(),
+      tcuProbability:clamp(Number(c.tcuProbability),0,100),
+      cbProbability:clamp(Number(c.cbProbability),0,100),
+      class:c.class||null,
+      source:'radar-nowcast'
+    };
+    try { localStorage.setItem(NOWCAST_KEY,JSON.stringify(saved)); } catch (_) {}
+    return saved;
+  }
+
+  function storedNowcast() {
+    try {
+      const c=JSON.parse(localStorage.getItem(NOWCAST_KEY)||'null');
+      const age=Date.now()-Date.parse(c?.updatedAt||0);
+      if (!c || !finite(c.tcuProbability) || !finite(c.cbProbability)) return null;
+      if (!(age>=0 && age<=NOWCAST_MAX_AGE)) return null;
+      if (!samePoint(c.point,currentPoint())) return null;
+      return {
+        tcu:clamp(Number(c.tcuProbability),0,100),
+        cb:clamp(Number(c.cbProbability),0,100),
+        updatedAt:c.updatedAt,
+        ageMs:age,
+        source:'shared-radar-nowcast'
+      };
+    } catch (_) { return null; }
+  }
+
+  function currentNowcast() {
+    const c=window.PrognozaEPIRConvectionNowcast;
+    if (c && finite(c.tcuProbability) && finite(c.cbProbability)) {
+      const saved=persistLiveNowcast();
+      return {
+        tcu:clamp(Number(c.tcuProbability),0,100),
+        cb:clamp(Number(c.cbProbability),0,100),
+        updatedAt:saved?.updatedAt||new Date().toISOString(),
+        ageMs:0,
+        source:'live-radar-nowcast'
+      };
+    }
+    return storedNowcast();
   }
 
   function blendWithNowcast(rows) {
@@ -118,15 +161,22 @@
     return rows.map(row => {
       const lead=(row.time-now)/HOUR;
       let tcu=row.tcuProbability, cb=row.cbProbability;
+      let nowcastWeight=0;
       if (nowcast && lead>=-0.75 && lead<=3.5) {
-        const w=clamp(0.82-lead*0.19,0.18,0.82);
-        tcu=Math.round(tcu*(1-w)+nowcast.tcu*w);
-        cb=Math.round(cb*(1-w)+nowcast.cb*w);
+        nowcastWeight=clamp(0.82-lead*0.19,0.18,0.82);
+        tcu=Math.round(tcu*(1-nowcastWeight)+nowcast.tcu*nowcastWeight);
+        cb=Math.round(cb*(1-nowcastWeight)+nowcast.cb*nowcastWeight);
       }
       cb=clamp(cb,0,97); tcu=clamp(Math.max(tcu,cb+3),0,99);
-      const mode=lead<=3.25?'NOWCAST + NWP':lead<=6.25?'HYBRYDA':'NWP';
-      const confidence=Math.round(clamp(88-lead*2.2,58,88));
-      return {...row,tcuProbability:tcu,cbProbability:cb,leadHours:lead,mode,confidence};
+      const mode=nowcast&&lead<=3.25?'NOWCAST + NWP':lead<=6.25?'HYBRYDA':'NWP';
+      const confidence=Math.round(clamp((nowcast?88:75)-lead*2.2,55,88));
+      return {
+        ...row,tcuProbability:tcu,cbProbability:cb,leadHours:lead,mode,confidence,
+        nowcastApplied:!!nowcast&&nowcastWeight>0,
+        nowcastWeight:Math.round(nowcastWeight*100),
+        nowcastSource:nowcast?.source||null,
+        nowcastUpdatedAt:nowcast?.updatedAt||null
+      };
     });
   }
 
@@ -222,12 +272,19 @@
   function reblend() { if (baseRows.length) publish(currentPoint(),baseRows,'reblend'); }
   function schedule(force=true) { clearTimeout(refreshTimer); refreshTimer=setTimeout(()=>refresh(force).catch(()=>fallback(currentPoint())),450); }
 
-  window.addEventListener('prognozaepir:convection-nowcast-updated',()=>setTimeout(reblend,0));
+  window.addEventListener('prognozaepir:convection-nowcast-updated',()=>{
+    persistLiveNowcast();
+    setTimeout(reblend,0);
+  });
   window.addEventListener('prognozaepir:radar-nowcast-updated',()=>setTimeout(reblend,0));
+  window.addEventListener('storage',e=>{
+    if (e.key===NOWCAST_KEY && page==='index') setTimeout(reblend,0);
+  });
   for (const id of ['apply','resetPoint','refresh']) document.getElementById(id)?.addEventListener('click',()=>schedule(true));
   document.addEventListener('visibilitychange',()=>{ if(!document.hidden && Date.now()-lastFetchAt>10*60*1000) schedule(false); });
   window.PrognozaEPIRConvection12hEngine={refresh:()=>refresh(true),get:()=>window.PrognozaEPIRConvection12h||null};
 
+  if (page==='radar') setTimeout(persistLiveNowcast,1200);
   setTimeout(()=>refresh(true).catch(()=>fallback(currentPoint())),250);
   if (page==='radar') [1200,3000,6000].forEach(ms=>setTimeout(()=>{reblend();renderRadar(window.PrognozaEPIRConvection12h);},ms));
 })();
