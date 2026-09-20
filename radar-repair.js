@@ -1,20 +1,19 @@
 'use strict';
 
-// Runtime bootstrap. The stable radar repair core is preserved verbatim in
-// radar-repair-core-r6.js; LFL is deliberately loaded afterwards because the
-// legacy radar cleanup removes obsolete lightning controls during startup.
-// The r10 stability bridge is loaded last so it can enforce a single POLRAD
-// frame and make the canonical image readable by spatial echo analysis.
+// Runtime bootstrap. The stable radar repair core runs first because it removes
+// obsolete controls. The real MTG LI/LFL module is then restored, and only after
+// that the POLRAD stability bridge is installed. This keeps radar analysis and
+// lightning ownership independent.
 (() => {
-  if (window.__EPIR_RADAR_BOOTSTRAP_R8__) return;
-  window.__EPIR_RADAR_BOOTSTRAP_R8__ = true;
+  if (window.__EPIR_RADAR_BOOTSTRAP_R9__) return;
+  window.__EPIR_RADAR_BOOTSTRAP_R9__ = true;
 
-  const loadScript=(src,id,onload)=>{
+  const loadScript=(src,id,onload,onerror)=>{
     if(document.getElementById(id)){onload?.();return;}
     const s=document.createElement('script');
     s.id=id;s.src=src;s.async=false;
     if(onload)s.onload=onload;
-    s.onerror=()=>console.error('PrognozaEPIR: failed to load',src);
+    s.onerror=()=>{console.error('PrognozaEPIR: failed to load',src);onerror?.();};
     document.head.appendChild(s);
   };
 
@@ -45,21 +44,16 @@
     }
   };
 
-  const loadLfl=()=>{
-    ensureLflHost();
-    loadScript('lightning-layer.js?v=20260915-lfl-r8','epirLflRuntimeR8');
+  const loadStability=()=>{
+    loadScript('radar-stability-r10.js?v=20260920-r11','epirRadarStabilityR11');
   };
 
-  const loadStability=()=>{
-    loadScript('radar-stability-r10.js?v=20260920-r10','epirRadarStabilityR10');
+  const loadLfl=()=>{
+    ensureLflHost();
+    loadScript('lightning-layer.js?v=20260920-lfl-r9','epirLflRuntimeR9',loadStability,loadStability);
   };
 
   loadScript('radar-repair-core-r6.js?v=20260915-core-r8','epirRadarRepairCoreR6',()=>{
-    // Let the repair core finish its synchronous control cleanup/bindings first,
-    // then install the final runtime guard after the legacy owners are present.
-    setTimeout(()=>{
-      loadLfl();
-      loadStability();
-    },0);
-  });
+    setTimeout(loadLfl,0);
+  },loadLfl);
 })();
