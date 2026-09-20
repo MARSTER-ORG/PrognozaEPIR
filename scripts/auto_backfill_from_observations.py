@@ -260,10 +260,12 @@ def enrich_context(days, workers):
                     if row.get("archive_source") == PREVIOUS_RUNS_SOURCE:
                         continue
                     ctx = context.get(row.get("valid_time"))
-                    if not ctx:
+                    if not ctx or not esc.has_context(ctx):
                         continue
                     new = dict(row)
                     new.update(ctx)
+                    if not esc.has_context(new):
+                        continue
                     new["synoptic_context_version"] = esc.sr.VERSION
                     new["synoptic_context_source"] = SINGLE_RUNS_SOURCE
                     files[path][idx] = new
@@ -272,7 +274,7 @@ def enrich_context(days, workers):
                 if updated:
                     success += 1
                 else:
-                    failures.append([mv.iso(run), model, "no matching valid times"])
+                    failures.append([mv.iso(run), model, "no matching finite pressure-level context"])
             except Exception as exc:
                 failures.append([mv.iso(run), model, str(exc)])
 
