@@ -3,8 +3,9 @@
 #
 # Normal path: Railway emits repository_dispatch only after the archive changes.
 # Safety path: one lightweight reconciliation every 6 hours catches missed events.
-# Historical JSONL files are append-only: a Railway snapshot is never allowed
-# to remove records that are already durable in GitHub.
+# Core EPIR/SYNOP JSONL files remain append-only. Neighbor-airport history may
+# use a rolling Git window once the repository storage guard is activated; the
+# durable copy is then Supabase.
 name: Mirror central archive from Railway
 
 on:
@@ -17,6 +18,8 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/mirror-central-archive.yml'
+      - 'scripts/repository_storage_guard.py'
+      - 'tests/test_repository_storage_guard.py'
 
 permissions:
   contents: write
@@ -36,6 +39,25 @@ jobs:
           ref: main
           fetch-depth: 0
 
+      - name: Determine repository storage mode
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/repository_storage_guard.py
+          python3 tests/test_repository_storage_guard.py
+          SIZE_KB="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.size')"
+          MODE="$(python3 scripts/repository_storage_guard.py --repo-size-kb "$SIZE_KB" --limit-mb 500 --mode-only)"
+          case "$MODE" in
+            normal) KEEP_DAYS=0 ;;
+            rolling) KEEP_DAYS=30 ;;
+            external) KEEP_DAYS=7 ;;
+            *) echo "Unknown storage mode: $MODE" >&2; exit 1 ;;
+          esac
+          echo "NEIGHBOR_ARCHIVE_MODE=$MODE" >> "$GITHUB_ENV"
+          echo "NEIGHBOR_RETENTION_DAYS=$KEEP_DAYS" >> "$GITHUB_ENV"
+          echo "Repository ${SIZE_KB} KB; neighbor archive mode=${MODE}; keep_days=${KEEP_DAYS}"
+
       - name: Copy completed Railway archive snapshot
         env:
           ARCHIVE_BASE: https://central-ingestor-production.up.railway.app
@@ -47,11 +69,14 @@ jobs:
           import time
           import urllib.parse
           import urllib.request
+          from datetime import date, datetime, timedelta, timezone
           from pathlib import Path
 
           base=os.environ['ARCHIVE_BASE'].rstrip('/')
           root=Path('data/messages')
           root.mkdir(parents=True,exist_ok=True)
+          neighbor_mode=os.environ.get('NEIGHBOR_ARCHIVE_MODE','normal').strip().lower()
+          neighbor_keep_days=int(os.environ.get('NEIGHBOR_RETENTION_DAYS','0') or 0)
 
           def get(url, attempts=3):
               last=None
@@ -84,10 +109,33 @@ jobs:
           if manifest.get('schema')!='prognozaepir-message-archive-manifest-v1':
               raise SystemExit('unexpected archive manifest schema')
 
+          def neighbor_file_day(rel):
+              parts=rel.split('/')
+              if len(parts)!=5 or parts[0]!='neighbors' or not parts[4].endswith('.jsonl'):
+                  return None
+              try:
+                  return date(int(parts[2]),int(parts[3]),int(parts[4][:-6]))
+              except (TypeError,ValueError):
+                  return None
+
           def wanted(rel):
-              if rel in {'latest.json','recent.json','taf-neighbors.json'}:
+              if rel in {'latest.json','recent.json','taf-neighbors.json','neighbors/latest.json'}:
                   return True
-              return rel.startswith(('metar/','speci/','synop/','taf/','neighbors/')) and rel.endswith(('.json','.jsonl'))
+              if rel.startswith(('metar/','speci/','synop/','taf/')):
+                  return rel.endswith(('.json','.jsonl'))
+              if not rel.startswith('neighbors/'):
+                  return False
+              if rel.endswith('.json'):
+                  return True
+              if not rel.endswith('.jsonl'):
+                  return False
+              if neighbor_mode=='normal':
+                  return True
+              day=neighbor_file_day(rel)
+              if day is None:
+                  return False
+              cutoff=datetime.now(timezone.utc).date()-timedelta(days=max(0,neighbor_keep_days))
+              return day>=cutoff
 
           changed=0
           checked=0
@@ -122,7 +170,7 @@ jobs:
               os.replace(tmp,dest)
               changed+=1
 
-          print(f'validated manifest {manifest.get("generated_at")}: checked={checked}, changed={changed}')
+          print(f'validated manifest {manifest.get("generated_at")}: checked={checked}, changed={changed}, neighbor_mode={neighbor_mode}')
           PY
 
       - name: Validate central archive before commit
@@ -171,6 +219,12 @@ jobs:
           if latest_path.exists():
               latest_view=json.loads(latest_path.read_text(encoding='utf-8'))
           archive_updated_at=latest_view.get('updated_at') or max((x for x in latest.values() if x),default=None)
+          neighbor_mode=os.environ.get('NEIGHBOR_ARCHIVE_MODE','normal').strip().lower()
+          neighbor_keep_days=int(os.environ.get('NEIGHBOR_RETENTION_DAYS','0') or 0)
+          if neighbor_mode=='normal':
+              neighbor_policy='full Git history; durable Supabase copy'
+          else:
+              neighbor_policy=f'{neighbor_keep_days}-day Git hot window; durable Supabase copy; mode={neighbor_mode}'
 
           payload={
               'schema':'prognozaepir-message-archive-status-v1',
@@ -183,7 +237,7 @@ jobs:
               'legacy_archives_authoritative':False,
               'taf_history_scope':'EPIR only',
               'taf_neighbors':'current snapshot only; not archived; not learning data',
-              'neighbor_observations':'EPBY/EPPW/EPKS METAR/SPECI context; historical JSONL; excluded from EPIR counts',
+              'neighbor_observations':f'EPBY/EPPW/EPKS METAR/SPECI context; {neighbor_policy}; excluded from EPIR counts',
           }
           dest=root/'status.json'
           text=json.dumps(payload,ensure_ascii=False,indent=2,sort_keys=True)+'\n'
