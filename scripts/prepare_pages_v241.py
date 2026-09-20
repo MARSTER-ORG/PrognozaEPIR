@@ -6,6 +6,10 @@ import re
 import prepare_pages as p
 
 
+TAF_FOG_POLICY_VERSION = "20260919-4"
+TAF_FOG_GATE_BUILD = "20260920-fg-vis-gate"
+
+
 def patch_taf_v243() -> None:
     # Patch only real script/src attributes. Do not call the historical
     # p.patch_taf() helper here because its broad regexes also matched marker
@@ -18,10 +22,35 @@ def patch_taf_v243() -> None:
         s,
         count=1,
     )
-    s = re.sub(r'(src="taf-engine-v2\.js\?v=)[^"]+', r'\g<1>2.3.0-kernel', s)
-    s = re.sub(r'(src="taf-engine-v24\.js\?v=)[^"]+', r'\g<1>2.4.0', s)
-    s = re.sub(r'(src="taf-engine-v241\.js\?v=)[^"]+', r'\g<1>2.4.1-audit', s)
-    s = re.sub(r'(src="taf-engine-v242\.js\?v=)[^"]+', r'\g<1>2.4.2-cloud-fog', s)
+
+    # Keep the semantic version markers used by the deployment contract, but
+    # add the current commit as a second query parameter. This makes every
+    # deployed TAF runtime URL unique, so a browser/CDN cannot mix a corrected
+    # Fog Policy with cached pre-fix engine layers.
+    build = p.ASSET_V
+    s = re.sub(
+        r'(src="taf-fog-policy\.js\?v=)[^"]+',
+        rf'\g<1>{TAF_FOG_POLICY_VERSION}&amp;build={build}',
+        s,
+    )
+    s = re.sub(r'(src="taf-engine-v2\.js\?v=)[^"]+', rf'\g<1>2.3.0-kernel&amp;build={build}', s)
+    s = re.sub(r'(src="taf-engine-v24\.js\?v=)[^"]+', rf'\g<1>2.4.0&amp;build={build}', s)
+    s = re.sub(r'(src="taf-engine-v241\.js\?v=)[^"]+', rf'\g<1>2.4.1-audit&amp;build={build}', s)
+    s = re.sub(r'(src="taf-engine-v242\.js\?v=)[^"]+', rf'\g<1>2.4.2-cloud-fog&amp;build={build}', s)
+
+    # The two current runtime layers are loaded from inline JavaScript rather
+    # than static <script> tags, so cache-bust those explicitly as well.
+    s = re.sub(
+        r"(loadScript\('taf-engine-v243\.js\?v=)[^']+",
+        rf"\g<1>{TAF_FOG_GATE_BUILD}&build={build}",
+        s,
+    )
+    s = re.sub(
+        r"(loadScript\('taf-app-v25\.js\?v=)[^']+",
+        rf"\g<1>{TAF_FOG_GATE_BUILD}&build={build}",
+        s,
+    )
+
     # Cache-bust the hidden model iframe without changing its mode query.
     s = re.sub(
         r'(<iframe\b[^>]*\bid="engine"[^>]*\bsrc=")([^"]+)(")',
@@ -112,6 +141,10 @@ def validate_v243() -> None:
     ):
         if marker not in taf:
             raise RuntimeError(f"missing TAF 2.4.3 marker: {marker}")
+    if f"build={p.ASSET_V}" not in taf:
+        raise RuntimeError("deployed TAF runtime is missing per-build cache busting")
+    if f"REQUIRED_FOG_POLICY_BUILD='{TAF_FOG_GATE_BUILD}'" not in taf:
+        raise RuntimeError("deployed TAF runtime is missing the strict Fog Policy build gate")
 
     bootstrap = p.rd(p.SITE / "taf-runtime-bootstrap.js")
     for marker in (
