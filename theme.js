@@ -10,7 +10,8 @@
   const page=file==="index"?"index":file;
   document.documentElement.dataset.epirPage=page;
 
-  const EPIR_LOCATION="Dla Lotniska EPIR · 52.828611, 18.330278";
+  const EPIR_LAT=52.828611,EPIR_LON=18.330278;
+  const EPIR_LOCATION=`Dla Lotniska EPIR · ${EPIR_LAT.toFixed(6)}, ${EPIR_LON.toFixed(6)}`;
   const LOCATION_SUFFIX={
     index:" · meteogram lotniczy multimodelowy",
     fog:" · FG / BR / MIFG · UTC",
@@ -83,13 +84,14 @@
     ["arch.html","ARCHIWUM","arch"]
   ];
 
+  const canonicalLocationLine=()=>EPIR_LOCATION+(LOCATION_SUFFIX[page]||"");
   const syncLocationHeader=()=>{
     const top=document.querySelector(".top");
-    if(!top)return;
+    if(!top)return null;
     let place=top.querySelector(".place");
     if(!place){
       const brand=top.querySelector(".brand");
-      if(!brand)return;
+      if(!brand)return null;
       let host=brand.parentElement;
       if(host===top){
         host=document.createElement("div");
@@ -100,12 +102,39 @@
       place.className="place";
       host.appendChild(place);
     }
-    place.textContent=EPIR_LOCATION+(LOCATION_SUFFIX[page]||"");
+    const line=canonicalLocationLine();
+    if(place.textContent!==line)place.textContent=line;
+    return place;
+  };
+
+  const installRadarLocationGuard=place=>{
+    if(page!=="radar"||!place||typeof MutationObserver!=="function")return;
+    const lat=document.getElementById("lat"),lon=document.getElementById("lon");
+    let syncing=false;
+    const enforce=()=>{
+      if(syncing)return;
+      const la=Number(lat?.value),lo=Number(lon?.value);
+      if(!Number.isFinite(la)||!Number.isFinite(lo))return;
+      const isEpir=Math.hypot(la-EPIR_LAT,lo-EPIR_LON)<0.001;
+      if(!isEpir)return;
+      const line=canonicalLocationLine();
+      if(place.textContent!==line){
+        syncing=true;
+        place.textContent=line;
+        syncing=false;
+      }
+    };
+    const observer=new MutationObserver(enforce);
+    observer.observe(place,{childList:true,characterData:true,subtree:true});
+    lat?.addEventListener("change",()=>queueMicrotask(enforce));
+    lon?.addEventListener("change",()=>queueMicrotask(enforce));
+    queueMicrotask(enforce);
   };
 
   const mount=()=>{
     if(new URLSearchParams(location.search).has("taf-engine"))return;
-    syncLocationHeader();
+    const place=syncLocationHeader();
+    installRadarLocationGuard(place);
     let nav=document.getElementById("epirGlobalNav");
     if(!nav){
       nav=document.createElement("nav");
