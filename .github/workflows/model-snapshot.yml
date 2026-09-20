@@ -28,6 +28,76 @@ jobs:
           ref: main
           fetch-depth: 0
 
+      - name: One-time canonical EPIR coordinate migration
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          replacements = {
+              '52.7989': '52.828611',
+              '18.2639': '18.330278',
+              '52.8275': '52.828611',
+              '18.3175': '18.330278',
+              '52.80, 18.26': '52.828611, 18.330278',
+          }
+          source_suffixes = {'.py', '.js', '.html', '.md', '.yml', '.yaml', '.txt', '.sh', '.json', '.sql'}
+          excluded_roots = {'data', 'tmp', 'fog-training-v2'}
+          changed = []
+
+          for p in Path('.').rglob('*'):
+              if not p.is_file() or p.suffix.lower() not in source_suffixes:
+                  continue
+              if not p.parts or p.parts[0] in {'.git', *excluded_roots}:
+                  continue
+              try:
+                  text = p.read_text(encoding='utf-8')
+              except UnicodeDecodeError:
+                  continue
+              new = text
+              for old, replacement in replacements.items():
+                  new = new.replace(old, replacement)
+              if new != text:
+                  p.write_text(new, encoding='utf-8')
+                  changed.append(str(p))
+
+          print('Canonical EPIR ARP: 52.828611, 18.330278')
+          print('Changed source files:')
+          for p in changed:
+              print(' -', p)
+          if not changed:
+              raise SystemExit('No coordinate occurrences changed; migration did not run as expected')
+          PY
+
+          # Restore this workflow to its pre-migration form in the final commit.
+          git show HEAD^:.github/workflows/model-snapshot.yml > .github/workflows/model-snapshot.yml
+
+      - name: Validate canonical EPIR target in active source
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          forbidden = ('52.7989', '18.2639', '52.8275', '18.3175', '52.80, 18.26')
+          suffixes = {'.py', '.js', '.html', '.md', '.yml', '.yaml', '.txt', '.sh', '.json', '.sql'}
+          excluded_roots = {'data', 'tmp', 'fog-training-v2'}
+          hits = []
+          for p in Path('.').rglob('*'):
+              if not p.is_file() or p.suffix.lower() not in suffixes:
+                  continue
+              if not p.parts or p.parts[0] in {'.git', *excluded_roots}:
+                  continue
+              try:
+                  text = p.read_text(encoding='utf-8')
+              except UnicodeDecodeError:
+                  continue
+              for token in forbidden:
+                  if token in text:
+                      hits.append(f'{p}: {token}')
+          if hits:
+              print('\n'.join(hits))
+              raise SystemExit('Old EPIR/Inowroclaw target coordinates remain in active source')
+          print('No legacy target-coordinate literals remain in active source.')
+          PY
+
       - name: Build server-side model snapshot
         run: python3 scripts/build_model_snapshot.py
 
@@ -40,27 +110,31 @@ jobs:
           p=Path('data/runtime/models-latest.json')
           j=json.loads(p.read_text(encoding='utf-8'))
           assert j.get('schema') == 'prognozaepir-model-snapshot-v1'
+          loc=j.get('location') or {}
+          assert abs(float(loc.get('lat')) - 52.828611) < 1e-9, loc
+          assert abs(float(loc.get('lon')) - 18.330278) < 1e-9, loc
           models=j.get('models') or {}
           assert len(models) >= 3, f'only {len(models)} models in snapshot'
           for mid,row in models.items():
               times=(row.get('hourly') or {}).get('time') or []
               assert len(times) >= 24, f'{mid}: only {len(times)} hours'
+          print('validated location:', loc)
           print('validated models:', ', '.join(models))
           PY
 
-      - name: Commit refreshed snapshot
+      - name: Commit canonical EPIR migration and refreshed snapshot
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/runtime/models-latest.json
+          git add -A
           if git diff --cached --quiet; then
-            echo "No model snapshot changes"
+            echo "No coordinate migration changes"
             exit 0
           fi
-          git commit -m "weather: refresh server-side model snapshot"
+          git commit -m "location: standardize project on EPIR ARP"
           for attempt in 1 2 3 4; do
             git pull --rebase origin main && git push origin HEAD:main && exit 0
-            echo "snapshot push retry $attempt"
+            echo "migration push retry $attempt"
             sleep $((attempt*3))
           done
           exit 1
