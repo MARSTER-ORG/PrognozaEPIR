@@ -1,9 +1,8 @@
 'use strict';
 
 // Runtime bootstrap. The stable radar repair core runs first because it removes
-// obsolete controls. The real MTG LI/LFL module is then restored, and only after
-// that the POLRAD stability bridge is installed. This keeps radar analysis and
-// lightning ownership independent.
+// obsolete controls. The real MTG LI/LFL module is then restored, followed by
+// the POLRAD stability bridge and the final late-start UI synchronizer.
 (() => {
   if (window.__EPIR_RADAR_BOOTSTRAP_R9__) return;
   window.__EPIR_RADAR_BOOTSTRAP_R9__ = true;
@@ -44,8 +43,12 @@
     }
   };
 
+  const loadUiSync=()=>{
+    loadScript('radar-ui-sync-r12.js?v=20260920-r12','epirRadarUiSyncR12');
+  };
+
   const loadStability=()=>{
-    loadScript('radar-stability-r10.js?v=20260920-r11','epirRadarStabilityR11');
+    loadScript('radar-stability-r10.js?v=20260920-r11','epirRadarStabilityR11',loadUiSync,loadUiSync);
   };
 
   const loadLfl=()=>{
