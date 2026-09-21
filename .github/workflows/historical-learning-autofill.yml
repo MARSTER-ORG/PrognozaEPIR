@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: historical-learning-autofill-main
@@ -133,3 +134,9 @@ jobs:
             sleep $((attempt * 3))
           done
           exit 1
+
+      - name: Redeploy refreshed learning
+        if: steps.acquire.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages-v2.yml --repo "${{ github.repository }}" --ref main
