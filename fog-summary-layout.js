@@ -5,7 +5,7 @@
   if(!window.__EPIR_METEOGRAM_PRESSURE_UNITS_LOADER__){
     window.__EPIR_METEOGRAM_PRESSURE_UNITS_LOADER__=true;
     const p=document.createElement('script');
-    p.src='meteogram-pressure-units.js?v=20260922-mmHg1';
+    p.src='meteogram-pressure-units.js?v=20260922-mmHg2';
     p.async=false;
     p.dataset.epirPressureUnits='1';
     p.onerror=()=>{window.__EPIR_METEOGRAM_PRESSURE_UNITS_LOADER__=false;console.error('EPIR meteogram: nie udało się załadować meteogram-pressure-units.js');};
