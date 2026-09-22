@@ -47,15 +47,13 @@ function fakeStorage(mode) {
   assert.equal(rows[0].score, 77);
 })();
 
-(function testFogPageIsNativeAndMeteogramFree() {
+(function testFogPageUsesIntegrated244Runtime() {
   const html = read('fog.html');
   assert(html.includes('id="epirGlobalNav"'));
   assert(html.includes('id="fogStandaloneMount"'));
   assert(html.includes('window.__PROGNOZA_EPIR_FOG_STANDALONE__=true'));
-  for (const asset of [
-    'fog-mode-switch.js', 'fog-engine.js', 'mifg-engine.js', 'fog-summary-layout.js',
-    'br-engine.js', 'fog-page-layout.js', 'fog-visibility-cells.js'
-  ]) assert(html.includes(asset), `missing ${asset}`);
+  assert(html.includes('fog-engine-v244.js?v='));
+  assert(html.includes('fog-engine.js?v='));
   for (const forbidden of [
     '<iframe', 'fogRuntime', 'index.html?fogpanel=', '<canvas', 'canvasViewport',
     'MutationObserver', 'ResizeObserver', 'epir-pages-compat-', 'observation-engine.js',
@@ -63,67 +61,59 @@ function fakeStorage(mode) {
   ]) assert(!html.includes(forbidden), `fog.html contains dead/meteogram marker: ${forbidden}`);
 })();
 
-(function testVisibilityCellsStayPresentWhenInactive() {
-  const js = read('fog-visibility-cells.js');
-  assert(js.includes('FG · szacowana VIS'));
-  assert(js.includes('BR · szacowana VIS'));
-  assert(js.includes('MIFG · VIS standardowa'));
-  assert(js.includes('function isOperationalFg(row)'));
-  assert(js.includes('brak sygnału FOG ≥50/100 w 48 h'));
-  assert(js.includes('BRAK FG'));
-  assert(js.includes('bez VIS &lt;1000 m nie oznaczam FG'));
-  assert(js.includes('brak aktywnego BR ≥50/100 w 24 h'));
-  assert(js.includes('brak aktywnego MIFG ≥50/100 w 48 h'));
+(function testIntegrated244UsesUnifiedThreshold60() {
+  const engine = read('fog-engine-v244.js');
+  assert(engine.includes("const V='2.4.4',H=3600e3,ACTIVE=60"));
+  assert(engine.includes('PrognozaEPIRFogRenderThreshold=ACTIVE'));
+  assert(engine.includes('PrognozaEPIRBRSeries=br'));
+  assert(engine.includes('PrognozaEPIRMIFG={'));
 })();
 
-(function testMeteogramUsesSelectedFogSeries() {
+(function testMeteogramUsesThreshold60ForAllFogPhenomena() {
   const overlay = read('fog-meteogram-overlay.js');
   assert(overlay.includes('function selectedMode()'));
   assert(overlay.includes('PrognozaEPIRFogLegacySeries'));
   assert(overlay.includes('PrognozaEPIRFogVNextSeries'));
   assert(overlay.includes('fogScoreLegacy'));
-  assert(overlay.includes('prognozaepir:fog-engine-mode-changed'));
-  assert(/FOG_DRAW_THRESHOLD\s*=\s*50/.test(overlay));
-  assert(/BR_DRAW_THRESHOLD\s*=\s*50/.test(overlay));
+  assert(/FOG_DRAW_THRESHOLD\s*=\s*60/.test(overlay));
+  assert(/BR_DRAW_THRESHOLD\s*=\s*60/.test(overlay));
+  assert(/MIFG_DRAW_THRESHOLD\s*=\s*60/.test(overlay));
+  assert(/FOG_INFO_THRESHOLD\s*=\s*60/.test(overlay));
+  assert(/BR_INFO_THRESHOLD\s*=\s*60/.test(overlay));
+  assert(/MIFG_INFO_THRESHOLD\s*=\s*60/.test(overlay));
 })();
 
-(function testMifgUsesSameSeriesOnFogPageAndMeteogram() {
-  const page = read('fog-page-layout.js');
-  const overlay = read('fog-meteogram-overlay.js');
-  const engine = read('mifg-engine.js');
-  assert(page.includes('window.PrognozaEPIRMIFG?.getSeries?.()'));
-  assert(overlay.includes('window.PrognozaEPIRMIFG?.getSeries?.()'));
-  assert(engine.includes('window.PrognozaEPIRMIFG='));
-  assert(/MIFG_DRAW_THRESHOLD\s*=\s*50/.test(overlay));
-  assert(page.includes('score < 50'));
+(function testCanonicalBridgeHardGatesBrAndMifgAt60() {
+  const bridge = read('fog-index-bridge.js');
+  assert(bridge.includes('const ACTIVE=60'));
+  assert(bridge.includes('function activeRows(rows)'));
+  assert(bridge.includes('mifg=activeRows(m)'));
+  assert(bridge.includes('return activeRows(src.map(row=>engine.scoreRow'));
+  assert(bridge.includes('PrognozaEPIRFogRenderThreshold=ACTIVE'));
 })();
 
-(function testMifgPageListsAllOperationalWindows() {
-  const page = read('fog-page-layout.js');
-  assert(page.includes('function activeWindows(rows)'));
-  assert(page.includes('Okna MIFG ≥50/100'));
-  assert(page.includes("windows.map(windowHtml).join('')"));
-  assert(page.includes('wszystkie okresy z tej samej serii co meteogram'));
-  assert(page.includes('czerwone punkty i liczby'));
-  assert(!page.includes('function firstActiveWindow(rows)'));
+(function testQuickPreviewShowsBrAndSuppressesSub60Rows() {
+  const cleanup = read('meteogram-visfog-cleanup.js');
+  assert(cleanup.includes('const FOG_TOOLTIP_THRESHOLD = 60'));
+  assert(cleanup.includes('function brAt(t)'));
+  assert(cleanup.includes("appendHoverRow(tooltip,'Zamglenie · BR'"));
+  assert(cleanup.includes('data-epir-br-hover'));
+  assert(cleanup.includes('FOG / BR / MIFG ≥60/100'));
 })();
 
-(function testMifgVisibilityMeaningIsNotFabricated() {
-  const cells = read('fog-visibility-cells.js');
-  const engine = read('mifg-engine.js');
-  assert(cells.includes('nie jest to VIS warstwy &lt;2 m'));
-  assert(engine.includes('Visibility is deliberately'));
-  assert(engine.includes('not used as a primary predictor'));
+(function testSectionInfoUsesSameThreshold60() {
+  const section = read('fog-section-info-fix.js');
+  assert(section.includes('const ACTIVE=60'));
+  assert(section.includes("addOrReplace(values,'br','Zamglenie · BR',br,ACTIVE)"));
+  assert(section.includes("addOrReplace(values,'mifg','Niska mgła <2 m · MIFG',mifg,ACTIVE)"));
 })();
 
-(function testBuildExportsDedicatedLegacySeries() {
+(function testPagesWiringTargetsIntegrated244Provider() {
   const wire = read('scripts/wire_fog_mifg_utc_runtime.py');
+  assert(wire.includes('fog-engine-v244.js'));
   assert(wire.includes('PrognozaEPIRFogLegacySeries'));
-  assert(wire.includes("'<iframe'"));
-  assert(wire.includes("'index.html?fogpanel='"));
-  assert(wire.includes('FOG_PAGE_ASSETS'));
-  assert(wire.includes('function isOperationalFg'));
-  assert(wire.includes('Kiedy FG?'));
+  assert(wire.includes('FOG_TOOLTIP_THRESHOLD = 60'));
+  assert(wire.includes('FOG_DRAW_THRESHOLD=60'));
 })();
 
 (function testTafUsesExactlySelectedFogMode() {
