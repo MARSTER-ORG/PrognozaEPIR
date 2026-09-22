@@ -1,296 +1,46 @@
 'use strict';
-(() => {
-  if (typeof window === 'undefined' || typeof document === 'undefined') return;
-  if (window.__PROGNOZA_EPIR_FOG_VNEXT_BRIDGE__) return;
-  window.__PROGNOZA_EPIR_FOG_VNEXT_BRIDGE__ = true;
-
-  const HOUR = 3600e3;
-  const finite = Number.isFinite;
-  const num = v => v !== null && v !== undefined && v !== '' && finite(Number(v)) ? Number(v) : null;
-  const mean = a => { const q = (a || []).filter(finite); return q.length ? q.reduce((s, v) => s + v, 0) / q.length : null; };
-  const fmt = (v, d = 1) => finite(v) ? Number(v).toFixed(d) : '—';
-  const fmt0 = v => finite(v) ? String(Math.round(v)) : '—';
-  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const parseUtc = s => Date.parse(String(s || '').endsWith('Z') ? s : String(s || '') + 'Z');
-  let iconRows = [], ecmwfRows = [], loading = null, lastAppliedSignature = '';
-
-  function loadScript(globalName, src, dataKey) {
-    if (window[globalName]) return Promise.resolve(window[globalName]);
-    return new Promise((resolve, reject) => {
-      const selector = `script[data-${dataKey}="1"]`;
-      const old = document.querySelector(selector);
-      if (old) {
-        old.addEventListener('load', () => window[globalName] && resolve(window[globalName]), {once:true});
-        setTimeout(() => window[globalName] && resolve(window[globalName]), 50);
-        return;
-      }
-      const s = document.createElement('script');
-      s.src = src;
-      s.setAttribute(`data-${dataKey}`, '1');
-      s.onload = () => window[globalName] ? resolve(window[globalName]) : reject(new Error(`${globalName} API missing`));
-      s.onerror = () => reject(new Error(`${src} unavailable`));
-      document.head.appendChild(s);
-    });
-  }
-  const loadPhysics = () => loadScript('PrognozaEPIRFogPhysicsVNext', 'fog-physics-vnext.js?v=20260916-prod1', 'fog-physics-vnext');
-  const loadProbability = () => loadScript('PrognozaEPIRFogVNextProbabilityLayer', 'fog-vnext-probability-layer.js?v=20260916-physicsfirst2', 'fog-probability-vnext');
-  const loadVisibility = () => loadScript('PrognozaEPIRFogVisibilityVNext', 'fog-visibility-vnext.js?v=20260916-vis2', 'fog-visibility-vnext');
-
-  async function fetchJson(url) {
-    const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 12000);
-    try {
-      const r = await fetch(url, {cache:'no-store', signal:ctl.signal});
-      const j = await r.json().catch(() => null);
-      if (!r.ok || !j) throw new Error(j?.reason || j?.message || ('HTTP ' + r.status));
-      return j;
-    } finally { clearTimeout(timer); }
-  }
-  function apiUrl(model, vars) {
-    const p = window.PLACE || {lat:52.828611, lon:18.330278};
-    const q = new URLSearchParams({latitude:String(p.lat), longitude:String(p.lon), hourly:vars.join(','), models:model, timezone:'UTC', forecast_hours:'60', past_hours:'6', wind_speed_unit:'ms'});
-    return 'https://api.open-meteo.com/v1/forecast?' + q;
-  }
-  function rowsFrom(j, kind) {
-    const h = j?.hourly; if (!Array.isArray(h?.time)) return [];
-    return h.time.map((s, i) => {
-      const row = {t:parseUtc(s)};
-      if (kind === 'icon') {
-        row.soil01 = num(h.soil_moisture_0_to_1cm?.[i]); row.soil13 = num(h.soil_moisture_1_to_3cm?.[i]);
-        row.soilT0 = num(h.soil_temperature_0cm?.[i]); row.soilT6 = num(h.soil_temperature_6cm?.[i]); row.Ts = num(h.surface_temperature?.[i]);
-      } else {
-        row.pbl = num(h.boundary_layer_height?.[i]); row.soil07 = num(h.soil_moisture_0_to_7cm?.[i]);
-        row.soilT07 = num(h.soil_temperature_0_7cm?.[i] ?? h.soil_temperature_0_to_7cm?.[i]); row.Ts = num(h.surface_temperature?.[i]);
-        row.T2 = num(h.temperature_2m?.[i]); row.isDay = num(h.is_day?.[i]); row.sw = num(h.shortwave_radiation?.[i]);
-      }
-      return row;
-    }).filter(x => finite(x.t)).sort((a, b) => a.t - b.t);
-  }
-  async function fetchIcon() {
-    const tiers = [
-      ['soil_moisture_0_to_1cm','soil_moisture_1_to_3cm','soil_temperature_0cm','soil_temperature_6cm','surface_temperature'],
-      ['soil_moisture_0_to_1cm','soil_moisture_1_to_3cm','soil_temperature_0cm','soil_temperature_6cm'],
-      ['soil_moisture_0_to_1cm','soil_moisture_1_to_3cm']
-    ];
-    let err = null; for (const vars of tiers) try { return rowsFrom(await fetchJson(apiUrl('icon_d2', vars)), 'icon'); } catch (e) { err = e; }
-    throw err || new Error('ICON-D2 vNext unavailable');
-  }
-  async function fetchEcmwf() {
-    const tiers = [
-      ['boundary_layer_height','soil_moisture_0_to_7cm','soil_temperature_0_7cm','surface_temperature','temperature_2m','shortwave_radiation','is_day'],
-      ['boundary_layer_height','soil_moisture_0_to_7cm','surface_temperature','temperature_2m','shortwave_radiation','is_day'],
-      ['boundary_layer_height','surface_temperature','temperature_2m','shortwave_radiation','is_day']
-    ];
-    let err = null; for (const vars of tiers) try { return rowsFrom(await fetchJson(apiUrl('ecmwf_ifs', vars)), 'ecmwf'); } catch (e) { err = e; }
-    throw err || new Error('ECMWF vNext unavailable');
-  }
-  async function ensurePhysicalData() {
-    if (loading) return loading;
-    loading = (async () => {
-      const [a, b] = await Promise.allSettled([fetchIcon(), fetchEcmwf()]);
-      iconRows = a.status === 'fulfilled' ? a.value : []; ecmwfRows = b.status === 'fulfilled' ? b.value : [];
-      window.PrognozaEPIRFogVNextSources = {icon:iconRows.length > 0, ecmwf:ecmwfRows.length > 0, updated:Date.now(), iconError:a.status === 'rejected' ? String(a.reason?.message || a.reason) : null, ecmwfError:b.status === 'rejected' ? String(b.reason?.message || b.reason) : null};
-      return window.PrognozaEPIRFogVNextSources;
-    })().finally(() => { loading = null; });
-    return loading;
-  }
-
-  function nearest(rows, t, max = 50 * 60e3) { let best = null, bd = Infinity; for (const r of rows || []) { const d = Math.abs(r.t - t); if (d < bd) { bd = d; best = r; } } return bd <= max ? best : null; }
-  function modelMean(hour, key) { return mean((hour?.models || []).map(m => num(m?.[key]))); }
-  function modelComponentMean(hour, key) { return mean((hour?.models || []).map(m => num(m?.components?.[key]))); }
-  function legacyAt(series, t) { return nearest(series, t, 40 * 60e3); }
-  function surfaceAt(t, hour) { const e = nearest(ecmwfRows, t), i = nearest(iconRows, t); return num(e?.Ts) ?? modelMean(hour, 'Tskin') ?? num(i?.Ts); }
-  function diff(a, b) { return finite(a) && finite(b) ? a - b : null; }
-  function t5cmObservation(t) {
-    const rows = Array.isArray(window.PrognozaEPIRT5cmObservations) ? window.PrognozaEPIRT5cmObservations : [];
-    const one = window.PrognozaEPIRT5cmObs, candidates = one ? [...rows, one] : rows;
-    let best = null, bd = Infinity;
-    for (const r of candidates) {
-      const rt = Date.parse(r?.obs_time || r?.time || r?.timestamp || ''), v = num(r?.temperature_c ?? r?.T5cm_obs);
-      if (!finite(rt) || !finite(v)) continue;
-      const d = Math.abs(rt - t); if (d < bd) { bd = d; best = {temperature_c:v, obs_time:new Date(rt).toISOString(), source:r?.source || 'T5cm_obs', ageHours:Math.abs(Date.now() - rt) / HOUR}; }
-    }
-    return bd <= 3 * HOUR ? best : null;
-  }
-  function inputFor(series, hour) {
-    const t = hour.t, e = nearest(ecmwfRows, t), i = nearest(iconRows, t), e1 = nearest(ecmwfRows, t - HOUR), e3 = nearest(ecmwfRows, t - 3 * HOUR);
-    const h1 = legacyAt(series, t - HOUR), h3 = legacyAt(series, t - 3 * HOUR);
-    const T = modelMean(hour, 'T') ?? num(hour.T), Td = modelMean(hour, 'Td'), RH = modelMean(hour, 'RH'), WS = modelMean(hour, 'WS');
-    const T1 = h1 ? (modelMean(h1, 'T') ?? num(h1.T)) : null, T3 = h3 ? (modelMean(h3, 'T') ?? num(h3.T)) : null, Td3 = h3 ? modelMean(h3, 'Td') : null, RH3 = h3 ? modelMean(h3, 'RH') : null;
-    const Ts = surfaceAt(t, hour), Ts1 = h1 ? surfaceAt(t - HOUR, h1) : null, Ts3 = h3 ? surfaceAt(t - 3 * HOUR, h3) : null;
-    const sc = diff(T, Ts), sc1 = diff(T1, Ts1), sc3 = diff(T3, Ts3), cbh = modelMean(hour, 'CBH'), cbh3 = h3 ? modelMean(h3, 'CBH') : null;
-    const dmi = (hour.models || []).find(m => m?.id === 'dmi_harmonie_arome_europe'), t5 = t5cmObservation(t);
-    const observedFog = /^(FG|FZFG)$/i.test(String(hour.obsPhenomenon || ''));
-    return {
-      t:T, td:Td, rh:RH, ws:WS, visibility:num(hour.vis), observedFog, weatherFog:null,
-      leadHours:Math.max(0, (t - Date.now()) / HOUR),
-      soilIcon01:num(i?.soil01), soilIcon13:num(i?.soil13), soilEcmwf07:num(e?.soil07), precip12:modelMean(hour, 'p12'),
-      pbl:num(e?.pbl), deltaPbl1:diff(num(e?.pbl), num(e1?.pbl)), deltaPbl3:diff(num(e?.pbl), num(e3?.pbl)),
-      tsurface:Ts, deltaSurfaceCooling1:diff(sc, sc1), deltaSurfaceCooling3:diff(sc, sc3), deltaTsurface3:diff(Ts, Ts3),
-      deltaSpread3:finite(T) && finite(Td) && finite(T3) && finite(Td3) ? (T - Td) - (T3 - Td3) : null, deltaRh3:diff(RH, RH3),
-      inversion:modelMean(hour, 'inv200'), shear:null, isDay:num(e?.isDay), shortwave:num(e?.sw) ?? modelMean(hour, 'SW'), cloudCover:modelMean(hour, 'TCC'), lowCloud:modelMean(hour, 'LOW'),
-      cloud2m:num(dmi?.directFog), cbh, cbhDrop3:finite(cbh) && finite(cbh3) ? cbh3 - cbh : null, precip:modelMean(hour, 'RR'), verticalRh:modelMean(hour, 'rhLow'),
-      moistAdvection:modelComponentMean(hour, 'SMADV'), surfaceContrast:modelComponentMean(hour, 'SCOLD'), soilTemperature0:num(i?.soilT0), soilTemperature6:num(i?.soilT6), soilTemperatureEcmwf07:num(e?.soilT07),
-      t5cmObs:num(t5?.temperature_c), t5cmObsTime:t5?.obs_time || null, t5cmObsSource:t5?.source || null, t5cmObsAgeHours:num(t5?.ageHours)
-    };
-  }
-
-  function scoreClass(s) { if (!finite(s)) return 'BRAK DANYCH'; if (s < 50) return 'NIE'; if (s < 60) return 'MOŻLIWA'; if (s < 80) return 'PRAWDOPODOBNA'; return 'BARDZO PRAWDOPODOBNA'; }
-  function riskCss(s) { if (!finite(s) || s < 50) return ''; return s >= 80 ? 'fog-risk-vhigh' : s >= 60 ? 'fog-risk-high' : 'fog-risk-mid'; }
-  function visCss(v) { if (!finite(v)) return ''; return v < 200 ? 'fog-risk-vhigh' : v < 500 ? 'fog-risk-high' : v < 1000 ? 'fog-risk-mid' : ''; }
-  function localHour(t) { try { return new Intl.DateTimeFormat('pl-PL', {timeZone:window.PLACE?.tz || 'UTC', hour:'2-digit', minute:'2-digit'}).format(new Date(t)); } catch (_) { return new Date(t).toISOString().slice(11, 16); } }
-  function fmtVis(v) { return finite(v) ? Math.max(0, Math.round(v)) + ' m' : '—'; }
-  function fmtRange(g) { return g && finite(g.low) && finite(g.high) ? `${Math.round(g.low)}–${Math.round(g.high)} m` : '—'; }
-  function onsetAndDissipation(series) {
-    const idx = series.findIndex(x => finite(x?.score) && x.score >= 50), onset = idx >= 0 ? series[idx].t : null;
-    let end = null;
-    if (idx >= 0) { let last = idx; while (last + 1 < series.length && finite(series[last + 1]?.score) && series[last + 1].score >= 50) last++; end = series[last + 1]?.t ?? null; }
-    const peak = series.reduce((a, b) => !a || (finite(b.score) && (!finite(a.score) || b.score > a.score)) ? b : a, null);
-    return {onset, end, peak};
-  }
-  function episodeRows(series, ev) {
-    if (!ev?.onset) return [];
-    return series.filter(x => x.t >= ev.onset && (!ev.end || x.t < ev.end) && finite(x.score) && x.score >= 50);
-  }
-  function driverText(row) {
-    const v = row?.vnext || {};
-    const items = [
-      ['nasycenie', finite(v.SATURATION) ? v.SATURATION * 100 : null],
-      ['niski/stabilny PBL', num(row?.SPBL)],
-      ['chłodzenie powierzchni', num(row?.SSFC_COOL)],
-      ['wilgotność gleby', num(row?.SSOIL)],
-      ['RAD', num(row?.RAD_vNextShadow)], ['ADV', num(row?.ADV_vNextShadow)], ['CBL', num(row?.CBL_vNextShadow)], ['PCP', num(row?.PCP_vNextShadow)]
-    ].filter(x => finite(x[1])).sort((a,b) => b[1]-a[1]).slice(0,3);
-    return items.length ? items.map(x => `${x[0]} ${Math.round(x[1])}/100`).join(' · ') : 'brak wystarczających danych';
-  }
-
-  function renderOperationalSummary() {
-    let selectedMode = 'legacy';
-    try { selectedMode = localStorage.getItem('prognozaepir-fog-engine-mode') === 'vnext' ? 'vnext' : 'legacy'; } catch (_) {}
-    if (selectedMode !== 'vnext') return;
-    const series = window.PrognozaEPIRFogSeries || [], now = Date.now();
-    const future = series.filter(x => x.t >= now - HOUR && x.t <= now + 48 * HOUR);
-    if (!future.length) return;
-    const summary = document.getElementById('fogSummary'), hours = document.getElementById('fogHours'), source = document.getElementById('fogSource');
-    if (!summary) return;
-    const current = future.reduce((a, b) => Math.abs(b.t - now) < Math.abs(a.t - now) ? b : a, future[0]);
-    const ev = onsetAndDissipation(future), peak = ev.peak || current, type = peak.type?.text || current.type?.text || peak.mechanism1 || current.mechanism1 || '—';
-    const rows = episodeRows(future, ev), Visibility = window.PrognozaEPIRFogVisibilityVNext;
-    const eventVis = Visibility?.eventSummary ? Visibility.eventSummary(rows) : null;
-    const curVis = current.visGuidance, peakVis = peak.visGuidance;
-    const minVis = eventVis?.minimum ?? peakVis?.point ?? curVis?.point;
-    const minTime = eventVis?.minimumTime ?? peak.t;
-    const p1000 = eventVis?.p1000 ?? peakVis?.p1000 ?? curVis?.p1000;
-    const p500 = eventVis?.p500 ?? peakVis?.p500 ?? curVis?.p500;
-    const p1500 = eventVis?.p1500 ?? peakVis?.p1500 ?? curVis?.p1500;
-    const p200 = eventVis?.p200 ?? peakVis?.p200 ?? curVis?.p200;
-    const visConf = eventVis?.confidence ?? peakVis?.confidence ?? curVis?.confidence;
-    const visConfLabel = eventVis?.confidenceLabel ?? peakVis?.confidenceLabel ?? curVis?.confidenceLabel ?? 'brak danych';
-    const nwpDiag = peakVis?.nwpRelation || curVis?.nwpRelation || 'brak danych NWP VIS';
-    const nwpMedian = peakVis?.modelMedian ?? curVis?.modelMedian;
-
-    summary.innerHTML = `
-      <div class="fog-card ${riskCss(current.score)}"><small>MGŁA W CIĄGU NAJBLIŻSZEJ GODZINY</small><strong>${scoreClass(current.score)}</strong><em>${finite(current.score) ? fmt0(current.score) + '/100' : 'brak danych'}</em></div>
-      <div class="fog-card"><small>Typ procesu</small><strong>${esc(type)}</strong><em>${esc(current.vnext?.phase || 'faza nieustalona')}</em></div>
-      <div class="fog-card"><small>Kiedy mgła?</small><strong>${ev.onset ? localHour(ev.onset) + ' → ' + (ev.end ? localHour(ev.end) : 'dalej') : 'brak sygnału ≥50 w 48 h'}</strong><em>próg operacyjny 50/100</em></div>
-      <div class="fog-card ${riskCss(peak.score)}"><small>Maksimum w 48 h</small><strong>${finite(peak.score) ? scoreClass(peak.score) : 'BRAK DANYCH'}</strong><em>${finite(peak.score) ? fmt0(peak.score) + '/100 · ' + localHour(peak.t) : '—'}</em></div>
-      <div class="fog-card ${visCss(curVis?.point)}"><small>VIS vNext — NAJBLIŻSZA GODZINA</small><strong>${fmtRange(curVis)}</strong><em>oczekiwana ${fmtVis(curVis?.point)} · fizyka silnika</em></div>
-      <div class="fog-card ${visCss(peakVis?.point)}"><small>VIS vNext — MAKSIMUM ZJAWISKA</small><strong>${fmtRange(peakVis)}</strong><em>oczekiwana ${fmtVis(peakVis?.point)} · ${localHour(peak.t)}</em></div>
-      <div class="fog-card ${visCss(minVis)}"><small>MINIMUM OCZEKIWANEJ VIS</small><strong>${fmtVis(minVis)}</strong><em>${finite(minTime) ? localHour(minTime) : '—'} · zakres, nie pozorna dokładność</em></div>
-      <div class="fog-card"><small>P(VIS &lt;1000 / &lt;500 m)</small><strong>${fmt0(p1000)}% · ${fmt0(p500)}%</strong><em>z fizyki i fazy epizodu</em></div>
-      <div class="fog-card"><small>P(VIS &lt;1500 / &lt;200 m)</small><strong>${fmt0(p1500)}% · ${fmt0(p200)}%</strong><em>osobne progi operacyjne</em></div>
-      <div class="fog-card"><small>Pewność prognozy VIS</small><strong>${esc(visConfLabel)}</strong><em>${fmt0((visConf ?? 0) * 100)}% · jakość fizyki i kompletność danych</em></div>
-      <div class="fog-card"><small>Dlaczego?</small><strong>${esc(driverText(peak))}</strong><em>najsilniejsze czynniki przy maksimum</em></div>
-      <div class="fog-card"><small>VIS NWP — KONTROLA</small><strong>${fmtVis(nwpMedian)}</strong><em>${esc(nwpDiag)} · nie steruje VIS vNext</em></div>`;
-
-    if (hours) {
-      hours.innerHTML = future.slice(0, 13).map(x => {
-        const g = x.visGuidance;
-        return `<div class="fog-hour ${riskCss(x.score)}"><b>${localHour(x.t)}</b><div class="p">${scoreClass(x.score)}</div><small>${finite(x.score) ? fmt0(x.score) + '/100' : '—'} · ${esc(x.vnext?.phase || '')}</small><small>VIS vNext ${fmtRange(g)}</small><small>oczek. ${fmtVis(g?.point)}</small><small>&lt;1 km ${fmt0(g?.p1000)}% · &lt;500 ${fmt0(g?.p500)}%</small><small>NWP ${fmtVis(g?.modelMedian)} · diagnostyka</small></div>`;
-      }).join('');
-    }
-    if (source) source.textContent = `EPIR FOG ENGINE vNext PHYSICS-FIRST · VIS ${peakVis?.version || curVis?.version || '—'} · NWP VIS diagnostycznie · ${current.fogEngineFallback ? 'fog: legacy fallback' : 'fog: physics + dodatnie potwierdzenie direct'}`;
-  }
-
-  function cell(k, v, sub = '') { return `<div class="fog-diag-cell"><small>${esc(k)}</small><b>${esc(v)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</div>`; }
-  function currentHour() { const s = window.PrognozaEPIRFogSeries || []; if (!s.length) return null; const now = Date.now(); let best = s[0], bd = Infinity; for (const x of s) { const d = Math.abs(x.t - now); if (d < bd) { bd = d; best = x; } } return best; }
-  function renderDiagnostics() {
-    const h = currentHour(), v = h?.vnext; if (!h || !v) return;
-    const base = document.getElementById('fogDiag')?.closest('details'); if (!base) return;
-    let details = document.getElementById('fogVNextDiagnostics');
-    if (!details) { details = document.createElement('details'); details.id = 'fogVNextDiagnostics'; details.className = 'fog-diag'; base.insertAdjacentElement('afterend', details); }
-    const vi = h.vnextInput || {}, p = h.vnextProbability || {}, vg = h.visGuidance || {}, vd = vg.diagnostics || {};
-    details.innerHTML = `<summary>Fog Engine vNext — PHYSICS-FIRST + VIS</summary><div class="fog-data-note"><b>Tryb:</b> operational. VIS vNext jest liczona z P_physics, nasycenia, PBL, chłodzenia powierzchni, mechanizmu, wilgotności podłoża i fazy epizodu. Widzialność NWP/legacy jest wyłącznie diagnostyką i nie może podnieść prognozowanej VIS ani wyłączyć silnego sygnału mgły. Niska VIS NWP może jedynie dodatnio potwierdzić sam sygnał wystąpienia mgły.</div><div class="fog-diag-grid">
-      ${cell('Fog score vNext', finite(h.score) ? fmt0(h.score) + '/100' : '—', h.fogEngineFallback ? 'LEGACY FALLBACK' : 'PHYSICS-FIRST')}
-      ${cell('Fog score legacy', finite(h.fogScoreLegacy) ? fmt0(h.fogScoreLegacy) + '/100' : '—')}
-      ${cell('VIS vNext', fmtVis(vg.point), fmtRange(vg))}${cell('Pewność VIS', vg.confidenceLabel || '—', finite(vg.confidence) ? fmt0(vg.confidence * 100) + '%' : '—')}
-      ${cell('P VIS <1500', finite(vg.p1500) ? fmt0(vg.p1500) + '%' : '—')}${cell('P VIS <1000', finite(vg.p1000) ? fmt0(vg.p1000) + '%' : '—')}${cell('P VIS <500', finite(vg.p500) ? fmt0(vg.p500) + '%' : '—')}${cell('P VIS <200', finite(vg.p200) ? fmt0(vg.p200) + '%' : '—')}
-      ${cell('VIS NWP Q25–Q75', finite(vd.q25) && finite(vd.q75) ? `${vd.q25}–${vd.q75} m` : '—', `${vg.modelCount ?? 0} modeli · tylko diagnostyka`)}${cell('VIS NWP mediana', fmtVis(vg.modelMedian), vg.nwpRelation || '—')}
-      ${cell('VIS legacy', fmtVis(vg.rawLegacy), 'tylko diagnostyka')}${cell('Severity VIS', finite(vg.severity) ? fmt(vg.severity, 3) : '—', 'wewnętrzna intensywność')}
-      ${cell('P_physics', finite(p.P_physics) ? fmt(p.P_physics, 3) : '—')}${cell('P_direct', finite(p.P_direct) ? fmt(p.P_direct, 3) : '—', p.directRole || 'confirm-only')}
-      ${cell('P_model_final', finite(p.P_model_final) ? fmt(p.P_model_final, 3) : '—', `direct +${finite(p.directContribution) ? fmt(p.directContribution,3) : '0.000'}`)}${cell('Lead bucket', p.leadBucket || '—')}
-      ${cell('SSOIL', fmt0(h.SSOIL) + '/100')}${cell('SPBL', fmt0(h.SPBL) + '/100')}${cell('SSFC_COOL', fmt0(h.SSFC_COOL) + '/100')}
-      ${cell('Tsurface', finite(vi.tsurface) ? fmt(vi.tsurface, 1) + ' °C' : '—')}${cell('T5 cm OBS', finite(vi.t5cmObs) ? fmt(vi.t5cmObs, 1) + ' °C' : '—')}
-      ${cell('RAD', finite(h.RAD_vNextShadow) ? fmt0(h.RAD_vNextShadow) + '/100' : '—')}${cell('ADV', finite(h.ADV_vNextShadow) ? fmt0(h.ADV_vNextShadow) + '/100' : '—')}${cell('CBL', finite(h.CBL_vNextShadow) ? fmt0(h.CBL_vNextShadow) + '/100' : '—')}${cell('PCP', finite(h.PCP_vNextShadow) ? fmt0(h.PCP_vNextShadow) + '/100' : '—')}
-      ${cell('Data quality', fmt0((v.dataQuality || 0) * 100) + '%')}${cell('Braki', v.missing?.length ? v.missing.join(', ') : 'brak')}${cell('Fallbacki fizyki', v.fallbacks?.length ? v.fallbacks.join(', ') : 'brak')}
-    </div>`;
-  }
-
-  function enrichSeries(Physics, Probability, Visibility) {
-    const series = window.PrognozaEPIRFogSeries; if (!Array.isArray(series) || !series.length) return false;
-    const sig = `${series.length}:${series[0]?.t}:${series.at(-1)?.t}:${iconRows.length}:${ecmwfRows.length}:vis2`;
-    if (sig === lastAppliedSignature && series.every(x => x?.fogEngineMode === 'vnext-production' && x?.visGuidance)) { renderOperationalSummary(); renderDiagnostics(); return true; }
-    for (const h of series) {
-      if (!finite(h?.t)) continue;
-      const legacyScore = num(h.fogScoreLegacy) ?? num(h.score);
-      const input = inputFor(series, h);
-      const enhanced = Physics.enhanceLegacyHour({...h, score:legacyScore}, input);
-      const probability = Probability.evaluate(input, enhanced.vnext || {});
-      const op = Probability.operationalScore(legacyScore, probability);
-      const visGuidance = Visibility.evaluate(h, {
-        physicsProbability:probability.P_physics,
-        vnext:enhanced.vnext || {},
-        leadHours:input.leadHours,
-        phase:enhanced.vnext?.phase
-      });
-      Object.assign(h, enhanced, {
-        score:op.score,
-        fogScoreLegacy:legacyScore,
-        fogEngineMode:'vnext-production',
-        fogEngineFallback:op.fallback,
-        fogEngineSource:op.source,
-        fogProbabilityVNext:finite(probability.P_model_final) ? probability.P_model_final : null,
-        vnextProbability:probability,
-        visGuidance,
-        visProposed:visGuidance?.point ?? null,
-        visRangeLow:visGuidance?.low ?? null,
-        visRangeHigh:visGuidance?.high ?? null,
-        visProb1500:visGuidance?.p1500 ?? null,
-        visProb1000:visGuidance?.p1000 ?? null,
-        visProb500:visGuidance?.p500 ?? null,
-        visProb200:visGuidance?.p200 ?? null,
-        visConfidence:visGuidance?.confidence ?? null,
-        vnextInput:{tsurface:input.tsurface, soilTemperature0:input.soilTemperature0, soilTemperature6:input.soilTemperature6, soilTemperatureEcmwf07:input.soilTemperatureEcmwf07, t5cmObs:input.t5cmObs, t5cmObsTime:input.t5cmObsTime, t5cmObsSource:input.t5cmObsSource, t5cmObsAgeHours:input.t5cmObsAgeHours}
-      });
-    }
-    lastAppliedSignature = sig;
-    window.PrognozaEPIRFogVNextSeries = series;
-    window.PrognozaEPIRFogEngineMode = 'vnext-production';
-    renderOperationalSummary();
-    window.dispatchEvent(new CustomEvent('prognozaepir:fog-vnext-updated'));
-    renderDiagnostics();
-    return true;
-  }
-
-  async function refresh() {
-    try {
-      const [Physics, Probability, Visibility] = await Promise.all([loadPhysics(), loadProbability(), loadVisibility()]);
-      await ensurePhysicalData();
-      enrichSeries(Physics, Probability, Visibility);
-    } catch (e) { window.PrognozaEPIRFogVNextError = String(e?.message || e); }
-  }
-  window.addEventListener('prognozaepir:fog-series-updated', refresh);
-  window.addEventListener('prognozaepir:fog-vnext-updated', renderDiagnostics);
-  window.addEventListener('prognozaepir:t5cm-updated', () => { lastAppliedSignature = ''; refresh(); });
-  setTimeout(refresh, 200);
-  setInterval(refresh, 30 * 60 * 1000);
+(()=>{
+  if(typeof window==='undefined'||typeof document==='undefined'||window.__EPIR_FOG_244__)return;
+  window.__EPIR_FOG_244__=true;
+  const V='2.4.4',H=3600e3,F=Number.isFinite,n=x=>x!==null&&x!==undefined&&x!==''&&F(Number(x))?Number(x):null,C=(x,a=0,b=1)=>Math.max(a,Math.min(b,x));
+  const mean=a=>{a=(a||[]).filter(F);return a.length?a.reduce((s,x)=>s+x,0)/a.length:null},W=a=>{let s=0,w=0;for(const x of a||[])if(F(x.v)&&x.w>0){s+=x.v*x.w;w+=x.w}return w?s/w:null};
+  const sm=(x,a,b)=>{x=n(x);if(!F(x))return null;const q=C((x-a)/(b-a));return q*q*(3-2*q)},ip=(x,a,b,A,B)=>!F(x)?null:x<=a?A:x>=b?B:A+(B-A)*(x-a)/(b-a),pct=x=>F(x)?100*C(x):null;
+  let raw=[],fg=[],br=[],mifg=[],obs=null,icon=[],ec=[],busy=null,last='',status={error:null,updated:null,sources:{}};
+  const weights={ecmwf_ifs:.17,ecmwf_aifs025_single:.08,ncep_gfs_global:.10,icon_d2:.12,icon_eu:.12,icon_global:.05,chmi_aladin_central_europe_2km:.12,meteofrance_arpege_europe:.08,ukmo_global_deterministic_10km:.06,cmc_gem_gdps:.04,dmi_harmonie_arome_europe:.16,knmi_harmonie_arome_europe:.11};
+  const mw=id=>weights[id]||.06,avg=(h,k)=>{let s=0,w=0;for(const m of h?.models||[]){const v=n(m?.[k]);if(F(v)){const q=mw(m.id);s+=v*q;w+=q}}return w?s/w:null},cavg=(h,k)=>{let s=0,w=0;for(const m of h?.models||[]){const v=n(m?.components?.[k]);if(F(v)){const q=mw(m.id);s+=v*q;w+=q}}return w?s/w:null};
+  function med(h,k){const a=(h?.models||[]).map(m=>({v:n(m?.[k]),w:mw(m?.id)})).filter(x=>F(x.v)).sort((a,b)=>a.v-b.v),t=a.reduce((s,x)=>s+x.w,0);let c=0;for(const x of a){c+=x.w;if(c>=t/2)return x.v}return a.at(-1)?.v??null}
+  function near(a,t,d=55*60e3){let r=null,b=Infinity;for(const x of a||[]){const q=n(x?.t),z=F(q)?Math.abs(q-t):Infinity;if(z<b){b=z;r=x}}return b<=d?r:null}
+  const d=(a,b)=>F(a)&&F(b)?a-b:null,utc=t=>new Intl.DateTimeFormat('pl-PL',{timeZone:'UTC',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(t))+' UTC',hh=t=>new Intl.DateTimeFormat('pl-PL',{timeZone:'UTC',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(t))+' UTC';
+  async function js(url,ms=12000){const c=new AbortController(),tm=setTimeout(()=>c.abort(),ms);try{const r=await fetch(url,{cache:'no-store',signal:c.signal}),j=await r.json().catch(()=>null);if(!r.ok||!j)throw Error(j?.reason||j?.message||'HTTP '+r.status);return j}finally{clearTimeout(tm)}}
+  function url(model,vars){const p=window.PLACE||{lat:52.828611,lon:18.330278},q=new URLSearchParams({latitude:p.lat,longitude:p.lon,hourly:vars.join(','),models:model,timezone:'UTC',forecast_hours:'60',past_hours:'8',wind_speed_unit:'ms'});return'https://api.open-meteo.com/v1/forecast?'+q}
+  function rows(j,k){const h=j?.hourly;if(!h?.time)return[];return h.time.map((s,i)=>{const r={t:Date.parse(s.endsWith('Z')?s:s+'Z')};if(k==='i')Object.assign(r,{s1:n(h.soil_moisture_0_to_1cm?.[i]),s3:n(h.soil_moisture_1_to_3cm?.[i]),ts:n(h.surface_temperature?.[i])});else Object.assign(r,{p:n(h.boundary_layer_height?.[i]),s:n(h.soil_moisture_0_to_7cm?.[i]),ts:n(h.surface_temperature?.[i]),day:n(h.is_day?.[i]),sw:n(h.shortwave_radiation?.[i])});return r}).filter(x=>F(x.t))}
+  async function tier(model,sets,k){let e;for(const v of sets)try{const r=rows(await js(url(model,v)),k);if(r.length)return r}catch(x){e=x}throw e||Error('brak '+model)}
+  async function extras(){if(busy)return busy;busy=(async()=>{const I=[['soil_moisture_0_to_1cm','soil_moisture_1_to_3cm','surface_temperature'],['soil_moisture_0_to_1cm','soil_moisture_1_to_3cm']],E=[['boundary_layer_height','soil_moisture_0_to_7cm','surface_temperature','is_day','shortwave_radiation'],['boundary_layer_height','surface_temperature','is_day','shortwave_radiation']];const [a,b]=await Promise.allSettled([tier('icon_d2',I,'i'),tier('ecmwf_ifs',E,'e')]);icon=a.status==='fulfilled'?a.value:[];ec=b.status==='fulfilled'?b.value:[];status.sources={icon:!!icon.length,ecmwf:!!ec.length}})().finally(()=>busy=null);return busy}
+  async function getObs(){try{const j=await js('data/messages/latest.json?_='+Date.now(),9000),a=[j?.speci,j?.metar,j?.aviation].filter(Boolean).sort((x,y)=>Date.parse(y.obs_time||y.message_time||'')-Date.parse(x.obs_time||x.message_time||'')),r=a[0],t=Date.parse(r?.obs_time||r?.message_time||'');if(!r||!F(t)||Date.now()-t>3*H){obs=null;return}const q=String(r.canonical_raw||r.raw||'').toUpperCase();obs={t,T:n(r.temperature_c),Td:n(r.dew_point_c),RH:n(r.relative_humidity_pct),vis:n(r.visibility_m),wind:n(r.wind_speed_ms),fg:!!(r.fog||r.freezing_fog||/(^|\s)(?:FZ)?FG(?=\s|=|$)/.test(q)),br:!!(r.mist||/(^|\s)BR(?=\s|=|$)/.test(q)),mifg:/(^|\s)MIFG(?=\s|=|$)/.test(q),source:r.source||'OBS'}}catch(_){obs=null}}
+  function sat(i){const sp=F(i.T)&&F(i.Td)?i.T-i.Td:null;return W([{v:F(sp)?1-sm(sp,.15,3.8):null,w:.65},{v:F(i.RH)?sm(i.RH,82,99):null,w:.35},{v:F(i.ds3)?sm(-i.ds3,-.1,1.6):null,w:.12}])}
+  function soil(i){const x=mean([i.s1,i.s3]);if(F(x))return sm(x,.08,.42);if(F(i.se))return sm(i.se,.08,.42);return F(i.p12)?.25+.65*sm(i.p12,0,2):null}
+  function pbl(i){return W([{v:F(i.pbl)?1-sm(i.pbl,120,850):null,w:.7},{v:F(i.dp3)?sm(-i.dp3,0,380):null,w:.3}])}
+  function sfc(i){const x=F(i.T)&&F(i.Ts)?i.T-i.Ts:null,t5=F(i.T)&&F(i.t5)?i.T-i.t5:null;return W([{v:F(x)?sm(x,-.2,2.5):null,w:.45},{v:F(i.dTs3)?sm(-i.dTs3,-.1,2.8):null,w:.30},{v:F(t5)?sm(t5,-.2,2.8):null,w:.15},{v:F(i.dsc3)?sm(i.dsc3,-.2,1.6):null,w:.10}])}
+  function wr(u){u=n(u);if(!F(u))return null;if(u<.2)return.45;if(u<.6)return ip(u,.2,.6,.45,.85);if(u<=1.5)return ip(u,.6,1.5,.85,1);if(u<=2.2)return ip(u,1.5,2.2,1,.82);if(u<=3)return ip(u,2.2,3,.82,.52);if(u<=4)return ip(u,3,4,.52,.25);if(u<=5)return ip(u,4,5,.25,.10);return.05}
+  function wa(u){u=n(u);if(!F(u))return null;if(u<.5)return.2;if(u<1.2)return ip(u,.5,1.2,.2,.7);if(u<=5)return 1;if(u<=9)return ip(u,5,9,1,.65);return.3}
+  function wm(u){u=n(u);if(!F(u))return null;if(u<.5)return.8;if(u<=1.2)return 1;if(u<=1.8)return ip(u,1.2,1.8,1,.72);if(u<=2.5)return ip(u,1.8,2.5,.72,.42);if(u<=3.5)return ip(u,2.5,3.5,.42,.16);if(u<=4.5)return ip(u,3.5,4.5,.16,.04);return 0}
+  function inp(h){const t=n(h.t),h3=near(raw,t-3*H),e=near(ec,t),e3=near(ec,t-3*H),ii=near(icon,t),T=avg(h,'T')??n(h.T),Td=avg(h,'Td'),RH=avg(h,'RH'),dm=(h.models||[]).find(x=>x.id==='dmi_harmonie_arome_europe'),Ts=n(e?.ts)??n(dm?.Tskin)??n(ii?.ts),T3=h3?(avg(h3,'T')??n(h3.T)):null,Td3=h3?avg(h3,'Td'):null,cb=avg(h,'CBH'),cb3=h3?avg(h3,'CBH'):null,p12=avg(h,'p12');const o=obs&&obs.t<=t+10*60000&&t-obs.t<=6*H?obs:null;return{t,lead:Math.max(0,(t-Date.now())/H),T,Td,RH,WS:avg(h,'WS'),RR:avg(h,'RR'),VIS:med(h,'VIS')??n(h.vis),LOW:avg(h,'LOW'),TCC:avg(h,'TCC'),CBH:cb,direct:n(dm?.directFog),Ts,pbl:n(e?.p),dp3:d(n(e?.p),n(e3?.p)),s1:n(ii?.s1),s3:n(ii?.s3),se:n(e?.s),p12,day:n(e?.day),sw:n(e?.sw),dTs3:d(Ts,n(e3?.ts)),dsc3:F(T)&&F(Ts)&&h3?d(T-Ts,(avg(h3,'T')??n(h3.T))-n(e3?.ts)):null,ds3:F(T)&&F(Td)&&F(T3)&&F(Td3)?(T-Td)-(T3-Td3):null,cb3:F(cb)&&F(cb3)?cb3-cb:null,adv:cavg(h,'SMADV'),cold:cavg(h,'SCOLD'),inv:avg(h,'inv200')??(F(n(dm?.T100))&&F(T)?n(dm.T100)-T:null),t5:n(window.PrognozaEPIRT5cmObs?.temperature_c??window.PrognozaEPIRT5cmObs?.T5cm_obs),obs:o,legacy:n(h.score),raw:h}}
+  function calc(i){const S=sat(i),P=pbl(i),G=sfc(i),M=soil(i),I=F(i.inv)?sm(i.inv,-.3,2):null,mix=W([{v:P,w:.42},{v:wr(i.WS),w:.38},{v:I,w:.20}]),sky=W([{v:F(i.LOW)?1-C(i.LOW/100):null,w:.6},{v:F(i.sw)?1-sm(i.sw,0,170):null,w:.4}]);let RAD=W([{v:mean([S,G,mix].filter(F)),w:.82},{v:W([{v:M,w:.45},{v:sky,w:.35},{v:I,w:.20}]),w:.18}]);if(F(RAD)&&F(S)&&S<.3)RAD=Math.min(RAD,.34);const low=F(i.CBH)?1-sm(i.CBH,70,900):null,lower=F(i.cb3)?sm(i.cb3,0,450):null,lc=F(i.LOW)?sm(i.LOW,35,95):null,D=F(i.direct)?C(i.direct/100):null,CBL=W([{v:low,w:.25},{v:lower,w:.25},{v:lc,w:.2},{v:D,w:.15},{v:P,w:.08},{v:S,w:.07}]),ADV=W([{v:S,w:.34},{v:wa(i.WS),w:.25},{v:n(i.adv),w:.22},{v:n(i.cold),w:.19}]),PCP=W([{v:F(i.RR)?sm(i.RR,.02,1.2):null,w:.4},{v:S,w:.35},{v:lc,w:.25}]),me=[['RAD',RAD],['ADV',ADV],['CBL',CBL],['PCP',PCP]].filter(x=>F(x[1])).sort((a,b)=>b[1]-a[1]),pot=me.length?(me.length>1?.78*me[0][1]+.22*me[1][1]:me[0][1]):null,ready=W([{v:S,w:.55},{v:P,w:.16},{v:G,w:.14},{v:M,w:.08},{v:I,w:.07}]);let ph=F(pot)?pot*(.25+.75*(ready??.5)):null;if(F(ph)&&F(D)&&D>ph)ph+=.16*(D-ph);if(F(ph)&&F(i.legacy))ph=.95*ph+.05*C(i.legacy/100);let op=0,vp=0;if(i.obs&&!i.obs.fg&&F(i.obs.vis)&&i.obs.vis>=8000&&!i.obs.br&&!i.obs.mifg){const dt=Math.max(0,(i.t-i.obs.t)/H);op=.62*Math.exp(-dt/2.7)*(F(i.obs.wind)&&i.obs.wind>=2&&i.WS>=2?1.12:1);op=C(op,0,.72)}if(F(i.VIS)&&i.VIS>=6000&&F(ph)&&!(S>.84&&ready>.72))vp=.30*sm(i.VIS,6000,16000)*(1-sm(ph,.52,.78));let fs=F(ph)?100*C(ph*(1-op)*(1-vp)):null;if(i.obs?.fg){const z=.58*Math.exp(-Math.max(0,(i.t-i.obs.t)/H)/2.2);fs=100*((1-z)*(fs??0)/100+z)}const type=me[0]?.[0]||null;
+    const sev=C(W([{v:F(fs)?fs/100:null,w:.4},{v:S,w:.26},{v:P,w:.1},{v:G,w:.1},{v:mean([RAD,ADV,CBL,PCP]),w:.1},{v:D,w:.04}])??0),pv=sev<.7?ip(sev,0,.7,16000,1000):ip(sev,.7,1,1000,200);let vv=pv;if(F(i.VIS))vv=Math.exp(.82*Math.log(Math.max(50,vv))+.18*Math.log(Math.max(50,i.VIS)));if(i.obs&&F(i.obs.vis)){const z=.55*Math.exp(-Math.max(0,(i.t-i.obs.t)/H)/2.2);vv=Math.exp((1-z)*Math.log(Math.max(50,vv))+z*Math.log(Math.max(50,i.obs.vis)))}const rv=x=>{const st=x<1000?50:x<5000?100:x<10000?500:1000;return Math.round(C(x,50,50000)/st)*st},p1000=Math.min(fs??0,100*sm(sev,.55,.8)),conf=C(W([{v:mean([F(S)?1:0,F(P)?1:0,F(G)?1:0,F(M)?1:0,F(i.VIS)?1:0]),w:.6},{v:1-.35*C(i.lead/48),w:.4}])??.4),vg={point:rv(vv),low:rv(vv/Math.exp(.35+(1-conf)*.8)),high:rv(vv*Math.exp(.35+(1-conf)*.8)),p1500:Math.max(p1000,100*sm(sev,.43,.7)),p1000,p500:Math.min(p1000,100*sm(sev,.7,.94)),p200:Math.min(p1000,100*sm(sev,.88,.998)),confidence:conf,severity:sev,source:'integrated-2.4.4',modelMedian:rv(i.VIS)};
+    let bs=W([{v:S,w:.55},{v:F(vg.point)?(vg.point<1000?.15:vg.point<5000?1:vg.point<8000?.2:0):null,w:.22},{v:F(fs)?sm(fs,25,70):null,w:.18},{v:wa(i.WS),w:.05}]);if(F(bs)&&vg.point>5000&&S<.8)bs=Math.min(bs,.49);if(i.obs&&i.obs.vis>=8000&&!i.obs.br)bs*=1-.55*Math.exp(-Math.max(0,(i.t-i.obs.t)/H)/2.4);if(i.obs?.br)bs=Math.max(bs??0,.75);
+    const ss=F(i.Td)&&F(i.Ts)?sm(i.Td-i.Ts,-1.8,.4):F(S)?S*.72:null;let ms=W([{v:ss,w:.38},{v:wm(i.WS),w:.24},{v:I,w:.13},{v:G,w:.1},{v:D,w:.08},{v:M,w:.07}]);if(F(ms)&&i.WS>=3&&Math.max(ss??0,D??0)<.82)ms=Math.min(ms,.48);if(i.obs&&i.obs.vis>=8000&&!i.obs.mifg){let z=(i.obs.wind>=2&&i.WS>=2?.48:.2)*Math.exp(-Math.max(0,(i.t-i.obs.t)/H)/2.5);ms*=1-z}if(i.obs?.mifg)ms=Math.max(ms??0,.8);
+    return{fg:{score:fs,physics:ph,obsPenalty:op,visPenalty:vp,type,mechanism1:type,mechanism2:me[1]?.[0]||null},br:{score:F(bs)?100*C(bs):null},mifg:{score:F(ms)?100*C(ms):null},vis:vg,phys:{SATURATION:S,SPBL:P,SSFC_COOL:G,SSOIL:M,RAD,ADV,CBL,PCP,windRad:wr(i.WS),windMifg:wm(i.WS)}}}
+  function trim(a){a=a.map(x=>({...x}));for(let i=0;i<a.length;){if(a[i].score<50){i++;continue}let j=i;while(j+1<a.length&&a[j+1].score>=50)j++;let p=i;for(let k=i+1;k<=j;k++)if(a[k].score>a[p].score)p=k;const th=Math.max(52,a[p].score-8,a[p].score*.86);for(let k=i;k<=j;k++)if(a[k].score<th)a[k].score=Math.min(49,a[k].score);i=j+1}return a}
+  function publish(){window.PrognozaEPIRFogLegacySeries=raw.map(x=>({...x,fogScoreLegacy:n(x.score),fogEngineMode:'legacy'}));window.PrognozaEPIRFogSeries=fg;window.PrognozaEPIRFogVNextSeries=fg;window.PrognozaEPIRFogRenderSeries=fg;window.PrognozaEPIRFogRenderThreshold=50;window.PrognozaEPIRFogSelectedMode='vnext';window.PrognozaEPIRFogEngineMode='vnext-production-2.4.4';window.PrognozaEPIRBRSeries=br;window.PrognozaEPIRMIFG={getSeries:()=>mifg.slice(),getStatus:()=>({source:'EPIR FOG 2.4.4',count:mifg.length,error:status.error}),refresh};window.PrognozaEPIRBREngine={VERSION:V,scoreRow:r=>near(br,n(r?.t)),expectedVis:r=>F(r?.visibility)?Math.round(r.visibility)+' m':'—',render,start:()=>{}};window.PrognozaEPIRFogMode={get:()=> 'vnext',set:()=>{},LEGACY:'legacy',VNEXT:'vnext'};for(const [e,q]of[['prognozaepir:fog-vnext-updated',{version:V}],['prognozaepir:br-series-updated',{version:V}],['prognozaepir:mifg-series-updated',{version:V}],['prognozaepir:fog-engine-mode-applied',{version:V,mode:'vnext'}]])try{dispatchEvent(new CustomEvent(e,{detail:q}))}catch(_){}}
+  function enrich(){if(!raw.length)return;fg=[];br=[];let mm=[];for(const h of raw){const i=inp(h),z=calc(i),r={...h,score:z.fg.score,fogScoreLegacy:n(h.score),fogEngineVersion:V,fogEngineMode:'vnext-production',fogEngineSource:'fog-2.4.4',vis:z.vis.point,visGuidance:z.vis,visProposed:z.vis.point,visProb1500:z.vis.p1500,visProb1000:z.vis.p1000,visProb500:z.vis.p500,visProb200:z.vis.p200,confidence:z.vis.confidence,vnext:z.phys,vnextProbability:{version:V,P_physics:z.fg.physics,P_model_final:z.fg.score/100,mechanism1:z.fg.mechanism1,mechanism2:z.fg.mechanism2,observationPenalty:z.fg.obsPenalty,visibilityContradiction:z.fg.visPenalty},SSOIL:pct(z.phys.SSOIL),SPBL:pct(z.phys.SPBL),SSFC_COOL:pct(z.phys.SSFC_COOL),RAD_vNextShadow:pct(z.phys.RAD),ADV_vNextShadow:pct(z.phys.ADV),CBL_vNextShadow:pct(z.phys.CBL),PCP_vNextShadow:pct(z.phys.PCP),type:{text:z.fg.type||'—',primary:z.fg.mechanism1,secondary:z.fg.mechanism2},integrated244:{input:i,...z}};fg.push(r);br.push({t:i.t,score:z.br.score,visibility:z.vis.point,mode:'vnext',engineVersion:V});mm.push({t:i.t,score:z.mifg.score,WS:i.WS,T:i.T,Td:i.Td,source:'EPIR FOG 2.4.4',engineVersion:V})}mifg=trim(mm);publish();render();status.updated=Date.now()}
+  const cls=s=>s>=80?'fog244-vh':s>=60?'fog244-hi':s>=50?'fog244-mi':'';
+  const txt=s=>!F(s)?'BRAK DANYCH':s<50?'NIE':s<60?'MOŻLIWA':s<80?'PRAWDOPODOBNA':'BARDZO PRAWDOPODOBNA';
+  const cur=a=>a.reduce((x,y)=>!x||Math.abs(y.t-Date.now())<Math.abs(x.t-Date.now())?y:x,null);
+  const peak=(a,h)=>a.filter(x=>x.t<Date.now()+h*H).reduce((x,y)=>!x||y.score>x.score?y:x,null);
+  const vis=v=>F(v)?(v>=10000?(v/1000).toFixed(1)+' km':Math.round(v)+' m'):'—';
+  function render(){if(!fg.length)return;let st=document.getElementById('fog244css');if(!st){st=document.createElement('style');st.id='fog244css';st.textContent='#fogEngine,#brEngine,#mifgEngineStandalone,#fogEngineModeSwitch,#fogVNextDiagnostics{display:none!important}.fog244{margin-top:8px;border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:10px}.fog244g{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}.fog244c{background:var(--soft);border-left:3px solid var(--blueText);padding:6px}.fog244c small,.fog244c em{display:block;color:var(--muted);font-size:8px;font-style:normal}.fog244c strong{display:block;font-size:12px}.fog244-mi{border-left-color:#d49a28}.fog244-hi{border-left-color:#d86c2f}.fog244-vh{border-left-color:#d0503f}.fog244note{margin-top:7px;padding:6px;background:var(--soft);border:1px solid var(--border);border-radius:5px;font-size:9px;color:var(--muted)}@media(max-width:700px){.fog244g{grid-template-columns:repeat(2,minmax(0,1fr))}}';document.head.appendChild(st)}if(/\/(?:index\.html)?$/.test(location.pathname)){return}let h=document.getElementById('fogEngine244');if(!h){h=document.createElement('section');h.id='fogEngine244';(document.getElementById('fogStandaloneMount')||document.querySelector('.app')||document.body).appendChild(h)}h.className='fog244';const f=cur(fg),b=cur(br),m=cur(mifg),fp=peak(fg,48),bp=peak(br,24),mp=peak(mifg,48),z=f?.integrated244;h.innerHTML='<div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--border);padding-bottom:7px;margin-bottom:8px"><b style="color:var(--blueText)">EPIR FOG ENGINE 2.4.4</b><span style="color:var(--muted);font-size:9px">zintegrowany FG / BR / MIFG</span></div><div class="fog244g">'+[['FG teraz',f],['FG max 48 h',fp],['BR teraz',b],['BR max 24 h',bp],['MIFG teraz',m],['MIFG max 48 h',mp]].map(([k,r])=>`<div class="fog244c ${cls(r?.score)}"><small>${k}</small><strong>${txt(r?.score)}</strong><em>${F(r?.score)?Math.round(r.score)+'/100':'—'}${r?.t?' · '+utc(r.t):''}</em></div>`).join('')+`<div class="fog244c"><small>VIS</small><strong>${vis(f?.visGuidance?.point)}</strong><em>${vis(f?.visGuidance?.low)}–${vis(f?.visGuidance?.high)} · P&lt;1km ${Math.round(f?.visGuidance?.p1000||0)}%</em></div><div class="fog244c"><small>Proces</small><strong>${f?.type?.text||'—'}</strong><em>RAD ${Math.round(f?.RAD_vNextShadow||0)} · ADV ${Math.round(f?.ADV_vNextShadow||0)} · CBL ${Math.round(f?.CBL_vNextShadow||0)} · PCP ${Math.round(f?.PCP_vNextShadow||0)}</em></div><div class="fog244c"><small>OBS</small><strong>${obs?vis(obs.vis):'BRAK ≤3 h'}</strong><em>${obs?hh(obs.t)+' · wiatr '+(obs.wind?.toFixed?.(1)??'—')+' m/s · '+(obs.fg?'FG':obs.br?'BR':obs.mifg?'MIFG':'bez FG/BR/MIFG'):'—'}</em></div><div class="fog244c"><small>Korekta alarmu</small><strong>${Math.round((z?.fg?.obsPenalty||0)*100)}%</strong><em>9999 i wiatr 2–4 m/s obniżają nowcast, ale nie blokują późniejszej mgły</em></div></div><div class="fog244note"><b>2.4.4:</b> jeden tor obliczeniowy integruje nasycenie, wiatr, PBL, chłodzenie powierzchni/T5 cm, wilgotność gleby, inwersję, RAD/ADV/CBL/PCP, DMI fog 2 m, multimodelową VIS, METAR/SPECI oraz osobne targety BR i MIFG. VIS nie jest twardą bramką dla ryzyka FG.</div>`}
+  async function refresh(){try{await Promise.all([extras(),getObs()]);enrich();status.error=null}catch(e){status.error=String(e?.message||e)}return fg.slice()}
+  function capture(){const a=window.PrognozaEPIRFogSeries;if(!Array.isArray(a)||!a.length||a.every(x=>x?.fogEngineVersion===V))return;const s=a.length+':'+a[0]?.t+':'+a.at(-1)?.t+':'+a.map(x=>Math.round(n(x.score)||0)).join(',');if(s===last)return;last=s;raw=a.map(x=>({...x,models:(x.models||[]).map(m=>({...m,components:m.components?{...m.components}:m.components}))}));refresh()}
+  let brGuard=false;addEventListener('prognozaepir:br-series-updated',e=>{if(brGuard||e.detail?.version===V||!br.length)return;setTimeout(()=>{brGuard=true;window.PrognozaEPIRBRSeries=br;dispatchEvent(new CustomEvent('prognozaepir:br-series-updated',{detail:{version:V,mode:'vnext'}}));brGuard=false},0)});
+  window.PrognozaEPIRFog244={VERSION:V,getSeries:()=>fg.slice(),getBRSeries:()=>br.slice(),getMIFGSeries:()=>mifg.slice(),refresh,getStatus:()=>({...status})};addEventListener('prognozaepir:fog-series-updated',capture,true);addEventListener('prognozaepir:t5cm-updated',refresh);setTimeout(capture,100);setTimeout(capture,1500);setInterval(refresh,30*60e3);
 })();
