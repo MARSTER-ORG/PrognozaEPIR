@@ -2,8 +2,9 @@
 (() => {
   const FRAME_ID='epirFogCanonicalRuntime';
   const MODE_KEY='prognozaepir-fog-engine-mode';
-  const VERSION='2026-09-19-canonical-fog-page-2';
+  const VERSION='2026-09-22-threshold60-hoverbr-1';
   const SECTION_FIX='fog-section-info-fix.js';
+  const ACTIVE=60;
   const finite=Number.isFinite;
   let frame=null,lastSync=0,lastCounts={legacy:0,vnext:0,br:0,mifg:0};
 
@@ -23,6 +24,9 @@
       return out;
     });
   }
+  function activeRows(rows){
+    return copyRows(rows).filter(row=>finite(Number(row?.score))&&Number(row.score)>=ACTIVE);
+  }
   function canonicalWindow(){
     try{return frame?.contentWindow||null;}catch(_){return null;}
   }
@@ -35,7 +39,7 @@
       const src=mode==='vnext'&&vnext.length?vnext:legacy;
       if(!engine?.scoreRow||!src.length)return [];
       const now=Date.now();
-      return copyRows(src.map(row=>engine.scoreRow(row,mode,now)).filter(r=>r&&finite(Number(r.t))&&finite(Number(r.score))));
+      return activeRows(src.map(row=>engine.scoreRow(row,mode,now)).filter(r=>r&&finite(Number(r.t))&&finite(Number(r.score))));
     }catch(_){return [];}
   }
   function sync(){
@@ -46,7 +50,7 @@
       legacy=copyRows(cw.PrognozaEPIRFogLegacySeries);
       vnext=copyRows(cw.PrognozaEPIRFogVNextSeries);
       const m=cw.PrognozaEPIRMIFG?.getSeries?.();
-      mifg=copyRows(m);
+      mifg=activeRows(m);
     }catch(_){return false;}
     if(!legacy.length&&!vnext.length)return false;
 
@@ -59,7 +63,7 @@
     window.PrognozaEPIRFogSeries=copyRows(selected);
     window.PrognozaEPIRFogSelectedMode=mode;
     window.PrognozaEPIRFogEngineMode=mode==='vnext'?'vnext-production':'legacy';
-    window.PrognozaEPIRFogRenderThreshold=mode==='vnext'?60:50;
+    window.PrognozaEPIRFogRenderThreshold=ACTIVE;
     window.PrognozaEPIRMIFGSeries=mifg;
     window.PrognozaEPIRMIFG=Object.freeze({
       VERSION:'canonical-fog-page-bridge',
