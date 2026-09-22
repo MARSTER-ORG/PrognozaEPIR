@@ -1,6 +1,7 @@
 'use strict';
 (() => {
-  const VERSION='2026-09-19-section-info-fix-1';
+  const VERSION='2026-09-22-section-threshold60-br-1';
+  const ACTIVE=60;
   const MAX_MATCH_MS=70*60e3;
   const finite=Number.isFinite;
 
@@ -25,21 +26,20 @@
     return {fog,br,mifg};
   }
 
-  function addOrReplace(values,key,label,row,threshold){
+  function addOrReplace(values,key,label,row,threshold=ACTIVE){
     let cell=values.querySelector(`[data-${key}-risk="1"]`);
+    const score=Number(row?.score);
+    if(!finite(score)||score<threshold){
+      if(cell)cell.remove();
+      return;
+    }
     if(!cell){
       cell=document.createElement('div');
       cell.className='section-value';
       cell.dataset[`${key}Risk`]='1';
       values.appendChild(cell);
     }
-    const score=Number(row?.score);
-    if(!finite(score)){
-      cell.innerHTML=`<small>${label}</small><strong>—</strong><small>brak danych dla tej godziny</small>`;
-      return;
-    }
-    const note=score>=threshold?`próg aktywny ≥${threshold}/100`:`poniżej progu rysowania ${threshold}/100`;
-    cell.innerHTML=`<small>${label}</small><strong>${Math.round(score)}/100</strong><small>${note}</small>`;
+    cell.innerHTML=`<small>${label}</small><strong>${Math.round(score)}/100</strong><small>próg aktywny ≥${threshold}/100</small>`;
   }
 
   function removeFogCells(box){
@@ -62,12 +62,12 @@
     if(!values)return;
     const rows=series(),t=Number(z?.t);
     const fog=nearest(rows.fog,t),br=nearest(rows.br,t),mifg=nearest(rows.mifg,t);
-    const fogThreshold=finite(Number(window.PrognozaEPIRFogRenderThreshold))?Number(window.PrognozaEPIRFogRenderThreshold):50;
+    const fogThreshold=finite(Number(window.PrognozaEPIRFogRenderThreshold))?Number(window.PrognozaEPIRFogRenderThreshold):ACTIVE;
     addOrReplace(values,'fog','Ryzyko mgły · FOG ENGINE',fog,fogThreshold);
-    addOrReplace(values,'br','Zamglenie · BR',br,50);
-    addOrReplace(values,'mifg','Niska mgła <2 m · MIFG',mifg,50);
+    addOrReplace(values,'br','Zamglenie · BR',br,ACTIVE);
+    addOrReplace(values,'mifg','Niska mgła <2 m · MIFG',mifg,ACTIVE);
     const help=box.querySelector('.section-help');
-    if(help)help.textContent=`Pomarańczowa linia pokazuje widzialność konsensusu. Wartości FOG, BR i MIFG są zawsze pokazane tutaj; na wykresie FOG jest rysowany od ${fogThreshold}/100, a BR i MIFG od 50/100.`;
+    if(help)help.textContent=`Pomarańczowa linia pokazuje widzialność konsensusu. FOG, BR i MIFG są oznaczane dopiero od ${ACTIVE}/100.`;
   }
 
   function install(){
