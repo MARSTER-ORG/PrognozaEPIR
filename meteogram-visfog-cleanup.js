@@ -4,7 +4,7 @@
 
   const LEGEND_RIGHT_GAP = 30;
   const WIND_ARROW = '#ef4444';
-  const FOG_TOOLTIP_THRESHOLD = 40;
+  const FOG_TOOLTIP_THRESHOLD = 60;
   const MAX_RISK_MATCH_MS = 70 * 60e3;
   const HOUR = 3600e3;
 
@@ -41,6 +41,14 @@
     try {
       const rows = window.PrognozaEPIRMIFG?.getSeries?.();
       return nearestRiskRow(Array.isArray(rows) ? rows : [],t);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function brAt(t) {
+    try {
+      return nearestRiskRow(Array.isArray(window.PrognozaEPIRBRSeries) ? window.PrognozaEPIRBRSeries : [],t);
     } catch (_) {
       return null;
     }
@@ -202,7 +210,7 @@
       const m = canvas._meta;
       if (!tooltip || tooltip.style.display === 'none' || !m || !Array.isArray(m.data) || !m.data.length || !Array.isArray(m.panelYs)) return;
 
-      tooltip.querySelectorAll('[data-epir-fog-hover],[data-epir-mifg-hover]').forEach(el => el.remove());
+      tooltip.querySelectorAll('[data-epir-fog-hover],[data-epir-mifg-hover],[data-epir-br-hover]').forEach(el => el.remove());
 
       const rect = canvas.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
@@ -221,8 +229,12 @@
 
       const fog = fogAt(best.t);
       const mifg = mifgAt(best.t);
+      const br = brAt(best.t);
       if (fog && fog.score >= FOG_TOOLTIP_THRESHOLD) {
         appendHoverRow(tooltip,'Ryzyko mgły · FOG',fog.score,'data-epir-fog-hover');
+      }
+      if (br && br.score >= FOG_TOOLTIP_THRESHOLD) {
+        appendHoverRow(tooltip,'Zamglenie · BR',br.score,'data-epir-br-hover');
       }
       if (mifg && mifg.score >= FOG_TOOLTIP_THRESHOLD) {
         appendHoverRow(tooltip,'Niska mgła <2 m · MIFG',mifg.score,'data-epir-mifg-hover');
@@ -269,11 +281,15 @@
       const values = box?.querySelector('.section-values');
       if (!values) return;
 
-      values.querySelectorAll('[data-fog-risk],[data-mifg-risk]').forEach(el => el.remove());
+      values.querySelectorAll('[data-fog-risk],[data-mifg-risk],[data-br-risk]').forEach(el => el.remove());
       const fog = fogAt(z?.t);
       const mifg = mifgAt(z?.t);
+      const br = brAt(z?.t);
       if (fog && fog.score >= FOG_TOOLTIP_THRESHOLD) {
         appendRiskCell(values,'Ryzyko mgły · FOG ENGINE',fog.score,'fogRisk');
+      }
+      if (br && br.score >= FOG_TOOLTIP_THRESHOLD) {
+        appendRiskCell(values,'Zamglenie · BR',br.score,'brRisk');
       }
       if (mifg && mifg.score >= FOG_TOOLTIP_THRESHOLD) {
         appendRiskCell(values,'Niska mgła <2 m · MIFG',mifg.score,'mifgRisk');
@@ -322,7 +338,7 @@
     legendSample(sx,y,'#ef4444','Kierunek');y+=18;
     legendTitle(sx,y,'Widzialność / mgła');y+=14;
     legendSample(sx,y,'#d66c12','Widzialność');y+=13;
-    legendSample(sx,y,'#d49a28','FOG ENGINE ≥40/100');y+=18;
+    legendSample(sx,y,'#d49a28','FOG / BR / MIFG ≥60/100');y+=18;
     legendTitle(sx,y,'Chmury');y+=14;
     legendSample(sx,y,'#8d4a1a','Podstawa ≥5/8');y+=13;
     legendDot(sx,y,activeTheme()==='dark'?'#fff':'#555','Profil zachmurzenia');y+=18;
