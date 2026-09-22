@@ -34,12 +34,11 @@ jobs:
           python3 -m py_compile scripts/prepare_pages.py scripts/prepare_pages_v241.py scripts/wire_fog_mifg_utc_runtime.py
           for f in \
             theme.js taf-engine-v2.js taf-engine-v24.js taf-engine-v241.js taf-engine-v242.js taf-engine-v243.js taf-fog-policy.js taf-app-v25.js taf-runtime-bootstrap.js \
-            message-archive-client.js neighbor-observation-context.js fog-engine.js observation-engine.js mifg-engine.js br-engine.js fog-index-bridge.js fog-meteogram-overlay.js \
-            fog-mode-switch.js fog-summary-layout.js fog-page-layout.js fog-visibility-cells.js fog-physics-vnext.js fog-vnext-probability-layer.js fog-vnext-transition-risk.js \
-            radar-risk-policy.js lightning-alert-sw.js opera-nowcast.js opera-convection-bridge.js \
+            message-archive-client.js neighbor-observation-context.js fog-engine.js fog-engine-v244.js fog-index-bridge.js fog-meteogram-overlay.js fog-section-info-fix.js \
+            meteogram-visfog-cleanup.js meteogram-visfog-split.js radar-risk-policy.js lightning-alert-sw.js opera-nowcast.js opera-convection-bridge.js \
             _site/theme.js _site/taf-engine-v2.js _site/taf-engine-v24.js _site/taf-engine-v241.js _site/taf-engine-v242.js _site/taf-engine-v243.js _site/taf-fog-policy.js _site/taf-app-v25.js _site/taf-runtime-bootstrap.js \
-            _site/fog-engine.js _site/observation-engine.js _site/mifg-engine.js _site/br-engine.js _site/fog-index-bridge.js _site/fog-meteogram-overlay.js _site/fog-mode-switch.js _site/fog-summary-layout.js _site/fog-page-layout.js _site/fog-visibility-cells.js \
-            _site/fog-physics-vnext.js _site/fog-vnext-probability-layer.js _site/fog-vnext-transition-risk.js _site/radar-risk-policy.js _site/lightning-alert-sw.js; do
+            _site/fog-engine.js _site/fog-engine-v244.js _site/fog-index-bridge.js _site/fog-meteogram-overlay.js _site/fog-section-info-fix.js \
+            _site/meteogram-visfog-cleanup.js _site/meteogram-visfog-split.js _site/radar-risk-policy.js _site/lightning-alert-sw.js; do
             node --check "$f"
           done
           node tests/taf-engine-v2.test.js
@@ -62,8 +61,8 @@ jobs:
           required = [
               'index.html','fog.html','radar.html','taf.html','sat-fog.html','arch.html','theme.js','app.css',
               'taf-engine-v2.js','taf-engine-v24.js','taf-engine-v241.js','taf-engine-v242.js','taf-engine-v243.js','taf-fog-policy.js','taf-app-v25.js','taf-runtime-bootstrap.js',
-              'fog-engine.js','mifg-engine.js','br-engine.js','fog-index-bridge.js','fog-meteogram-overlay.js','fog-mode-switch.js','fog-summary-layout.js','fog-page-layout.js','fog-visibility-cells.js',
-              'fog-physics-vnext.js','fog-vnext-probability-layer.js','fog-vnext-transition-risk.js','radar-risk-policy.js','lightning-alert-sw.js',
+              'fog-engine.js','fog-engine-v244.js','fog-index-bridge.js','fog-meteogram-overlay.js','fog-section-info-fix.js','meteogram-visfog-cleanup.js',
+              'radar-risk-policy.js','lightning-alert-sw.js',
               'pages-build.json','data/messages/latest.json','data/messages/recent.json','data/messages/status.json',
               'data/learning/adaptive-weights.json','data/learning/fog-event-skill.json','data/learning/model-verification.json'
           ]
@@ -78,6 +77,10 @@ jobs:
           theme = (site / 'theme.js').read_text(encoding='utf-8')
           fog = (site / 'fog.html').read_text(encoding='utf-8')
           fog_engine = (site / 'fog-engine.js').read_text(encoding='utf-8')
+          fog244 = (site / 'fog-engine-v244.js').read_text(encoding='utf-8')
+          bridge = (site / 'fog-index-bridge.js').read_text(encoding='utf-8')
+          overlay = (site / 'fog-meteogram-overlay.js').read_text(encoding='utf-8')
+          hover = (site / 'meteogram-visfog-cleanup.js').read_text(encoding='utf-8')
           taf = (site / 'taf.html').read_text(encoding='utf-8')
           taf_app = (site / 'taf-app-v25.js').read_text(encoding='utf-8')
           taf_bootstrap = (site / 'taf-runtime-bootstrap.js').read_text(encoding='utf-8')
@@ -88,12 +91,13 @@ jobs:
               raise SystemExit('shared navigation is missing TAF Generator')
           if re.search(r'<a[^>]+class="control-link"[^>]+href="taf\.html', index, re.I):
               raise SystemExit('duplicate TAF control leaked into meteogram controls')
-          for asset in ['fog-engine.js','observation-engine.js','mifg-engine.js','br-engine.js','fog-summary-layout.js','fog-mode-switch.js']:
+          for asset in ['fog-engine-v244.js','fog-engine.js','observation-engine.js','mifg-engine.js','br-engine.js','fog-summary-layout.js','fog-mode-switch.js']:
               if re.search(rf'<script\s+src=["\']{re.escape(asset)}(?:\?[^"\']*)?["\']', index, re.I):
                   raise SystemExit(f'duplicate Fog runtime leaked into index: {asset}')
           if 'theme-control.js' in index:
               raise SystemExit('legacy theme-control.js leaked into index artifact')
-          for marker in ['id="epirGlobalNav"','id="fogStandaloneMount"','fog-mode-switch.js?v=','fog-engine.js?v=','mifg-engine.js?v=','fog-summary-layout.js?v=','br-engine.js?v=','fog-page-layout.js?v=','fog-visibility-cells.js?v=','theme.js?v=','app.css?v=']:
+
+          for marker in ['id="epirGlobalNav"','id="fogStandaloneMount"','fog-engine-v244.js?v=','fog-engine.js?v=','theme.js?v=','app.css?v=']:
               if marker not in fog: raise SystemExit(f'native fog page contract missing: {marker}')
           if 'theme-control.js' in fog:
               raise SystemExit('legacy theme-control.js leaked into fog artifact')
@@ -101,6 +105,16 @@ jobs:
               if marker in fog: raise SystemExit(f'forbidden meteogram/dead marker in fog.html: {marker}')
           if 'PrognozaEPIRFogLegacySeries' not in fog_engine:
               raise SystemExit('LEGACY Fog series export missing')
+
+          for marker in ["const V='2.4.4',H=3600e3,ACTIVE=60",'PrognozaEPIRFogRenderThreshold=ACTIVE','PrognozaEPIRBRSeries=br','PrognozaEPIRMIFG={']:
+              if marker not in fog244: raise SystemExit(f'Fog 2.4.4 threshold/runtime contract missing: {marker}')
+          for marker in ['const ACTIVE=60','PrognozaEPIRFogRenderThreshold=ACTIVE','PrognozaEPIRBRSeries','PrognozaEPIRMIFGSeries']:
+              if marker not in bridge: raise SystemExit(f'Fog bridge threshold contract missing: {marker}')
+          for marker in ['FOG_DRAW_THRESHOLD=60','MIFG_DRAW_THRESHOLD=60','BR_DRAW_THRESHOLD=60','FOG_INFO_THRESHOLD=60','MIFG_INFO_THRESHOLD=60','BR_INFO_THRESHOLD=60']:
+              if marker not in overlay: raise SystemExit(f'Fog overlay threshold contract missing: {marker}')
+          for marker in ['FOG_TOOLTIP_THRESHOLD = 60','function brAt(t)','Zamglenie · BR','data-epir-br-hover']:
+              if marker not in hover: raise SystemExit(f'Fog quick-preview contract missing: {marker}')
+
           for marker in ['TAF ENGINE 2.4.3 ·','taf-engine-v242.js?v=2.4.2-cloud-fog','taf-runtime-bootstrap.js?v=20260919-1']:
               if marker not in taf: raise SystemExit(f'TAF contract missing: {marker}')
           for marker in ['taf-engine-v243.js?v=${BUILD}', "QUALITY_VERSION !== ENGINE_LABEL"]:
@@ -139,6 +153,9 @@ jobs:
             marker="$(curl -fsSL --max-time 15 "${base}/pages-build.json?v=${GITHUB_SHA}" 2>/dev/null || true)"
             index="$(curl -fsSL --max-time 15 "${base}/index.html?v=${GITHUB_SHA}" 2>/dev/null || true)"
             fog="$(curl -fsSL --max-time 15 "${base}/fog.html?v=${GITHUB_SHA}" 2>/dev/null || true)"
+            fog244="$(curl -fsSL --max-time 15 "${base}/fog-engine-v244.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
+            overlay="$(curl -fsSL --max-time 15 "${base}/fog-meteogram-overlay.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
+            hover="$(curl -fsSL --max-time 15 "${base}/meteogram-visfog-cleanup.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
             theme="$(curl -fsSL --max-time 15 "${base}/theme.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
             css="$(curl -fsSL --max-time 15 "${base}/app.css?v=${GITHUB_SHA}" 2>/dev/null || true)"
             fogengine="$(curl -fsSL --max-time 15 "${base}/fog-engine.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
@@ -153,16 +170,21 @@ jobs:
               && printf '%s' "$fog" | grep -Fq 'id="fogStandaloneMount"' \
               && printf '%s' "$fog" | grep -Fq 'theme.js?v=' \
               && printf '%s' "$fog" | grep -Fq 'app.css?v=' \
+              && printf '%s' "$fog" | grep -Fq 'fog-engine-v244.js?v=' \
+              && printf '%s' "$fog" | grep -Fq 'fog-engine.js?v=' \
               && ! printf '%s' "$fog" | grep -Fq 'theme-control.js' \
+              && ! printf '%s' "$fog" | grep -Fq '<iframe' \
+              && ! printf '%s' "$fog" | grep -Fq 'index.html?fogpanel=' \
+              && ! printf '%s' "$fog" | grep -Fq 'fogRuntime' \
+              && printf '%s' "$fog244" | grep -Fq "ACTIVE=60" \
+              && printf '%s' "$overlay" | grep -Fq 'MIFG_DRAW_THRESHOLD=60' \
+              && printf '%s' "$overlay" | grep -Fq 'BR_DRAW_THRESHOLD=60' \
+              && printf '%s' "$hover" | grep -Fq 'FOG_TOOLTIP_THRESHOLD = 60' \
+              && printf '%s' "$hover" | grep -Fq 'Zamglenie · BR' \
               && printf '%s' "$theme" | grep -Fq 'prognozaepir.theme.preference' \
               && printf '%s' "$theme" | grep -Fq '["taf.html","TAF GENERATOR","taf"]' \
               && ! printf '%s' "$index" | grep -Fq '>GENERATOR TAF</a>' \
               && printf '%s' "$css" | grep -Fq 'EPIR-SHARED-START' \
-              && printf '%s' "$fog" | grep -Fq 'fog-engine.js?v=' \
-              && printf '%s' "$fog" | grep -Fq 'fog-visibility-cells.js?v=' \
-              && ! printf '%s' "$fog" | grep -Fq '<iframe' \
-              && ! printf '%s' "$fog" | grep -Fq 'index.html?fogpanel=' \
-              && ! printf '%s' "$fog" | grep -Fq 'fogRuntime' \
               && printf '%s' "$fogengine" | grep -Fq 'PrognozaEPIRFogLegacySeries' \
               && printf '%s' "$taf" | grep -Fq 'TAF ENGINE 2.4.3 ·' \
               && printf '%s' "$taf" | grep -Fq 'taf-engine-v242.js?v=2.4.2-cloud-fog' \
@@ -170,11 +192,11 @@ jobs:
               && printf '%s' "$taf243" | grep -Fq 'prevailingWindFullPeriodWhenNoSignificantChange' \
               && printf '%s' "$tafapp" | grep -Fq 'const mode=Policy.selectedMode(w)' \
               && printf '%s' "$tafapp" | grep -Fq 'Policy.seriesForMode(w,mode)'; then
-              echo "GitHub Pages serves commit $GITHUB_SHA with canonical fog.html provider, shared UI and TAF 2.4.3 integration."
+              echo "GitHub Pages serves commit $GITHUB_SHA with FOG/BR/MIFG threshold 60, BR quick preview and TAF 2.4.3 integration."
               break
             fi
             if [ "$attempt" -eq 18 ]; then
-              echo "ERROR: live Pages does not satisfy canonical Fog provider/native FOG/TAF 2.4.3 contract." >&2
+              echo "ERROR: live Pages does not satisfy integrated Fog 2.4.4/TAF 2.4.3 contract." >&2
               exit 1
             fi
             echo "Waiting for Pages/CDN propagation (${attempt}/18)..."
