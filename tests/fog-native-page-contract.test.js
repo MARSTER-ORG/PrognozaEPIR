@@ -18,15 +18,15 @@ const scripts = [...html.matchAll(/<script\b[^>]*\bsrc="([^"]+)"[^>]*><\/script>
 const expectedScripts = [
   'utc-ui-guard.js',
   'theme.js',
-  'fog-mode-switch.js',
-  'fog-engine.js',
-  'mifg-engine.js',
-  'fog-summary-layout.js',
-  'br-engine.js',
-  'fog-page-layout.js',
-  'fog-visibility-cells.js'
+  'fog-engine-v244.js',
+  'fog-engine.js'
 ];
-assert.deepStrictEqual(scripts, expectedScripts, 'fog.html must load only the approved standalone runtime scripts');
+assert.deepStrictEqual(scripts, expectedScripts, 'fog.html must load only the integrated 2.4.4 standalone runtime scripts');
+
+const v244 = fs.readFileSync(path.join(ROOT, 'fog-engine-v244.js'), 'utf8');
+assert(v244.includes("const V='2.4.4',H=3600e3,ACTIVE=60"), 'Fog 2.4.4 must use the unified 60/100 activation threshold');
+assert(v244.includes('PrognozaEPIRBRSeries=br'), 'Fog 2.4.4 must publish BR');
+assert(v244.includes('PrognozaEPIRMIFG={'), 'Fog 2.4.4 must publish MIFG');
 
 const forbidden = [
   '<iframe','index.html?fogpanel=','fogRuntime','runtime-wrap','<canvas','canvasViewport',
