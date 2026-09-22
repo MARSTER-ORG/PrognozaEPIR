@@ -60,7 +60,24 @@ assert.equal(vp.vis1000,72);
 assert.equal(vp.type,'CBL/RAD');
 assert.equal(vp.confidence,.82);
 assert.equal(vp.fgVisibilitySupported,true);
-assert.ok(vp.fgOperationalScore>=72);
+// The Fog Engine score and the explicit VIS threshold probability are separate
+// products. The TAF adapter must not inflate a 68/100 engine score to 72/100
+// merely because P(VIS<1000 m)=72%; visibility remains a coding gate.
+assert.equal(vp.fgOperationalScore,68);
+
+const integrated244={
+  ...vnext,
+  fogEngineVersion:'2.4.4',fogEngineSource:'fog-2.4.4',
+  _br244:{t:1,score:81,visibility:4600,engineVersion:'2.4.4'},
+  _mifg244:{t:1,score:29,T:8,Td:7,engineVersion:'2.4.4'}
+};
+const p244=P.normalizeFogHour(integrated244,'vnext');
+assert.equal(p244.rawScore,68);
+assert.equal(p244.engineFogScore,68);
+assert.equal(p244.fogScore,0);
+assert.equal(p244.fgOperationalScore,68);
+assert.equal(p244.brRawScore,81);
+assert.equal(p244.mifgRawScore,29);
 
 const wLegacy={PrognozaEPIRFogLegacySeries:[legacy],PrognozaEPIRFogSeries:[vnext]};
 assert.equal(P.seriesForMode(wLegacy,'legacy')[0].score,55);
