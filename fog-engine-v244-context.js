@@ -72,7 +72,7 @@
     return out;
   }
   function tafSignalAt(t){
-    let epir=0,neighbors=0,fz=0,detail=[];
+    let epir=0,neighbors=0,fz=0,negative=0,detail=[];
     for(const st of STATIONS){
       const row=tafs[st];if(!row)continue;
       const seg=tafSegments(row).filter(s=>t>=s.from&&t<s.to);
@@ -81,12 +81,14 @@
       const br=Math.max(0,...seg.filter(s=>s.br).map(s=>s.weight));
       const mi=Math.max(0,...seg.filter(s=>s.mifg).map(s=>s.weight));
       const fr=Math.max(0,...seg.filter(s=>s.fzfg).map(s=>s.weight));
+      const clear=Math.max(0,...seg.filter(s=>!s.fg&&!s.br&&!s.mifg&&/(?:^|\s)(?:9999|CAVOK)(?:\s|$)/.test(s.text)).map(s=>s.weight));
       const local=Math.max(fg,br*.65,mi*.55);
       if(st==='EPIR')epir=Math.max(epir,local);else neighbors=Math.max(neighbors,local);
       fz=Math.max(fz,fr*(st==='EPIR'?1:.45));
+      if(clear>0)negative=Math.max(negative,clear*(st==='EPIR'?1:.35));
       if(local>0)detail.push(`${st}:${fg?'FG':br?'BR':'MIFG'}`);
     }
-    return {epir,neighbors,fz,detail};
+    return {epir,neighbors,fz,negative,detail};
   }
 
   function obsMetrics(r){
@@ -124,8 +126,8 @@
     if(p==='RAD')return 'radiacyjna';if(p==='ADV')return 'adwekcyjna';if(p==='CBL')return 'Stratus → mgła';if(p==='PCP')return 'opadowa / parowania';return p||'—';
   }
   function freezeFlag(row,ctx){
-    const T=num(row?.integrated244?.input?.T),Ts=num(row?.integrated244?.input?.Ts),score=coreScore(row);
-    const thermal=(finite(T)&&T<=0.2)||(finite(Ts)&&Ts<=0);
+    const T=num(row?.integrated244?.input?.T),Ts=num(row?.integrated244?.input?.Ts),score=num(row?.score)??coreScore(row);
+    const thermal=finite(T)&&T<=0.2||finite(Ts)&&Ts<=0;
     const taf=ctx?.taf?.fz>=.45;
     return {value:score>=ACTIVE&&(thermal||taf),reason:taf?'TAF FZFG':thermal?`T ${finite(T)?T.toFixed(1):'—'}°C / Ts ${finite(Ts)?Ts.toFixed(1):'—'}°C`:'brak sygnału ujemnej temperatury'};
   }
@@ -134,7 +136,7 @@
     if(!finite(base))return row;
     const decayObs=Math.exp(-lead/5.5),decayTaf=.35+.65*Math.exp(-lead/30);
     const trendAdj=12*trend.support*trend.quality*decayObs;
-    const tafSupport=.68*taf.epir+.32*taf.neighbors;
+    const tafSupport=.68*taf.epir+.32*taf.neighbors-.22*(taf.negative||0);
     let tafAdj=7*tafSupport*decayTaf;
     if(base<42)tafAdj=Math.min(tafAdj,2);
     let score=clamp(base+trendAdj+tafAdj,0,100);
@@ -171,7 +173,7 @@
     return true;
   }
 
-  function best(series,hours){const now=Date.now(),to=now+hours*HOUR;return (series||[]).filter(r=>finite(num(r?.t))&&r.t>=now-HOUR&&r.t<=to&&finite(num(r?.score))).reduce((a,b)=>!a||b.score>a.score?b:a,null);}
+  function best(series,hours){const now=Date.now(),from=now-30*60e3,to=now+hours*HOUR;return (series||[]).filter(r=>finite(num(r?.t))&&r.t>=from&&r.t<=to&&finite(num(r?.score))).reduce((a,b)=>!a||b.score>a.score?b:a,null);}
   function riskText(s){return !finite(s)?'BRAK DANYCH':s<ACTIVE?'NIE':s<80?'PRAWDOPODOBNA':'BARDZO PRAWDOPODOBNA';}
   function css(s){return s>=80?'fogctx-vh':s>=ACTIVE?'fogctx-hi':'';}
   function visText(v){v=num(v);return finite(v)?(v>=10000?(v/1000).toFixed(1)+' km':Math.round(v)+' m'):'—';}
@@ -195,7 +197,7 @@
       <div class="fogctx-card"><small>Rodzaj mgły w maksimum FG</small><strong>${esc(typeText(peak))}</strong><em>${peak?.t?utc(peak.t):'—'} · mechanizm 1/2: ${esc(peak?.vnextProbability?.mechanism1||'—')} / ${esc(peak?.vnextProbability?.mechanism2||'—')}</em></div>
       <div class="fogctx-card ${fr.value?'fogctx-hi':''}"><small>Czy marznąca (FZFG)</small><strong>${fr.value?'TAK':'NIE'}</strong><em>${esc(fr.reason)}</em></div>
       <div class="fogctx-card"><small>Tempo zmian EPIR</small><strong>${trend.support>0.18?'w stronę mgły':trend.support<-.18?'od mgły':'stabilnie'}</strong><em>Δ(T−Td) ${finite(trend.spreadPerH)?trend.spreadPerH.toFixed(2)+'°C/h':'—'} · ΔRH ${finite(trend.rhPerH)?trend.rhPerH.toFixed(1)+'%/h':'—'} · ΔVIS ${finite(trend.visPerH)?Math.round(trend.visPerH)+' m/h':'—'}</em></div>
-      <div class="fogctx-card"><small>TAF EPIR + zapasowe</small><strong>${tafText==='brak aktywnego sygnału FG/BR/MIFG w TAF'?'brak sygnału':'sygnał pomocniczy'}</strong><em>${esc(tafText)}</em></div>
+      <div class="fogctx-card"><small>TAF EPIR + zapasowe</small><strong>${tafText==='brak aktywnego sygnału FG/BR/MIFG w TAF'?'brak sygnału': 'sygnał pomocniczy'}</strong><em>${esc(tafText)}</em></div>
       <div class="fogctx-card"><small>Aktualne warunki EPIR</small><strong>${trend.last?visText(trend.last.vis):'BRAK'}</strong><em>${trend.last?`T/Td ${finite(trend.last.T)?trend.last.T.toFixed(1):'—'}/${finite(trend.last.Td)?trend.last.Td.toFixed(1):'—'}°C · RH ${finite(trend.last.rh)?Math.round(trend.last.rh):'—'}% · wiatr ${finite(trend.last.wind)?trend.last.wind.toFixed(1):'—'} m/s`:'brak świeżej obserwacji'}</em></div>
     </div><div class="fogctx-note"><b>TAF i obserwacje są kontekstem, nie zastępują fizyki.</b> TAF EPIR ma większą wagę niż TAF EPBY/EPPW/EPKS; lotniska zapasowe tylko potwierdzają szerszy sygnał synoptyczny. Trend z ostatnich obserwacji wykorzystuje zmianę T−Td, RH, widzialności, pułapu i wiatru. Dodatni kontekst nie może sam podnieść słabego sygnału fizycznego ponad próg 60/100.</div>`;
   }
