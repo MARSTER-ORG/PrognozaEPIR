@@ -3,6 +3,7 @@ const assert=require('assert');
 const P=require('../taf-fog-policy.js');
 
 assert.equal(P.BUILD,'20260920-fg-vis-gate');
+assert.equal(P.TAF_FOG_MODE,'vnext');
 assert.equal(P.normalizeMode('legacy'),'legacy');
 assert.equal(P.normalizeMode('vnext'),'vnext');
 assert.equal(P.normalizeMode('vnext-production'),'vnext');
@@ -79,9 +80,12 @@ assert.equal(p244.fgOperationalScore,68);
 assert.equal(p244.brRawScore,81);
 assert.equal(p244.mifgRawScore,29);
 
-const wLegacy={PrognozaEPIRFogLegacySeries:[legacy],PrognozaEPIRFogSeries:[vnext]};
-assert.equal(P.seriesForMode(wLegacy,'legacy')[0].score,55);
+const wLegacy={localStorage:{getItem:()=> 'legacy'},PrognozaEPIRFogLegacySeries:[legacy],PrognozaEPIRFogSeries:[vnext],PrognozaEPIRFogVNextSeries:[vnext]};
+assert.equal(P.selectedMode(wLegacy),'vnext');
+assert.equal(P.seriesForTaf(wLegacy)[0].score,68);
+assert.equal(P.seriesForMode(wLegacy,'legacy')[0].score,68);
 const wNext={PrognozaEPIRFogVNextSeries:[vnext]};
 assert.equal(P.seriesForMode(wNext,'vnext')[0].score,68);
+assert.deepEqual(P.seriesForTaf({localStorage:{getItem:()=> 'legacy'},PrognozaEPIRFogLegacySeries:[legacy]}),[]);
 
 console.log('TAF fog engine mode policy regressions: OK');
