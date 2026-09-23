@@ -2,11 +2,11 @@
 (() => {
   const FRAME_ID='epirFogCanonicalRuntime';
   const MODE_KEY='prognozaepir-fog-engine-mode';
-  const VERSION='2026-09-23-mode-visible-1';
+  const VERSION='2026-09-23-mode-visible-2';
   const SECTION_FIX='fog-section-info-fix.js';
-  const ACTIVE=60;
+  const ACTIVE=60,HOUR=3600e3;
   const finite=Number.isFinite;
-  let frame=null,lastSync=0,lastCounts={legacy:0,vnext:0,br:0,mifg:0};
+  let frame=null,lastSync=0,lastCounts={legacy:0,vnext:0,br:0,mifg:0},fgMarkerWrapped=false;
 
   function selectedMode(){
     try{return localStorage.getItem(MODE_KEY)==='vnext'?'vnext':'legacy';}
@@ -47,6 +47,36 @@
     badge.textContent=mode==='vnext'?'FOG ENGINE: NEXT 2.4.4':'FOG ENGINE: LEGACY';
     badge.dataset.mode=mode;
   }
+  function drawFgEpisodeMarkers(){
+    try{
+      if(typeof cv==='undefined'||typeof ctx==='undefined')return;
+      const api=window.PrognozaEPIRFogMeteogramOverlay,m=cv?._meta;
+      if(!api?.fogRows||!m||!Array.isArray(m.panelYs)||!finite(Number(m.t0))||!finite(Number(m.t1)))return;
+      const p=m.panelYs.find(x=>x?.id==='visfog')||m.panelYs.find(x=>x?.id==='cloud');
+      if(!p)return;
+      const rows=api.fogRows().filter(r=>r&&finite(Number(r.t))&&finite(Number(r.score))&&Number(r.score)>=ACTIVE&&Number(r.t)>=m.t0&&Number(r.t)<=m.t1).sort((a,b)=>Number(a.t)-Number(b.t));
+      if(!rows.length)return;
+      const groups=[];let group=[];
+      for(const row of rows){const prev=group.at(-1);if(!prev||Number(row.t)-Number(prev.t)<=1.6*HOUR)group.push(row);else{groups.push(group);group=[row];}}
+      if(group.length)groups.push(group);
+      const x0=m.x0,x1=m.x1,plotW=x1-x0,x=t=>Math.max(x0,Math.min(x1,x0+(t-m.t0)/(m.t1-m.t0)*plotW));
+      const yFor=score=>{const q=Math.max(0,Math.min(1,(Number(score)-ACTIVE)/(100-ACTIVE)));return p.y+p.h-8-q*Math.max(16,p.h-22);};
+      ctx.save();ctx.beginPath();ctx.rect(x0,p.y,plotW,p.h);ctx.clip();ctx.lineWidth=1.4;ctx.font='bold 7.5px Arial';ctx.textAlign='center';ctx.textBaseline='bottom';
+      for(const row of rows){const xx=x(Number(row.t)),yy=yFor(Number(row.score));ctx.strokeStyle='rgba(255,157,70,.98)';ctx.beginPath();ctx.moveTo(xx-3.5,yy);ctx.lineTo(xx+3.5,yy);ctx.stroke();}
+      for(const g of groups){const peak=g.reduce((a,b)=>!a||Number(b.score)>Number(a.score)?b:a,null);if(!peak)continue;const xx=x(Number(peak.t)),yy=yFor(Number(peak.score));ctx.fillStyle=typeof canvasPalette==='function'?(canvasPalette().text||'#fff'):'#fff';ctx.fillText('FG '+Math.round(Number(peak.score)),xx,Math.max(p.y+10,yy-3));}
+      ctx.restore();
+    }catch(_){}
+  }
+  function installFgEpisodeMarkers(){
+    if(fgMarkerWrapped)return true;
+    try{
+      if(typeof draw!=='function'||!window.__epirFogMeteogramDrawWrapped||!window.PrognozaEPIRFogMeteogramOverlay)return false;
+      const base=draw;
+      draw=function(){base();drawFgEpisodeMarkers();};
+      fgMarkerWrapped=true;
+      return true;
+    }catch(_){return false;}
+  }
   function computeSelectedBR(cw,mode,legacy,vnext){
     try{
       const engine=cw?.PrognozaEPIRBREngine;
@@ -86,6 +116,7 @@
     window.PrognozaEPIRBRSeries=br;
 
     updateModeBadge();
+    installFgEpisodeMarkers();
     lastSync=Date.now();
     lastCounts={legacy:legacy.length,vnext:vnext.length,br:br.length,mifg:mifg.length};
     const detail={source:'fog.html',mode,version:VERSION,...lastCounts};
@@ -139,6 +170,7 @@
     loadSectionFix();
     updateModeBadge();
     loadFrame();
+    let markerTries=0;const markerTimer=setInterval(()=>{if(installFgEpisodeMarkers()||++markerTries>80)clearInterval(markerTimer);},250);
     window.addEventListener('storage',ev=>{if(ev.key===MODE_KEY){updateModeBadge();reloadCanonical();}});
     window.addEventListener('prognozaepir:fog-engine-mode-changed',updateModeBadge);
     document.addEventListener('visibilitychange',()=>{if(!document.hidden)setTimeout(sync,0);});
@@ -149,7 +181,7 @@
     version:VERSION,
     sync,
     selectedMode,
-    status:()=>({lastSync,...lastCounts,frameReady:Boolean(canonicalWindow())})
+    status:()=>({lastSync,...lastCounts,frameReady:Boolean(canonicalWindow()),fgMarkerWrapped})
   });
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start,{once:true});else start();
 })();
