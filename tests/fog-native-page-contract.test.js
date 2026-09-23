@@ -19,14 +19,23 @@ const expectedScripts = [
   'utc-ui-guard.js',
   'theme.js',
   'fog-engine-v244.js',
-  'fog-engine.js'
+  'fog-engine-v244-context.js',
+  'fog-engine.js',
+  'fog-mode-switch.js'
 ];
-assert.deepStrictEqual(scripts, expectedScripts, 'fog.html must load only the integrated 2.4.4 standalone runtime scripts');
+assert.deepStrictEqual(scripts, expectedScripts, 'fog.html must load only the integrated 2.4.4 standalone runtime and explicit Legacy/NEXT selector');
 
 const v244 = fs.readFileSync(path.join(ROOT, 'fog-engine-v244.js'), 'utf8');
 assert(v244.includes("const V='2.4.4',H=3600e3,ACTIVE=60"), 'Fog 2.4.4 must use the unified 60/100 activation threshold');
 assert(v244.includes('PrognozaEPIRBRSeries=br'), 'Fog 2.4.4 must publish BR');
 assert(v244.includes('PrognozaEPIRMIFG={'), 'Fog 2.4.4 must publish MIFG');
+
+const modeSwitch = fs.readFileSync(path.join(ROOT, 'fog-mode-switch.js'), 'utf8');
+assert(modeSwitch.includes("const KEY = 'prognozaepir-fog-engine-mode'"), 'Fog selector must use the shared engine-mode key');
+assert(modeSwitch.includes("MODE_LEGACY = 'legacy'"), 'Fog selector must expose Legacy mode');
+assert(modeSwitch.includes("MODE_VNEXT = 'vnext'"), 'Fog selector must expose NEXT mode');
+assert(modeSwitch.includes('AKTYWNY: LEGACY'), 'Fog selector must show active Legacy state');
+assert(modeSwitch.includes('AKTYWNY: NEXT 2.4.4'), 'Fog selector must show active NEXT state');
 
 const forbidden = [
   '<iframe','index.html?fogpanel=','fogRuntime','runtime-wrap','<canvas','canvasViewport',
