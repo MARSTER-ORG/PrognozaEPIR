@@ -2,7 +2,7 @@
 (() => {
   const FRAME_ID='epirFogCanonicalRuntime';
   const MODE_KEY='prognozaepir-fog-engine-mode';
-  const VERSION='2026-09-22-threshold60-hoverbr-1';
+  const VERSION='2026-09-23-mode-visible-1';
   const SECTION_FIX='fog-section-info-fix.js';
   const ACTIVE=60;
   const finite=Number.isFinite;
@@ -32,6 +32,20 @@
   }
   function emit(name,detail){
     try{window.dispatchEvent(new CustomEvent(name,{detail}));}catch(_){}
+  }
+  function updateModeBadge(){
+    const legend=document.querySelector('.legend');
+    if(!legend)return;
+    let badge=document.getElementById('fogActiveEngineBadge');
+    if(!badge){
+      badge=document.createElement('div');
+      badge.id='fogActiveEngineBadge';
+      badge.style.cssText='margin-top:5px;padding-top:5px;border-top:1px solid var(--border);font-size:9px;font-weight:700;color:var(--blueText);';
+      legend.appendChild(badge);
+    }
+    const mode=selectedMode();
+    badge.textContent=mode==='vnext'?'FOG ENGINE: NEXT 2.4.4':'FOG ENGINE: LEGACY';
+    badge.dataset.mode=mode;
   }
   function computeSelectedBR(cw,mode,legacy,vnext){
     try{
@@ -71,6 +85,7 @@
     });
     window.PrognozaEPIRBRSeries=br;
 
+    updateModeBadge();
     lastSync=Date.now();
     lastCounts={legacy:legacy.length,vnext:vnext.length,br:br.length,mifg:mifg.length};
     const detail={source:'fog.html',mode,version:VERSION,...lastCounts};
@@ -122,8 +137,10 @@
   }
   function start(){
     loadSectionFix();
+    updateModeBadge();
     loadFrame();
-    window.addEventListener('storage',ev=>{if(ev.key===MODE_KEY)reloadCanonical();});
+    window.addEventListener('storage',ev=>{if(ev.key===MODE_KEY){updateModeBadge();reloadCanonical();}});
+    window.addEventListener('prognozaepir:fog-engine-mode-changed',updateModeBadge);
     document.addEventListener('visibilitychange',()=>{if(!document.hidden)setTimeout(sync,0);});
     setInterval(sync,60000);
   }
