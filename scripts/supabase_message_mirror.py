@@ -22,7 +22,7 @@ ARCHIVE = ROOT / "data" / "messages"
 NEIGHBOR_ROOT = ARCHIVE / "neighbors"
 STATE_PATH = Path(os.environ.get("SUPABASE_MIRROR_STATE", "/tmp/prognozaepir-supabase-mirror-state.json"))
 URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
-INGEST_TOKEN = os.environ.get("SUPABASE_INGEST_TOKEN", "")
+INGEST_TOKEN = os.environ.get("MESSAGE_INGEST_TOKEN") or os.environ.get("SUPABASE_INGEST_TOKEN", "")
 ENABLED = os.environ.get("SUPABASE_INGEST_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
 TIMEOUT = max(10, int(os.environ.get("SUPABASE_INGEST_TIMEOUT_SECONDS", "30")))
 BATCH_SIZE = max(1, min(500, int(os.environ.get("SUPABASE_INGEST_BATCH_SIZE", "200"))))
@@ -155,7 +155,14 @@ def run(lookback_days: int, force: bool = False, all_history: bool = False) -> d
     started = utc_iso()
     if not ENABLED:
         return {"ok": True, "enabled": False, "started_at": started, "sent": 0, "reason": "disabled"}
-    missing = [name for name, value in (("SUPABASE_URL", URL), ("SUPABASE_INGEST_TOKEN", INGEST_TOKEN)) if not value]
+    missing = [
+        name
+        for name, value in (
+            ("SUPABASE_URL", URL),
+            ("MESSAGE_INGEST_TOKEN or SUPABASE_INGEST_TOKEN", INGEST_TOKEN),
+        )
+        if not value
+    ]
     if missing:
         return {"ok": False, "enabled": True, "started_at": started, "sent": 0, "error": f"missing env: {', '.join(missing)}"}
 

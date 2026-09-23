@@ -76,7 +76,15 @@ def main() -> int:
     assert "create table if not exists public.messages" in migration
     assert "create table if not exists public.stations" in migration
     assert "create or replace function public.ingest_message_batch" in migration
+    assert "alter table public.stations alter column icao drop not null" in compact_migration
+    assert "content_hash text generated always as" in compact_migration
+    assert "archive_time timestamptz generated always as" in compact_migration
+    assert "messages_type_station_time_hash_key" in compact_migration
+    assert "on conflict (message_type, station_code, archive_time, content_hash) do update" in compact_migration
+    assert "on conflict (content_hash) do update" not in compact_migration
     assert "database.rpc('ingest_message_batch'" in ingest
+    assert "Deno.env.get('MESSAGE_INGEST_TOKEN')" in ingest
+    assert "Deno.env.get('SUPABASE_INGEST_TOKEN')" in ingest
     assert "db.from('messages').select(SELECT)" in reader
     assert "revoke all on table public.messages from public, anon, authenticated" in compact_migration
     assert "revoke all on table public.stations from public, anon, authenticated" in compact_migration
@@ -87,6 +95,8 @@ def main() -> int:
     assert "create policy messages_public_read" not in compact_migration
     assert "create policy stations_public_read" not in compact_migration
     assert "using (true)" not in compact_migration
+    assert 'drop policy if exists "public read messages" on public.messages' in compact_migration
+    assert 'drop policy if exists "public read stations" on public.stations' in compact_migration
     assert "grant select on table public.message_sources, public.stations, public.messages to service_role" in compact_migration
     icao_seed = re.search(
         r"insert into public\.stations \(icao, name\).*?\) as seed\(icao, name\)",

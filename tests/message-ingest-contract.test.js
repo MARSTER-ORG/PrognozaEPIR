@@ -80,11 +80,19 @@ function hash(value) {
     assert.match(reader, new RegExp(`\\b${column}\\b`), `message-archive must read ${column}`);
   }
   assert.match(migration, /create or replace function public\.ingest_message_batch/);
+  assert.match(migration, /alter table public\.stations alter column icao drop not null/);
+  assert.match(migration, /content_hash text generated always as/);
+  assert.match(migration, /archive_time timestamptz generated always as/);
+  assert.match(migration, /messages_type_station_time_hash_key/);
+  assert.match(migration, /on conflict \(message_type, station_code, archive_time, content_hash\) do update/);
+  assert.doesNotMatch(migration, /on conflict \(content_hash\) do update/);
   assert.match(migration, /revoke all on table public\.messages from public, anon, authenticated/);
   assert.match(migration, /revoke all on table public\.stations from public, anon, authenticated/);
   assert.doesNotMatch(migration, /grant select on table public\.(?:messages|stations) to (?:anon|authenticated)/i);
   assert.doesNotMatch(migration, /create policy (?:messages|stations)_public_read/i);
   assert.doesNotMatch(migration, /using\s*\(true\)/i);
+  assert.match(migration, /drop policy if exists "public read messages" on public\.messages/);
+  assert.match(migration, /drop policy if exists "public read stations" on public\.stations/);
   assert.match(migration, /grant select on table public\.message_sources, public\.stations, public\.messages to service_role/);
   const icaoSeed = migration.match(/insert into public\.stations \(icao, name\)[\s\S]*?\) as seed\(icao, name\)/i)?.[0] || '';
   assert.ok(icaoSeed, 'ICAO seed must be present');

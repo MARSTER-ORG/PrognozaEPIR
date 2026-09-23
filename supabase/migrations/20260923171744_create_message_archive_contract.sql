@@ -13,6 +13,27 @@ create table if not exists public.message_sources (
   constraint message_sources_name_chk check (btrim(name) <> '')
 );
 
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.message_sources'::regclass and conname = 'message_sources_code_chk'
+  ) then
+    alter table public.message_sources
+      add constraint message_sources_code_chk check (code ~ '^[A-Z0-9_]{2,64}$') not valid;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.message_sources'::regclass and conname = 'message_sources_name_chk'
+  ) then
+    alter table public.message_sources
+      add constraint message_sources_name_chk check (btrim(name) <> '') not valid;
+  end if;
+end $$;
+
+alter table public.message_sources validate constraint message_sources_code_chk;
+alter table public.message_sources validate constraint message_sources_name_chk;
+
 create table if not exists public.stations (
   id uuid primary key default gen_random_uuid(),
   icao text,
@@ -31,6 +52,72 @@ create table if not exists public.stations (
   constraint stations_longitude_chk check (longitude is null or longitude between -180 and 180),
   constraint stations_name_chk check (btrim(name) <> '')
 );
+
+-- The live schema predates WMO-only stations and has stations.icao NOT NULL.
+-- Relax that legacy requirement before repairing the 12342 seed row.
+alter table public.stations alter column icao drop not null;
+
+do $$
+begin
+  if exists (select 1 from public.stations where name is null or btrim(name) = '') then
+    raise exception 'stations.name contains null or blank values; clean them before applying this migration';
+  end if;
+end $$;
+
+alter table public.stations alter column name set not null;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.stations'::regclass and conname = 'stations_code_present_chk'
+  ) then
+    alter table public.stations
+      add constraint stations_code_present_chk check (icao is not null or wmo is not null) not valid;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.stations'::regclass and conname = 'stations_icao_chk'
+  ) then
+    alter table public.stations
+      add constraint stations_icao_chk check (icao is null or icao ~ '^[A-Z0-9]{4,5}$') not valid;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.stations'::regclass and conname = 'stations_wmo_chk'
+  ) then
+    alter table public.stations
+      add constraint stations_wmo_chk check (wmo is null or wmo ~ '^[0-9]{5}$') not valid;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.stations'::regclass and conname = 'stations_latitude_chk'
+  ) then
+    alter table public.stations
+      add constraint stations_latitude_chk check (latitude is null or latitude between -90 and 90) not valid;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.stations'::regclass and conname = 'stations_longitude_chk'
+  ) then
+    alter table public.stations
+      add constraint stations_longitude_chk check (longitude is null or longitude between -180 and 180) not valid;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.stations'::regclass and conname = 'stations_name_chk'
+  ) then
+    alter table public.stations
+      add constraint stations_name_chk check (btrim(name) <> '') not valid;
+  end if;
+end $$;
+
+alter table public.stations validate constraint stations_code_present_chk;
+alter table public.stations validate constraint stations_icao_chk;
+alter table public.stations validate constraint stations_wmo_chk;
+alter table public.stations validate constraint stations_latitude_chk;
+alter table public.stations validate constraint stations_longitude_chk;
+alter table public.stations validate constraint stations_name_chk;
 
 create unique index if not exists stations_icao_uidx
   on public.stations (icao) where icao is not null;
@@ -89,16 +176,20 @@ create table if not exists public.messages (
   ingested_at timestamptz not null default now(),
   first_seen_at timestamptz not null default now(),
   last_seen_at timestamptz not null default now(),
-  duplicate_count bigint not null default 0,
-  payload jsonb not null,
-  content_hash text not null,
-  archive_time timestamptz not null,
+  duplicate_count integer not null default 0,
+  payload jsonb not null default '{}',
+  content_hash text generated always as (
+    encode(extensions.digest(normalized_text, 'sha256'), 'hex')
+  ) stored,
+  archive_time timestamptz generated always as (
+    coalesce(observed_at, issued_at, ingested_at)
+  ) stored,
   visibility_m integer,
-  wind_direction_deg integer,
-  wind_speed_kt double precision,
-  gust_kt double precision,
-  temperature_c double precision,
-  qnh_hpa double precision,
+  wind_direction_deg smallint,
+  wind_speed_kt numeric,
+  gust_kt numeric,
+  temperature_c numeric,
+  qnh_hpa numeric,
   ceiling_ft integer,
   weather_codes text[] not null default '{}',
   has_fg boolean not null default false,
@@ -129,8 +220,134 @@ create table if not exists public.messages (
   constraint messages_ceiling_chk check (ceiling_ft is null or ceiling_ft >= 0)
 );
 
-create unique index if not exists messages_content_hash_uidx
-  on public.messages (content_hash);
+alter table public.messages alter column content_hash set not null;
+alter table public.messages alter column archive_time set not null;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.messages'::regclass and conname = 'messages_type_chk'
+  ) then
+    alter table public.messages
+      add constraint messages_type_chk check (message_type in ('METAR', 'SPECI', 'TAF', 'SYNOP')) not valid;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.messages'::regclass and conname = 'messages_station_code_chk'
+  ) then
+    alter table public.messages
+      add constraint messages_station_code_chk check (station_code ~ '^[A-Z0-9]{4,5}$') not valid;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.messages'::regclass and conname = 'messages_raw_text_chk'
+  ) then
+    alter table public.messages
+      add constraint messages_raw_text_chk check (btrim(raw_text) <> '') not valid;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.messages'::regclass and conname = 'messages_normalized_text_chk'
+  ) then
+    alter table public.messages
+      add constraint messages_normalized_text_chk check (btrim(normalized_text) <> '') not valid;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.messages'::regclass and conname = 'messages_content_hash_chk'
+  ) then
+    alter table public.messages
+      add constraint messages_content_hash_chk check (content_hash ~ '^[0-9a-f]{64}$') not valid;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.messages'::regclass and conname = 'messages_payload_object_chk'
+  ) then
+    alter table public.messages
+      add constraint messages_payload_object_chk check (jsonb_typeof(payload) = 'object') not valid;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.messages'::regclass and conname = 'messages_duplicate_count_chk'
+  ) then
+    alter table public.messages
+      add constraint messages_duplicate_count_chk check (duplicate_count >= 0) not valid;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.messages'::regclass and conname = 'messages_event_time_chk'
+  ) then
+    alter table public.messages
+      add constraint messages_event_time_chk check (
+        (message_type = 'TAF' and issued_at is not null)
+        or (message_type <> 'TAF' and observed_at is not null)
+      ) not valid;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.messages'::regclass and conname = 'messages_validity_chk'
+  ) then
+    alter table public.messages
+      add constraint messages_validity_chk check (valid_to is null or valid_from is null or valid_to >= valid_from) not valid;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.messages'::regclass and conname = 'messages_visibility_chk'
+  ) then
+    alter table public.messages
+      add constraint messages_visibility_chk check (visibility_m is null or visibility_m >= 0) not valid;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.messages'::regclass and conname = 'messages_wind_direction_chk'
+  ) then
+    alter table public.messages
+      add constraint messages_wind_direction_chk check (wind_direction_deg is null or wind_direction_deg between 0 and 360) not valid;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.messages'::regclass and conname = 'messages_wind_speed_chk'
+  ) then
+    alter table public.messages
+      add constraint messages_wind_speed_chk check (wind_speed_kt is null or wind_speed_kt >= 0) not valid;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.messages'::regclass and conname = 'messages_gust_chk'
+  ) then
+    alter table public.messages
+      add constraint messages_gust_chk check (gust_kt is null or gust_kt >= 0) not valid;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.messages'::regclass and conname = 'messages_ceiling_chk'
+  ) then
+    alter table public.messages
+      add constraint messages_ceiling_chk check (ceiling_ft is null or ceiling_ft >= 0) not valid;
+  end if;
+end $$;
+
+alter table public.messages validate constraint messages_type_chk;
+alter table public.messages validate constraint messages_station_code_chk;
+alter table public.messages validate constraint messages_raw_text_chk;
+alter table public.messages validate constraint messages_normalized_text_chk;
+alter table public.messages validate constraint messages_content_hash_chk;
+alter table public.messages validate constraint messages_payload_object_chk;
+alter table public.messages validate constraint messages_duplicate_count_chk;
+alter table public.messages validate constraint messages_event_time_chk;
+alter table public.messages validate constraint messages_validity_chk;
+alter table public.messages validate constraint messages_visibility_chk;
+-- One legacy production row uses a non-compass sentinel. Keep the constraint
+-- NOT VALID so new writes are protected without rewriting historical data.
+alter table public.messages validate constraint messages_wind_speed_chk;
+alter table public.messages validate constraint messages_gust_chk;
+alter table public.messages validate constraint messages_ceiling_chk;
+
+-- Historical messages can legitimately repeat the same canonical text at a
+-- different event time. Match the existing archive's time-aware identity.
+create unique index if not exists messages_type_station_time_hash_key
+  on public.messages (message_type, station_code, archive_time, content_hash);
 create index if not exists messages_type_station_archive_idx
   on public.messages (message_type, station_code, archive_time desc, id desc);
 create index if not exists messages_type_archive_idx
@@ -168,6 +385,9 @@ end $$;
 
 drop policy if exists stations_public_read on public.stations;
 drop policy if exists messages_public_read on public.messages;
+drop policy if exists "public read sources" on public.message_sources;
+drop policy if exists "public read stations" on public.stations;
+drop policy if exists "public read messages" on public.messages;
 
 -- The Edge Function validates and projects each object. This database function
 -- makes the final batch write atomic and prevents a hash conflict from updating
@@ -190,6 +410,39 @@ begin
   v_expected := jsonb_array_length(p_messages);
   if v_expected < 1 or v_expected > 500 then
     raise exception 'p_messages batch size must be between 1 and 500' using errcode = '22023';
+  end if;
+
+  if exists (
+    select 1
+    from jsonb_to_recordset(p_messages) as incoming(
+      content_hash text,
+      normalized_text text,
+      observed_at timestamptz,
+      issued_at timestamptz,
+      archive_time timestamptz
+    )
+    where incoming.content_hash is distinct from
+          encode(extensions.digest(incoming.normalized_text, 'sha256'), 'hex')
+       or incoming.archive_time is distinct from coalesce(incoming.observed_at, incoming.issued_at)
+  ) then
+    raise exception 'message hash or archive time does not match the canonical identity' using errcode = '23505';
+  end if;
+
+  if exists (
+    select 1
+    from jsonb_to_recordset(p_messages) as incoming(
+      content_hash text,
+      message_type text,
+      station_code text,
+      normalized_text text
+    )
+    join public.messages existing
+      on existing.content_hash = incoming.content_hash
+    where existing.message_type <> incoming.message_type
+       or existing.station_code <> incoming.station_code
+       or existing.normalized_text <> incoming.normalized_text
+  ) then
+    raise exception 'content hash conflicts with an unrelated message identity' using errcode = '23505';
   end if;
 
   with input as (
@@ -239,24 +492,24 @@ begin
     ) as station on true
   ), upserted as (
     insert into public.messages as existing (
-      content_hash, message_type, station_id, station_code,
+      message_type, station_id, station_code,
       observed_at, issued_at, valid_from, valid_to,
-      raw_text, normalized_text, source_ref, payload, archive_time,
+      raw_text, normalized_text, source_ref, payload,
       visibility_m, wind_direction_deg, wind_speed_kt, gust_kt,
       temperature_c, qnh_hpa, ceiling_ft, weather_codes,
       has_fg, has_br, has_mifg, has_ts, has_ra, has_sn, has_cb, has_tcu, has_vv
     )
     select
-      content_hash, message_type, station_id, station_code,
+      message_type, station_id, station_code,
       observed_at, issued_at, valid_from, valid_to,
-      raw_text, normalized_text, source_ref, payload, archive_time,
+      raw_text, normalized_text, source_ref, payload,
       visibility_m, wind_direction_deg, wind_speed_kt, gust_kt,
       temperature_c, qnh_hpa, ceiling_ft, coalesce(weather_codes, '{}'),
       coalesce(has_fg, false), coalesce(has_br, false), coalesce(has_mifg, false),
       coalesce(has_ts, false), coalesce(has_ra, false), coalesce(has_sn, false),
       coalesce(has_cb, false), coalesce(has_tcu, false), coalesce(has_vv, false)
     from input
-    on conflict (content_hash) do update
+    on conflict (message_type, station_code, archive_time, content_hash) do update
     set
       station_id = coalesce(existing.station_id, excluded.station_id),
       source_ref = coalesce(existing.source_ref, excluded.source_ref),

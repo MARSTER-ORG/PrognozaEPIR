@@ -33,7 +33,7 @@ Deno.serve(async (request: Request) => {
   const requestId = crypto.randomUUID();
   if (request.method !== 'POST') return json({ ok: false, error: 'method not allowed', request_id: requestId }, 405);
 
-  const ingestToken = Deno.env.get('SUPABASE_INGEST_TOKEN') || '';
+  const ingestToken = Deno.env.get('MESSAGE_INGEST_TOKEN') || Deno.env.get('SUPABASE_INGEST_TOKEN') || '';
   if (!ingestToken) {
     console.error('message-ingest configuration error', { requestId, reason: 'missing ingest token' });
     return json({ ok: false, error: 'service unavailable', request_id: requestId }, 503);
