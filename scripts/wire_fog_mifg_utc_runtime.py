@@ -166,7 +166,7 @@ def validate() -> None:
     forbidden = (
         '<iframe', 'index.html?fogpanel=', 'fogRuntime', 'runtime-wrap',
         'canvasViewport', '<canvas', 'MutationObserver', 'ResizeObserver',
-        'epir-pages-compat-', 'message-archive-client.js', 'observation-engine.js',
+        'epir-pages-compat-', 'observation-engine.js',
         'fog-meteogram-overlay.js', 'shortcut-mode.js',
     )
     for marker in forbidden:
@@ -178,6 +178,11 @@ def validate() -> None:
     ):
         if marker not in fog_html:
             raise SystemExit(f"native EPIR FOG page marker missing: {marker}")
+    archive_asset = 'message-archive-client.js?v=live-jsonl-v7'
+    if archive_asset not in fog_html:
+        raise SystemExit("native EPIR FOG page is missing MessageArchive client")
+    if fog_html.find(archive_asset) > fog_html.find('fog-engine-v244.js'):
+        raise SystemExit("MessageArchive client must load before integrated FOG 2.4.4")
     for asset in FOG_PAGE_ASSETS:
         if f'{asset}?v={ASSET_V}' not in fog_html:
             raise SystemExit(f"native EPIR FOG asset missing/cache stale: {asset}")

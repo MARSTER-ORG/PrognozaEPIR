@@ -29,9 +29,9 @@ LEGACY_BULLETIN_FILES = re.compile(
 )
 SERVICE_ROLE_CREDENTIAL = re.compile(r"SUPABASE_SERVICE_ROLE_KEY|['\"]service_role['\"]\s*[:=]", re.I)
 CLIENT_SCRIPT = re.compile(r'<script\s+src=["\']message-archive-client\.js(?:\?[^"\']*)?["\']\s*></script>', re.I)
-BRIDGED_LEGACY_READERS = {"fog-engine.js", "mifg-engine.js"}
+DIRECT_FALLBACK_READERS = {"fog-engine.js", "fog-engine-v244.js"}
 TARGETS = [*ROOT.glob("*.html"), *ROOT.glob("*.js"), *ROOT.glob("api/*.js")]
-BULLETIN_PAGES = ("index.html", "arch.html", "taf.html")
+BULLETIN_PAGES = ("index.html", "fog.html", "arch.html", "taf.html")
 
 
 def rel(path: Path) -> str:
@@ -40,6 +40,14 @@ def rel(path: Path) -> str:
 
 def compact(text: str) -> str:
     return re.sub(r"\s+", "", text)
+
+
+def direct_message_file_violations(path: Path, text: str) -> list[str]:
+    if path.resolve() == CLIENT.resolve() or not DIRECT_MESSAGE_FILES.search(text):
+        return []
+    if path.name in DIRECT_FALLBACK_READERS:
+        return []
+    return [f"{rel(path)}: direct bulletin JSON/JSONL access bypasses shared MessageArchive client"]
 
 
 def validate_taf_archive_app(path: Path, label: str, violations: list[str]) -> None:
@@ -66,8 +74,7 @@ def main() -> int:
             violations.append(f"{rel(path)}: direct Railway archive URL bypasses shared MessageArchive client")
         if path.resolve() != CLIENT.resolve() and SUPABASE_ARCHIVE.search(text):
             violations.append(f"{rel(path)}: direct Supabase archive URL bypasses shared MessageArchive client")
-        if path.resolve() != CLIENT.resolve() and DIRECT_MESSAGE_FILES.search(text) and path.name not in BRIDGED_LEGACY_READERS:
-            violations.append(f"{rel(path)}: direct bulletin JSON/JSONL access bypasses shared MessageArchive client")
+        violations.extend(direct_message_file_violations(path, text))
         if path.resolve() != CLIENT.resolve() and LEGACY_BULLETIN_FILES.search(text):
             violations.append(f"{rel(path)}: legacy bulletin file/snapshot access bypasses MessageArchive")
 
@@ -108,22 +115,51 @@ def main() -> int:
         if not CLIENT_SCRIPT.search(text):
             violations.append(f"{name}: shared MessageArchive client is not loaded")
 
-    index = ROOT / "index.html"
-    if index.exists():
-        text = index.read_text(encoding="utf-8", errors="replace")
+    bridged_pages = {
+        "index.html": ("fog-engine.js",),
+        "fog.html": ("fog-engine-v244.js", "fog-engine.js"),
+    }
+    for page_name, script_names in bridged_pages.items():
+        page = ROOT / page_name
+        if not page.exists():
+            continue
+        text = page.read_text(encoding="utf-8", errors="replace")
         client_pos = text.find("message-archive-client.js")
-        for script_name in sorted(BRIDGED_LEGACY_READERS):
+        for script_name in script_names:
             script_pos = text.find(script_name)
             if script_pos < 0:
-                violations.append(f"index.html: expected bridged consumer {script_name} is not loaded")
+                violations.append(f"{page_name}: expected archive consumer {script_name} is not loaded")
             elif client_pos < 0 or client_pos > script_pos:
-                violations.append(f"index.html: {script_name} loads before MessageArchive fetch bridge")
+                violations.append(f"{page_name}: {script_name} loads before MessageArchive client")
             module = ROOT / script_name
-            if module.exists():
+            if module.exists() and script_name in DIRECT_FALLBACK_READERS:
                 module_text = module.read_text(encoding="utf-8", errors="replace")
                 refs = DIRECT_MESSAGE_FILES.findall(module_text)
                 if not refs or any(not ref.startswith("data/messages/latest.json") for ref in refs):
                     violations.append(f"{script_name}: compatibility read is not limited to data/messages/latest.json")
+
+    fog_v244 = ROOT / "fog-engine-v244.js"
+    if not fog_v244.exists():
+        violations.append("fog-engine-v244.js: missing integrated FOG runtime")
+    else:
+        text = fog_v244.read_text(encoding="utf-8", errors="replace")
+        archive_pos = text.find("window.PrognozaEPIRMessageArchive")
+        latest_pos = text.find("archive.latest(true)", archive_pos)
+        fallback_pos = text.find("data/messages/latest.json", latest_pos)
+        if archive_pos < 0 or latest_pos < 0:
+            violations.append("fog-engine-v244.js: observations do not use MessageArchive.latest as primary")
+        if latest_pos < 0 or fallback_pos < latest_pos:
+            violations.append("fog-engine-v244.js: local latest.json is not a final standalone fallback")
+
+    mifg = ROOT / "mifg-engine.js"
+    if not mifg.exists():
+        violations.append("mifg-engine.js: missing integrated MIFG bridge")
+    else:
+        text = mifg.read_text(encoding="utf-8", errors="replace")
+        if "PrognozaEPIRFog244?.getMIFGSeries?.()" not in text:
+            violations.append("mifg-engine.js: MIFG must remain a bridge to integrated FOG 2.4.4")
+        if DIRECT_MESSAGE_FILES.search(text):
+            violations.append("mifg-engine.js: bridge-only MIFG must not read archive files directly")
 
     taf = ROOT / "taf.html"
     if taf.exists():
