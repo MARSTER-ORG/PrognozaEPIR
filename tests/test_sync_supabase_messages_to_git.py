@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 import importlib.util
+import json
 import sys
 import unittest
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
@@ -78,6 +81,68 @@ class MirrorTests(unittest.TestCase):
     def test_parse_time_normalizes_utc(self):
         got = mirror.parse_time("2025-01-01 01:00:00+01:00")
         self.assertEqual(got, datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc))
+
+    def test_message_archive_projection_is_accepted(self):
+        row = {
+            "message_id": "archive-id",
+            "type": "SYNOP",
+            "station": "12342",
+            "message_time": "2025-01-01T00:00:00Z",
+            "raw": "AAXX 01001 12342 469// /2106 10014 21024 30070 40180 5/012 555 6//76=",
+            "source": "MESSAGE_ARCHIVE",
+        }
+        msg = mirror.canonical_from_row(row)
+        self.assertIsNotNone(msg)
+        self.assertEqual(msg["type"], "SYNOP")
+        self.assertEqual(msg["station"], "12342")
+        self.assertEqual(msg["supabase_message_id"], "archive-id")
+
+    def test_fetch_type_uses_message_archive_edge_api(self):
+        payload = {
+            "ok": True,
+            "rows": [{
+                "message_id": "edge-row",
+                "type": "METAR",
+                "station": "EPIR",
+                "message_time": "2025-01-01T00:00:00Z",
+                "raw": "METAR EPIR 010000Z 21012KT CAVOK 01/M02 Q1017=",
+            }],
+            "count": 1,
+        }
+        captured = {}
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps(payload).encode("utf-8")
+
+        def fake_urlopen(request, timeout):
+            captured["request"] = request
+            captured["timeout"] = timeout
+            return Response()
+
+        with mock.patch.object(mirror, "public_anon_key", return_value="anon-test-key"), mock.patch.object(
+            mirror.urllib.request, "urlopen", side_effect=fake_urlopen
+        ):
+            rows = mirror.fetch_type(
+                "METAR",
+                datetime(2025, 1, 1, tzinfo=timezone.utc),
+                datetime(2025, 1, 2, tzinfo=timezone.utc),
+            )
+
+        request = captured["request"]
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(request.full_url).query)
+        self.assertTrue(request.full_url.startswith(mirror.ARCHIVE_URL + "?"))
+        self.assertEqual(query["op"], ["search"])
+        self.assertEqual(query["type"], ["METAR"])
+        self.assertEqual(query["station"], ["EPIR"])
+        self.assertEqual(request.get_header("Authorization"), "Bearer anon-test-key")
+        self.assertEqual(rows, payload["rows"])
 
 
 if __name__ == "__main__":

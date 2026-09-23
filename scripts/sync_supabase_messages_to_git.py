@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Mirror canonical weather messages from Supabase into GitHub JSONL history.
 
-This intentionally uses only the public SELECT policy on ``public.messages``.
-It does not use the service-role backup Edge Function. Rows are normalized by
-scripts/message_archive.py so the mirror writes exactly the same canonical
-``data/messages/<type>/YYYY/MM/DD.jsonl`` tree used by the live archive.
+This reads through the public MessageArchive Edge Function. The Edge Function
+owns service-role table access; this client never requires direct SELECT on
+``public.messages``. Rows are normalized by scripts/message_archive.py so the
+mirror writes exactly the same canonical ``data/messages/<type>/YYYY/MM/DD.jsonl``
+tree used by the live archive.
 
 Typical use:
   python3 scripts/sync_supabase_messages_to_git.py --year 2025
@@ -32,7 +33,10 @@ import collect_epir_observations as obs  # noqa: E402
 import message_archive as archive  # noqa: E402
 
 PROJECT_REF = os.getenv("SUPABASE_PROJECT_REF", "qozgntzeormujmqzkkmd")
-REST_URL = os.getenv("SUPABASE_REST_URL", f"https://{PROJECT_REF}.supabase.co/rest/v1/messages")
+ARCHIVE_URL = os.getenv(
+    "SUPABASE_ARCHIVE_URL",
+    f"https://{PROJECT_REF}.supabase.co/functions/v1/message-archive",
+)
 PAGE_SIZE = 1000
 TYPE_CONFIG = {
     "METAR": {"station": "EPIR", "time_col": "observed_at"},
@@ -40,7 +44,6 @@ TYPE_CONFIG = {
     "SYNOP": {"station": "12342", "time_col": "observed_at"},
     "TAF": {"station": "EPIR", "time_col": "issued_at"},
 }
-SELECT_FIELDS = "id,message_type,station_code,observed_at,issued_at,archive_time,raw_text,source_ref,payload"
 
 
 def public_anon_key() -> str:
@@ -77,31 +80,18 @@ def fetch_type(kind: str, start: datetime, end: datetime) -> list[dict]:
     out: list[dict] = []
     while True:
         params = {
-            "select": SELECT_FIELDS,
-            "message_type": f"eq.{kind}",
-            "station_code": f"eq.{cfg['station']}",
-            cfg["time_col"]: f"gte.{iso(start)}",
-            f"{cfg['time_col']}.lt": iso(end),
-            "order": f"{cfg['time_col']}.asc,id.asc",
+            "op": "search",
+            "type": kind,
+            "station": cfg["station"],
+            "from": iso(start),
+            "to": iso(end - timedelta(microseconds=1)),
+            "sort": "asc",
             "limit": PAGE_SIZE,
             "offset": offset,
         }
-        # PostgREST uses the column name once for each operator. urllib cannot
-        # represent duplicate keys cleanly through a dict, so build the two
-        # time predicates explicitly.
-        base = {
-            "select": SELECT_FIELDS,
-            "message_type": f"eq.{kind}",
-            "station_code": f"eq.{cfg['station']}",
-            "order": f"{cfg['time_col']}.asc,id.asc",
-            "limit": str(PAGE_SIZE),
-            "offset": str(offset),
-        }
-        query = urllib.parse.urlencode(base)
-        query += "&" + urllib.parse.quote(cfg["time_col"], safe="") + "=" + urllib.parse.quote(f"gte.{iso(start)}", safe=".-:TZ+")
-        query += "&" + urllib.parse.quote(cfg["time_col"], safe="") + "=" + urllib.parse.quote(f"lt.{iso(end)}", safe=".-:TZ+")
+        query = urllib.parse.urlencode(params)
         req = urllib.request.Request(
-            REST_URL + "?" + query,
+            ARCHIVE_URL + "?" + query,
             headers={
                 "Accept": "application/json",
                 "Authorization": f"Bearer {key}",
@@ -110,29 +100,37 @@ def fetch_type(kind: str, start: datetime, end: datetime) -> list[dict]:
             },
         )
         with urllib.request.urlopen(req, timeout=45) as response:
-            page = json.loads(response.read().decode("utf-8"))
-        if not isinstance(page, list):
-            raise RuntimeError(f"{kind}: invalid Supabase response")
+            payload = json.loads(response.read().decode("utf-8"))
+        page = payload.get("rows") if isinstance(payload, dict) else None
+        if not isinstance(payload, dict) or not payload.get("ok") or not isinstance(page, list):
+            raise RuntimeError(f"{kind}: invalid MessageArchive response")
         out.extend(page)
-        if len(page) < PAGE_SIZE:
+        count = payload.get("count")
+        if len(page) < PAGE_SIZE or (count is not None and len(out) >= int(count)):
             break
         offset += len(page)
     return out
 
 
 def canonical_from_row(row: dict) -> dict | None:
-    kind = str(row.get("message_type") or "").upper()
+    kind = str(row.get("message_type") or row.get("type") or "").upper()
     cfg = TYPE_CONFIG.get(kind)
     if not cfg:
         return None
-    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
-    raw = str(row.get("raw_text") or payload.get("raw") or "").strip()
-    when = parse_time(row.get(cfg["time_col"]) or row.get("archive_time") or payload.get("message_time"))
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else (row if row.get("type") else {})
+    raw = str(row.get("raw_text") or row.get("raw") or row.get("canonical_raw") or payload.get("raw") or "").strip()
+    when = parse_time(
+        row.get(cfg["time_col"])
+        or row.get("obs_time" if kind != "TAF" else "issue_time")
+        or row.get("message_time")
+        or row.get("archive_time")
+        or payload.get("message_time")
+    )
     if not raw or not when:
         return None
 
-    source = str(payload.get("source") or "SUPABASE_MESSAGE_MIRROR")
-    source_ref = str(row.get("source_ref") or payload.get("archive_source_file") or "").strip() or None
+    source = str(row.get("source") or payload.get("source") or "SUPABASE_MESSAGE_MIRROR")
+    source_ref = str(row.get("source_ref") or row.get("archive_source_file") or payload.get("archive_source_file") or "").strip() or None
 
     decoded: dict | None
     if kind in {"METAR", "SPECI"}:
@@ -161,7 +159,7 @@ def canonical_from_row(row: dict) -> dict | None:
     if source_ref:
         decoded["archive_source_file"] = source_ref
         decoded["source_file"] = source_ref
-    decoded["supabase_message_id"] = row.get("id")
+    decoded["supabase_message_id"] = row.get("id") or row.get("message_id")
     return archive.norm(decoded, kind, source_ref)
 
 

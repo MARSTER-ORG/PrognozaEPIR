@@ -31,7 +31,10 @@ ROLLING_RETENTION_DAYS = 30
 EXTERNAL_RETENTION_DAYS = 7
 PAGE_SIZE = 1000
 PROJECT_REF = os.getenv("SUPABASE_PROJECT_REF", "qozgntzeormujmqzkkmd")
-REST_URL = os.getenv("SUPABASE_REST_URL", f"https://{PROJECT_REF}.supabase.co/rest/v1/messages")
+ARCHIVE_URL = os.getenv(
+    "SUPABASE_ARCHIVE_URL",
+    f"https://{PROJECT_REF}.supabase.co/functions/v1/message-archive",
+)
 PATH_RE = re.compile(r"^([a-z0-9]+)/([0-9]{4})/([0-9]{2})/([0-9]{2})\.jsonl$")
 
 
@@ -129,17 +132,17 @@ def fetch_remote_keys(station: str, day: date) -> set[tuple[str, str, str]]:
     offset = 0
     out: set[tuple[str, str, str]] = set()
     while True:
-        params = [
-            ("select", "message_type,archive_time,raw_text"),
-            ("station_code", f"eq.{station}"),
-            ("archive_time", f"gte.{start_iso}"),
-            ("archive_time", f"lt.{end_iso}"),
-            ("order", "archive_time.asc,id.asc"),
-            ("limit", str(PAGE_SIZE)),
-            ("offset", str(offset)),
-        ]
+        params = {
+            "op": "search",
+            "station": station,
+            "from": start_iso,
+            "to": normalize_time(end - timedelta(microseconds=1)),
+            "sort": "asc",
+            "limit": PAGE_SIZE,
+            "offset": offset,
+        }
         req = urllib.request.Request(
-            REST_URL + "?" + urllib.parse.urlencode(params),
+            ARCHIVE_URL + "?" + urllib.parse.urlencode(params),
             headers={
                 "Accept": "application/json",
                 "Authorization": f"Bearer {key}",
@@ -148,16 +151,18 @@ def fetch_remote_keys(station: str, day: date) -> set[tuple[str, str, str]]:
             },
         )
         with urllib.request.urlopen(req, timeout=40) as response:
-            rows = json.loads(response.read().decode("utf-8"))
-        if not isinstance(rows, list):
-            raise RuntimeError(f"{station} {day}: invalid Supabase response")
+            payload = json.loads(response.read().decode("utf-8"))
+        rows = payload.get("rows") if isinstance(payload, dict) else None
+        if not isinstance(payload, dict) or not payload.get("ok") or not isinstance(rows, list):
+            raise RuntimeError(f"{station} {day}: invalid MessageArchive response")
         for row in rows:
-            kind = str(row.get("message_type") or "").upper().strip()
-            when = normalize_time(row.get("archive_time"))
-            raw = normalize_raw(row.get("raw_text"))
+            kind = str(row.get("message_type") or row.get("type") or "").upper().strip()
+            when = normalize_time(row.get("archive_time") or row.get("message_time") or row.get("obs_time") or row.get("issue_time"))
+            raw = normalize_raw(row.get("raw_text") or row.get("canonical_raw") or row.get("raw"))
             if kind and when and raw:
                 out.add((kind, when, raw))
-        if len(rows) < PAGE_SIZE:
+        count = payload.get("count")
+        if len(rows) < PAGE_SIZE or (count is not None and offset + len(rows) >= int(count)):
             break
         offset += len(rows)
     return out

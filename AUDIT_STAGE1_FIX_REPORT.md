@@ -4,19 +4,20 @@
 
 `fix/audit-stage1-core-contracts`
 
-Branch jest lokalny i nie został scalony z `main` ani wdrożony na produkcję.
+Branch review nie został scalony z `main` ani wdrożony na produkcję.
 
 ## 2. Commit bazowy
 
-`04e987bcdc0c7459f075e4d3174d57e22f3a1054` (`origin/main` w chwili utworzenia brancha).
+`97883826ce3cea2244a248752e37aa61cbba5bb7` (`origin/main` po review rebase).
 
 ## 3. Lista wykonanych commitów
 
-1. `25500d75` `fix(supabase): version message archive ingest contract`
-2. `e88d5f1d` `fix(taf): validate active v25 v243 runtime`
-3. `9e8c722d` `fix(taf): make fog vnext policy explicit`
-4. `0e5b860d` `fix(fog): route observations through message archive`
-5. `report commit: HEAD` `docs: add stage 1 fix report`
+1. `5a9b7eaa` `fix(supabase): version message archive ingest contract`
+2. `5f504a22` `fix(taf): validate active v25 v243 runtime`
+3. `57414632` `fix(taf): make fog vnext policy explicit`
+4. `9d9101e8` `fix(fog): route observations through message archive`
+5. `72e5e61f` `docs: add stage 1 fix report`
+6. `review follow-up commit: HEAD` `fix(supabase): tighten archive contract before staging`
 
 ## 4. I-01 - Supabase ingest / schema contract
 
@@ -58,6 +59,8 @@ Kod i konfiguracja:
 - `scripts/check_archive_boundaries.py`
 - `scripts/finalize_central_message_architecture_v2.py`
 - `scripts/prepare_pages_v241.py`
+- `scripts/repository_storage_guard.py`
+- `scripts/sync_supabase_messages_to_git.py`
 - `scripts/wire_fog_mifg_utc_runtime.py`
 - `supabase/config.toml`
 - `supabase/functions/message-ingest/contract.mjs`
@@ -74,7 +77,9 @@ Testy:
 - `tests/taf-engine-v2.test.js`
 - `tests/taf-fog-policy.test.js`
 - `tests/test_archive_boundaries.py`
+- `tests/test_repository_storage_guard.py`
 - `tests/test_supabase_message_contract.py`
+- `tests/test_sync_supabase_messages_to_git.py`
 - `tests/test_taf_finalizer_runtime.py`
 
 Nie zmieniono danych historycznych, JSONL, cache ani śledzonych artefaktów `_site`.
@@ -90,8 +95,8 @@ Nie zmieniono danych historycznych, JSONL, cache ani śledzonych artefaktów `_s
 - Cloudflare: oba `node --check` PASS, `core.test.mjs` 4/4 PASS.
 - `python scripts/prepare_pages_v241.py`: PASS.
 - `python scripts/wire_fog_mifg_utc_runtime.py`: PASS.
-- Finalny `_site`: 7 stron HTML, 70 plików JS, komplet lokalnych assetów, wszystkie wygenerowane pliki JS poprawne składniowo.
-- I-01 dodatkowo: Deno type-check Edge Function PASS, parser SQL przyjął 31 statements, test mirror -> ingest -> archive PASS.
+- Finalny `_site`: 7 stron HTML, 70 plików JS, 65 sprawdzonych lokalnych referencji, wszystkie wygenerowane pliki JS poprawne składniowo.
+- I-01 dodatkowo: Deno type-check Edge Function PASS, parser SQL przyjął 29 statements, test mirror -> ingest -> archive PASS.
 
 ## 10. Testy FAIL
 
@@ -132,3 +137,37 @@ Tak. `supabase/functions/message-ingest` wymaga osobnego, kontrolowanego deployu
 3. Po review brancha przygotować oddzielny, kontrolowany plan deployu z rollbackiem dla migracji i Edge Function.
 
 Porównanie po opublikowaniu brancha: https://github.com/MARSTER-ORG/PrognozaEPIR/compare/main...fix/audit-stage1-core-contracts
+
+## Stage 1 review follow-up
+
+### Rebase
+
+- Branch zrebase'owano na `97883826ce3cea2244a248752e37aa61cbba5bb7`, aktualny `origin/main` przed pełnym przebiegiem testów.
+- Dziesięć nowych commitów `main` dotyczyło wyłącznie `data/messages` oraz `data/learning`. Pozostają one w bazie brancha i nie są częścią diffu Stage 1.
+
+### RLS i granty
+
+- Migracja odbiera `public`, `anon` i `authenticated` bezpośrednie uprawnienia do tabel `messages` i `stations` oraz usuwa publiczne polityki SELECT oparte na `using (true)`.
+- `service_role` zachowuje wymagany odczyt tabel oraz zapis do `messages`. Publiczne API `message-archive` nie zmieniło kontraktu i nadal wykonuje zapytania po stronie Edge Function z `service_role`.
+- `sync_supabase_messages_to_git.py` i `repository_storage_guard.py` zostały przełączone z anonimowego PostgREST na istniejące API `message-archive`; frontend nadal używa anon key wyłącznie do wywołania Edge Function.
+
+### WMO 12342
+
+- Lotniska `EPIR`, `EPBY`, `EPKS` i `EPPW` są seedowane jako ICAO. Stacja `12342` jest seedowana jako `wmo='12342'`, `icao=NULL`.
+- Wąska korekta istniejącego błędnego seeda dotyczy wyłącznie wiersza `icao='12342' AND wmo IS NULL` i wykonuje się tylko wtedy, gdy nie istnieje już wiersz `wmo='12342'`. Seed nie tworzy duplikatu, jeśli istnieje którykolwiek z tych wariantów.
+- RPC mapuje pięciocyfrowe numery stacji wyłącznie przez WMO, a pozostałe kody przez ICAO.
+
+### Kontrole
+
+- JS: 15/16 PASS; jedyny FAIL to znany I-14 w `fog-physics-vnext.test.js`.
+- Python: 17/17 PASS; `py_compile` 123/123 PASS.
+- Archive boundaries, kontrakt Supabase, finalizer TAF, archiwum obserwacji FOG, UTC i Cloudflare 4/4: PASS.
+- Pages: build i wiring PASS, składnia JS 70/70 PASS, lokalne assety oraz kolejność MessageArchive przed aktywnymi runtime'ami TAF/FOG: PASS.
+
+### Bezpieczeństwo migracji przed stagingiem
+
+- `CREATE TABLE IF NOT EXISTS` jest bezpieczne dla brakujących tabel, ale dla tabel już istniejących nie dodaje ani nie naprawia brakujących kolumn, constraints lub defaults.
+- `CREATE INDEX IF NOT EXISTS` zakłada zgodne istniejące kolumny: `stations.icao`, `stations.wmo` oraz `messages.content_hash`, `message_type`, `station_code`, `archive_time`, `id`, `station_id` i `source_id`.
+- Klucze obce i funkcja ingest zakładają UUID w `stations.id`/`message_sources.id`, zgodne typy wszystkich używanych kolumn `messages` oraz automatyczne generowanie `messages.id`; obsługa sekwencji działa tylko wtedy, gdy `pg_get_serial_sequence` ją odnajdzie.
+- Migracja została sprawdzona statycznie, parserem SQL i testami kontraktowymi. Przed merge/deploy musi zostać zastosowana na klonie stagingowym aktualnego schematu i danych, aby potwierdzić powyższe założenia oraz działanie Edge Functions.
+- Nie uruchomiono migracji Supabase, nie wdrożono Edge Function i nie wykonano żadnego deploymentu.

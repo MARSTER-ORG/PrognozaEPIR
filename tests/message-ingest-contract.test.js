@@ -80,6 +80,18 @@ function hash(value) {
     assert.match(reader, new RegExp(`\\b${column}\\b`), `message-archive must read ${column}`);
   }
   assert.match(migration, /create or replace function public\.ingest_message_batch/);
+  assert.match(migration, /revoke all on table public\.messages from public, anon, authenticated/);
+  assert.match(migration, /revoke all on table public\.stations from public, anon, authenticated/);
+  assert.doesNotMatch(migration, /grant select on table public\.(?:messages|stations) to (?:anon|authenticated)/i);
+  assert.doesNotMatch(migration, /create policy (?:messages|stations)_public_read/i);
+  assert.doesNotMatch(migration, /using\s*\(true\)/i);
+  assert.match(migration, /grant select on table public\.message_sources, public\.stations, public\.messages to service_role/);
+  const icaoSeed = migration.match(/insert into public\.stations \(icao, name\)[\s\S]*?\) as seed\(icao, name\)/i)?.[0] || '';
+  assert.ok(icaoSeed, 'ICAO seed must be present');
+  assert.doesNotMatch(icaoSeed, /'12342'/);
+  assert.match(migration, /insert into public\.stations \(wmo, name\)[\s\S]*select '12342', '12342'/);
+  assert.match(migration, /candidate\.wmo = incoming\.station_code/);
+  assert.match(migration, /candidate\.icao = incoming\.station_code/);
   assert.match(ingest, /database\.rpc\('ingest_message_batch'/);
   assert.match(mirror, /json\.dumps\(\{"messages": messages\}/);
   assert.match(mirror, /functions\/v1\/message-ingest/);

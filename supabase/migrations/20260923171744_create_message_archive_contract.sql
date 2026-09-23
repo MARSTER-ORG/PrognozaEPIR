@@ -1,5 +1,5 @@
 -- Versioned contract for the MessageArchive tables used by the Railway mirror,
--- message-ingest, message-archive, the public REST mirror, and retention jobs.
+-- message-ingest, message-archive, server-side mirrors, and retention jobs.
 
 create table if not exists public.message_sources (
   id uuid primary key default gen_random_uuid(),
@@ -43,11 +43,34 @@ from (values
   ('EPIR', 'Inowroclaw'),
   ('EPBY', 'Bydgoszcz'),
   ('EPKS', 'Poznan-Krzesiny'),
-  ('EPPW', 'Powidz'),
-  ('12342', '12342')
+  ('EPPW', 'Powidz')
 ) as seed(icao, name)
 where not exists (
-  select 1 from public.stations station where station.icao = seed.icao
+  select 1
+  from public.stations station
+  where station.icao = seed.icao or station.wmo = seed.icao
+);
+
+-- Repair only the exact legacy seed shape when no canonical WMO row exists.
+-- If production already has wmo=12342, leave every existing row untouched.
+update public.stations legacy
+set icao = null,
+    wmo = '12342',
+    updated_at = now()
+where legacy.icao = '12342'
+  and legacy.wmo is null
+  and not exists (
+    select 1
+    from public.stations canonical
+    where canonical.wmo = '12342'
+  );
+
+insert into public.stations (wmo, name)
+select '12342', '12342'
+where not exists (
+  select 1
+  from public.stations station
+  where station.wmo = '12342' or station.icao = '12342'
 );
 
 create table if not exists public.messages (
@@ -129,8 +152,6 @@ revoke all on table public.message_sources from public, anon, authenticated;
 revoke all on table public.stations from public, anon, authenticated;
 revoke all on table public.messages from public, anon, authenticated;
 
-grant select on table public.stations to anon, authenticated;
-grant select on table public.messages to anon, authenticated;
 grant select on table public.message_sources, public.stations, public.messages to service_role;
 grant insert, update on table public.messages to service_role;
 
@@ -140,21 +161,13 @@ declare
 begin
   v_sequence := pg_get_serial_sequence('public.messages', 'id');
   if v_sequence is not null then
+    execute format('revoke all on sequence %s from public, anon, authenticated', v_sequence::regclass);
     execute format('grant usage, select on sequence %s to service_role', v_sequence::regclass);
   end if;
 end $$;
 
 drop policy if exists stations_public_read on public.stations;
-create policy stations_public_read
-  on public.stations for select
-  to anon, authenticated
-  using (true);
-
 drop policy if exists messages_public_read on public.messages;
-create policy messages_public_read
-  on public.messages for select
-  to anon, authenticated
-  using (true);
 
 -- The Edge Function validates and projects each object. This database function
 -- makes the final batch write atomic and prevents a hash conflict from updating
@@ -215,8 +228,13 @@ begin
     left join lateral (
       select candidate.id
       from public.stations candidate
-      where candidate.icao = incoming.station_code or candidate.wmo = incoming.station_code
-      order by (candidate.icao = incoming.station_code) desc
+      where (
+        incoming.station_code ~ '^[0-9]{5}$'
+        and candidate.wmo = incoming.station_code
+      ) or (
+        incoming.station_code !~ '^[0-9]{5}$'
+        and candidate.icao = incoming.station_code
+      )
       limit 1
     ) as station on true
   ), upserted as (
