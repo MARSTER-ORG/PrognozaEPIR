@@ -95,7 +95,7 @@
     box.innerHTML = `
       <div class="fog-mode-copy">
         <b>Aktywny silnik mgły</b>
-        <span>LEGACY = poprzedni silnik. NEXT 2.4.4 = zintegrowany nowy silnik. Ten sam wybór obowiązuje na meteogramie i w generatorze TAF.</span>
+        <span>LEGACY = poprzedni silnik FG. NEXT 2.4.4 = nowy zintegrowany silnik FG. Wybrana seria FG jest używana również na meteogramie; BR i MIFG pozostają osobnymi targetami.</span>
       </div>
       <div class="fog-mode-buttons">
         <button type="button" data-fog-mode="legacy">LEGACY</button>
@@ -103,6 +103,7 @@
       </div>
       <div id="fogModeBadge" class="fog-mode-badge" aria-live="polite"></div>`;
 
+    box.style.setProperty('display', 'flex', 'important');
     if (engine?.parentNode) engine.parentNode.insertBefore(box, engine);
     else if (nextEngine?.parentNode) nextEngine.parentNode.insertBefore(box, nextEngine);
     else mount.prepend(box);
@@ -113,8 +114,31 @@
     return true;
   }
 
+  function labelLegacyPanel() {
+    const engine = document.getElementById('fogEngine');
+    const heading = engine?.querySelector('.fog-head b');
+    if (heading) heading.textContent = 'EPIR FOG ENGINE LEGACY';
+    if (engine) engine.dataset.fogEngineMode = MODE_LEGACY;
+    const nextEngine = document.getElementById('fogEngine244');
+    if (nextEngine) nextEngine.dataset.fogEngineMode = MODE_VNEXT;
+  }
+
   function applyPanelVisibility() {
-    document.documentElement.setAttribute('data-epir-fog-mode', getMode());
+    const mode = getMode();
+    document.documentElement.setAttribute('data-epir-fog-mode', mode);
+    const legacyPanel = document.getElementById('fogEngine');
+    const nextPanel = document.getElementById('fogEngine244');
+    if (legacyPanel) {
+      legacyPanel.hidden = mode !== MODE_LEGACY;
+      legacyPanel.setAttribute('aria-hidden', mode === MODE_LEGACY ? 'false' : 'true');
+      legacyPanel.style.setProperty('display', mode === MODE_LEGACY ? 'block' : 'none', 'important');
+    }
+    if (nextPanel) {
+      nextPanel.hidden = mode !== MODE_VNEXT;
+      nextPanel.setAttribute('aria-hidden', mode === MODE_VNEXT ? 'false' : 'true');
+      nextPanel.style.setProperty('display', mode === MODE_VNEXT ? 'block' : 'none', 'important');
+    }
+    labelLegacyPanel();
   }
 
   function updateChooser() {
@@ -142,8 +166,8 @@
     window.PrognozaEPIRFogEngineMode = mode === MODE_VNEXT ? 'vnext-production-2.4.4' : 'legacy';
 
     installApi();
-    applyPanelVisibility();
     ensureChooser();
+    applyPanelVisibility();
     updateChooser();
   }
 
@@ -158,7 +182,6 @@
 
   const start = () => {
     installApi();
-    applyPanelVisibility();
     ensureChooser();
     applySelectedSeries();
 
@@ -166,10 +189,19 @@
     const timer = setInterval(() => {
       ensureChooser();
       applySelectedSeries();
-      if (++tries > 40 || (document.getElementById('fogEngineModeSwitch') && document.getElementById('fogEngine244'))) {
-        clearInterval(timer);
-      }
+      const ready = document.getElementById('fogEngineModeSwitch') && document.getElementById('fogEngine') && document.getElementById('fogEngine244');
+      if (++tries > 80 || ready) clearInterval(timer);
     }, 250);
+
+    const mount = document.getElementById('fogStandaloneMount');
+    if (mount && typeof MutationObserver !== 'undefined') {
+      const observer = new MutationObserver(() => {
+        labelLegacyPanel();
+        applyPanelVisibility();
+        updateChooser();
+      });
+      observer.observe(mount, {childList:true, subtree:true});
+    }
   };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, {once:true});
