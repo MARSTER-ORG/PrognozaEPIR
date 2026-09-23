@@ -2,6 +2,7 @@
 const assert=require('assert');
 const F=require('../fog-physics-vnext.js');
 const P=require('../fog-vnext-probability-layer.js');
+const CANONICAL_CALIBRATION_STATUS='physics-state-gated-authoritative-render-2026-09-16';
 const finiteDeep=o=>{
   if(o===null||o===undefined)return true;
   if(typeof o==='number')return Number.isFinite(o);
@@ -80,7 +81,7 @@ const physicsB=P.evaluate({visibility:200,cloud2m:100,cbh:40,leadHours:6},favora
 assert.equal(physicsA.P_physics,physicsB.P_physics,'direct guidance leaked into physics');
 assert(physicsB.P_direct>physicsA.P_direct,'direct guidance did not react to visibility/cloud guidance');
 assert.equal(physicsA.calibrated,false);
-assert.equal(physicsA.calibrationStatus,'validated-production-2026-09-15');
+assert.equal(physicsA.calibrationStatus,CANONICAL_CALIBRATION_STATUS);
 assert.equal(physicsA.P_model_final,physicsA.P_model_final_shadow);
 
 // Changing physics must not mutate direct guidance for identical direct model fields.
@@ -95,9 +96,15 @@ const l3=P.evaluate({...directFields,leadHours:2},favorable);
 const l12=P.evaluate({...directFields,leadHours:8},favorable);
 assert.equal(l3.P_physics,l12.P_physics);
 assert.equal(l3.P_direct,l12.P_direct);
-assert.notEqual(l3.blendWeights.physics,l12.blendWeights.physics);
+assert.equal(l3.blendWeights.physics,1);
+assert.equal(l12.blendWeights.physics,1);
+assert.notEqual(l3.blendWeights.directConfirm,l12.blendWeights.directConfirm);
+assert.notEqual(l3.P_model_final,l12.P_model_final);
 assert(Number.isFinite(l3.P_model_final)&&Number.isFinite(l12.P_model_final));
 assert.equal(l3.P_model_final,l3.P_model_final_shadow);
 assert.equal(l12.P_model_final,l12.P_model_final_shadow);
+for(const result of [physicsA,physicsB,directA,directB,l3,l12]){
+  assert.equal(result.calibrationStatus,CANONICAL_CALIBRATION_STATUS,'calibration status drift');
+}
 
 console.log('fog physics vNext tests: OK');
