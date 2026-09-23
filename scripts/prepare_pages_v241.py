@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import prepare_pages as p
+from finalize_central_message_architecture_v2 import validate_taf_frontend
 
 
 TAF_FOG_POLICY_VERSION = "20260919-4"
@@ -145,6 +146,8 @@ def validate_v243() -> None:
         raise RuntimeError("deployed TAF runtime is missing per-build cache busting")
     if f"REQUIRED_FOG_POLICY_BUILD='{TAF_FOG_GATE_BUILD}'" not in taf:
         raise RuntimeError("deployed TAF runtime is missing the strict Fog Policy build gate")
+    if validate_taf_frontend(p.SITE) != "v25-v243":
+        raise RuntimeError("deployed TAF runtime validator returned an unexpected mode")
 
     bootstrap = p.rd(p.SITE / "taf-runtime-bootstrap.js")
     for marker in (

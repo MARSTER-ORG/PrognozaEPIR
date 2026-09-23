@@ -3,6 +3,7 @@
   if (!/\/taf\.html$/i.test(location.pathname) || window.__PROGNOZA_EPIR_TAF_APP_V25__) return;
   window.__PROGNOZA_EPIR_TAF_APP_V25__ = true;
 
+  const APP_ENGINE_VERSION='2.4.3';
   const HOUR=3600000, ISSUE_HOURS=[5,11,17,23], NEIGHBORS=['EPBY','EPPW','EPKS'];
   const $=id=>document.getElementById(id), finite=Number.isFinite;
   const num=v=>v!==null&&v!==undefined&&v!==''&&finite(Number(v));
@@ -108,20 +109,20 @@
     const fogMode=Policy.normalizeMode(rows.fogEngineMode||rows.find(r=>r.fogEngineMode)?.fogEngineMode),fogLabel=fogMode==='vnext'?'vNEXT':'LEGACY';
     $('sources').innerHTML=`<span class="pill ${data.anchorObservation?'ok':'warn'}">METAR/SPECI ${data.anchorObservation?'✓':'—'} · kotwica ${data.anchorObservation?esc(fmtUtc(itemTime(data.anchorObservation,data.issueTime),false)):'brak ≤ emisja'}</span><span class="pill ${neighborStations.length?'ok':'warn'}">OBS sąsiednie ${neighborStations.length?esc(neighborStations.join('/')):'—'}</span><span class="pill ok">${esc(result.name)} v${esc(result.version)}</span><span class="pill ok">Instrukcja 11.2023 — HARD GATE</span><span class="pill ${learningOk?'ok':'warn'}">kalibracja EPIR ${learningOk?'✓':'fallback'}</span><span class="pill ok">multimodel ${modelCount}</span><span class="pill ok">profil chmur → warstwy/pułap ✓</span><span class="pill ${fogOk?'ok':'warn'}">FG ${fogLabel} ${fogOk?'✓':'—'}</span><span class="pill warn">SYNOP wyłączony</span>`;
     $('conf').textContent=`Pewność ${result.confidence}%. Aktywny Fog Engine: ${fogLabel}. ${fogMode==='vnext'?'TAF używa score, progów VIS i prognozy VIS z vNext; NWP VIS pozostaje diagnostyczna po stronie silnika mgieł.':'TAF używa score i widzialności LEGACY; próg operacyjny 50/100 jest mapowany na skalę formalnego kernela bez uruchamiania logiki vNext.'} Instrukcja 11.2023 pozostaje nadrzędnym hard gate. MSA: ${result.diagnostics.msaMode==='explicit'?Math.round(result.diagnostics.msaFt)+' ft':'fallback 5000 ft'}.`;
-    $('badge').textContent='TAF ENGINE 2.4.2 · ZGODNY';$('badge').className='badge ok';$('st').textContent=`${fmtUtc(Date.now(),false)} · ${rows.length} h danych · FOG ${fogLabel}`;
+    $('badge').textContent=`TAF ENGINE ${APP_ENGINE_VERSION} · ZGODNY`;$('badge').className='badge ok';$('st').textContent=`${fmtUtc(Date.now(),false)} · ${rows.length} h danych · FOG ${fogLabel}`;
   }
 
   async function generate(){
     const period=selectedCycle();if(!period)throw Error('Nie wybrano cyklu TAF');
     const frame=$('engine'),w=frame?.contentWindow,selected=Policy.selectedMode(w||window),fogLabel=selected==='vnext'?'vNEXT':'LEGACY';
-    $('badge').textContent='TAF ENGINE 2.4.2 · LICZENIE';$('badge').className='badge';$('st').textContent=`archiwum + modele + FOG ${fogLabel} + profil chmur`;$('taf').textContent=`Pobieranie danych i generowanie TAF · aktywny Fog Engine: ${fogLabel}…`;
+    $('badge').textContent=`TAF ENGINE ${APP_ENGINE_VERSION} · LICZENIE`;$('badge').className='badge';$('st').textContent=`archiwum + modele + FOG ${fogLabel} + profil chmur`;$('taf').textContent=`Pobieranie danych i generowanie TAF · aktywny Fog Engine: ${fogLabel}…`;
     const [data,rows]=await Promise.all([loadArchive(),modelRows(period)]);if(rows.length<8)throw Error(`Niepełny okres modeli: ${rows.length} h`);
     const anchorObservation=newestAtOrBefore([data.observation,...(data.history||[])],period.issue);data.anchorObservation=anchorObservation;data.issueTime=period.issue;
-    const api=window.PrognozaEPIRTAFEngine;if(!api?.createEngine||api.ENGINE_VERSION!=='2.4.0')throw Error('TAF Engine 2.4 nie został załadowany');if(api.ready)await api.ready();const engine=api.createEngine({config:{station:'EPIR'}});
+    const api=window.PrognozaEPIRTAFEngine;if(!api?.createEngine||api.ENGINE_VERSION!=='2.4.0'||api.QUALITY_VERSION!==APP_ENGINE_VERSION)throw Error(`TAF Engine ${APP_ENGINE_VERSION} nie został załadowany`);if(api.ready)await api.ready();const engine=api.createEngine({config:{station:'EPIR'}});
     const result=engine.generate({station:'EPIR',issue:period.issue,start:period.start,end:period.end,rows,observation:anchorObservation,observations:data.history,msaFt:msaFt(),rowsAlreadyAnchored:false});render(result,data,rows);return result;
   }
-  async function guardedGenerate(){try{return await generate();}catch(e){console.error('[TAF Engine 2.4.2]',e);$('badge').textContent='TAF ENGINE 2.4.2 · BŁĄD';$('badge').className='badge bad';$('st').textContent=e.message;$('taf').textContent='TAF NIE ZOSTAŁ ZAAKCEPTOWANY: '+e.message;renderChecks({checks:e.validation||{ok:false,instructionLocked:true,periodHours:null,noProb40:true,noVV:true,max5:true,warnings:[]}});return null;}}
+  async function guardedGenerate(){try{return await generate();}catch(e){console.error(`[TAF Engine ${APP_ENGINE_VERSION}]`,e);$('badge').textContent=`TAF ENGINE ${APP_ENGINE_VERSION} · BŁĄD`;$('badge').className='badge bad';$('st').textContent=e.message;$('taf').textContent='TAF NIE ZOSTAŁ ZAAKCEPTOWANY: '+e.message;renderChecks({checks:e.validation||{ok:false,instructionLocked:true,periodHours:null,noProb40:true,noVV:true,max5:true,warnings:[]}});return null;}}
   async function copyTaf(){const text=activeResult?.taf||'';if(!text)return;try{await navigator.clipboard.writeText(text);$('copy').textContent='Skopiowano';setTimeout(()=>$('copy').textContent='Kopiuj TAF',1200);}catch(_){}}
-  function install(){fillCycles();$('gen').addEventListener('click',guardedGenerate);$('copy').addEventListener('click',copyTaf);$('cycle').addEventListener('change',()=>{$('st').textContent='wybrano inny cykl — generuj ponownie';});$('badge').textContent='TAF ENGINE 2.4.2 · GOTOWY';$('badge').className='badge';$('st').textContent='kliknij „Odśwież i generuj”';setTimeout(()=>{if(new URLSearchParams(location.search).get('autogen')==='1')guardedGenerate();},500);}
+  function install(){fillCycles();$('gen').addEventListener('click',guardedGenerate);$('copy').addEventListener('click',copyTaf);$('cycle').addEventListener('change',()=>{$('st').textContent='wybrano inny cykl — generuj ponownie';});$('badge').textContent=`TAF ENGINE ${APP_ENGINE_VERSION} · GOTOWY`;$('badge').className='badge';$('st').textContent='kliknij „Odśwież i generuj”';setTimeout(()=>{if(new URLSearchParams(location.search).get('autogen')==='1')guardedGenerate();},500);}
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',install,{once:true});else install();
 })();

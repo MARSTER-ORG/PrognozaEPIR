@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Finalize the central TAF archive policy for PrognozaEPIR TAF Engine v2.
+"""Finalize the central archive and validate the active TAF v25/v243 runtime.
 
-TAF Engine v2 is split between taf.html and taf-app-v2.js. The finalizer must
-therefore maintain archive views and validate the MessageArchive boundary, but
+The finalizer maintains archive views and checks the frontend contract, but it
 must never patch frontend JavaScript into taf.html during an ingest cycle.
 """
 from __future__ import annotations
@@ -11,6 +10,7 @@ import hashlib
 import json
 import re
 from datetime import datetime, timedelta, timezone
+from html.parser import HTMLParser
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -251,28 +251,139 @@ def refresh_views(snapshot: dict) -> None:
     write_json(status_path, status)
 
 
-def validate_taf_frontend() -> str:
-    html_path = ROOT / "taf.html"
-    app_path = ROOT / "taf-app-v2.js"
-    if not html_path.exists() or not app_path.exists():
-        raise RuntimeError("TAF Engine v2 frontend files are missing")
+class TafRuntimeParser(HTMLParser):
+    """Extract executable script wiring while deliberately ignoring comments."""
 
-    html = html_path.read_text(encoding="utf-8")
-    app = app_path.read_text(encoding="utf-8")
-    if "prognozaepir-taf-engine-v2" not in html or "taf-app-v2.js" not in html:
-        raise RuntimeError("taf.html is not the expected TAF Engine v2 shell")
-    if "message-archive-client.js" not in html:
-        raise RuntimeError("TAF Engine v2 is missing message-archive-client.js")
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.meta_version: str | None = None
+        self.script_sources: list[str] = []
+        self.inline_scripts: list[str] = []
+        self._inline: list[str] | None = None
 
-    required = (
+    def handle_starttag(self, tag: str, attrs) -> None:
+        values = dict(attrs)
+        if tag.lower() == "meta" and values.get("name") == "prognozaepir-taf-engine-v2":
+            self.meta_version = values.get("content")
+        if tag.lower() != "script":
+            return
+        src = values.get("src")
+        if src:
+            self.script_sources.append(src)
+            self._inline = None
+        else:
+            self._inline = []
+
+    def handle_data(self, data: str) -> None:
+        if self._inline is not None:
+            self._inline.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() == "script" and self._inline is not None:
+            self.inline_scripts.append("".join(self._inline))
+            self._inline = None
+
+
+def asset_name(src: str) -> str:
+    return src.split("?", 1)[0].rsplit("/", 1)[-1]
+
+
+def strip_js_comments(source: str) -> str:
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+    source = re.sub(r"<!--.*?-->", "", source, flags=re.S)
+    return re.sub(r"(^|[;{}\s])//[^\r\n]*", r"\1", source, flags=re.M)
+
+
+def require_file(root: Path, name: str) -> str:
+    path = root / name
+    if not path.is_file():
+        raise RuntimeError(f"active TAF runtime file is missing: {name}")
+    return path.read_text(encoding="utf-8")
+
+
+def validate_taf_frontend(root: Path = ROOT) -> str:
+    html = require_file(root, "taf.html")
+    app = require_file(root, "taf-app-v25.js")
+    engine = require_file(root, "taf-engine-v243.js")
+    policy = require_file(root, "taf-fog-policy.js")
+
+    parser = TafRuntimeParser()
+    parser.feed(html)
+    if parser.meta_version != "2.4.3":
+        raise RuntimeError(f"TAF UI version mismatch: expected 2.4.3, got {parser.meta_version or 'missing'}")
+
+    active_assets = [asset_name(src) for src in parser.script_sources]
+    required_static = (
+        "message-archive-client.js",
+        "taf-fog-policy.js",
+        "taf-engine-v2.js",
+        "taf-engine-v24.js",
+        "taf-engine-v241.js",
+        "taf-engine-v242.js",
+    )
+    missing_static = [name for name in required_static if name not in active_assets]
+    if missing_static:
+        raise RuntimeError("TAF static runtime incomplete: " + ", ".join(missing_static))
+    positions = [active_assets.index(name) for name in required_static]
+    if positions != sorted(positions):
+        raise RuntimeError("TAF static runtime scripts are loaded in the wrong order")
+    if "taf-app-v2.js" in active_assets:
+        raise RuntimeError("legacy taf-app-v2.js is active in taf.html")
+
+    dynamic_calls: list[tuple[str, str, str]] = []
+    pattern = re.compile(
+        r"await\s+loadScript\(\s*['\"]([^'\"]+)['\"]\s*,\s*['\"]([^'\"]+)['\"]\s*\)"
+    )
+    for script in parser.inline_scripts:
+        executable = strip_js_comments(script)
+        for src, element_id in pattern.findall(executable):
+            dynamic_calls.append((asset_name(src), element_id, executable))
+    dynamic_assets = [name for name, _element_id, _script in dynamic_calls]
+    for name in ("taf-engine-v243.js", "taf-app-v25.js"):
+        if name not in dynamic_assets:
+            raise RuntimeError(f"active TAF bootstrap does not load {name}")
+    if dynamic_assets.index("taf-engine-v243.js") > dynamic_assets.index("taf-app-v25.js"):
+        raise RuntimeError("TAF v25 application loads before TAF Engine v243")
+
+    bootstrap = next(script for name, _element_id, script in dynamic_calls if name == "taf-engine-v243.js")
+    bootstrap_required = (
+        "__PROGNOZA_EPIR_TAF_ENGINE_V243__",
+        "PrognozaEPIRTAFEngine?.QUALITY_VERSION!=='2.4.3'",
+        "__PROGNOZA_EPIR_TAF_APP_V25__",
+    )
+    missing_bootstrap = [token for token in bootstrap_required if token not in re.sub(r"\s+", "", bootstrap)]
+    if missing_bootstrap:
+        raise RuntimeError("TAF active bootstrap guards incomplete: " + ", ".join(missing_bootstrap))
+
+    engine_required = (
+        "const VERSION='2.4.3'",
+        "QUALITY_VERSION:VERSION",
+        "root.__PROGNOZA_EPIR_TAF_ENGINE_V243__=true",
+        "requires taf-engine-v242.js",
+    )
+    missing_engine = [token for token in engine_required if token not in engine]
+    if missing_engine:
+        raise RuntimeError("TAF Engine v243 contract incomplete: " + ", ".join(missing_engine))
+
+    app_required = (
+        "window.__PROGNOZA_EPIR_TAF_APP_V25__ = true",
+        "const APP_ENGINE_VERSION='2.4.3'",
+        "api.QUALITY_VERSION!==APP_ENGINE_VERSION",
         "PrognozaEPIRMessageArchive",
         "A.latest(true)",
         "A.recent(true)",
         "A.getLatest?.('TAF'",
     )
-    missing = [token for token in required if token not in app]
-    if missing:
-        raise RuntimeError("TAF Engine v2 MessageArchive boundary incomplete: " + ", ".join(missing))
+    missing_app = [token for token in app_required if token not in app]
+    if missing_app:
+        raise RuntimeError("TAF v25 application contract incomplete: " + ", ".join(missing_app))
+    if "TAF ENGINE 2.4.2" in app or "[TAF Engine 2.4.2]" in app:
+        raise RuntimeError("TAF v25 UI labels do not match active Engine 2.4.3")
+
+    build_match = re.search(r"\bconst\s+BUILD\s*=\s*['\"]([^'\"]+)['\"]", policy)
+    html_build_match = re.search(r"\bREQUIRED_FOG_POLICY_BUILD\s*=\s*['\"]([^'\"]+)['\"]", bootstrap)
+    if not build_match or not html_build_match or build_match.group(1) != html_build_match.group(1):
+        raise RuntimeError("TAF Fog Policy build differs between policy and active bootstrap")
 
     forbidden = (
         "aviation-api.imgw.pl",
@@ -283,8 +394,8 @@ def validate_taf_frontend() -> str:
     )
     bad = [token for token in forbidden if token in app]
     if bad:
-        raise RuntimeError("TAF Engine v2 contains direct bulletin acquisition: " + ", ".join(bad))
-    return "external-v2"
+        raise RuntimeError("TAF v25 contains direct bulletin acquisition: " + ", ".join(bad))
+    return "v25-v243"
 
 
 def validate_verifier_file() -> None:
