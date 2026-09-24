@@ -17,6 +17,7 @@ assert(html.includes('const datasets=new Map();'), 'standalone Fog dataset regis
 const scripts = [...html.matchAll(/<script\b[^>]*\bsrc="([^"]+)"[^>]*><\/script>/gi)].map(m => m[1].split('?')[0]);
 const expectedScripts = [
   'utc-ui-guard.js',
+  'meteo-units.js',
   'theme.js',
   'message-archive-client.js',
   'fog-engine-v244.js',
@@ -24,7 +25,7 @@ const expectedScripts = [
   'fog-engine.js',
   'fog-mode-switch.js'
 ];
-assert.deepStrictEqual(scripts, expectedScripts, 'fog.html must load MessageArchive before the integrated 2.4.4 standalone runtime and explicit Legacy/NEXT selector');
+assert.deepStrictEqual(scripts, expectedScripts, 'fog.html must load shared unit helpers and MessageArchive before the integrated 2.4.4 standalone runtime and explicit Legacy/NEXT selector');
 assert(html.includes('fog-mode-switch.js?v=20260923-mode2'), 'Fog selector cache key must be bumped after panel visibility repair');
 
 const v244 = fs.readFileSync(path.join(ROOT, 'fog-engine-v244.js'), 'utf8');
