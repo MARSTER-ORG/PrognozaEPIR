@@ -17,6 +17,7 @@ import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from meteo_units import kt_to_mps, ft_to_m
 
 ROOT = Path("data/messages/neighbors")
 LATEST = ROOT / "latest.json"
@@ -168,8 +169,8 @@ def _parse(raw: str, station: str, source_url: str) -> dict | None:
 
     wind = _WIND_RE.search(core)
     wd = None if not wind or wind.group(1).upper() == "VRB" else int(wind.group(1))
-    ws = round(int(wind.group(2)) * 0.514444, 2) if wind else None
-    gust = round(int(wind.group(3)) * 0.514444, 2) if wind and wind.group(3) else None
+    ws = round(kt_to_mps(int(wind.group(2))), 2) if wind else None
+    gust = round(kt_to_mps(int(wind.group(3))), 2) if wind and wind.group(3) else None
     temp_pair = re.search(r"\b(M?\d{2})/(M?\d{2})\b", core)
     temp = _temp(temp_pair.group(1)) if temp_pair else None
     dew = _temp(temp_pair.group(2)) if temp_pair else None
@@ -182,7 +183,7 @@ def _parse(raw: str, station: str, source_url: str) -> dict | None:
         clouds.append({
             "cover": cover.upper(),
             "base_ft_agl": ft,
-            "base_m_agl": round(ft * 0.3048),
+            "base_m_agl": round(ft_to_m(ft)),
             "type": (conv or "").upper() or None,
         })
     ceiling = next((c["base_m_agl"] for c in clouds if c["cover"] in {"BKN", "OVC", "VV"}), None)

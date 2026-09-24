@@ -94,7 +94,7 @@
         title = 'Profil chmur / widzialność';
         vals = [
           infoValue('Podstawa ≥5/8',finite(z.ceiling)?Math.round(z.ceiling)+' m AGL':'brak ≥5/8'),
-          infoValue('Podstawa',finite(z.ceiling)?Math.round(z.ceiling*3.28084)+' ft AGL':'—'),
+          infoValue('Podstawa',finite(z.ceiling)?Math.round(window.PrognozaEPIRUnits.mToFt(z.ceiling))+' ft AGL':'—'),
           infoValue('Widzialność',finite(z.VIS)?f(z.VIS/1000,1)+' km':'—'),
           infoValue('Niskie',detailedCloudLayerText(z.oktaL,z.lowH,z.profile,0,2000)),
           infoValue('Średnie',detailedCloudLayerText(z.oktaM,z.midH,z.profile,2000,6000)),

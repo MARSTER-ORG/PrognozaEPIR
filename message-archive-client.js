@@ -60,8 +60,8 @@
   function rawOf(r){return String(r?.canonical_raw||r?.raw||r?.message||r?.text||'').replace(/\s+/g,' ').trim()}
   function numericMetric(r,key){
     const direct=Number(r?.[key]);if(Number.isFinite(direct))return direct;
-    if(key==='wind_speed_kt'){const x=Number(r?.wind_speed_ms);return Number.isFinite(x)?x*1.9438444924406:null}
-    if(key==='gust_kt'){const x=Number(r?.wind_gust_ms);return Number.isFinite(x)?x*1.9438444924406:null}
+    if(key==='wind_speed_kt'){const x=Number(r?.wind_speed_ms);return Number.isFinite(x)?window.PrognozaEPIRUnits.mpsToKt(x):null}
+    if(key==='gust_kt'){const x=Number(r?.wind_gust_ms);return Number.isFinite(x)?window.PrognozaEPIRUnits.mpsToKt(x):null}
     if(key==='ceiling_ft'){const x=Number(r?.ceiling_m_agl);return Number.isFinite(x)?x*3.2808398950131:null}
     if(key==='qnh_hpa'){const x=Number(r?.pressure_hpa);return Number.isFinite(x)?x:null}
     return null;

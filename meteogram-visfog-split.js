@@ -60,7 +60,7 @@
       const time = fmt(z.t,{weekday:'short',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
       const vals = [
         infoValue('Podstawa ≥5/8',finite(z.ceiling)?Math.round(z.ceiling)+' m AGL':'brak ≥5/8'),
-        infoValue('Podstawa',finite(z.ceiling)?Math.round(z.ceiling*3.28084)+' ft AGL':'—'),
+        infoValue('Podstawa',finite(z.ceiling)?Math.round(window.PrognozaEPIRUnits.mToFt(z.ceiling))+' ft AGL':'—'),
         infoValue('Niskie',cloudLayerText(z.oktaL,z.lowH)),
         infoValue('Średnie',cloudLayerText(z.oktaM,z.midH)),
         infoValue('Wysokie',cloudLayerText(z.oktaH,z.highH))
