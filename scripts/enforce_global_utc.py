@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SELF = Path(__file__).resolve()
 TEXT_SUFFIXES = {'.html', '.js', '.mjs', '.cjs', '.py', '.yml', '.yaml'}
-SKIP_DIRS = {'.git', '.github', 'node_modules', 'data'}
+SKIP_DIRS = {'.git', '.github', 'node_modules', 'data', '_site'}
 UTC_GUARD_NAME = 'utc-ui-guard.js'
 
 JS_DATE_REPLACEMENTS = (

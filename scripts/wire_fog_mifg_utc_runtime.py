@@ -35,25 +35,15 @@ def patch_fog_provider() -> None:
     p = SITE / "fog-engine.js"
     s = p.read_text(encoding="utf-8")
 
-    s = s.replace("timeZone:PLACE.tz", "timeZone:'UTC'")
-    old_parse = "function parseLocalInput(v){return v?Date.parse(v):NaN;}"
-    if old_parse in s:
-        s = s.replace(
-            old_parse,
-            "function parseLocalInput(v){return v?Date.parse(/[zZ]|[+-]\\d\\d:\\d\\d$/.test(v)?v:v+'Z'):NaN;}",
-            1,
-        )
-
-    if "PrognozaEPIRFogLegacySeries" not in s:
-        active_export = "fogSeries=out;window.PrognozaEPIRFogSeries=fogSeries;"
-        legacy_export = (
-            "fogSeries=out;"
-            "window.PrognozaEPIRFogLegacySeries=fogSeries.map(h=>({...h,models:Array.isArray(h?.models)?h.models.map(m=>({...m,components:m?.components?{...m.components}:m?.components})):h?.models,fogEngineMode:'legacy',fogEngineSource:'legacy'}));"
-            "window.PrognozaEPIRFogSeries=fogSeries;"
-        )
-        if active_export not in s:
-            raise SystemExit("FOG active series export marker not found")
-        s = s.replace(active_export, legacy_export, 1)
+    required = (
+        "timeZone:'UTC'",
+        "function parseLocalInput(v){return v?Date.parse(/[zZ]|[+-]\\d\\d:\\d\\d$/.test(v)?v:v+'Z'):NaN;}",
+        "PrognozaEPIRFogLegacySeries",
+        "PrognozaEPIRFogSeries",
+    )
+    for marker in required:
+        if marker not in s:
+            raise SystemExit(f"source FOG provider contract missing before build: {marker}")
 
     p.write_text(s, encoding="utf-8")
 

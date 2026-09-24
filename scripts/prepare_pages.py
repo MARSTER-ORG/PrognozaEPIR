@@ -138,12 +138,10 @@ def patch_index() -> None:
         x = rd(q)
         x = re.sub(r"const VERSION = 'v0\.\d+\.\d+ HTML';", f"const VERSION = '{APP}';", x)
         x = re.sub(r"const APP_VERSION = 'v0\.\d+\.\d+ HTML';", f"const APP_VERSION = '{APP}';", x)
-        if name == "fog-engine.js" and "PrognozaEPIRFogSeries" not in x:
-            old = "fogSeries=out;renderFog();"
-            new = "fogSeries=out;window.PrognozaEPIRFogSeries=fogSeries;window.dispatchEvent(new CustomEvent('prognozaepir:fog-series-updated',{detail:{count:fogSeries.length}}));renderFog();"
-            if old not in x:
-                raise RuntimeError("FOG series export hook missing")
-            x = x.replace(old, new, 1)
+        if name == "fog-engine.js":
+            for marker in ("PrognozaEPIRFogLegacySeries", "PrognozaEPIRFogSeries", "prognozaepir:fog-series-updated"):
+                if marker not in x:
+                    raise RuntimeError(f"source FOG export contract missing: {marker}")
         wr(q, x)
 
 

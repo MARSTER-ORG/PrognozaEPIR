@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 EVAL = ROOT / "scripts" / "fog_vnext_eval.js"
+NODE = shutil.which("node") or shutil.which("nodejs")
 
 
 def main():
+    if not NODE:
+        raise RuntimeError("Node.js executable not found (tried node/nodejs)")
     sample = [{
         "time": "2026-09-15T03:00:00Z",
         "leadHours": 3,
@@ -25,7 +29,7 @@ def main():
         "obsVisM": 10000,
     }]
     p = subprocess.run(
-        ["node", str(EVAL)], input=json.dumps(sample), text=True,
+        [NODE, str(EVAL)], input=json.dumps(sample), text=True,
         capture_output=True, check=True,
     )
     row = json.loads(p.stdout)[0]
