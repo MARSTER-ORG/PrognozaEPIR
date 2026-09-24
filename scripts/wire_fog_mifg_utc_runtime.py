@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Wire the deployed integrated EPIR FOG 2.4.4 runtime.
 
-``fog.html`` is the canonical same-origin provider.  The meteogram consumes its
-published FG/BR/MIFG series through ``fog-index-bridge.js`` and renders them
-through ``fog-meteogram-overlay.js``.  Legacy standalone Fog assets are not
-started on the meteogram.
+``fog.html`` is the canonical same-origin provider. The meteogram consumes both
+LEGACY and vNext series through ``fog-index-bridge.js``. The mode guard selects
+exactly one series (LEGACY by default) before the overlay renders it.
 """
 import os
 import re
@@ -26,6 +25,7 @@ INDEX_FOG_RUNTIME_ASSETS = (
     "fog-summary-layout.js",
     "fog-mode-switch.js",
     "fog-index-bridge.js",
+    "fog-index-mode-guard.js",
     "fog-meteogram-overlay.js",
 )
 
@@ -68,8 +68,9 @@ def wire_meteogram_bridge() -> None:
     if '</body>' not in s:
         raise SystemExit("index.html body marker missing")
     provider = f'<script src="fog-index-bridge.js?v={ASSET_V}"></script>'
+    guard = f'<script src="fog-index-mode-guard.js?v={ASSET_V}"></script>'
     overlay = f'<script src="fog-meteogram-overlay.js?v={ASSET_V}"></script>'
-    s = s.replace('</body>', provider + '\n' + overlay + '\n</body>', 1)
+    s = s.replace('</body>', provider + '\n' + guard + '\n' + overlay + '\n</body>', 1)
     p.write_text(s, encoding="utf-8")
 
 
@@ -87,6 +88,7 @@ def validate() -> None:
     fog244 = (SITE / "fog-engine-v244.js").read_text(encoding="utf-8")
     index = (SITE / "index.html").read_text(encoding="utf-8")
     index_bridge = (SITE / "fog-index-bridge.js").read_text(encoding="utf-8")
+    mode_guard = (SITE / "fog-index-mode-guard.js").read_text(encoding="utf-8")
     overlay = (SITE / "fog-meteogram-overlay.js").read_text(encoding="utf-8")
     hover = (SITE / "meteogram-visfog-cleanup.js").read_text(encoding="utf-8")
     theme = (SITE / "theme.js").read_text(encoding="utf-8")
@@ -113,13 +115,16 @@ def validate() -> None:
         raise SystemExit("global navigation runtime is not cache-busted")
 
     provider_tag = f'fog-index-bridge.js?v={ASSET_V}'
+    guard_tag = f'fog-index-mode-guard.js?v={ASSET_V}'
     overlay_tag = f'fog-meteogram-overlay.js?v={ASSET_V}'
     if index.count('fog-index-bridge.js?v=') != 1 or provider_tag not in index:
         raise SystemExit("canonical fog.html provider is missing, duplicated or cache-stale")
+    if index.count('fog-index-mode-guard.js?v=') != 1 or guard_tag not in index:
+        raise SystemExit("canonical meteogram Fog mode guard is missing, duplicated or cache-stale")
     if index.count('fog-meteogram-overlay.js?v=') != 1 or overlay_tag not in index:
         raise SystemExit("meteogram Fog/BR/MIFG overlay is missing, duplicated or cache-stale")
-    if index.find(provider_tag) > index.find(overlay_tag):
-        raise SystemExit("canonical Fog provider must load before meteogram overlay")
+    if not (index.find(provider_tag) < index.find(guard_tag) < index.find(overlay_tag)):
+        raise SystemExit("Fog provider, mode guard and overlay are loaded in the wrong order")
     for asset in (
         "fog-engine-v244.js", "fog-engine.js", "observation-engine.js", "mifg-engine.js",
         "br-engine.js", "fog-summary-layout.js", "fog-mode-switch.js",
@@ -136,6 +141,16 @@ def validate() -> None:
     ):
         if marker not in index_bridge:
             raise SystemExit(f"canonical Fog index bridge contract missing: {marker}")
+
+    for marker in (
+        "prognozaepir-fog-engine-mode",
+        "return localStorage.getItem(KEY)===VNEXT?VNEXT:LEGACY",
+        "mode===VNEXT?window.PrognozaEPIRFogVNextSeries:window.PrognozaEPIRFogLegacySeries",
+        "window.PrognozaEPIRFogMode=Object.freeze",
+        "never substitute the other engine",
+    ):
+        if marker not in mode_guard:
+            raise SystemExit(f"canonical Meteogram Fog mode guard contract missing: {marker}")
 
     for marker in (
         "FOG_DRAW_THRESHOLD=60", "MIFG_DRAW_THRESHOLD=60", "BR_DRAW_THRESHOLD=60",
@@ -185,7 +200,7 @@ def main() -> int:
     wire_meteogram_bridge()
     wire_standalone_page()
     validate()
-    print("wired integrated EPIR FOG 2.4.4 provider with unified 60/100 thresholds")
+    print("wired EPIR FOG provider with Legacy-default exact mode selection and unified 60/100 thresholds")
     return 0
 
 

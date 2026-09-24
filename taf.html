@@ -6,10 +6,9 @@
   <meta name="color-scheme" content="dark">
   <meta name="prognozaepir-taf-engine-v2" content="2.4.3">
   <title>PrognozaEPIR — Generator TAF</title>
-  
-<script src="meteo-units.js?v=20260924-u1"></script>
-<script src="theme.js?v=20260919-ui1"></script>
-<link rel="stylesheet" href="app.css?v=20260919-ui1">
+  <script src="meteo-units.js?v=20260924-u1"></script>
+  <script src="theme.js?v=20260919-ui1"></script>
+  <link rel="stylesheet" href="app.css?v=20260919-ui1">
 </head>
 <body>
   <div class="wrap">
@@ -26,12 +25,12 @@
         <button id="copy" class="btn" type="button">Kopiuj TAF</button>
       </div>
       <div id="tafFogSource" class="fog-mode-control" aria-label="Źródło prognozy mgły dla generatora TAF">
-        <div class="fog-mode-copy"><b>Fog source: vNext</b><span>Generator TAF korzysta wyłącznie z serii Fog vNext i jej prognozy widzialności.</span></div>
-        <div class="fog-mode-state">AKTYWNY: vNext</div>
+        <div class="fog-mode-copy"><b>Fog source: LEGACY</b><span>Generator TAF domyślnie korzysta z serii Fog LEGACY. NEXT 2.4.4 jest używany wyłącznie po świadomym przełączeniu trybu.</span></div>
+        <div class="fog-mode-state">AKTYWNY: LEGACY</div>
       </div>
       <div class="statusline"><span id="badge" class="badge">TAF ENGINE 2.4.3 · START</span><span id="st">inicjalizacja</span></div>
       <div id="sources" class="sources"></div>
-      <div id="conf" class="note">Instrukcja TAF 11.2023 jest nadrzędną kontrolą końcową. Generator synchronizuje się z wybranym Fog Engine i używa właściwego score, prognozy widzialności oraz progów operacyjnych.</div>
+      <div id="conf" class="note">Instrukcja TAF 11.2023 jest nadrzędną kontrolą końcową. Generator synchronizuje się z wybranym Fog Engine; domyślny tryb to LEGACY.</div>
     </section>
 
     <div class="grid2">
@@ -64,15 +63,16 @@
       <div class="tablewrap"><table><thead><tr><th>Stacja</th><th>TAF</th></tr></thead><tbody id="neighborTafs"></tbody></table></div>
     </section>
 
-    <div class="note">Generator tworzy projekt operacyjny na podstawie modeli, lokalnego uczenia, Fog vNext i obserwacji. Czeka na gotową serię vNext i wykorzystuje jej prognozę VIS; nie przełącza się na Legacy. Każdy wynik przechodzi formalny kernel Instrukcji 11.2023.</div>
+    <div class="note">Generator tworzy projekt operacyjny na podstawie modeli, lokalnego uczenia, obserwacji i wybranego Fog Engine. LEGACY jest trybem domyślnym. Każdy wynik przechodzi formalny kernel Instrukcji 11.2023.</div>
     <footer class="footer">PrognozaEPIR · TAF Engine 2.4.3 · czasy prezentowane wyłącznie w UTC</footer>
   </div>
 
-  <iframe id="engine" class="engine-frame" src="index.html?taf-engine=1&amp;v=20260920-fg-vis-gate" title="Silnik danych modeli" aria-hidden="true" tabindex="-1"></iframe>
+  <iframe id="engine" class="engine-frame" src="index.html?taf-engine=1&amp;v=20260924-fog-mode-sync1" title="Silnik danych modeli" aria-hidden="true" tabindex="-1"></iframe>
 
   <script src="utc-ui-guard.js"></script>
   <script src="message-archive-client.js?v=live-jsonl-v7"></script>
   <script src="taf-fog-policy.js?v=20260919-4&amp;build=20260920-fg-vis-gate"></script>
+  <script src="taf-fog-mode-sync.js?v=20260924-legacy-sync1"></script>
   <script src="taf-engine-v2.js?v=2.3.0-kernel&amp;build=20260920-fg-vis-gate"></script>
   <script src="taf-engine-v24.js?v=2.4.0&amp;build=20260920-fg-vis-gate"></script>
   <script src="taf-engine-v241.js?v=2.4.1-audit&amp;build=20260920-fg-vis-gate"></script>
@@ -83,56 +83,15 @@
   <script>
   (()=>{
     'use strict';
-    const H=3600000, ISSUE_HOURS=[5,11,17,23];
-    const REQUIRED_FOG_POLICY_BUILD='20260920-fg-vis-gate';
-    const $=id=>document.getElementById(id), pad=n=>String(n).padStart(2,'0');
-    const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-
-    function setStatus(text,bad=false){
-      const st=$('st'),badge=$('badge');
-      if(st)st.textContent=text;
-      if(badge){badge.textContent=bad?'TAF ENGINE 2.4.3 · BŁĄD STARTU':'TAF ENGINE 2.4.3 · START';badge.className=bad?'badge bad':'badge';}
-    }
+    const H=3600000,ISSUE_HOURS=[5,11,17,23],REQUIRED_FOG_POLICY_BUILD='20260920-fg-vis-gate';
+    const $=id=>document.getElementById(id),pad=n=>String(n).padStart(2,'0'),sleep=ms=>new Promise(r=>setTimeout(r,ms));
+    function setStatus(text,bad=false){const st=$('st'),badge=$('badge');if(st)st.textContent=text;if(badge){badge.textContent=bad?'TAF ENGINE 2.4.3 · BŁĄD STARTU':'TAF ENGINE 2.4.3 · START';badge.className=bad?'badge bad':'badge';}}
     function fail(message){setStatus('STARTUP: '+message,true);console.error('[TAF startup]',message);}
-    window.addEventListener('error',e=>{if(e?.message)fail(e.message);});
-    window.addEventListener('unhandledrejection',e=>fail(e?.reason?.message||String(e?.reason||'odrzucona operacja')));
-
+    window.addEventListener('error',e=>{if(e?.message)fail(e.message)});window.addEventListener('unhandledrejection',e=>fail(e?.reason?.message||String(e?.reason||'odrzucona operacja')));
     function fmt(ms,date=true){const d=new Date(ms),hm=`${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;return date?`${pad(d.getUTCDate())}.${pad(d.getUTCMonth()+1)}.${d.getUTCFullYear()} ${hm}`:hm;}
-    function fillCycles(){
-      const select=$('cycle'),now=Date.now(),base=new Date(now-18*H),list=[];base.setUTCMinutes(0,0,0);
-      for(let i=0;i<72;i++){
-        const issue=base.getTime()+i*H;if(!ISSUE_HOURS.includes(new Date(issue).getUTCHours()))continue;
-        const start=issue+H,end=start+12*H;if(issue<now-8*H||issue>now+30*H)continue;list.push({issue,start,end});
-      }
-      let best=0,bestScore=Infinity;
-      select.innerHTML=list.map((c,i)=>{let score=c.issue>=now?c.issue-now:(now-c.issue)+12*H;if(now>=c.issue-20*60000&&now<=c.issue+5*60000)score=0;if(score<bestScore){bestScore=score;best=i;}return `<option value="${i}">${fmt(c.issue)} → ${fmt(c.start,false)}–${fmt(c.end,false)}</option>`;}).join('');
-      select.value=String(best);select.dataset.cycles=JSON.stringify(list);document.documentElement.dataset.tafStartup='cycles-ready';
-    }
-
-    function loadScript(src,id){
-      return new Promise((resolve,reject)=>{
-        const old=document.getElementById(id);if(old?.dataset.loaded==='1')return resolve();
-        const s=old||document.createElement('script');s.id=id;s.src=src;s.async=false;
-        s.onload=()=>{s.dataset.loaded='1';resolve();};s.onerror=()=>reject(new Error(`nie udało się załadować ${src}`));
-        if(!old)(document.body||document.documentElement).appendChild(s);
-      });
-    }
-
-    async function boot(){
-      fillCycles();setStatus('ładowanie TAF Engine 2.4.3…');
-      if(window.PrognozaEPIRTAFFogPolicy?.BUILD!==REQUIRED_FOG_POLICY_BUILD)throw new Error(`niezgodna wersja TAF Fog Policy: ${window.PrognozaEPIRTAFFogPolicy?.BUILD||'brak'}`);
-      await loadScript('taf-engine-v243.js?v=20260920-fg-vis-gate','taf-engine-v243-runtime');
-      if(!window.__PROGNOZA_EPIR_TAF_ENGINE_V243__||window.PrognozaEPIRTAFEngine?.QUALITY_VERSION!=='2.4.3')throw new Error('TAF Engine 2.4.3 nie wystartował');
-      await loadScript('taf-app-v25.js?v=20260920-fg-vis-gate','taf-app-v25-runtime');
-      const deadline=Date.now()+4000;
-      while(Date.now()<deadline&&!window.__PROGNOZA_EPIR_TAF_APP_V25__)await sleep(50);
-      if(!window.__PROGNOZA_EPIR_TAF_APP_V25__)throw new Error('interfejs generatora TAF nie wystartował');
-      document.documentElement.dataset.tafStartup='app-ready';
-      if($('st')?.textContent?.startsWith('ładowanie TAF Engine'))$('st').textContent='silnik TAF gotowy';
-      const autogen=new URLSearchParams(location.search).get('autogen')==='1';
-      if(autogen)setTimeout(()=>$('gen')?.click(),700);
-    }
-
+    function fillCycles(){const select=$('cycle'),now=Date.now(),base=new Date(now-18*H),list=[];base.setUTCMinutes(0,0,0);for(let i=0;i<72;i++){const issue=base.getTime()+i*H;if(!ISSUE_HOURS.includes(new Date(issue).getUTCHours()))continue;const start=issue+H,end=start+12*H;if(issue<now-8*H||issue>now+30*H)continue;list.push({issue,start,end});}let best=0,bestScore=Infinity;select.innerHTML=list.map((c,i)=>{let score=c.issue>=now?c.issue-now:(now-c.issue)+12*H;if(now>=c.issue-20*60000&&now<=c.issue+5*60000)score=0;if(score<bestScore){bestScore=score;best=i}return `<option value="${i}">${fmt(c.issue)} → ${fmt(c.start,false)}–${fmt(c.end,false)}</option>`}).join('');select.value=String(best);select.dataset.cycles=JSON.stringify(list);document.documentElement.dataset.tafStartup='cycles-ready';}
+    function loadScript(src,id){return new Promise((resolve,reject)=>{const old=document.getElementById(id);if(old?.dataset.loaded==='1')return resolve();const s=old||document.createElement('script');s.id=id;s.src=src;s.async=false;s.onload=()=>{s.dataset.loaded='1';resolve()};s.onerror=()=>reject(new Error(`nie udało się załadować ${src}`));if(!old)(document.body||document.documentElement).appendChild(s);});}
+    async function boot(){fillCycles();setStatus('ładowanie TAF Engine 2.4.3…');const policy=window.PrognozaEPIRTAFFogPolicy;if(policy?.BUILD!==REQUIRED_FOG_POLICY_BUILD)throw new Error(`niezgodna wersja TAF Fog Policy: ${policy?.BUILD||'brak'}`);if(!policy?.__modeSyncPatched)throw new Error('TAF Fog Mode Sync nie wystartował');await loadScript('taf-engine-v243.js?v=20260924-fog-mode-sync1','taf-engine-v243-runtime');if(!window.__PROGNOZA_EPIR_TAF_ENGINE_V243__||window.PrognozaEPIRTAFEngine?.QUALITY_VERSION!=='2.4.3')throw new Error('TAF Engine 2.4.3 nie wystartował');await loadScript('taf-app-v25.js?v=20260924-fog-mode-sync1','taf-app-v25-runtime');const deadline=Date.now()+4000;while(Date.now()<deadline&&!window.__PROGNOZA_EPIR_TAF_APP_V25__)await sleep(50);if(!window.__PROGNOZA_EPIR_TAF_APP_V25__)throw new Error('interfejs generatora TAF nie wystartował');document.documentElement.dataset.tafStartup='app-ready';if($('st')?.textContent?.startsWith('ładowanie TAF Engine'))$('st').textContent='silnik TAF gotowy';if(new URLSearchParams(location.search).get('autogen')==='1')setTimeout(()=>$('gen')?.click(),700);}
     boot().catch(e=>fail(e?.message||String(e)));
   })();
   </script>
