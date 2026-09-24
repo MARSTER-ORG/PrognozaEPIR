@@ -27,16 +27,25 @@ _UI_STOP_RE = re.compile(
     re.I,
 )
 _TAF_START_RE_TEMPLATE = r"\bTAF(?:\s+(?:AMD|COR))?\s+{station}\b"
-_TAF_GRACE_MIN = 15
 _TAF_SCHEDULES = {
     "EPIR": ((5, 0), (11, 0), (17, 0), (23, 0)),
     "EPBY": ((5, 30), (11, 30), (17, 30), (23, 30)),
     "EPPW": ((5, 0), (11, 0), (17, 0), (23, 0)),
     "EPKS": ((5, 0), (11, 0), (17, 0), (23, 0)),
 }
+# Keep source scheduling aligned with check_epir_archive_freshness.py. Recent
+# first-seen history is ~62 min median / <94 min recent max for EPIR/EPKS/EPPW,
+# while EPBY is normally available after ~32 min.
+_TAF_GRACE_MIN_BY_STATION = {
+    "EPIR": 100,
+    "EPBY": 45,
+    "EPPW": 100,
+    "EPKS": 100,
+}
 # The IMGW /data/last endpoint accepts the same supported query shape used by
 # the working METAR fast path. The former count=4 parameter returns HTTP 400.
 _IMGW_TAF_URL = "https://aviation-api.imgw.pl/data/last?params=taf&format=json"
+_legacy_is_current = legacy.is_current
 
 
 def _strict_station_tafs(page: str, station: str) -> list[str]:
@@ -59,8 +68,6 @@ def _strict_station_tafs(page: str, station: str) -> list[str]:
             candidates.append(eq + 1)
         if stop:
             candidates.append(stop.start())
-        # A valid operational TAF is compact. This final guard prevents a web
-        # page redesign from injecting many kilobytes of unrelated text.
         candidates.append(min(len(segment), 1800))
         segment = segment[: min(candidates)].strip()
 
@@ -89,7 +96,8 @@ def _expected_taf_cycle(station: str, now: datetime) -> datetime | None:
     schedule = _TAF_SCHEDULES.get(station)
     if not schedule:
         return None
-    eligible = now - timedelta(minutes=_TAF_GRACE_MIN)
+    grace_min = _TAF_GRACE_MIN_BY_STATION.get(station, 100)
+    eligible = now - timedelta(minutes=grace_min)
     candidates: list[datetime] = []
     for day_delta in (-1, 0):
         day = (eligible + timedelta(days=day_delta)).date()
@@ -98,6 +106,22 @@ def _expected_taf_cycle(station: str, now: datetime) -> datetime | None:
             if stamp <= eligible:
                 candidates.append(stamp)
     return max(candidates) if candidates else None
+
+
+def _scheduled_is_current(raw: str, now: datetime | None = None) -> bool:
+    """Apply both validity and station publication schedule to CURRENT state."""
+    now = now or datetime.now(timezone.utc)
+    normalized = legacy.normalize_taf(raw)
+    match = re.search(r"\bTAF(?:\s+(?:AMD|COR))?\s+([A-Z0-9]{4,5})\b", normalized, re.I)
+    if not match:
+        return _legacy_is_current(raw, now)
+    station = match.group(1).upper()
+    expected = _expected_taf_cycle(station, now)
+    issue_ts = legacy.taf_issue_ts(normalized, now)
+    if expected is None or issue_ts <= 0:
+        return _legacy_is_current(raw, now)
+    issue = datetime.fromtimestamp(issue_ts, tz=timezone.utc)
+    return _legacy_is_current(raw, now) and issue >= expected
 
 
 def _meets_expected_cycle(station: str, row: dict, now: datetime) -> bool:
@@ -112,13 +136,7 @@ def _meets_expected_cycle(station: str, row: dict, now: datetime) -> bool:
 
 
 def _missing_current(store: dict[str, list[dict]]) -> set[str]:
-    """Return stations missing the TAF cycle that should already be published.
-
-    The legacy collector's generic 8.5-hour age window is intentionally not
-    enough here. At 17:15 UTC, for example, an 11:00 TAF is still younger than
-    8.5 hours but must not suppress fallback attempts for the scheduled 17:00
-    cycle. EPBY uses the corresponding :30 schedule.
-    """
+    """Return stations missing the TAF cycle that should already be available."""
     now = datetime.now(timezone.utc)
     return {
         sid
@@ -129,7 +147,6 @@ def _missing_current(store: dict[str, list[dict]]) -> set[str]:
 
 def _pilot_worker(station: str, url: str):
     page = legacy.fetch_text(url, "text/html,*/*;q=0.8", retries=1)
-    # Reuse the same HTTP response to collect neighbour METAR/SPECI context.
     legacy.neighbor_obs.capture_pilothub_page(station, page, url)
     rows = [(station, raw) for raw in _strict_station_tafs(page, station)]
     return station, url, rows
@@ -174,8 +191,6 @@ def _fallback_imgw_page(store: dict[str, list[dict]], missing: set[str]) -> set[
     if not missing:
         return missing
 
-    # First make one combined request. Only if it does not fill every missing
-    # station do we try station-scoped Awiacja pages.
     try:
         page = legacy.fetch_text(legacy.IMGW_URL, "text/html,*/*;q=0.8", retries=1)
         rows = legacy.split_tafs(page)
@@ -236,9 +251,6 @@ def _fallback_awc(store: dict[str, list[dict]], missing: set[str]) -> set[str]:
     if not missing:
         return missing
 
-    # Query stations independently. AWC can reject a mixed request when one
-    # military identifier is unavailable; one failure must not hide valid data
-    # for the other stations. Current API documentation supports ids+format=json.
     def worker(sid: str):
         url = legacy.AWC_BASE + "?" + urllib.parse.urlencode({
             "ids": sid,
@@ -284,6 +296,7 @@ def collect_candidates() -> dict[str, list[dict]]:
 
 
 def main() -> int:
+    legacy.is_current = _scheduled_is_current
     legacy.collect_candidates = collect_candidates
     return legacy.main()
 
