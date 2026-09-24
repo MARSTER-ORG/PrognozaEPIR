@@ -1,0 +1,21 @@
+name: TAF fog onset regression
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Check TAF kernel syntax
+        run: node --check taf-engine-v2.js
+      - name: Prevent FG or BR onset through TEMPO when precipitation coexists
+        run: node tests/taf-fg-tempo-regression.test.js

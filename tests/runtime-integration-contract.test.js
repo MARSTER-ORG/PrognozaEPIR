@@ -11,29 +11,30 @@ function fakeStorage(mode) {
   return { getItem: key => key === Policy.MODE_KEY ? mode : null };
 }
 
-(function testLegacySeriesWinsOverEnrichedVnext() {
+(function testTafVnextWinsOverLegacyStorage() {
   const win = {
     localStorage: fakeStorage('legacy'),
     PrognozaEPIRFogLegacySeries: [{ t: 1, score: 55, vis: 900, fogEngineMode: 'legacy' }],
     PrognozaEPIRFogSeries: [{ t: 1, score: 82, fogScoreLegacy: 55, vis: 900, fogEngineMode: 'vnext-production' }],
     PrognozaEPIRFogVNextSeries: [{ t: 1, score: 82, fogScoreLegacy: 55, vis: 900, fogEngineMode: 'vnext-production' }]
   };
-  assert.equal(Policy.selectedMode(win), 'legacy');
-  const rows = Policy.seriesForMode(win, Policy.selectedMode(win));
+  assert.equal(Policy.selectedMode(win), 'vnext');
+  const rows = Policy.seriesForTaf(win);
   assert.equal(rows.length, 1);
-  assert.equal(rows[0].score, 55);
-  assert.equal(Policy.normalizeMode(rows[0].fogEngineMode), 'legacy');
+  assert.equal(rows[0].score, 82);
+  assert.equal(Policy.normalizeMode(rows[0].fogEngineMode), 'vnext');
+  assert.equal(Policy.seriesForMode(win, 'legacy')[0].score, 82);
 })();
 
-(function testLegacyRecoveryFromEnrichedSeries() {
+(function testTafNeverRecoversLegacyFromEnrichedSeries() {
   const win = {
     localStorage: fakeStorage('legacy'),
     PrognozaEPIRFogSeries: [{ t: 1, score: 84, fogScoreLegacy: 52, vis: 1200, fogEngineMode: 'vnext-production' }]
   };
-  const rows = Policy.seriesForMode(win, 'legacy');
+  const rows = Policy.seriesForTaf(win);
   assert.equal(rows.length, 1);
-  assert.equal(rows[0].score, 52);
-  assert.equal(rows[0].fogEngineMode, 'legacy');
+  assert.equal(rows[0].score, 84);
+  assert.equal(Policy.normalizeMode(rows[0].fogEngineMode), 'vnext');
 })();
 
 (function testVnextSeriesStillSelected() {
@@ -116,7 +117,7 @@ function fakeStorage(mode) {
   assert(wire.includes('FOG_DRAW_THRESHOLD=60'));
 })();
 
-(function testTafUsesExactlySelectedFogMode() {
+(function testTafUsesOnlyVnextFogMode() {
   const html = read('taf.html');
   const app = read('taf-app-v25.js');
   const bootstrap = read('taf-runtime-bootstrap.js');
@@ -125,11 +126,14 @@ function fakeStorage(mode) {
   assert(html.includes('taf-runtime-bootstrap.js?v=20260919-1'));
   assert(bootstrap.includes('taf-engine-v243.js?v=${BUILD}'));
   assert(bootstrap.includes("QUALITY_VERSION !== ENGINE_LABEL"));
-  assert(app.includes('const mode=Policy.selectedMode(w)'));
-  assert(app.includes('Policy.seriesForMode(w,mode)'));
-  assert(app.includes("if(mode==='vnext')throw Error"));
-  assert(app.includes("throw Error('Fog Engine LEGACY nie udostępnił kompletnej serii.')"));
-  assert(!app.includes("mode==='legacy'?'vnext'"));
+  assert(html.includes('id="tafFogSource"'));
+  assert(html.includes('Fog source: vNext'));
+  assert(!html.includes('data-taf-fog-mode'));
+  assert(!html.includes("localStorage.getItem(MODE_KEY)"));
+  assert(app.includes('const mode=Policy.TAF_FOG_MODE'));
+  assert(app.includes('Policy.seriesForTaf(w)'));
+  assert(!app.includes('Policy.selectedMode('));
+  assert(!app.includes('Policy.seriesForMode('));
 })();
 
 require('./taf-fog-policy.test.js');
