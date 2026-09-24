@@ -86,11 +86,11 @@
   }
   function parseUtc(s){ return Date.parse(String(s).endsWith('Z')?s:s+'Z'); }
   function localHour(t){
-    try{return new Intl.DateTimeFormat('pl-PL',{timeZone:PLACE.tz,hour:'2-digit',minute:'2-digit'}).format(new Date(t));}
+    try{return new Intl.DateTimeFormat('pl-PL',{timeZone:'UTC',hour:'2-digit',minute:'2-digit'}).format(new Date(t));}
     catch(_){return new Date(t).toLocaleTimeString('pl-PL',{hour:'2-digit',minute:'2-digit'});}
   }
   function localDateTime(t){
-    try{return new Intl.DateTimeFormat('pl-PL',{timeZone:PLACE.tz,weekday:'short',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(t));}
+    try{return new Intl.DateTimeFormat('pl-PL',{timeZone:'UTC',weekday:'short',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(t));}
     catch(_){return new Date(t).toLocaleString('pl-PL');}
   }
   function rhFromTempDew(T,Td){
@@ -278,11 +278,11 @@
   }
 
   function localInputValue(ms){
-    const parts=new Intl.DateTimeFormat('sv-SE',{timeZone:PLACE.tz,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).formatToParts(new Date(ms));
+    const parts=new Intl.DateTimeFormat('sv-SE',{timeZone:'UTC',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).formatToParts(new Date(ms));
     const o={};for(const p of parts)o[p.type]=p.value;
     return `${o.year}-${o.month}-${o.day}T${o.hour}:${o.minute}`;
   }
-  function parseLocalInput(v){return v?Date.parse(v):NaN;}
+  function parseLocalInput(v){return v?Date.parse(/[zZ]|[+-]\d\d:\d\d$/.test(v)?v:v+'Z'):NaN;}
   function setDefaultObsTime(){const x=document.getElementById('fogObsTime');if(x&&!x.value)x.value=localInputValue(Date.now());}
   function publishObsStatus(){
     window.PrognozaEPIRFogObsStatus={...archiveObsStatus};
@@ -763,7 +763,7 @@
     for(let h=0;h<=48;h++){
       const z=ensembleAt(start+h*HOUR);if(z)out.push(z);
     }
-    fogSeries=out;window.PrognozaEPIRFogSeries=fogSeries;renderFog();window.dispatchEvent(new CustomEvent('prognozaepir:fog-series-updated'));
+    fogSeries=out;window.PrognozaEPIRFogLegacySeries=fogSeries.map(h=>({...h,models:Array.isArray(h?.models)?h.models.map(m=>({...m,components:m?.components?{...m.components}:m?.components})):h?.models,fogEngineMode:'legacy',fogEngineSource:'legacy'}));window.PrognozaEPIRFogSeries=fogSeries;renderFog();window.dispatchEvent(new CustomEvent('prognozaepir:fog-series-updated'));
   }
 
   function onsetAndDissipation(series){
