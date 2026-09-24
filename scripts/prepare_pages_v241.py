@@ -9,6 +9,7 @@ from finalize_central_message_architecture_v2 import validate_taf_frontend
 
 TAF_FOG_POLICY_VERSION = "20260919-4"
 TAF_FOG_GATE_BUILD = "20260920-fg-vis-gate"
+TAF_FOG_MODE_SYNC_VERSION = "20260924-legacy-sync1"
 
 
 def patch_taf_v243() -> None:
@@ -26,12 +27,16 @@ def patch_taf_v243() -> None:
 
     # Keep the semantic version markers used by the deployment contract, but
     # add the current commit as a second query parameter. This makes every
-    # deployed TAF runtime URL unique, so a browser/CDN cannot mix a corrected
-    # Fog Policy with cached pre-fix engine layers.
+    # deployed TAF runtime URL unique, so a browser/CDN cannot mix runtime layers.
     build = p.ASSET_V
     s = re.sub(
         r'(src="taf-fog-policy\.js\?v=)[^"]+',
         rf'\g<1>{TAF_FOG_POLICY_VERSION}&amp;build={build}',
+        s,
+    )
+    s = re.sub(
+        r'(src="taf-fog-mode-sync\.js\?v=)[^"]+',
+        rf'\g<1>{TAF_FOG_MODE_SYNC_VERSION}&amp;build={build}',
         s,
     )
     s = re.sub(r'(src="taf-engine-v2\.js\?v=)[^"]+', rf'\g<1>2.3.0-kernel&amp;build={build}', s)
@@ -61,7 +66,6 @@ def patch_taf_v243() -> None:
         flags=re.I,
     )
     p.wr(path, s)
-
 
 
 def patch_global_theme() -> None:
@@ -99,7 +103,7 @@ def validate_v243() -> None:
     required = [
         "index.html", "radar.html", "taf.html", "sat-fog.html", "arch.html",
         "taf-engine-v2.js", "taf-engine-v24.js", "taf-engine-v241.js", "taf-engine-v242.js", "taf-engine-v243.js",
-        "taf-fog-policy.js", "taf-app-v25.js", "taf-runtime-bootstrap.js", "message-archive-client.js",
+        "taf-fog-policy.js", "taf-fog-mode-sync.js", "taf-app-v25.js", "taf-runtime-bootstrap.js", "message-archive-client.js",
         "fog-engine.js", "observation-engine.js", "mifg-engine.js",
         "meteogram-tap-details.js", "theme.js", "app.css",
         "radar-risk-policy.js", "lightning-alerts.html", "lightning-alert-sw.js",
@@ -125,15 +129,16 @@ def validate_v243() -> None:
             raise RuntimeError(f"global light/dark color scheme missing: {page.name}")
 
     taf = p.rd(p.SITE / "taf.html")
-    for legacy in (
+    for legacy_runtime in (
         "taf-hybrid-engine.js", "taf-hybrid-adapter.js", "taf-generator-policy.js",
         "taf-instruction-guard.js", "taf-output-sanitizer.js",
     ):
-        if legacy in taf:
-            raise RuntimeError(f"legacy TAF runtime in deployed taf.html: {legacy}")
+        if legacy_runtime in taf:
+            raise RuntimeError(f"legacy TAF runtime in deployed taf.html: {legacy_runtime}")
     for marker in (
         "TAF ENGINE 2.4.3 ·",
         "taf-fog-policy.js?v=20260919-4",
+        "taf-fog-mode-sync.js?v=20260924-legacy-sync1",
         "taf-engine-v2.js?v=2.3.0-kernel",
         "taf-engine-v24.js?v=2.4.0",
         "taf-engine-v241.js?v=2.4.1-audit",
@@ -141,7 +146,7 @@ def validate_v243() -> None:
         "taf-runtime-bootstrap.js?v=20260919-1",
         "prognozaepir-taf-engine-v2",
         "id=\"tafFogSource\"",
-        "Fog source: vNext",
+        "Fog source: LEGACY",
     ):
         if marker not in taf:
             raise RuntimeError(f"missing TAF 2.4.3 marker: {marker}")
@@ -149,8 +154,19 @@ def validate_v243() -> None:
         raise RuntimeError("deployed TAF runtime is missing per-build cache busting")
     if f"REQUIRED_FOG_POLICY_BUILD='{TAF_FOG_GATE_BUILD}'" not in taf:
         raise RuntimeError("deployed TAF runtime is missing the strict Fog Policy build gate")
-    if "data-taf-fog-mode" in taf or "localStorage.getItem(MODE_KEY)" in taf:
-        raise RuntimeError("deployed TAF page still exposes a selectable Fog mode")
+    if "data-taf-fog-mode" in taf:
+        raise RuntimeError("deployed TAF page exposes an obsolete page-local Fog mode")
+
+    mode_sync = p.rd(p.SITE / "taf-fog-mode-sync.js")
+    for marker in (
+        "prognozaepir-fog-engine-mode",
+        "return localStorage.getItem(KEY)===VNEXT?VNEXT:LEGACY",
+        "seriesForTaf:seriesForSelected",
+        "Object.defineProperty(patched,'TAF_FOG_MODE'",
+    ):
+        if marker not in mode_sync:
+            raise RuntimeError(f"TAF Fog mode sync contract missing: {marker}")
+
     if validate_taf_frontend(p.SITE) != "v25-v243":
         raise RuntimeError("deployed TAF runtime validator returned an unexpected mode")
 
@@ -194,7 +210,7 @@ def main() -> int:
     p.patch_radar()
     patch_global_theme()
     validate_v243()
-    print(f"prepared canonical Pages artifact with TAF 2.4.3 and shared UI: {p.SITE}")
+    print(f"prepared canonical Pages artifact with TAF 2.4.3, Legacy-default Fog mode and shared UI: {p.SITE}")
     return 0
 
 
