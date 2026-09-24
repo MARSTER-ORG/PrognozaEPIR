@@ -115,12 +115,16 @@ jobs:
           for marker in ['FOG_TOOLTIP_THRESHOLD = 60','function brAt(t)','Zamglenie · BR','data-epir-br-hover']:
               if marker not in hover: raise SystemExit(f'Fog quick-preview contract missing: {marker}')
 
-          for marker in ['TAF ENGINE 2.4.3 ·','taf-engine-v242.js?v=2.4.2-cloud-fog','taf-runtime-bootstrap.js?v=20260919-1']:
+          for marker in ['TAF ENGINE 2.4.3 ·','taf-engine-v242.js?v=2.4.2-cloud-fog','taf-runtime-bootstrap.js?v=20260919-1','id="tafFogSource"','Fog source: vNext']:
               if marker not in taf: raise SystemExit(f'TAF contract missing: {marker}')
+          if 'data-taf-fog-mode' in taf:
+              raise SystemExit('TAF must not expose a Legacy/vNext selector')
           for marker in ['taf-engine-v243.js?v=${BUILD}', "QUALITY_VERSION !== ENGINE_LABEL"]:
               if marker not in taf_bootstrap: raise SystemExit(f'TAF 2.4.3 bootstrap contract missing: {marker}')
-          for marker in ['const mode=Policy.selectedMode(w)','Policy.seriesForMode(w,mode)','Fog Engine LEGACY nie udostępnił kompletnej serii']:
-              if marker not in taf_app: raise SystemExit(f'TAF selected Fog mode contract missing: {marker}')
+          for marker in ['const mode=Policy.TAF_FOG_MODE','Policy.seriesForTaf(w)','Fog source: ${fogLabel}']:
+              if marker not in taf_app: raise SystemExit(f'TAF vNext-only Fog contract missing: {marker}')
+          for forbidden in ['Policy.selectedMode(', 'Policy.seriesForMode(']:
+              if forbidden in taf_app: raise SystemExit(f'TAF app still selects Fog mode dynamically: {forbidden}')
           PY
 
       - name: Upload Pages artifact
@@ -188,10 +192,13 @@ jobs:
               && printf '%s' "$fogengine" | grep -Fq 'PrognozaEPIRFogLegacySeries' \
               && printf '%s' "$taf" | grep -Fq 'TAF ENGINE 2.4.3 ·' \
               && printf '%s' "$taf" | grep -Fq 'taf-engine-v242.js?v=2.4.2-cloud-fog' \
+              && printf '%s' "$taf" | grep -Fq 'id="tafFogSource"' \
+              && printf '%s' "$taf" | grep -Fq 'Fog source: vNext' \
+              && ! printf '%s' "$taf" | grep -Fq 'data-taf-fog-mode' \
               && printf '%s' "$tafbootstrap" | grep -Fq 'taf-engine-v243.js?v=${BUILD}' \
               && printf '%s' "$taf243" | grep -Fq 'prevailingWindFullPeriodWhenNoSignificantChange' \
-              && printf '%s' "$tafapp" | grep -Fq 'const mode=Policy.selectedMode(w)' \
-              && printf '%s' "$tafapp" | grep -Fq 'Policy.seriesForMode(w,mode)'; then
+              && printf '%s' "$tafapp" | grep -Fq 'const mode=Policy.TAF_FOG_MODE' \
+              && printf '%s' "$tafapp" | grep -Fq 'Policy.seriesForTaf(w)'; then
               echo "GitHub Pages serves commit $GITHUB_SHA with FOG/BR/MIFG threshold 60, BR quick preview and TAF 2.4.3 integration."
               break
             fi

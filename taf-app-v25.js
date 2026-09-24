@@ -46,15 +46,14 @@
   function nearest(series,t){let best=null,bd=Infinity;for(const x of series||[]){const xt=+(x?.t??x?.time);if(!finite(xt))continue;const d=Math.abs(xt-t);if(d<bd){bd=d;best=x;}}return bd<=35*60000?best:null;}
 
   async function waitForFogSeries(w){
-    const mode=Policy.selectedMode(w),deadline=Date.now()+26000;
+    const mode=Policy.TAF_FOG_MODE,deadline=Date.now()+26000;
     while(Date.now()<deadline){
-      const series=Policy.seriesForMode(w,mode);
+      const series=Policy.seriesForTaf(w);
       if(series.length>10)return {mode,series};
       await new Promise(r=>setTimeout(r,250));
     }
     const err=w?.PrognozaEPIRFogVNextError;
-    if(mode==='vnext')throw Error(`Fog Engine vNEXT nie osiągnął stanu READY${err?': '+err:''}. TAF nie przełącza się awaryjnie na LEGACY.`);
-    throw Error('Fog Engine LEGACY nie udostępnił kompletnej serii.');
+    throw Error(`Fog Engine vNEXT nie osiągnął stanu READY${err?': '+err:''}. TAF nie przełącza się awaryjnie na LEGACY.`);
   }
 
   async function modelRows(period){
@@ -106,15 +105,15 @@
     $('reasons').innerHTML=result.diagnostics.reasons.length?'<ul>'+result.diagnostics.reasons.map(x=>`<li>${esc(x)}</li>`).join('')+'</ul>':'Brak progów wymagających grup zmian.';
     renderChecks(result);renderHours(result);renderNeighbors(data);
     const modelCount=Math.max(0,...result.hourly.map(h=>h.sourceRow?.mv?.length||0)),fogOk=rows.some(r=>num(r.fogOperationalScore)||num(r.fgOperationalScore)),neighborStations=[...new Set(rows.map(r=>r.neighborObsStation).filter(Boolean))],learningOk=!!result.learning?.active;
-    const fogMode=Policy.normalizeMode(rows.fogEngineMode||rows.find(r=>r.fogEngineMode)?.fogEngineMode),fogLabel=fogMode==='vnext'?'vNEXT':'LEGACY';
+    const fogLabel='vNext';
     $('sources').innerHTML=`<span class="pill ${data.anchorObservation?'ok':'warn'}">METAR/SPECI ${data.anchorObservation?'✓':'—'} · kotwica ${data.anchorObservation?esc(fmtUtc(itemTime(data.anchorObservation,data.issueTime),false)):'brak ≤ emisja'}</span><span class="pill ${neighborStations.length?'ok':'warn'}">OBS sąsiednie ${neighborStations.length?esc(neighborStations.join('/')):'—'}</span><span class="pill ok">${esc(result.name)} v${esc(result.version)}</span><span class="pill ok">Instrukcja 11.2023 — HARD GATE</span><span class="pill ${learningOk?'ok':'warn'}">kalibracja EPIR ${learningOk?'✓':'fallback'}</span><span class="pill ok">multimodel ${modelCount}</span><span class="pill ok">profil chmur → warstwy/pułap ✓</span><span class="pill ${fogOk?'ok':'warn'}">FG ${fogLabel} ${fogOk?'✓':'—'}</span><span class="pill warn">SYNOP wyłączony</span>`;
-    $('conf').textContent=`Pewność ${result.confidence}%. Aktywny Fog Engine: ${fogLabel}. ${fogMode==='vnext'?'TAF używa score, progów VIS i prognozy VIS z vNext; NWP VIS pozostaje diagnostyczna po stronie silnika mgieł.':'TAF używa score i widzialności LEGACY; próg operacyjny 50/100 jest mapowany na skalę formalnego kernela bez uruchamiania logiki vNext.'} Instrukcja 11.2023 pozostaje nadrzędnym hard gate. MSA: ${result.diagnostics.msaMode==='explicit'?Math.round(result.diagnostics.msaFt)+' ft':'fallback 5000 ft'}.`;
+    $('conf').textContent=`Pewność ${result.confidence}%. Fog source: ${fogLabel}. TAF używa score, progów VIS i prognozy VIS z vNext; NWP VIS pozostaje diagnostyczna po stronie silnika mgieł. Instrukcja 11.2023 pozostaje nadrzędnym hard gate. MSA: ${result.diagnostics.msaMode==='explicit'?Math.round(result.diagnostics.msaFt)+' ft':'fallback 5000 ft'}.`;
     $('badge').textContent=`TAF ENGINE ${APP_ENGINE_VERSION} · ZGODNY`;$('badge').className='badge ok';$('st').textContent=`${fmtUtc(Date.now(),false)} · ${rows.length} h danych · FOG ${fogLabel}`;
   }
 
   async function generate(){
     const period=selectedCycle();if(!period)throw Error('Nie wybrano cyklu TAF');
-    const frame=$('engine'),w=frame?.contentWindow,selected=Policy.selectedMode(w||window),fogLabel=selected==='vnext'?'vNEXT':'LEGACY';
+    const frame=$('engine'),w=frame?.contentWindow,fogLabel='vNext';
     $('badge').textContent=`TAF ENGINE ${APP_ENGINE_VERSION} · LICZENIE`;$('badge').className='badge';$('st').textContent=`archiwum + modele + FOG ${fogLabel} + profil chmur`;$('taf').textContent=`Pobieranie danych i generowanie TAF · aktywny Fog Engine: ${fogLabel}…`;
     const [data,rows]=await Promise.all([loadArchive(),modelRows(period)]);if(rows.length<8)throw Error(`Niepełny okres modeli: ${rows.length} h`);
     const anchorObservation=newestAtOrBefore([data.observation,...(data.history||[])],period.issue);data.anchorObservation=anchorObservation;data.issueTime=period.issue;
