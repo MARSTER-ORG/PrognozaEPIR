@@ -25,29 +25,49 @@
     return true;
   }
 
+  function replaceText(el,from,to){
+    if(!el)return;
+    const before=el.textContent||'',after=before.replace(from,to);
+    if(after!==before)el.textContent=after;
+  }
   function syncUi(){
     const m=mode(),legacy=m===LEGACY,label=legacy?'LEGACY':'NEXT 2.4.4';
     window.PrognozaEPIRFogSelectedMode=m;
     const box=document.getElementById('tafFogSource');
-    if(box)box.innerHTML=`<div class="fog-mode-copy"><b>Fog source: ${label}</b><span>Generator TAF używa serii FG wybranego silnika. Domyślny tryb to LEGACY; NEXT 2.4.4 jest używany tylko po świadomym przełączeniu.</span></div><div class="fog-mode-state">AKTYWNY: ${label}</div>`;
-    const conf=document.getElementById('conf');
-    if(conf&&legacy&&/vNext/i.test(conf.textContent||''))conf.textContent=(conf.textContent||'').replace(/vNext/gi,'LEGACY').replace(/score, progów VIS i prognozy VIS z LEGACY/gi,'score i widzialności z LEGACY');
-    const sources=document.getElementById('sources');
-    if(sources&&legacy)sources.innerHTML=sources.innerHTML.replace(/FG\s+vNext/gi,'FG LEGACY').replace(/Fog source:\s*vNext/gi,'Fog source: LEGACY');
+    if(box&&box.dataset.syncedFogMode!==m){
+      box.dataset.syncedFogMode=m;
+      box.innerHTML=`<div class="fog-mode-copy"><b>Fog source: ${label}</b><span>Generator TAF używa serii FG wybranego silnika. Domyślny tryb to LEGACY; NEXT 2.4.4 jest używany tylko po świadomym przełączeniu.</span></div><div class="fog-mode-state">AKTYWNY: ${label}</div>`;
+    }
+    if(legacy){
+      const conf=document.getElementById('conf');
+      if(conf&&/vNext/i.test(conf.textContent||'')){
+        const next=(conf.textContent||'').replace(/vNext/gi,'LEGACY').replace(/score, progów VIS i prognozy VIS z LEGACY/gi,'score i widzialności z LEGACY');
+        if(next!==conf.textContent)conf.textContent=next;
+      }
+      const sources=document.getElementById('sources');
+      if(sources&&/vNext/i.test(sources.innerHTML||'')){
+        const next=sources.innerHTML.replace(/FG\s+vNext/gi,'FG LEGACY').replace(/Fog source:\s*vNext/gi,'Fog source: LEGACY');
+        if(next!==sources.innerHTML)sources.innerHTML=next;
+      }
+    }
     const summary=document.getElementById('fog244Summary');
     if(summary){
-      const h=summary.querySelector('h2');
-      if(h)h.textContent=legacy?'EPIR FOG 2.4.4 — diagnostyka porównawcza (generator używa LEGACY)':'EPIR FOG 2.4.4 — osobne maksimum FG / BR / MIFG';
-      summary.dataset.generatorFogMode=m;
+      const h=summary.querySelector('h2'),wanted=legacy?'EPIR FOG 2.4.4 — diagnostyka porównawcza (generator używa LEGACY)':'EPIR FOG 2.4.4 — osobne maksimum FG / BR / MIFG';
+      if(h&&h.textContent!==wanted)h.textContent=wanted;
+      if(summary.dataset.generatorFogMode!==m)summary.dataset.generatorFogMode=m;
     }
   }
 
   function install(){
     if(!patchPolicy())return false;
     syncUi();
-    const observer=new MutationObserver(()=>queueMicrotask(syncUi));
+    let queued=false;
+    const observer=new MutationObserver(()=>{
+      if(queued)return;queued=true;
+      setTimeout(()=>{queued=false;syncUi()},0);
+    });
     observer.observe(document.documentElement,{childList:true,subtree:true,characterData:true});
-    window.addEventListener('storage',e=>{if(e.key===KEY){syncUi()}});
+    window.addEventListener('storage',e=>{if(e.key===KEY)syncUi()});
     window.addEventListener('prognozaepir:fog-engine-mode-changed',syncUi);
     setInterval(syncUi,2000);
     return true;
