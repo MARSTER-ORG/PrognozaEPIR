@@ -48,12 +48,47 @@ def save_json(path: Path, payload: dict) -> None:
     tmp.replace(path)
 
 
+def canonical_identity(message: dict) -> str | None:
+    """Return the identity required by the message-ingest contract.
+
+    Historical local rows may carry a pre-contract ``message_id``. Supabase
+    validates identity as SHA-256(TYPE + station + canonical_raw), after
+    upper-casing type/station and trimming canonical_raw. Recompute that exact
+    identity here instead of trusting a possibly stale stored identifier.
+    """
+    message_type = str(message.get("type") or "").strip().upper()
+    station = str(message.get("station") or "").strip().upper()
+    canonical_raw = str(message.get("canonical_raw") or "").strip()
+    if not message_type or not station or not canonical_raw:
+        return None
+    basis = f"{message_type}\n{station}\n{canonical_raw}"
+    return hashlib.sha256(basis.encode("utf-8")).hexdigest()
+
+
 def stable_id(message: dict) -> str:
-    mid = str(message.get("message_id") or "").strip()
+    canonical_id = canonical_identity(message)
+    if canonical_id:
+        return canonical_id
+    mid = str(message.get("message_id") or "").strip().lower()
     if mid:
         return mid
     basis = "\n".join(str(message.get(key) or "") for key in ("type", "station", "message_time", "canonical_raw", "raw"))
     return hashlib.sha256(basis.encode("utf-8")).hexdigest()
+
+
+def prepare_for_ingest(message: dict) -> dict:
+    """Canonicalize outbound identity without mutating the local archive row."""
+    message_type = str(message.get("type") or "").strip().upper()
+    station = str(message.get("station") or "").strip().upper()
+    canonical_raw = str(message.get("canonical_raw") or "").strip()
+    if not message_type or not station or not canonical_raw:
+        raise ValueError("message is missing canonical identity fields: type, station or canonical_raw")
+    item = dict(message)
+    item["type"] = message_type
+    item["station"] = station
+    item["canonical_raw"] = canonical_raw
+    item["message_id"] = canonical_identity(item)
+    return item
 
 
 def recent_day_files(lookback_days: int):
@@ -131,11 +166,12 @@ def read_messages(lookback_days: int, all_history: bool = False) -> tuple[list[d
 
 def post_batch(messages: list[dict]) -> dict:
     endpoint = f"{URL}/functions/v1/message-ingest"
-    body = json.dumps({"messages": messages}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    outbound = [prepare_for_ingest(message) for message in messages]
+    body = json.dumps({"messages": outbound}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     request = Request(endpoint, data=body, method="POST", headers={
         "content-type": "application/json",
         "x-ingest-token": INGEST_TOKEN,
-        "user-agent": "PrognozaEPIR-Railway-Supabase-Mirror/1.3",
+        "user-agent": "PrognozaEPIR-Railway-Supabase-Mirror/1.4",
     })
     try:
         with urlopen(request, timeout=TIMEOUT) as response:
