@@ -11,7 +11,10 @@ function fakeStorage(mode) {
   return { getItem: key => key === Policy.MODE_KEY ? mode : null };
 }
 
-(function testTafVnextWinsOverLegacyStorage() {
+// The base Fog Policy remains the vNext-compatible normalization layer. The
+// browser mode-sync adapter wraps it before taf-app-v25 starts and selects the
+// user-requested source. These tests retain coverage of the base policy itself.
+(function testBasePolicyStillUnderstandsVnext() {
   const win = {
     localStorage: fakeStorage('legacy'),
     PrognozaEPIRFogLegacySeries: [{ t: 1, score: 55, vis: 900, fogEngineMode: 'legacy' }],
@@ -26,7 +29,7 @@ function fakeStorage(mode) {
   assert.equal(Policy.seriesForMode(win, 'legacy')[0].score, 82);
 })();
 
-(function testTafNeverRecoversLegacyFromEnrichedSeries() {
+(function testBasePolicyNeverInventsLegacyFromUnmarkedSeries() {
   const win = {
     localStorage: fakeStorage('legacy'),
     PrognozaEPIRFogSeries: [{ t: 1, score: 84, fogScoreLegacy: 52, vis: 1200, fogEngineMode: 'vnext-production' }]
@@ -37,7 +40,7 @@ function fakeStorage(mode) {
   assert.equal(Policy.normalizeMode(rows[0].fogEngineMode), 'vnext');
 })();
 
-(function testVnextSeriesStillSelected() {
+(function testVnextSeriesStillSupportedByBasePolicy() {
   const win = {
     localStorage: fakeStorage('vnext'),
     PrognozaEPIRFogVNextSeries: [{ t: 1, score: 77, fogEngineMode: 'vnext-production' }]
@@ -93,6 +96,15 @@ function fakeStorage(mode) {
   assert(bridge.includes('PrognozaEPIRFogRenderThreshold=ACTIVE'));
 })();
 
+(function testCanonicalMeteogramModeGuardDefaultsToLegacyAndNeverSubstitutes() {
+  const guard = read('fog-index-mode-guard.js');
+  assert(guard.includes("KEY='prognozaepir-fog-engine-mode'"));
+  assert(guard.includes('return localStorage.getItem(KEY)===VNEXT?VNEXT:LEGACY'));
+  assert(guard.includes('mode===VNEXT?window.PrognozaEPIRFogVNextSeries:window.PrognozaEPIRFogLegacySeries'));
+  assert(guard.includes('window.PrognozaEPIRFogMode=Object.freeze'));
+  assert(guard.includes('never substitute the other engine'));
+})();
+
 (function testQuickPreviewShowsBrAndSuppressesSub60Rows() {
   const cleanup = read('meteogram-visfog-cleanup.js');
   assert(cleanup.includes('const FOG_TOOLTIP_THRESHOLD = 60'));
@@ -109,17 +121,19 @@ function fakeStorage(mode) {
   assert(section.includes("addOrReplace(values,'mifg','Niska mgła <2 m · MIFG',mifg,ACTIVE)"));
 })();
 
-(function testPagesWiringTargetsIntegrated244Provider() {
+(function testPagesWiringTargetsIntegrated244ProviderAndModeGuard() {
   const wire = read('scripts/wire_fog_mifg_utc_runtime.py');
   assert(wire.includes('fog-engine-v244.js'));
   assert(wire.includes('PrognozaEPIRFogLegacySeries'));
+  assert(wire.includes('fog-index-mode-guard.js'));
   assert(wire.includes('FOG_TOOLTIP_THRESHOLD = 60'));
   assert(wire.includes('FOG_DRAW_THRESHOLD=60'));
 })();
 
-(function testTafUsesOnlyVnextFogMode() {
+(function testTafUsesSelectedFogModeWithLegacyDefault() {
   const html = read('taf.html');
   const app = read('taf-app-v25.js');
+  const modeSync = read('taf-fog-mode-sync.js');
   const bootstrap = read('taf-runtime-bootstrap.js');
   assert(html.includes('id="engine"'));
   assert(html.includes('taf-engine-v242.js?v=2.4.2-cloud-fog'));
@@ -127,9 +141,13 @@ function fakeStorage(mode) {
   assert(bootstrap.includes('taf-engine-v243.js?v=${BUILD}'));
   assert(bootstrap.includes("QUALITY_VERSION !== ENGINE_LABEL"));
   assert(html.includes('id="tafFogSource"'));
-  assert(html.includes('Fog source: vNext'));
+  assert(html.includes('Fog source: LEGACY'));
+  assert(html.includes('taf-fog-mode-sync.js?v=20260924-legacy-sync1'));
   assert(!html.includes('data-taf-fog-mode'));
-  assert(!html.includes("localStorage.getItem(MODE_KEY)"));
+  assert(modeSync.includes("KEY='prognozaepir-fog-engine-mode'"));
+  assert(modeSync.includes('return localStorage.getItem(KEY)===VNEXT?VNEXT:LEGACY'));
+  assert(modeSync.includes('seriesForTaf:seriesForSelected'));
+  assert(modeSync.includes("Object.defineProperty(patched,'TAF_FOG_MODE'"));
   assert(app.includes('const mode=Policy.TAF_FOG_MODE'));
   assert(app.includes('Policy.seriesForTaf(w)'));
   assert(!app.includes('Policy.selectedMode('));
