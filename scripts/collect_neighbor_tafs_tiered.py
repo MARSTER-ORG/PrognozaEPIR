@@ -34,6 +34,9 @@ _TAF_SCHEDULES = {
     "EPPW": ((5, 0), (11, 0), (17, 0), (23, 0)),
     "EPKS": ((5, 0), (11, 0), (17, 0), (23, 0)),
 }
+# The IMGW /data/last endpoint accepts the same supported query shape used by
+# the working METAR fast path. The former count=4 parameter returns HTTP 400.
+_IMGW_TAF_URL = "https://aviation-api.imgw.pl/data/last?params=taf&format=json"
 
 
 def _strict_station_tafs(page: str, station: str) -> list[str]:
@@ -155,12 +158,12 @@ def _fallback_imgw_api(store: dict[str, list[dict]], missing: set[str]) -> set[s
         return missing
     try:
         page = legacy.fetch_text(
-            legacy.IMGW_API_URL,
+            _IMGW_TAF_URL,
             "application/json,text/plain,*/*;q=0.8",
             retries=1,
         )
         rows = legacy.extract_imgw_api_tafs(page)
-        _add_rows(store, rows, "IMGW Aviation API", legacy.IMGW_API_URL, missing)
+        _add_rows(store, rows, "IMGW Aviation API", _IMGW_TAF_URL, missing)
         print(f"TAF fallback IMGW API: decoded={len(rows)} missing_before={sorted(missing)}")
     except Exception as exc:
         print(f"TAF fallback IMGW API failed: {exc}")
@@ -216,30 +219,47 @@ def _walk_strings(value):
             yield from _walk_strings(child)
 
 
+def _awc_rows(payload, sid: str) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    taf_start = re.compile(_TAF_START_RE_TEMPLATE.format(station=re.escape(sid)), re.I)
+    bare_start = re.compile(rf"^{re.escape(sid)}\s+\d{{6}}Z\b", re.I)
+    for raw in _walk_strings(payload):
+        norm = legacy.normalize_taf(raw)
+        if bare_start.search(norm):
+            norm = legacy.normalize_taf("TAF " + norm)
+        if taf_start.search(norm):
+            rows.append((sid, norm))
+    return rows
+
+
 def _fallback_awc(store: dict[str, list[dict]], missing: set[str]) -> set[str]:
     if not missing:
         return missing
-    # Current AWC API documents JSON as a supported TAF format. One batched
-    # request is cheaper than four station requests and avoids the old repeated
-    # format=raw HTTP 400 failures.
-    url = legacy.AWC_BASE + "?" + urllib.parse.urlencode({
-        "ids": ",".join(sorted(missing)),
-        "format": "json",
-    })
-    try:
+
+    # Query stations independently. AWC can reject a mixed request when one
+    # military identifier is unavailable; one failure must not hide valid data
+    # for the other stations. Current API documentation supports ids+format=json.
+    def worker(sid: str):
+        url = legacy.AWC_BASE + "?" + urllib.parse.urlencode({
+            "ids": sid,
+            "format": "json",
+        })
         page = legacy.fetch_text(url, "application/json,text/plain,*/*;q=0.8", retries=1)
+        if not page.strip():
+            return sid, url, []
         payload = json.loads(page)
-        rows: list[tuple[str, str]] = []
-        for raw in _walk_strings(payload):
-            norm = legacy.normalize_taf(raw)
-            for sid in missing:
-                if re.search(_TAF_START_RE_TEMPLATE.format(station=re.escape(sid)), norm, re.I):
-                    rows.append((sid, norm))
-                    break
-        _add_rows(store, rows, "AWC", legacy.AWC_BASE, missing)
-        print(f"TAF fallback AWC JSON: decoded={len(rows)} missing_before={sorted(missing)}")
-    except Exception as exc:
-        print(f"TAF fallback AWC failed: {exc}")
+        return sid, url, _awc_rows(payload, sid)
+
+    with ThreadPoolExecutor(max_workers=max(1, len(missing))) as pool:
+        future_map = {pool.submit(worker, sid): sid for sid in sorted(missing)}
+        for fut in as_completed(future_map):
+            sid = future_map[fut]
+            try:
+                _sid, url, rows = fut.result()
+                _add_rows(store, rows, "AWC", legacy.AWC_BASE, {sid})
+                print(f"TAF fallback AWC {sid}: decoded={len(rows)}")
+            except Exception as exc:
+                print(f"TAF fallback AWC {sid} failed: {exc}")
     return _missing_current(store)
 
 
