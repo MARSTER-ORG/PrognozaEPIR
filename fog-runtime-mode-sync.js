@@ -27,30 +27,31 @@
       set(value){
         const next=value===VNEXT?VNEXT:LEGACY;
         try{localStorage.setItem(KEY,next)}catch(_){}
-        apply();
+        apply('set');
         try{dispatchEvent(new CustomEvent('prognozaepir:fog-engine-mode-changed',{detail:{mode:next}}))}catch(_){}
       },
       LEGACY,VNEXT
     });
     try{window.PrognozaEPIRFogMode=api}catch(_){}
   }
-  function apply(){
+  function apply(reason='sync'){
     const selectedMode=mode();
     const legacy=clone(window.PrognozaEPIRFogLegacySeries);
     const vnext=clone(window.PrognozaEPIRFogVNextSeries);
     const selected=selectedMode===VNEXT?vnext:legacy;
-    if(selected.length){
-      window.PrognozaEPIRFogSeries=selected;
-      window.PrognozaEPIRFogRenderSeries=clone(selected);
-    }
+    // Never silently fall back to the other engine. If the selected engine is
+    // still computing, publish an empty active series until that engine is ready.
+    window.PrognozaEPIRFogSeries=selected;
+    window.PrognozaEPIRFogRenderSeries=clone(selected);
     window.PrognozaEPIRFogSelectedMode=selectedMode;
     window.PrognozaEPIRFogEngineMode=selectedMode===VNEXT?'vnext-production-2.4.4':'legacy';
     installApi();
+    try{dispatchEvent(new CustomEvent('prognozaepir:fog-engine-mode-applied',{detail:{mode:selectedMode,reason,count:selected.length}}))}catch(_){}
   }
 
   for(const eventName of ['prognozaepir:fog-series-updated','prognozaepir:fog-vnext-updated','prognozaepir:br-series-updated','prognozaepir:mifg-series-updated']){
-    window.addEventListener(eventName,()=>setTimeout(apply,0));
+    window.addEventListener(eventName,()=>setTimeout(()=>apply(eventName),0));
   }
-  window.addEventListener('storage',event=>{if(event.key===KEY)apply()});
-  apply();
+  window.addEventListener('storage',event=>{if(event.key===KEY)apply('storage')});
+  apply('startup');
 })();
