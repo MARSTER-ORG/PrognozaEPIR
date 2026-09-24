@@ -1,0 +1,36 @@
+name: Stage 2 contract discovery
+
+on:
+  push:
+    branches: [fix/audit-stage2-contracts]
+    paths: [.github/workflows/_stage2-contract-discovery.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Locate coordinate and unit contracts
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          root=Path('.')
+          skip={'.git','data','node_modules','_site'}
+          pats=[
+            r'52\.83',r'18\.33',r'52\.828611',r'18\.330278',
+            r'3\.28084',r'0\.3048',r'1\.94384',r'0\.514444',r'1852',r'1609\.344',
+            r'\bft\b',r'\bfeet\b',r'\bkt\b',r'\bknots?\b',r'\bNM\b',
+          ]
+          rx=re.compile('|'.join(pats),re.I)
+          for p in sorted(root.rglob('*')):
+            if not p.is_file() or p.suffix.lower() not in {'.js','.py','.html','.mjs','.json','.yml','.yaml'}: continue
+            if any(x in skip for x in p.parts): continue
+            try: lines=p.read_text(encoding='utf-8').splitlines()
+            except UnicodeDecodeError: continue
+            for i,line in enumerate(lines,1):
+              if rx.search(line): print(f'{p}:{i}: {line[:500]}')
+          PY
