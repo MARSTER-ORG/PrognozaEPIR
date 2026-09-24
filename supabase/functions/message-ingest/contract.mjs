@@ -115,7 +115,9 @@ export async function normalizeMessage(message) {
   const suppliedId = requiredText(message.message_id, 'message_id', 64).toLowerCase();
   if (!MESSAGE_ID_RE.test(suppliedId)) throw new ContractError('message_id must be a lowercase SHA-256 value');
   const expectedId = await sha256(`${messageType}\n${stationCode}\n${normalizedText}`);
-  if (suppliedId !== expectedId) throw new ContractError('message_id does not match the canonical identity', 409);
+  const canonicalPayload = suppliedId === expectedId
+    ? message
+    : { ...message, legacy_message_id: suppliedId, message_id: expectedId };
 
   const contentHash = await sha256(normalizedText);
   const weatherCodes = tokensFrom(message, normalizedText);
@@ -139,7 +141,7 @@ export async function normalizeMessage(message) {
     source_ref: optionalText(
       message.source_ref || message.source_url || message.archive_source_file || message.source_file,
     ),
-    payload: message,
+    payload: canonicalPayload,
     archive_time: messageTime,
     visibility_m: firstFinite(message, ['visibility_m'], { integer: true, min: 0 }),
     wind_direction_deg: firstFinite(message, ['wind_direction_deg'], { integer: true, min: 0, max: 360 }),
