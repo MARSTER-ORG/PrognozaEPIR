@@ -6,7 +6,8 @@ Rules:
 - the default full gate also verifies recent routine continuity;
 - operational heartbeat checks may explicitly skip historical continuity and
   judge only whether the newest METAR reached the currently expected slot;
-- TAF stations are checked against their own issue schedules;
+- TAF stations are checked against their own issue schedules and observed
+  publication latency;
 - SPECI is event-driven and is never treated as a scheduled bulletin.
 """
 from __future__ import annotations
@@ -20,13 +21,22 @@ LATEST = Path("data/messages/latest.json")
 METAR_ROOT = Path("data/messages/metar")
 METAR_GRACE_MIN = 10
 METAR_CONTINUITY_HOURS = 24
-TAF_GRACE_MIN = 15
 
 TAF_SCHEDULES = {
     "EPIR": ((5, 0), (11, 0), (17, 0), (23, 0)),
     "EPBY": ((5, 30), (11, 30), (17, 30), (23, 30)),
     "EPPW": ((5, 0), (11, 0), (17, 0), (23, 0)),
     "EPKS": ((5, 0), (11, 0), (17, 0), (23, 0)),
+}
+# Recent production history shows routine first-seen latency around 62 min for
+# EPIR/EPKS/EPPW (p90 ~87-89 min, recent max ~93 min), and ~32 min for EPBY.
+# These thresholds keep the gate sensitive to a real source delay without
+# declaring a normal publication window stale.
+TAF_GRACE_MIN_BY_STATION = {
+    "EPIR": 100,
+    "EPBY": 45,
+    "EPPW": 100,
+    "EPKS": 100,
 }
 
 
@@ -103,7 +113,6 @@ def load_recent_metar_times(start: datetime, end: datetime) -> set[datetime]:
 def missing_metar_slots(now: datetime, grace_min: int, continuity_hours: int) -> list[datetime]:
     end = expected_metar_slot(now, grace_min)
     start = end - timedelta(hours=max(1, continuity_hours))
-    # Align to a routine half-hour slot.
     start = start.replace(minute=30 if start.minute >= 30 else 0, second=0, microsecond=0)
     found = load_recent_metar_times(start, end)
     expected: list[datetime] = []
@@ -144,7 +153,12 @@ def main() -> int:
         action="store_true",
         help="check current METAR freshness only; report continuity separately elsewhere",
     )
-    ap.add_argument("--taf-grace-min", type=int, default=TAF_GRACE_MIN)
+    ap.add_argument(
+        "--taf-grace-min",
+        type=int,
+        default=None,
+        help="override the station-specific TAF publication grace for all stations",
+    )
     args = ap.parse_args()
 
     if args.metar_only and args.all_tafs:
@@ -192,7 +206,12 @@ def main() -> int:
         stations = tuple(TAF_SCHEDULES) if args.all_tafs else ("EPIR",)
         result["taf"] = {}
         for station in stations:
-            station_result, station_ok = taf_result(payload, station, now, max(0, args.taf_grace_min))
+            grace = (
+                max(0, args.taf_grace_min)
+                if args.taf_grace_min is not None
+                else TAF_GRACE_MIN_BY_STATION[station]
+            )
+            station_result, station_ok = taf_result(payload, station, now, grace)
             result["taf"][station] = station_result
             checks.append(station_ok)
 
