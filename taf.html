@@ -24,9 +24,13 @@
         <button id="gen" class="btn" type="button">Odśwież i generuj</button>
         <button id="copy" class="btn" type="button">Kopiuj TAF</button>
       </div>
-      <div id="tafFogSource" class="fog-mode-control" aria-label="Źródło prognozy mgły dla generatora TAF">
-        <div class="fog-mode-copy"><b>Fog source: vNext</b><span>Generator TAF korzysta wyłącznie z serii Fog vNext i jej prognozy widzialności.</span></div>
-        <div class="fog-mode-state">AKTYWNY: vNext</div>
+      <div id="tafFogModeSwitch" class="fog-mode-control" aria-label="Wybór silnika mgły dla generatora TAF">
+        <div class="fog-mode-copy"><b>Silnik mgły używany przez TAF</b><span>Wybór jest wspólny z EPIR FOG. LEGACY używa poprzedniego silnika; vNEXT używa nowej fizyki i prognozy VIS. Po zmianie przeładowywane jest ukryte źródło danych generatora.</span></div>
+        <div class="fog-mode-buttons">
+          <button type="button" data-taf-fog-mode="legacy">LEGACY</button>
+          <button type="button" data-taf-fog-mode="vnext">vNEXT</button>
+        </div>
+        <div id="tafFogModeState" class="fog-mode-state">—</div>
       </div>
       <div class="statusline"><span id="badge" class="badge">TAF ENGINE 2.4.3 · START</span><span id="st">inicjalizacja</span></div>
       <div id="sources" class="sources"></div>
@@ -63,7 +67,7 @@
       <div class="tablewrap"><table><thead><tr><th>Stacja</th><th>TAF</th></tr></thead><tbody id="neighborTafs"></tbody></table></div>
     </section>
 
-    <div class="note">Generator tworzy projekt operacyjny na podstawie modeli, lokalnego uczenia, Fog vNext i obserwacji. Czeka na gotową serię vNext i wykorzystuje jej prognozę VIS; nie przełącza się na Legacy. Każdy wynik przechodzi formalny kernel Instrukcji 11.2023.</div>
+    <div class="note">Generator tworzy projekt operacyjny na podstawie modeli, lokalnego uczenia, aktywnego Fog Engine i obserwacji. W trybie LEGACY używa wyłącznie toru Legacy; w trybie vNEXT czeka na gotową serię vNext i wykorzystuje również VIS vNext. Nie ma cichego fallbacku z vNEXT do LEGACY. Każdy wynik przechodzi formalny kernel Instrukcji 11.2023.</div>
     <footer class="footer">PrognozaEPIR · TAF Engine 2.4.3 · czasy prezentowane wyłącznie w UTC</footer>
   </div>
 
@@ -82,7 +86,7 @@
   <script>
   (()=>{
     'use strict';
-    const H=3600000, ISSUE_HOURS=[5,11,17,23];
+    const H=3600000, ISSUE_HOURS=[5,11,17,23], MODE_KEY='prognozaepir-fog-engine-mode';
     const REQUIRED_FOG_POLICY_BUILD='20260920-fg-vis-gate';
     const $=id=>document.getElementById(id), pad=n=>String(n).padStart(2,'0');
     const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -107,6 +111,24 @@
       select.innerHTML=list.map((c,i)=>{let score=c.issue>=now?c.issue-now:(now-c.issue)+12*H;if(now>=c.issue-20*60000&&now<=c.issue+5*60000)score=0;if(score<bestScore){bestScore=score;best=i;}return `<option value="${i}">${fmt(c.issue)} → ${fmt(c.start,false)}–${fmt(c.end,false)}</option>`;}).join('');
       select.value=String(best);select.dataset.cycles=JSON.stringify(list);document.documentElement.dataset.tafStartup='cycles-ready';
     }
+
+    function readMode(){try{return localStorage.getItem(MODE_KEY)==='vnext'?'vnext':'legacy';}catch(_){return'legacy';}}
+    function updateModeUi(){
+      const mode=readMode();window.PrognozaEPIRFogSelectedMode=mode;
+      document.querySelectorAll('[data-taf-fog-mode]').forEach(b=>{const active=b.dataset.tafFogMode===mode;b.classList.toggle('active',active);b.setAttribute('aria-pressed',active?'true':'false');});
+      const state=$('tafFogModeState');if(state)state.textContent=mode==='vnext'?'AKTYWNY: vNEXT':'AKTYWNY: LEGACY';
+    }
+    function setMode(mode){
+      const next=mode==='vnext'?'vnext':'legacy';try{localStorage.setItem(MODE_KEY,next);}catch(_){}
+      window.PrognozaEPIRFogSelectedMode=next;updateModeUi();
+      const frame=$('engine');if(frame)frame.src=`index.html?taf-engine=1&fog-mode=${next}&v=${Date.now()}`;
+      const hours=$('hours');if(hours)hours.innerHTML='';
+      const taf=$('taf');if(taf)taf.textContent='Silnik danych przeładowuje się po zmianie trybu. Kliknij „Odśwież i generuj”, gdy status będzie gotowy.';
+      const st=$('st');if(st)st.textContent=`przełączono Fog Engine na ${next==='vnext'?'vNEXT':'LEGACY'} · przeładowywanie danych`;
+      window.dispatchEvent(new CustomEvent('prognozaepir:fog-engine-mode-changed',{detail:{mode:next}}));
+    }
+    document.querySelectorAll('[data-taf-fog-mode]').forEach(b=>b.addEventListener('click',()=>setMode(b.dataset.tafFogMode)));
+    updateModeUi();
 
     function loadScript(src,id){
       return new Promise((resolve,reject)=>{

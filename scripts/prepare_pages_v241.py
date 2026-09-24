@@ -136,8 +136,9 @@ def validate_v243() -> None:
         "taf-engine-v242.js?v=2.4.2-cloud-fog",
         "taf-runtime-bootstrap.js?v=20260919-1",
         "prognozaepir-taf-engine-v2",
-        "id=\"tafFogSource\"",
-        "Fog source: vNext",
+        "id=\"tafFogModeSwitch\"",
+        "data-taf-fog-mode=\"legacy\"",
+        "data-taf-fog-mode=\"vnext\"",
     ):
         if marker not in taf:
             raise RuntimeError(f"missing TAF 2.4.3 marker: {marker}")
@@ -145,8 +146,6 @@ def validate_v243() -> None:
         raise RuntimeError("deployed TAF runtime is missing per-build cache busting")
     if f"REQUIRED_FOG_POLICY_BUILD='{TAF_FOG_GATE_BUILD}'" not in taf:
         raise RuntimeError("deployed TAF runtime is missing the strict Fog Policy build gate")
-    if "data-taf-fog-mode" in taf or "localStorage.getItem(MODE_KEY)" in taf:
-        raise RuntimeError("deployed TAF page still exposes a selectable Fog mode")
     if validate_taf_frontend(p.SITE) != "v25-v243":
         raise RuntimeError("deployed TAF runtime validator returned an unexpected mode")
 

@@ -16,16 +16,15 @@
       const proc={RAD:'radiacyjna',ADV:'adwekcyjna',CBL:'stratus → mgła',PCP:'opadowa'};
       let summarySig='',lastHourlyResult=null;
 
-      win.PrognozaEPIRFogSelectedMode=policy.TAF_FOG_MODE;
+      try{win.localStorage?.setItem(policy.MODE_KEY,'vnext');}catch(_){}
+      win.PrognozaEPIRFogSelectedMode='vnext';
 
       function frame(){return win.document.getElementById('engine')?.contentWindow||null;}
       function nearest(series,t,max=40*60000){let best=null,bd=Infinity;for(const x of series||[]){const q=num(x?.t??x?.time);if(!finite(q))continue;const d=Math.abs(q-t);if(d<bd){bd=d;best=x;}}return bd<=max?best:null;}
       function getBundle(){
         try{
           const w=frame();if(!w)return null;
-          const direct=Array.isArray(w.PrognozaEPIRFogVNextSeries)?w.PrognozaEPIRFogVNextSeries:[];
-          const active=Array.isArray(w.PrognozaEPIRFogSeries)?w.PrognozaEPIRFogSeries:[];
-          const fg=direct.length?direct:active.filter(x=>policy.normalizeMode(x?.fogEngineMode||x?.fogEngineSource)==='vnext');
+          const fg=Array.isArray(w.PrognozaEPIRFogSeries)?w.PrognozaEPIRFogSeries:[];
           const br=Array.isArray(w.PrognozaEPIRBRSeries)?w.PrognozaEPIRBRSeries:[];
           const mifg=w.PrognozaEPIRMIFG?.getSeries?.()||[];
           const ok=fg.length>10&&br.length>10&&mifg.length>10&&fg.some(x=>String(x?.fogEngineVersion||x?.engineVersion||'').includes('2.4.4')||String(x?.fogEngineSource||'').includes('2.4.4'));
@@ -61,10 +60,10 @@
         return `<b>${s===null?'—':s+'/100'}</b><div class="muted" style="font-size:11px;line-height:1.35;margin-top:3px">${fmt(t)}<br>VIS ${finite(vis)?Math.round(vis)+' m':'—'} · ${type}<br>T2m ${temp} · FZFG ${freeze}</div>`;
       }
       function ensureUi(){
-        const mode=win.document.getElementById('tafFogSource');
+        const mode=win.document.getElementById('tafFogModeSwitch');
         if(mode&&!mode.dataset.fog244){
           mode.dataset.fog244='1';
-          mode.innerHTML='<div class="fog-mode-copy"><b>Fog source: vNext</b><span>Generator korzysta wyłącznie z serii FG, BR i MIFG silnika EPIR FOG 2.4.4 vNext.</span></div><div class="fog-mode-state">AKTYWNY: vNext · EPIR FOG 2.4.4</div>';
+          mode.innerHTML='<div class="fog-mode-copy"><b>Silnik mgły używany przez TAF: EPIR FOG 2.4.4</b><span>Generator korzysta z tych samych serii FG, BR i MIFG co strona EPIR FOG. Tryb LEGACY jest wyłączony dla TAF, aby wartości nie rozjeżdżały się między modułami.</span></div><div class="fog-mode-state">AKTYWNY: EPIR FOG 2.4.4</div>';
         }
         const hours=win.document.getElementById('hours'),table=hours?.closest('table');
         if(table){
@@ -118,7 +117,6 @@
   // synchronization revision is carried by the per-commit cache-busting URL.
   const BUILD='20260920-fg-vis-gate';
   const MODE_KEY='prognozaepir-fog-engine-mode';
-  const TAF_FOG_MODE='vnext';
   const finite=Number.isFinite;
   const num=v=>v!==null&&v!==undefined&&v!==''&&finite(Number(v))?Number(v):null;
   const clamp=(v,a=0,b=100)=>Math.max(a,Math.min(b,v));
@@ -128,7 +126,15 @@
     return s.includes('vnext')||s.includes('2.4.4')?'vnext':'legacy';
   }
 
-  function selectedMode(){return TAF_FOG_MODE;}
+  function selectedMode(win){
+    try{
+      const live=String(win?.PrognozaEPIRFogEngineMode||win?.PrognozaEPIRFogSelectedMode||'').toLowerCase();
+      if(live.includes('vnext')||live.includes('2.4.4'))return'vnext';
+      const stored=win?.localStorage?.getItem(MODE_KEY);
+      if(stored==='vnext'||stored==='legacy')return stored;
+      return 'vnext';
+    }catch(_){return'vnext';}
+  }
 
   function operationalScoreForTaf(score,mode){
     const s=num(score);if(!finite(s))return null;
@@ -219,14 +225,22 @@
     }).filter(x=>normalizeMode(x?.fogEngineMode||x?.fogEngineSource)!=='vnext');
   }
 
-  function seriesForTaf(win){
-    const v=win?.PrognozaEPIRFogVNextSeries;
-    if(Array.isArray(v)&&v.length)return merge244(win,v);
+  function seriesForMode(win,mode){
+    const m=normalizeMode(mode||selectedMode(win));
+    if(m==='vnext'){
+      const v=win?.PrognozaEPIRFogVNextSeries;
+      if(Array.isArray(v)&&v.length)return merge244(win,v);
+      const active=win?.PrognozaEPIRFogSeries;
+      if(Array.isArray(active)&&active.length&&active.some(x=>normalizeMode(x?.fogEngineMode||x?.fogEngineSource)==='vnext'))return merge244(win,active);
+      return [];
+    }
+    const legacy=win?.PrognozaEPIRFogLegacySeries;
+    if(Array.isArray(legacy)&&legacy.length)return cloneSeries(legacy);
     const active=win?.PrognozaEPIRFogSeries;
-    if(Array.isArray(active)&&active.length&&active.some(x=>normalizeMode(x?.fogEngineMode||x?.fogEngineSource)==='vnext'))return merge244(win,active);
+    if(Array.isArray(active)&&active.length&&!active.some(x=>normalizeMode(x?.fogEngineMode||x?.fogEngineSource)==='vnext'))return cloneSeries(active);
+    if(Array.isArray(active)&&active.some(x=>finite(num(x?.fogScoreLegacy))))return recoverLegacySeries(active);
     return [];
   }
-  function seriesForMode(win){return seriesForTaf(win);}
 
-  return Object.freeze({BUILD,MODE_KEY,TAF_FOG_MODE,normalizeMode,selectedMode,operationalScoreForTaf,activeVisibility,thresholdRisk,mechanismType,normalizeFogHour,seriesForTaf,seriesForMode,cloneSeries,recoverLegacySeries});
+  return Object.freeze({BUILD,MODE_KEY,normalizeMode,selectedMode,operationalScoreForTaf,activeVisibility,thresholdRisk,mechanismType,normalizeFogHour,seriesForMode,cloneSeries,recoverLegacySeries});
 });
