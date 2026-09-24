@@ -34,9 +34,10 @@
     const m=mode(),legacy=m===LEGACY,label=legacy?'LEGACY':'NEXT 2.4.4';
     window.PrognozaEPIRFogSelectedMode=m;
     const box=document.getElementById('tafFogSource');
-    if(box&&box.dataset.syncedFogMode!==m){
+    const wantedState=`AKTYWNY: ${label}`;
+    if(box&&(box.dataset.syncedFogMode!==m||!(box.textContent||'').includes(wantedState))){
       box.dataset.syncedFogMode=m;
-      box.innerHTML=`<div class="fog-mode-copy"><b>Fog source: ${label}</b><span>Generator TAF używa serii FG wybranego silnika. Domyślny tryb to LEGACY; NEXT 2.4.4 jest używany tylko po świadomym przełączeniu.</span></div><div class="fog-mode-state">AKTYWNY: ${label}</div>`;
+      box.innerHTML=`<div class="fog-mode-copy"><b>Fog source: ${label}</b><span>Generator TAF używa serii FG wybranego silnika. Domyślny tryb to LEGACY; NEXT 2.4.4 jest używany tylko po świadomym przełączeniu.</span></div><div class="fog-mode-state">${wantedState}</div>`;
     }
     if(legacy){
       const conf=document.getElementById('conf');
@@ -69,6 +70,7 @@
     observer.observe(document.documentElement,{childList:true,subtree:true,characterData:true});
     window.addEventListener('storage',e=>{if(e.key===KEY)syncUi()});
     window.addEventListener('prognozaepir:fog-engine-mode-changed',syncUi);
+    window.addEventListener('DOMContentLoaded',()=>setTimeout(syncUi,0),{once:true});
     setInterval(syncUi,2000);
     return true;
   }
