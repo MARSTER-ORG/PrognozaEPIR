@@ -3,7 +3,7 @@
 
 Normal path:
   PilotHub/IMGW pages -> current TAFs + neighbour METAR/SPECI context.
-Fallbacks are activated only for stations that still lack a current TAF:
+Fallbacks are activated only for stations that still lack the expected scheduled TAF:
   IMGW Aviation API -> IMGW Awiacja -> AWC.
 
 The existing collect_neighbor_tafs module remains the parser/persistence authority;
@@ -16,6 +16,7 @@ import re
 import urllib.parse
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta, timezone
 
 import collect_neighbor_tafs as legacy
 
@@ -26,6 +27,13 @@ _UI_STOP_RE = re.compile(
     re.I,
 )
 _TAF_START_RE_TEMPLATE = r"\bTAF(?:\s+(?:AMD|COR))?\s+{station}\b"
+_TAF_GRACE_MIN = 15
+_TAF_SCHEDULES = {
+    "EPIR": ((5, 0), (11, 0), (17, 0), (23, 0)),
+    "EPBY": ((5, 30), (11, 30), (17, 30), (23, 30)),
+    "EPPW": ((5, 0), (11, 0), (17, 0), (23, 0)),
+    "EPKS": ((5, 0), (11, 0), (17, 0), (23, 0)),
+}
 
 
 def _strict_station_tafs(page: str, station: str) -> list[str]:
@@ -74,11 +82,45 @@ def _add_rows(store: dict[str, list[dict]], rows, source: str, source_url: str, 
         legacy.add_candidate(store, sid, raw, source, source_url)
 
 
+def _expected_taf_cycle(station: str, now: datetime) -> datetime | None:
+    schedule = _TAF_SCHEDULES.get(station)
+    if not schedule:
+        return None
+    eligible = now - timedelta(minutes=_TAF_GRACE_MIN)
+    candidates: list[datetime] = []
+    for day_delta in (-1, 0):
+        day = (eligible + timedelta(days=day_delta)).date()
+        for hour, minute in schedule:
+            stamp = datetime(day.year, day.month, day.day, hour, minute, tzinfo=timezone.utc)
+            if stamp <= eligible:
+                candidates.append(stamp)
+    return max(candidates) if candidates else None
+
+
+def _meets_expected_cycle(station: str, row: dict, now: datetime) -> bool:
+    issue_ts = float(row.get("issue") or 0)
+    if issue_ts <= 0:
+        return False
+    expected = _expected_taf_cycle(station, now)
+    if expected is None:
+        return bool(row.get("current"))
+    issue = datetime.fromtimestamp(issue_ts, tz=timezone.utc)
+    return issue >= expected
+
+
 def _missing_current(store: dict[str, list[dict]]) -> set[str]:
+    """Return stations missing the TAF cycle that should already be published.
+
+    The legacy collector's generic 8.5-hour age window is intentionally not
+    enough here. At 17:15 UTC, for example, an 11:00 TAF is still younger than
+    8.5 hours but must not suppress fallback attempts for the scheduled 17:00
+    cycle. EPBY uses the corresponding :30 schedule.
+    """
+    now = datetime.now(timezone.utc)
     return {
         sid
         for sid in legacy.STATIONS
-        if not any(bool(row.get("current")) for row in store.get(sid, []))
+        if not any(_meets_expected_cycle(sid, row, now) for row in store.get(sid, []))
     }
 
 
@@ -207,7 +249,7 @@ def collect_candidates() -> dict[str, list[dict]]:
     _collect_pilothub(store)
     missing = _missing_current(store)
     if not missing:
-        print("TAF fallback chain: skipped; PilotHub/IMGW supplied all current stations")
+        print("TAF fallback chain: skipped; PilotHub/IMGW supplied all expected cycles")
         return store
 
     print(f"TAF fallback chain activated for: {sorted(missing)}")
@@ -215,9 +257,9 @@ def collect_candidates() -> dict[str, list[dict]]:
     missing = _fallback_imgw_page(store, missing)
     missing = _fallback_awc(store, missing)
     if missing:
-        print(f"TAF fallback chain exhausted; still missing current: {sorted(missing)}")
+        print(f"TAF fallback chain exhausted; still missing expected cycle: {sorted(missing)}")
     else:
-        print("TAF fallback chain completed; all current stations recovered")
+        print("TAF fallback chain completed; all expected cycles recovered")
     return store
 
 
