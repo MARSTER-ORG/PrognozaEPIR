@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import collect_epir_observations as obs
 import import_epir_bulk_archive as bulk
+from station_metadata import EPIR as EPIR_META
 
 ROOT=Path(__file__).resolve().parents[1]; A=ROOT/'data/messages'
 TYPES={'METAR':'metar','SPECI':'speci','TAF':'taf','SYNOP':'synop'}
@@ -299,7 +300,7 @@ def views(stat,full=False):
     tb={}
     if tf: tb['EPIR']=tf[-1]
     tb.update(neighbors)
-    latest={'schema':'prognozaepir-message-archive-latest-v1','archive':'data/messages','station':{'icao':'EPIR','synop':'12342','wigos':'0-20000-0-12342','lat':52.83,'lon':18.33},'metar':av[-1] if av else None,'metar_only':m[-1] if m else None,'speci':sp[-1] if sp else None,'aviation':av[-1] if av else None,'synop':sy[-1] if sy else None,'taf':tf[-1] if tf else None,'taf_by_station':tb,'taf_neighbors_current':neighbors}
+    latest={'schema':'prognozaepir-message-archive-latest-v1','archive':'data/messages','station':dict(EPIR_META),'metar':av[-1] if av else None,'metar_only':m[-1] if m else None,'speci':sp[-1] if sp else None,'aviation':av[-1] if av else None,'synop':sy[-1] if sy else None,'taf':tf[-1] if tf else None,'taf_by_station':tb,'taf_neighbors_current':neighbors}
     candidates=[x for x in (latest['aviation'],latest['synop'],latest['taf'],*neighbors.values()) if isinstance(x,dict) and x.get('message_time')]
     latest['updated_at']=max([x['message_time'] for x in candidates],default=None)
     try: latest['fused']=obs.fuse(latest['aviation'],latest['synop'])

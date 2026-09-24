@@ -66,6 +66,7 @@ def patch_taf_v243() -> None:
 
 def patch_global_theme() -> None:
     """Wire the shared app.css/theme.js pair on every deployed HTML page."""
+    units = f'<script src="meteo-units.js?v={p.ASSET_V}"></script>'
     theme = f'<script src="theme.js?v={p.ASSET_V}"></script>'
     style = f'<link rel="stylesheet" href="app.css?v={p.ASSET_V}">'
     html_pages = sorted(p.SITE.glob("*.html"))
@@ -76,6 +77,7 @@ def patch_global_theme() -> None:
         s = p.rd(path)
         for pattern in (
             r'\s*<script\s+src=["\']theme-control\.js(?:\?[^"\']*)?["\'][^>]*></script>',
+            r'\s*<script\s+src=["\']meteo-units\.js(?:\?[^"\']*)?["\'][^>]*></script>',
             r'\s*<script\s+src=["\']theme\.js(?:\?[^"\']*)?["\'][^>]*></script>',
             r'\s*<link\s+[^>]*href=["\']app\.css(?:\?[^"\']*)?["\'][^>]*>',
         ):
@@ -89,7 +91,7 @@ def patch_global_theme() -> None:
         else:
             raise RuntimeError(f"HTML page has no </head> for shared UI wiring: {path.name}")
 
-        s = re.sub(r'</head>', f'  {theme}\n  {style}\n</head>', s, count=1, flags=re.I)
+        s = re.sub(r'</head>', f'  {units}\n  {theme}\n  {style}\n</head>', s, count=1, flags=re.I)
         p.wr(path, s)
 
 
@@ -111,6 +113,8 @@ def validate_v243() -> None:
         raise RuntimeError("no deployed HTML pages found")
     for page in html_pages:
         html = p.rd(page)
+        if html.count('meteo-units.js?v=') != 1:
+            raise RuntimeError(f"shared unit contract must be wired exactly once: {page.name}")
         if html.count('theme.js?v=') != 1:
             raise RuntimeError(f"shared theme controller must be wired exactly once: {page.name}")
         if html.count('app.css?v=') != 1:

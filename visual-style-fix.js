@@ -48,7 +48,7 @@
     const hideTooltip = () => { tooltip.style.display = 'none'; };
     const finiteNum = v => Number.isFinite(Number(v));
     const n = (v,d=0) => finiteNum(v) ? Number(v).toFixed(d) : '—';
-    const kt = v => finiteNum(v) ? Math.round(Number(v)*1.94384) : null;
+    const kt = v => finiteNum(v) ? Math.round(window.PrognozaEPIRUnits.mpsToKt(Number(v))) : null;
     const DIRS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
     const dir = deg => finiteNum(deg) ? DIRS[Math.round(Number(deg)/22.5)%16] : '—';
     const h = v => finiteNum(v) ? Math.round(Number(v))+' m' : '—';

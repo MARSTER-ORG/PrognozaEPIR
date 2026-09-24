@@ -3,9 +3,10 @@ import csv, html, io, json, math, re
 import urllib.parse, urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from station_metadata import ICAO, SYNOP_ID, WIGOS_ID, LAT, LON
+from meteo_units import kt_to_mps, ft_to_m
 
-ICAO='EPIR'; SYNOP_ID='12342'; WIGOS_ID='0-20000-0-12342'
-LAT=52.83; LON=18.33; OUT=Path('data/observations')
+OUT=Path('data/observations')
 UA='Mozilla/5.0 (compatible; PrognozaEPIR/1.0; +https://github.com/MARSTER-ORG/PrognozaEPIR)'
 
 def now(): return datetime.now(timezone.utc)
@@ -74,13 +75,13 @@ def decode_metar(raw,t=None,source='OGIMET_METAR'):
             if cand:t=min(cand,key=lambda d:abs((d-ref).total_seconds()))
     v,vlb,vub,vrep=metar_vis(raw)
     w=re.search(r'\b(\d{3}|VRB)(\d{2,3})(?:G(\d{2,3}))?KT\b',raw)
-    wd=None if not w or w.group(1)=='VRB' else int(w.group(1)); ws=int(w.group(2))*.514444 if w else None; gust=int(w.group(3))*.514444 if w and w.group(3) else None
+    wd=None if not w or w.group(1)=='VRB' else int(w.group(1)); ws=kt_to_mps(int(w.group(2))) if w else None; gust=kt_to_mps(int(w.group(3))) if w and w.group(3) else None
     q=re.search(r'\b(M?\d{2})/(M?\d{2})\b',raw); T=metar_temp(q.group(1)) if q else None; Td=metar_temp(q.group(2)) if q else None
     p=re.search(r'\bQ(\d{4})\b',raw); pressure=int(p.group(1)) if p else None
     codes=set(re.findall(r'(?<![A-Z])(FZFG|MIFG|BCFG|PRFG|FG|BR)(?![A-Z])',raw))
     clouds=[]
     for c,h in re.findall(r'\b(FEW|SCT|BKN|OVC|VV)(\d{3})\b',raw):
-        ft=int(h)*100; clouds.append({'cover':c,'base_ft_agl':ft,'base_m_agl':round(ft*.3048)})
+        ft=int(h)*100; clouds.append({'cover':c,'base_ft_agl':ft,'base_m_agl':round(ft_to_m(ft))})
     ceil=next((c['base_m_agl'] for c in clouds if c['cover'] in ('BKN','OVC','VV')),None)
     return {'source':source,'station':ICAO,'obs_time':iso(t),'temperature_c':T,'dew_point_c':Td,'relative_humidity_pct':rnd(rh(T,Td),1),
       'visibility_m':v,'visibility_lower_bound':vlb,'visibility_upper_bound':vub,'visibility_report':vrep,'wind_direction_deg':wd,'wind_speed_ms':rnd(ws,2),'wind_gust_ms':rnd(gust,2),
