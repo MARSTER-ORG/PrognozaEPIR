@@ -424,7 +424,7 @@
   }
 
   function sameOperationalState(a,b){return significantFields(a,b).fields.length===0&&wxFamily(weatherToken(a,.5))===wxFamily(weatherToken(b,.5));}
-  function fogFamily(s,threshold=.5){const f=wxFamily(weatherToken(s,threshold));return f==='FG'||f==='BR'?f:'NONE';}
+  function fogFamily(s,threshold=.5){const families=weatherTokens(s,threshold).map(wxFamily);if(families.includes('FG'))return'FG';if(families.includes('BR'))return'BR';return'NONE';}
 
   function baseState(states){
     const z=states.slice(0,Math.min(3,states.length)),s={...z[0]};
