@@ -41,8 +41,8 @@ jobs:
             scripts/build_fog_event_learning_v2.py
           python3 scripts/historical_reanalysis_physics.py --dry-run
 
-      - name: Acquire four historical months
-        run: python3 scripts/historical_reanalysis_physics.py --max-months 4
+      - name: Acquire historical months
+        run: python3 scripts/historical_reanalysis_physics.py --max-months 60
 
       - name: Validate learning guardrails and output
         run: |
@@ -62,35 +62,37 @@ jobs:
           assert guard.get('may_rank_operational_models') is False
 
           out_path = Path('data/learning/historical-physics-priors.json')
-          if out_path.exists():
-              out = json.loads(out_path.read_text(encoding='utf-8'))
-              assert out.get('schema') == 'prognozaepir-historical-physics-priors-v1'
-              assert set((out.get('targets') or {})) >= {'FG', 'MIFG', 'BR', 'LOW_CLOUD', 'CONVECTION'}
-              out_guard = out.get('guardrails') or {}
-              assert out_guard.get('may_calibrate_model_skill') is False
-              assert out_guard.get('may_change_adaptive_model_weights') is False
-              print('processed months:', (out.get('period') or {}).get('processed_months'))
-              print('FG positives:', (out.get('targets') or {}).get('FG', {}).get('positive_cases'))
-              print('MIFG positives:', (out.get('targets') or {}).get('MIFG', {}).get('positive_cases'))
-              print('BR positives:', (out.get('targets') or {}).get('BR', {}).get('positive_cases'))
+          if not out_path.exists():
+              raise SystemExit('historical physics priors were not created')
+          out = json.loads(out_path.read_text(encoding='utf-8'))
+          assert out.get('schema') == 'prognozaepir-historical-physics-priors-v1'
+          assert set((out.get('targets') or {})) >= {'FG', 'MIFG', 'BR', 'LOW_CLOUD', 'CONVECTION'}
+          out_guard = out.get('guardrails') or {}
+          assert out_guard.get('may_calibrate_model_skill') is False
+          assert out_guard.get('may_change_adaptive_model_weights') is False
+          assert out_guard.get('may_rank_operational_models') is False
+          print('processed months:', (out.get('period') or {}).get('processed_months'))
+          print('FG positives:', (out.get('targets') or {}).get('FG', {}).get('positive_cases'))
+          print('MIFG positives:', (out.get('targets') or {}).get('MIFG', {}).get('positive_cases'))
+          print('BR positives:', (out.get('targets') or {}).get('BR', {}).get('positive_cases'))
+          print('LOW_CLOUD positives:', (out.get('targets') or {}).get('LOW_CLOUD', {}).get('positive_cases'))
+          print('CONVECTION positives:', (out.get('targets') or {}).get('CONVECTION', {}).get('positive_cases'))
           PY
 
       - name: Commit refreshed physical learning
         run: |
-          if git diff --quiet -- \
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -f \
             data/learning/reanalysis-physics \
             data/learning/reanalysis-physics-state.json \
-            data/learning/historical-physics-priors.json; then
+            data/learning/historical-physics-priors.json
+
+          if git diff --cached --quiet; then
             echo 'No historical physics changes.'
             exit 0
           fi
 
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add \
-            data/learning/reanalysis-physics \
-            data/learning/reanalysis-physics-state.json \
-            data/learning/historical-physics-priors.json
           git commit -m 'weather: learn historical EPIR physical priors'
 
           for attempt in 1 2 3 4 5; do
