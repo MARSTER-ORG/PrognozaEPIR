@@ -1,0 +1,104 @@
+name: Historical reanalysis physics learning
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/historical_reanalysis_physics.py'
+      - 'scripts/fog_vnext_event_backfill.py'
+      - 'scripts/build_fog_event_learning_v2.py'
+      - '.github/workflows/historical-reanalysis-learning.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: historical-reanalysis-physics-main
+  cancel-in-progress: false
+
+jobs:
+  learn:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate historical physics learner
+        run: |
+          python3 -m py_compile \
+            scripts/historical_reanalysis_physics.py \
+            scripts/fog_vnext_event_backfill.py \
+            scripts/build_fog_event_learning_v2.py
+          python3 scripts/historical_reanalysis_physics.py --dry-run
+
+      - name: Acquire four historical months
+        run: python3 scripts/historical_reanalysis_physics.py --max-months 4
+
+      - name: Validate learning guardrails and output
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          state_path = Path('data/learning/reanalysis-physics-state.json')
+          if not state_path.exists():
+              raise SystemExit('historical reanalysis state was not created')
+          state = json.loads(state_path.read_text(encoding='utf-8'))
+          assert state.get('schema') == 'prognozaepir-reanalysis-physics-state-v1'
+          guard = state.get('guardrails') or {}
+          assert guard.get('reanalysis_is_not_an_issued_forecast') is True
+          assert guard.get('may_calibrate_model_skill') is False
+          assert guard.get('may_change_adaptive_model_weights') is False
+          assert guard.get('may_rank_operational_models') is False
+
+          out_path = Path('data/learning/historical-physics-priors.json')
+          if out_path.exists():
+              out = json.loads(out_path.read_text(encoding='utf-8'))
+              assert out.get('schema') == 'prognozaepir-historical-physics-priors-v1'
+              assert set((out.get('targets') or {})) >= {'FG', 'MIFG', 'BR', 'LOW_CLOUD', 'CONVECTION'}
+              out_guard = out.get('guardrails') or {}
+              assert out_guard.get('may_calibrate_model_skill') is False
+              assert out_guard.get('may_change_adaptive_model_weights') is False
+              print('processed months:', (out.get('period') or {}).get('processed_months'))
+              print('FG positives:', (out.get('targets') or {}).get('FG', {}).get('positive_cases'))
+              print('MIFG positives:', (out.get('targets') or {}).get('MIFG', {}).get('positive_cases'))
+              print('BR positives:', (out.get('targets') or {}).get('BR', {}).get('positive_cases'))
+          PY
+
+      - name: Commit refreshed physical learning
+        run: |
+          if git diff --quiet -- \
+            data/learning/reanalysis-physics \
+            data/learning/reanalysis-physics-state.json \
+            data/learning/historical-physics-priors.json; then
+            echo 'No historical physics changes.'
+            exit 0
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            data/learning/reanalysis-physics \
+            data/learning/reanalysis-physics-state.json \
+            data/learning/historical-physics-priors.json
+          git commit -m 'weather: learn historical EPIR physical priors'
+
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            if git rebase origin/main && git push origin HEAD:main; then
+              exit 0
+            fi
+            git rebase --abort 2>/dev/null || true
+            sleep $((attempt * 3))
+          done
+          exit 1
