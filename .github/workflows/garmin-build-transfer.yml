@@ -28,13 +28,11 @@ jobs:
             | base64 -d > tmp-garmin-build/EPIRMeteo-vivoactive5.prg
           test "$(stat -c%s tmp-garmin-build/EPIRMeteo-vivoactive5.prg)" = "102492"
           echo 'd40643c2a4233708bd3678137965764dbd70d15fd6a2c9b5537feb37c028c6ac  tmp-garmin-build/EPIRMeteo-vivoactive5.prg' | sha256sum -c -
-          base64 -w0 tmp-garmin-build/EPIRMeteo-vivoactive5.prg > tmp-garmin-build/EPIRMeteo-vivoactive5.prg.b64
 
-      - name: Commit verified files
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add tmp-garmin-build/EPIRMeteo-vivoactive5.prg tmp-garmin-build/EPIRMeteo-vivoactive5.prg.b64
-          git commit -m 'temp: publish verified EPIR Meteo vivoactive5 files'
-          git push origin garmin-build-transfer
+      - name: Upload verified PRG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EPIRMeteo-vivoactive5
+          path: tmp-garmin-build/EPIRMeteo-vivoactive5.prg
+          if-no-files-found: error
+          retention-days: 1
