@@ -48,13 +48,13 @@
   function nearest(series,t){let best=null,bd=Infinity;for(const x of series||[]){const xt=+(x?.t??x?.time);if(!finite(xt))continue;const d=Math.abs(xt-t);if(d<bd){bd=d;best=x;}}return bd<=35*60000?best:null;}
 
   async function waitForFogSeries(w){
-    const mode=fogMode(Policy.TAF_FOG_MODE),label=fogLabelForMode(mode),deadline=Date.now()+26000;
+    const mode=Policy.TAF_FOG_MODE,normalizedMode=fogMode(mode),label=fogLabelForMode(normalizedMode),deadline=Date.now()+26000;
     while(Date.now()<deadline){
       const series=Policy.seriesForTaf(w);
-      if(series.length>10)return {mode,series};
+      if(series.length>10)return {mode:normalizedMode,series};
       await new Promise(r=>setTimeout(r,250));
     }
-    const err=mode==='vnext'?w?.PrognozaEPIRFogVNextError:null;
+    const err=normalizedMode==='vnext'?w?.PrognozaEPIRFogVNextError:null;
     throw Error(`Fog Engine ${label} nie osiągnął stanu READY${err?': '+err:''}. Brak gotowej serii dla wybranego trybu.`);
   }
 
