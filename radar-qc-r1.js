@@ -1,23 +1,23 @@
 'use strict';
 
-// PrognozaEPIR POLRAD CMAX display QC r1 (2026-09-30)
+// PrognozaEPIR POLRAD CMAX display QC r2 (2026-09-30)
 // Visual-only quality-control layer. The canonical raw POLRAD frame and all
 // analytical consumers keep using the original IMGW image/state.
 (() => {
-  if (window.__EPIR_POLRAD_QC_R1__) return;
+  if (window.__EPIR_POLRAD_QC_R2__) return;
   if (typeof L === 'undefined' || typeof map === 'undefined' || !map) return;
-  window.__EPIR_POLRAD_QC_R1__ = true;
+  window.__EPIR_POLRAD_QC_R2__ = true;
 
   const $ = id => document.getElementById(id);
   const PANE_RAW = 'polradImagePane';
   const PANE_QC = 'polradQcPane';
   const BOUNDS = L.latLngBounds([[48.5,13.5],[56.0,25.0]]);
   const RAW_OPACITY = 0.70;
-  const QC_OPACITY = 0.72;
+  const QC_OPACITY = 0.74;
   const TEMPORAL_LIMIT_MS = 20 * 60 * 1000;
   const colorCache = new Map();
 
-  let mode = 'qc'; // operational default on every page load
+  let mode = 'qc';
   let qcLayer = null;
   let qcBlobUrl = '';
   let renderToken = 0;
@@ -44,25 +44,31 @@
   document.head.appendChild(style);
 
   function normalize(url) {
-    return String(url || '').replace(/^http:\/\//i,'https://').replace(/#.*$/,'').replace(/[?&]_epir=\d+/g,'').replace(/[?&]$/,'');
+    return String(url || '')
+      .replace(/^http:\/\//i,'https://')
+      .replace(/#.*$/,'')
+      .replace(/[?&]_epir=\d+/g,'')
+      .replace(/[?&]_epir_qc=\d+/g,'')
+      .replace(/[?&]$/,'');
   }
 
-  function canonicalLayer(url) {
+  function canonicalLayers(url) {
     const wanted = normalize(url);
-    let exact = null;
-    let newest = null;
+    const exact = [];
+    const all = [];
     map.eachLayer(layer => {
       if (!(layer instanceof L.ImageOverlay)) return;
       if (String(layer?.options?.pane || '') !== PANE_RAW) return;
-      if (normalize(layer?._url) === wanted) exact = layer;
-      if (!newest || (layer?._leaflet_id || 0) > (newest?._leaflet_id || 0)) newest = layer;
+      all.push(layer);
+      if (normalize(layer?._url) === wanted) exact.push(layer);
     });
-    return exact || newest;
+    return exact.length ? exact : all.slice(-1);
   }
 
   function setRawOpacity(value, url) {
-    const layer = canonicalLayer(url || window.PrognozaEPIRPolradState?.url);
-    try { layer?.setOpacity?.(value); } catch (_) {}
+    for (const layer of canonicalLayers(url || window.PrognozaEPIRPolradState?.url)) {
+      try { layer?.setOpacity?.(value); } catch (_) {}
+    }
   }
 
   function dropDisplayedQc() {
@@ -94,8 +100,8 @@
     qc.id = 'polradQcMode';
     qc.type = 'button';
     qc.className = 'polrad-qc-mode active';
-    qc.textContent = 'CMAX QC';
-    qc.title = 'Widok operacyjny: filtruje słabe, izolowane echa; zachowuje spójne pola i echo trwałe w kolejnych klatkach.';
+    qc.textContent = 'CMAX QC+';
+    qc.title = 'Widok operacyjny: usuwa pojedyncze i małe słabe obiekty radarowe, a większe/spójne pola pozostawia.';
 
     const raw = document.createElement('button');
     raw.id = 'polradRawMode';
@@ -106,8 +112,8 @@
 
     const anchor = $('polrad_cmax');
     if (anchor?.parentNode === mapbar) {
-      anchor.insertAdjacentElement('afterend', raw);
-      anchor.insertAdjacentElement('afterend', qc);
+      anchor.insertAdjacentElement('afterend',raw);
+      anchor.insertAdjacentElement('afterend',qc);
     } else {
       mapbar.prepend(raw);
       mapbar.prepend(qc);
@@ -116,11 +122,11 @@
     const note = document.createElement('span');
     note.id = 'polradQcStatus';
     note.className = 'polrad-qc-note';
-    note.textContent = 'QC: oczekiwanie na CMAX';
-    raw.insertAdjacentElement('afterend', note);
+    note.textContent = 'QC+: oczekiwanie na CMAX';
+    raw.insertAdjacentElement('afterend',note);
 
-    qc.addEventListener('click', () => setMode('qc'));
-    raw.addEventListener('click', () => setMode('raw'));
+    qc.addEventListener('click',() => setMode('qc'));
+    raw.addEventListener('click',() => setMode('raw'));
     syncControls();
   }
 
@@ -133,8 +139,8 @@
     const qc = $('polradQcMode');
     const raw = $('polradRawMode');
     const note = $('polradQcStatus');
-    if (qc) { qc.hidden = !visible; qc.classList.toggle('active', visible && mode === 'qc'); }
-    if (raw) { raw.hidden = !visible; raw.classList.toggle('active', visible && mode === 'raw'); }
+    if (qc) { qc.hidden = !visible; qc.classList.toggle('active',visible && mode === 'qc'); }
+    if (raw) { raw.hidden = !visible; raw.classList.toggle('active',visible && mode === 'raw'); }
     if (note) note.hidden = !visible;
   }
 
@@ -145,7 +151,7 @@
     if (cached !== undefined) return cached;
 
     const mx = Math.max(r,g,b), mn = Math.min(r,g,b), d = mx - mn;
-    if (mx < 38 || d * 100 < mx * 28) { colorCache.set(key,-1); return -1; }
+    if (mx < 30 || d * 100 < mx * 22) { colorCache.set(key,-1); return -1; }
 
     let h = 0;
     if (d) {
@@ -212,6 +218,43 @@
     });
   }
 
+  function temporalSupport(queue,count,w,h,prevIi) {
+    if (!prevIi || count < 8) return 0;
+    const step = Math.max(1,Math.floor(count/64));
+    let tested = 0, supported = 0;
+    for (let k=0;k<count;k+=step) {
+      const i = queue[k];
+      const y = Math.floor(i/w), x = i-y*w;
+      tested++;
+      if (boxSum(prevIi,w,h,x,y,2) > 0) supported++;
+    }
+    return tested ? supported/tested : 0;
+  }
+
+  function componentFactor(count,maxDbz,temporal) {
+    // Strong compact echoes may represent a genuine convective cell: never suppress.
+    if (maxDbz >= 35) return 1;
+
+    // Single pixels and tiny clusters are the main CMAX speckle/clutter problem.
+    if (count <= 4) return 0;
+    if (count <= 8) {
+      if (maxDbz <= 29) return 0;
+      return temporal >= .45 ? .45 : .12;
+    }
+    if (count <= 14) {
+      if (maxDbz <= 23) return temporal >= .55 ? .25 : 0;
+      if (maxDbz <= 29) return temporal >= .45 ? .45 : .08;
+      return temporal >= .35 ? .65 : .28;
+    }
+    if (count <= 28) {
+      if (maxDbz <= 20) return temporal >= .45 ? .35 : .05;
+      if (maxDbz <= 26) return temporal >= .35 ? .55 : .22;
+      return temporal >= .30 ? .72 : .45;
+    }
+    if (count <= 45 && maxDbz <= 20) return temporal >= .30 ? .70 : .45;
+    return 1;
+  }
+
   async function makeQcBlob(state) {
     const img = await loadImage(state.url);
     const w = img.naturalWidth, h = img.naturalHeight;
@@ -234,55 +277,95 @@
       if (dbz >= 0) mask[i] = 1;
     }
 
-    const ii = integral(mask,w,h);
     const temporalOk = previousMask && previousWidth === w && previousHeight === h && Number.isFinite(previousTimeMs) && Math.abs(Number(state.timeMs)-previousTimeMs) <= TEMPORAL_LIMIT_MS;
     const prevIi = temporalOk ? integral(previousMask,w,h) : null;
-    let weak = 0, suppressed = 0, faded = 0, preserved = 0;
+    const visited = new Uint8Array(n);
+    const queue = new Int32Array(n);
+    let objects = 0, removedObjects = 0, fadedObjects = 0, removedPixels = 0, fadedPixels = 0, keptObjects = 0;
 
+    // 8-connected component filtering removes isolated speckles independently
+    // of their exact palette class. This is stronger than the old per-pixel rule.
+    for (let seed=0;seed<n;seed++) {
+      if (!mask[seed] || visited[seed]) continue;
+      objects++;
+      let head = 0, tail = 0, maxDbz = -1;
+      visited[seed] = 1;
+      queue[tail++] = seed;
+
+      while (head < tail) {
+        const i = queue[head++];
+        if (values[i] > maxDbz) maxDbz = values[i];
+        const y = Math.floor(i/w), x = i-y*w;
+        for (let dy=-1;dy<=1;dy++) {
+          const yy = y+dy;
+          if (yy < 0 || yy >= h) continue;
+          for (let dx=-1;dx<=1;dx++) {
+            if (!dx && !dy) continue;
+            const xx = x+dx;
+            if (xx < 0 || xx >= w) continue;
+            const j = yy*w+xx;
+            if (mask[j] && !visited[j]) {
+              visited[j] = 1;
+              queue[tail++] = j;
+            }
+          }
+        }
+      }
+
+      const temporal = temporalSupport(queue,tail,w,h,prevIi);
+      const factor = componentFactor(tail,maxDbz,temporal);
+      if (factor >= .999) {
+        keptObjects++;
+        continue;
+      }
+      if (factor <= .001) removedObjects++; else fadedObjects++;
+
+      for (let k=0;k<tail;k++) {
+        const i = queue[k];
+        const a = i*4+3;
+        data[a] = Math.round(data[a] * factor);
+        if (factor <= .001) removedPixels++; else fadedPixels++;
+      }
+    }
+
+    // Second pass: eliminate single-pixel/two-pixel tendrils still attached to a
+    // larger weak object. It only touches weak returns; >=32 dBZ is left intact.
+    const rawIi = integral(mask,w,h);
+    let isolatedPixels = 0;
     for (let y=0;y<h;y++) {
       for (let x=0;x<w;x++) {
         const i = y*w+x;
         const dbz = values[i];
-        if (dbz < 0 || dbz >= 23) continue;
-        weak++;
-        const local5 = boxSum(ii,w,h,x,y,2);
-        const local9 = boxSum(ii,w,h,x,y,4);
-        const persistent = prevIi ? boxSum(prevIi,w,h,x,y,3) > 0 : false;
-        const coherent = local5 >= 5 || local9 >= 14 || persistent;
-        const marginal = local5 >= 3 || local9 >= 7;
-        let factor;
-        if (coherent) {
-          factor = dbz <= 11 ? .50 : .72;
-          preserved++;
-        } else if (marginal) {
-          factor = dbz <= 11 ? .18 : .35;
-          faded++;
-        } else {
-          factor = dbz <= 14 ? 0 : .10;
-          suppressed++;
+        if (dbz < 0 || dbz >= 32) continue;
+        const local3 = boxSum(rawIi,w,h,x,y,1);
+        const local5 = boxSum(rawIi,w,h,x,y,2);
+        const persistent = prevIi ? boxSum(prevIi,w,h,x,y,2) >= 3 : false;
+        if (!persistent && (local3 <= 2 || local5 <= 3)) {
+          data[i*4+3] = 0;
+          isolatedPixels++;
         }
-        const a = i*4+3;
-        data[a] = Math.round(data[a] * factor);
       }
     }
 
     ctx.putImageData(image,0,0);
     const blob = await new Promise((resolve,reject) => canvas.toBlob(b => b ? resolve(b) : reject(new Error('nie można utworzyć obrazu QC')),'image/png'));
-    return {blob,mask,w,h,stats:{weak,suppressed,faded,preserved,temporal:!!prevIi}};
+    return {
+      blob,mask,w,h,
+      stats:{objects,removedObjects,fadedObjects,keptObjects,removedPixels,fadedPixels,isolatedPixels,temporal:!!prevIi}
+    };
   }
 
   async function renderQc(state) {
     if (mode !== 'qc' || String(state?.product || '').toLowerCase() !== 'cmax' || !cmaxIsActive()) return;
     const token = ++renderToken;
-    const raw = canonicalLayer(state.url);
-    try { raw?.setOpacity?.(0); } catch (_) {}
-    setStatusSuffix('QC: filtruję klatkę…');
+    setRawOpacity(0,state.url);
+    setStatusSuffix('QC+: filtruję klatkę…');
 
     try {
       const result = await makeQcBlob(state);
       if (token !== renderToken || mode !== 'qc' || !cmaxIsActive()) return;
       const blobUrl = URL.createObjectURL(result.blob);
-      const next = L.imageOverlay(blobUrl,BOUNDS,{pane:PANE_QC,opacity:QC_OPACITY,interactive:false,attribution:'IMGW-PIB / POLRAD · QC PrognozaEPIR'});
+      const next = L.imageOverlay(blobUrl,BOUNDS,{pane:PANE_QC,opacity:QC_OPACITY,interactive:false,attribution:'IMGW-PIB / POLRAD · QC+ PrognozaEPIR'});
       const loaded = await new Promise(resolve => {
         let done = false;
         const finish = ok => { if (done) return; done = true; clearTimeout(timer); resolve(ok); };
@@ -291,13 +374,14 @@
         next.once('error',()=>finish(false));
         next.addTo(map);
       });
+
       if (!loaded || token !== renderToken || mode !== 'qc' || !cmaxIsActive()) {
         try { if (map.hasLayer(next)) map.removeLayer(next); } catch (_) {}
         URL.revokeObjectURL(blobUrl);
         if (token === renderToken) {
           dropDisplayedQc();
           setRawOpacity(RAW_OPACITY,state.url);
-          setStatusSuffix('QC niedostępne — pokazuję RAW');
+          setStatusSuffix('QC+ niedostępne — pokazuję RAW');
         }
         return;
       }
@@ -306,17 +390,21 @@
       qcLayer = next; qcBlobUrl = blobUrl;
       if (old && old !== next) { try { if (map.hasLayer(old)) map.removeLayer(old); } catch (_) {} }
       if (oldUrl) { try { URL.revokeObjectURL(oldUrl); } catch (_) {} }
+      setRawOpacity(0,state.url);
+
       previousMask = result.mask;
-      previousWidth = result.w; previousHeight = result.h; previousTimeMs = Number(state.timeMs);
+      previousWidth = result.w;
+      previousHeight = result.h;
+      previousTimeMs = Number(state.timeMs);
+
       const s = result.stats;
-      const removedPct = s.weak ? Math.round(100*s.suppressed/s.weak) : 0;
-      setStatusSuffix(`QC aktywne · słabe echa: ${removedPct}% izolowanych wygaszono${s.temporal?' · kontrola trwałości klatka↔klatka':''}`);
+      setStatusSuffix(`QC+ aktywne · usunięto ${s.removedObjects} małych obiektów + ${s.isolatedPixels} izolowanych pikseli · przytłumiono ${s.fadedObjects}${s.temporal?' · kontrola kolejnej klatki':''}`);
     } catch (err) {
       if (token !== renderToken) return;
       dropDisplayedQc();
       setRawOpacity(RAW_OPACITY,state.url);
-      setStatusSuffix('QC niedostępne — pokazuję RAW');
-      console.warn('PrognozaEPIR POLRAD QC:',err);
+      setStatusSuffix('QC+ niedostępne — pokazuję RAW');
+      console.warn('PrognozaEPIR POLRAD QC+:',err);
     }
   }
 
@@ -343,7 +431,11 @@
       return;
     }
     if (mode === 'qc') renderQc(state);
-    else { removeQcLayer(); setRawOpacity(RAW_OPACITY,state.url); setStatusSuffix('RAW · bez filtracji'); }
+    else {
+      removeQcLayer();
+      setRawOpacity(RAW_OPACITY,state.url);
+      setStatusSuffix('RAW · bez filtracji');
+    }
   }
 
   window.addEventListener('prognozaepir:polrad-frame-changed',e => onFrame(e.detail || window.PrognozaEPIRPolradState || {}));
@@ -356,13 +448,15 @@
       if (!cmaxIsActive()) {
         removeQcLayer();
         setRawOpacity(RAW_OPACITY,state.url);
+      } else if (mode === 'qc') {
+        setRawOpacity(0,state.url);
       }
     },50);
   });
 
   createControls();
   const version = document.querySelector('.brand small');
-  if (version) version.textContent = 'RADAR / SAT / AI v0.12.0';
+  if (version) version.textContent = 'RADAR / SAT / AI v0.12.1';
   if (window.PrognozaEPIRPolradState) setTimeout(() => onFrame(window.PrognozaEPIRPolradState),0);
 
   window.PrognozaEPIRPolradQc = {
