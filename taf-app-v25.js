@@ -14,6 +14,8 @@
 
   if(!Policy)throw new Error('TAF Fog Policy nie został załadowany');
 
+  function fogMode(mode=Policy.TAF_FOG_MODE){return String(mode||'').toLowerCase()==='vnext'?'vnext':'legacy';}
+  function fogLabelForMode(mode=Policy.TAF_FOG_MODE){return fogMode(mode)==='vnext'?'NEXT 2.4.4':'LEGACY';}
   function fmtUtc(ms,withDate=true){if(!finite(ms))return'—';const d=new Date(ms),hm=`${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;return withDate?`${pad(d.getUTCDate())}.${pad(d.getUTCMonth()+1)}.${d.getUTCFullYear()} ${hm}`:hm;}
   function rawOf(x){return String(x?.raw||x?.canonical_raw||'').trim();}
   function itemTime(x,ref=Date.now()){
@@ -46,14 +48,14 @@
   function nearest(series,t){let best=null,bd=Infinity;for(const x of series||[]){const xt=+(x?.t??x?.time);if(!finite(xt))continue;const d=Math.abs(xt-t);if(d<bd){bd=d;best=x;}}return bd<=35*60000?best:null;}
 
   async function waitForFogSeries(w){
-    const mode=Policy.TAF_FOG_MODE,deadline=Date.now()+26000;
+    const mode=fogMode(Policy.TAF_FOG_MODE),label=fogLabelForMode(mode),deadline=Date.now()+26000;
     while(Date.now()<deadline){
       const series=Policy.seriesForTaf(w);
       if(series.length>10)return {mode,series};
       await new Promise(r=>setTimeout(r,250));
     }
-    const err=w?.PrognozaEPIRFogVNextError;
-    throw Error(`Fog Engine vNEXT nie osiągnął stanu READY${err?': '+err:''}. TAF nie przełącza się awaryjnie na LEGACY.`);
+    const err=mode==='vnext'?w?.PrognozaEPIRFogVNextError:null;
+    throw Error(`Fog Engine ${label} nie osiągnął stanu READY${err?': '+err:''}. Brak gotowej serii dla wybranego trybu.`);
   }
 
   async function modelRows(period){
@@ -105,15 +107,15 @@
     $('reasons').innerHTML=result.diagnostics.reasons.length?'<ul>'+result.diagnostics.reasons.map(x=>`<li>${esc(x)}</li>`).join('')+'</ul>':'Brak progów wymagających grup zmian.';
     renderChecks(result);renderHours(result);renderNeighbors(data);
     const modelCount=Math.max(0,...result.hourly.map(h=>h.sourceRow?.mv?.length||0)),fogOk=rows.some(r=>num(r.fogOperationalScore)||num(r.fgOperationalScore)),neighborStations=[...new Set(rows.map(r=>r.neighborObsStation).filter(Boolean))],learningOk=!!result.learning?.active;
-    const fogLabel='vNext';
+    const mode=fogMode(rows?.fogEngineMode||Policy.TAF_FOG_MODE),fogLabel=fogLabelForMode(mode),fogUsage=mode==='vnext'?'TAF używa score, progów VIS i prognozy VIS z NEXT 2.4.4':'TAF używa score i widzialności z LEGACY';
     $('sources').innerHTML=`<span class="pill ${data.anchorObservation?'ok':'warn'}">METAR/SPECI ${data.anchorObservation?'✓':'—'} · kotwica ${data.anchorObservation?esc(fmtUtc(itemTime(data.anchorObservation,data.issueTime),false)):'brak ≤ emisja'}</span><span class="pill ${neighborStations.length?'ok':'warn'}">OBS sąsiednie ${neighborStations.length?esc(neighborStations.join('/')):'—'}</span><span class="pill ok">${esc(result.name)} v${esc(result.version)}</span><span class="pill ok">Instrukcja 11.2023 — HARD GATE</span><span class="pill ${learningOk?'ok':'warn'}">kalibracja EPIR ${learningOk?'✓':'fallback'}</span><span class="pill ok">multimodel ${modelCount}</span><span class="pill ok">profil chmur → warstwy/pułap ✓</span><span class="pill ${fogOk?'ok':'warn'}">FG ${fogLabel} ${fogOk?'✓':'—'}</span><span class="pill warn">SYNOP wyłączony</span>`;
-    $('conf').textContent=`Pewność ${result.confidence}%. Fog source: ${fogLabel}. TAF używa score, progów VIS i prognozy VIS z vNext; NWP VIS pozostaje diagnostyczna po stronie silnika mgieł. Instrukcja 11.2023 pozostaje nadrzędnym hard gate. MSA: ${result.diagnostics.msaMode==='explicit'?Math.round(result.diagnostics.msaFt)+' ft':'fallback 5000 ft'}.`;
+    $('conf').textContent=`Pewność ${result.confidence}%. Fog source: ${fogLabel}. ${fogUsage}; NWP VIS pozostaje diagnostyczna po stronie silnika mgieł. Instrukcja 11.2023 pozostaje nadrzędnym hard gate. MSA: ${result.diagnostics.msaMode==='explicit'?Math.round(result.diagnostics.msaFt)+' ft':'fallback 5000 ft'}.`;
     $('badge').textContent=`TAF ENGINE ${APP_ENGINE_VERSION} · ZGODNY`;$('badge').className='badge ok';$('st').textContent=`${fmtUtc(Date.now(),false)} · ${rows.length} h danych · FOG ${fogLabel}`;
   }
 
   async function generate(){
     const period=selectedCycle();if(!period)throw Error('Nie wybrano cyklu TAF');
-    const frame=$('engine'),w=frame?.contentWindow,fogLabel='vNext';
+    const frame=$('engine'),w=frame?.contentWindow,fogLabel=fogLabelForMode(Policy.TAF_FOG_MODE);
     $('badge').textContent=`TAF ENGINE ${APP_ENGINE_VERSION} · LICZENIE`;$('badge').className='badge';$('st').textContent=`archiwum + modele + FOG ${fogLabel} + profil chmur`;$('taf').textContent=`Pobieranie danych i generowanie TAF · aktywny Fog Engine: ${fogLabel}…`;
     const [data,rows]=await Promise.all([loadArchive(),modelRows(period)]);if(rows.length<8)throw Error(`Niepełny okres modeli: ${rows.length} h`);
     const anchorObservation=newestAtOrBefore([data.observation,...(data.history||[])],period.issue);data.anchorObservation=anchorObservation;data.issueTime=period.issue;
