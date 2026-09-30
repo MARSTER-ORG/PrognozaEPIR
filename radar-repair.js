@@ -2,10 +2,10 @@
 
 // Runtime bootstrap. The stable radar repair core runs first because it removes
 // obsolete controls. The real MTG LI/LFL module is then restored, followed by
-// the POLRAD stability bridge and the final late-start UI synchronizer.
+// the POLRAD stability bridge, CMAX display QC and the final late-start UI synchronizer.
 (() => {
-  if (window.__EPIR_RADAR_BOOTSTRAP_R9__) return;
-  window.__EPIR_RADAR_BOOTSTRAP_R9__ = true;
+  if (window.__EPIR_RADAR_BOOTSTRAP_R10__) return;
+  window.__EPIR_RADAR_BOOTSTRAP_R10__ = true;
 
   const loadScript=(src,id,onload,onerror)=>{
     if(document.getElementById(id)){onload?.();return;}
@@ -47,8 +47,12 @@
     loadScript('radar-ui-sync-r12.js?v=20260920-r12','epirRadarUiSyncR12');
   };
 
+  const loadQc=()=>{
+    loadScript('radar-qc-r1.js?v=20260930-r1','epirPolradQcR1',loadUiSync,loadUiSync);
+  };
+
   const loadStability=()=>{
-    loadScript('radar-stability-r10.js?v=20260920-r11','epirRadarStabilityR11',loadUiSync,loadUiSync);
+    loadScript('radar-stability-r10.js?v=20260920-r11','epirRadarStabilityR11',loadQc,loadQc);
   };
 
   const loadLfl=()=>{
