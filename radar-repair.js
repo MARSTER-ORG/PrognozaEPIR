@@ -4,8 +4,8 @@
 // obsolete controls. The real MTG LI/LFL module is then restored, followed by
 // the POLRAD stability bridge, CMAX display QC and the final late-start UI synchronizer.
 (() => {
-  if (window.__EPIR_RADAR_BOOTSTRAP_R10__) return;
-  window.__EPIR_RADAR_BOOTSTRAP_R10__ = true;
+  if (window.__EPIR_RADAR_BOOTSTRAP_R11__) return;
+  window.__EPIR_RADAR_BOOTSTRAP_R11__ = true;
 
   const loadScript=(src,id,onload,onerror)=>{
     if(document.getElementById(id)){onload?.();return;}
@@ -48,7 +48,7 @@
   };
 
   const loadQc=()=>{
-    loadScript('radar-qc-r1.js?v=20260930-r1','epirPolradQcR1',loadUiSync,loadUiSync);
+    loadScript('radar-qc-r1.js?v=20260930-r2','epirPolradQcR2',loadUiSync,loadUiSync);
   };
 
   const loadStability=()=>{
