@@ -85,28 +85,17 @@
     return Number(v).toLocaleString('pl-PL',{minimumFractionDigits:d,maximumFractionDigits:d});
   }
 
-  async function stationMeta(){
-    try{
-      const r=await fetch('station-metadata.json',{cache:'no-cache'});
-      if(!r.ok)throw new Error('HTTP '+r.status);
-      const j=await r.json(),e=j?.EPIR||{};
-      const elevationM=finiteNumber(e.elevation_m_amsl),elevationFt=finiteNumber(e.elevation_ft_amsl);
-      if(elevationM!==null&&elevationFt!==null)return {icao:e.icao||'EPIR',elevationM,elevationFt,source:'station-metadata.json'};
-    }catch(e){console.warn('PrognozaEPIR pressure altitude metadata',e);}
-    return {...DEFAULT_EPIR,source:'fallback'};
-  }
-
   function storedQnh(){
     try{const v=finiteNumber(localStorage.getItem(STORAGE_KEY));if(v!==null&&v>=800&&v<=1100)return v;}catch(_){}
     return ISA.seaLevelPressureHpa;
   }
 
-  async function mount(){
+  function mount(){
     if(document.getElementById('pressureAltitude'))return;
     const anchor=document.getElementById('sectionInfo')||document.querySelector('.wrap');
     if(!anchor)return;
     addStyle();
-    const station=await stationMeta();
+    const station=DEFAULT_EPIR;
     const section=document.createElement('section');
     section.id='pressureAltitude';
     section.className='pressure-altitude';
@@ -148,6 +137,6 @@
     update();
   }
 
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>mount().catch(e=>console.error('PrognozaEPIR pressure altitude',e)),{once:true});
-  else mount().catch(e=>console.error('PrognozaEPIR pressure altitude',e));
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',mount,{once:true});
+  else mount();
 })(typeof globalThis!=='undefined'?globalThis:this);

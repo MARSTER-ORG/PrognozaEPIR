@@ -1,10 +1,16 @@
 'use strict';
 const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
 const pa=require('../pressure-altitude.js');
 
 function near(actual,expected,tolerance,message){
   assert.ok(Math.abs(actual-expected)<=tolerance,`${message}: ${actual} vs ${expected}`);
 }
+
+const metadata=JSON.parse(fs.readFileSync(path.join(__dirname,'..','station-metadata.json'),'utf8')).EPIR;
+near(metadata.elevation_ft_amsl,pa.DEFAULT_EPIR.elevationFt,1e-12,'station metadata elevation ft');
+near(metadata.elevation_m_amsl,pa.DEFAULT_EPIR.elevationM,1e-12,'station metadata elevation m');
 
 const standard=pa.calculate(1013.25,84.1248);
 near(standard.pressureAltitudeFt,276,1e-8,'QNH 1013.25 must reproduce EPIR elevation');
