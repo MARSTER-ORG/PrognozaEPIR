@@ -4,7 +4,7 @@
   const FOG_INFO_THRESHOLD=60, MIFG_INFO_THRESHOLD=60, BR_INFO_THRESHOLD=60;
   const BR_COLOR='#c084fc', FOG_FULL_SCALE_KM=19.5, VIS_SCALE_MAX_KM=30;
   const VIS_INNER_PAD=9, PRESSURE_INNER_PAD=9, MAX_MATCH_MS=70*60e3, HOUR=3600e3, BR_HORIZON_HOURS=48;
-  const VERSION='2026-10-01-fog-grid-bars3';
+  const VERSION='2026-10-01-engine-vis1';
   const finite=Number.isFinite, clip=(v,a,b)=>Math.max(a,Math.min(b,v));
 
   function selectedMode(){
@@ -98,7 +98,8 @@
     return bestDiff<=MAX_MATCH_MS?best:null;
   }
   function fogAt(t){return nearestAt(fogRows(),t);}
-  // Zachowane dla zgodności z kodem zewnętrznym. Nie steruje już linią VIS.
+  // To jest źródło VIS dla meteogramu w widoku CONSENSUS. Gdy silnik nie
+  // publikuje VIS dla danej godziny, warstwa danych zostawia konsensus modeli.
   function canonicalVisibilityAt(t){return fogVisibility(fogAt(t));}
 
   function mifgSeries(){
@@ -117,6 +118,24 @@
     return (Array.isArray(rows)?rows:[]).filter(r=>r&&finite(Number(r.t))&&finite(Number(r.score))&&Number(r.t)>=from&&Number(r.t)<=to).slice().sort((a,b)=>Number(a.t)-Number(b.t));
   }
   function brAt(t){return nearestAt(brSeries(),t);}
+
+  function installVisibilityProvider(){
+    if(typeof dataVisible!=='function'||window.__epirFogVisibilityDataWrapped)return;
+    const baseDataVisible=dataVisible;
+    dataVisible=function(){
+      const rows=baseDataVisible.apply(this,arguments);
+      if(!Array.isArray(rows)||!rows.length)return rows;
+      let useEngine=true;
+      try{if(typeof selected!=='undefined'&&selected!=='consensus')useEngine=false;}catch(_){}
+      if(!useEngine)return rows;
+      return rows.map(row=>{
+        const engineVis=canonicalVisibilityAt(row?.t);
+        if(!finite(engineVis))return row;
+        return {...row,VIS:engineVis,VIS_MODEL:row?.VIS,VIS_SOURCE:'fog-engine'};
+      });
+    };
+    window.__epirFogVisibilityDataWrapped=true;
+  }
 
   function fogColor(score){
     if(score>=80)return 'rgba(208,80,63,.82)';
@@ -223,15 +242,27 @@
     ctx.save();ctx.globalAlpha=.96;ctx.fillStyle=cp.muted||'#666';ctx.font='bold 8px Arial';ctx.textBaseline='middle';ctx.textAlign='right';ctx.fillText('FOG '+fogThreshold,x0-24,baseY);ctx.fillText('FOG 100',x0-24,fog100LabelY);ctx.restore();
   }
 
+  function visText(v){
+    v=Number(v);if(!finite(v))return '—';
+    return v>=10000?(v/1000).toFixed(1)+' km':Math.round(v)+' m';
+  }
+  function syncVisibilityCells(values,fog){
+    const vis=fogVisibility(fog);if(!finite(vis))return;
+    const cells=[...values.querySelectorAll('.section-value')].filter(cell=>String(cell.querySelector('small')?.textContent||'').trim().toLowerCase().startsWith('widzialność'));
+    let cell=cells[0];
+    if(!cell){cell=document.createElement('div');cell.className='section-value';values.prepend(cell);}
+    cell.dataset.fogEngineVisibility='1';
+    cell.innerHTML='<small>Widzialność · FOG ENGINE</small><strong>'+visText(vis)+'</strong>';
+    for(let i=1;i<cells.length;i++)cells[i].remove();
+  }
   function addFogToSectionInfo(z,panelId){
     if(!isVisibilityPanelId(panelId))return;
     const fog=fogAt(z?.t),mifg=mifgAt(z?.t),br=brAt(z?.t),box=document.getElementById('sectionInfo');if(!box||(!fog&&!mifg&&!br))return;
     const values=box.querySelector('.section-values');if(!values)return;
-    // Widzialność pozostaje wartością z tego samego wiersza konsensusu, który
-    // rysuje pomarańczową linię. FOG Engine nie nadpisuje już karty VIS.
+    syncVisibilityCells(values,fog);
     const help=box.querySelector('.section-help')||document.createElement('div');
     if(!help.parentElement){help.className='section-help';box.appendChild(help);}
-    help.textContent=`Pomarańczowa linia i wartość widzialności w ramce korzystają z tej samej serii konsensusu. Słupki FOG korzystają z aktywnej serii FOG Engine i są pokazywane od ${fogDrawThreshold()}/100 niezależnie od wartości VIS. VIS <1000 m służy tylko do kwalifikacji operacyjnej FG. BR jest pokazywane do +${BR_HORIZON_HOURS} h.`;
+    help.textContent=`Pomarańczowa linia i wartość widzialności korzystają z VIS aktywnego FOG Engine. Konsensus modeli jest używany tylko jako fallback, gdy silnik nie publikuje VIS dla danej godziny. FOG, BR i MIFG są pokazywane od 60/100. VIS <1000 m służy tylko do kwalifikacji operacyjnej FG. BR jest pokazywane do +${BR_HORIZON_HOURS} h.`;
     if(fog&&Number(fog.score)>=FOG_INFO_THRESHOLD&&!values.querySelector('[data-fog-risk="1"]')){
       const operational=isOperationalFg(fog),vis=fogVisibility(fog);
       const cell=document.createElement('div');cell.className='section-value';cell.dataset.fogRisk='1';
@@ -248,11 +279,12 @@
     if(!el){el=document.createElement('span');el.id='fogMeteogramLegend';legend.appendChild(el);}else if(el.parentElement!==legend)legend.appendChild(el);
     el.style.display='inline-flex';el.style.flexWrap='wrap';el.style.gap='8px';el.style.alignItems='center';
     const fogThreshold=fogDrawThreshold();
-    el.innerHTML='<b>Widzialność / mgła:</b><span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:16px;height:3px;border-radius:2px;background:#d97706"></i>linia = VIS konsensusu modeli</span><span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:8px;height:12px;border-radius:1px;background:rgba(216,108,47,.72)"></i>słupki = ryzyko FOG aktywnego silnika od '+fogThreshold+'/100</span><span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#d63434;border:1px solid #ffdede"></i>czerwone punkty = MIFG &lt;2 m, od 60/100</span><span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:16px;height:0;border-top:2px dashed '+BR_COLOR+'"></i>linia BR = zamglenie, od 60/100, do +'+BR_HORIZON_HOURS+' h</span>';
+    el.innerHTML='<b>Widzialność / mgła:</b><span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:16px;height:3px;border-radius:2px;background:#d97706"></i>linia = VIS FOG Engine (fallback: konsensus modeli)</span><span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:8px;height:12px;border-radius:1px;background:rgba(216,108,47,.72)"></i>słupki = ryzyko FOG aktywnego silnika od '+fogThreshold+'/100</span><span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#d63434;border:1px solid #ffdede"></i>czerwone punkty = MIFG &lt;2 m, od 60/100</span><span style="display:inline-flex;align-items:center;gap:4px"><i aria-hidden="true" style="display:inline-block;width:16px;height:0;border-top:2px dashed '+BR_COLOR+'"></i>linia BR = zamglenie, od 60/100, do +'+BR_HORIZON_HOURS+' h</span>';
   }
 
   function install(){
     if(typeof draw!=='function'||typeof showSectionInfo!=='function')return false;
+    installVisibilityProvider();
     if(!window.__epirFogMeteogramDrawWrapped){const baseDraw=draw;draw=function(){baseDraw();drawPressureFill();drawFogBars();try{if(typeof window.PrognozaEPIRRedrawWindForeground==='function')window.PrognozaEPIRRedrawWindForeground();}catch(_){}};window.__epirFogMeteogramDrawWrapped=true;}
     if(!window.__epirFogMeteogramInfoWrapped){const baseInfo=showSectionInfo;showSectionInfo=function(z,panelId){baseInfo(z,panelId);addFogToSectionInfo(z,panelId);};window.__epirFogMeteogramInfoWrapped=true;}
     installLegendNote();window.__EPIR_FOG_METEOGRAM_OVERLAY_VERSION__=VERSION;return true;
