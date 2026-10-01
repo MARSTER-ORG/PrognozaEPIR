@@ -1,0 +1,45 @@
+name: Verify EPIR pressure altitude
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pressure-altitude.js'
+      - 'station-metadata.json'
+      - 'theme.js'
+      - 'tests/pressure-altitude.test.js'
+      - 'scripts/prepare_pages.py'
+      - 'scripts/prepare_pages_v241.py'
+      - '.github/workflows/pressure-altitude.yml'
+  pull_request:
+    paths:
+      - 'pressure-altitude.js'
+      - 'station-metadata.json'
+      - 'theme.js'
+      - 'tests/pressure-altitude.test.js'
+      - 'scripts/prepare_pages.py'
+      - 'scripts/prepare_pages_v241.py'
+      - '.github/workflows/pressure-altitude.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate runtime and ISA tests
+        run: |
+          node --check pressure-altitude.js
+          node tests/pressure-altitude.test.js
+
+      - name: Verify Pages artifact includes pressure-altitude module
+        run: |
+          python3 scripts/prepare_pages_v241.py
+          test -s _site/pressure-altitude.js
+          node --check _site/pressure-altitude.js
+          grep -Fq 'load("pressure-altitude.js?v=20261001-pa1")' _site/theme.js
