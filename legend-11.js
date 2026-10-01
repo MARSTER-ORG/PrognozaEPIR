@@ -44,3 +44,76 @@
   setTimeout(renderLegend11,1600);
   window.PrognozaEPIRLegend11 = {render:renderLegend11,steps:LEGEND_11.slice()};
 })();
+
+// Optional country-border reference layer -----------------------------------
+(() => {
+  if (window.__epirCountryBordersInstalled) return;
+  if (typeof L === 'undefined' || typeof map === 'undefined' || !map) return;
+
+  const mapbar = document.querySelector('.mapbar');
+  if (!mapbar) return;
+  window.__epirCountryBordersInstalled = true;
+
+  const STORAGE_KEY = 'prognozaepir-country-borders';
+  const PANE = 'countryBordersPane';
+  const TILE_URL = 'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
+
+  if (!map.getPane(PANE)) {
+    map.createPane(PANE);
+    const pane = map.getPane(PANE);
+    pane.style.zIndex = '650';
+    pane.style.pointerEvents = 'none';
+  }
+
+  const layer = L.tileLayer(TILE_URL, {
+    pane: PANE,
+    opacity: 0.86,
+    maxZoom: 19,
+    keepBuffer: 3,
+    updateWhenIdle: true,
+    attribution: 'Granice: Esri, HERE, Garmin, © OpenStreetMap contributors, GIS community'
+  });
+
+  const btn = document.createElement('button');
+  btn.id = 'countryBordersToggle';
+  btn.type = 'button';
+  btn.textContent = 'Granice państw';
+  btn.title = 'Włącz lub wyłącz warstwę granic państw';
+  btn.setAttribute('aria-pressed','false');
+
+  const anchor = document.getElementById('satToggle') || document.getElementById('radarToggle');
+  if (anchor) anchor.insertAdjacentElement('afterend',btn);
+  else mapbar.prepend(btn);
+
+  function store(enabled){
+    try { localStorage.setItem(STORAGE_KEY, enabled ? '1' : '0'); } catch (_) {}
+  }
+
+  function setEnabled(enabled,{persist=true}={}){
+    const on = !!enabled;
+    try {
+      if (on) {
+        if (!map.hasLayer(layer)) layer.addTo(map);
+      } else if (map.hasLayer(layer)) {
+        map.removeLayer(layer);
+      }
+    } catch (_) {}
+    btn.classList.toggle('active',on);
+    btn.setAttribute('aria-pressed',on?'true':'false');
+    if (persist) store(on);
+  }
+
+  btn.addEventListener('click',()=>setEnabled(!btn.classList.contains('active')));
+
+  let initial = false;
+  try { initial = localStorage.getItem(STORAGE_KEY) === '1'; } catch (_) {}
+  setEnabled(initial,{persist:false});
+
+  window.PrognozaEPIRCountryBorders = Object.freeze({
+    layer,
+    enable:()=>setEnabled(true),
+    disable:()=>setEnabled(false),
+    toggle:()=>setEnabled(!btn.classList.contains('active')),
+    isEnabled:()=>btn.classList.contains('active')
+  });
+})();
