@@ -4,7 +4,7 @@
   const FOG_INFO_THRESHOLD=60, MIFG_INFO_THRESHOLD=60, BR_INFO_THRESHOLD=60;
   const BR_COLOR='#c084fc', FOG_FULL_SCALE_KM=19.5, VIS_SCALE_MAX_KM=30;
   const VIS_INNER_PAD=9, PRESSURE_INNER_PAD=9, MAX_MATCH_MS=70*60e3, HOUR=3600e3, BR_HORIZON_HOURS=48;
-  const VERSION='2026-10-01-vis-sync-fog-bars2';
+  const VERSION='2026-10-01-fog-grid-bars3';
   const finite=Number.isFinite, clip=(v,a,b)=>Math.max(a,Math.min(b,v));
 
   function selectedMode(){
@@ -119,9 +119,9 @@
   function brAt(t){return nearestAt(brSeries(),t);}
 
   function fogColor(score){
-    if(score>=80)return 'rgba(208,80,63,.62)';
-    if(score>=60)return 'rgba(216,108,47,.57)';
-    return 'rgba(212,154,40,.50)';
+    if(score>=80)return 'rgba(208,80,63,.82)';
+    if(score>=60)return 'rgba(216,108,47,.78)';
+    return 'rgba(212,154,40,.70)';
   }
   function yOnVisibilityScale(km,p){
     const pad=Math.min(VIS_INNER_PAD,Math.max(7,p.h*.09)),usable=Math.max(1,p.h-2*pad);
@@ -176,15 +176,35 @@
     if(typeof cv==='undefined'||typeof ctx==='undefined')return;
     const m=cv._meta;if(!m||!Array.isArray(m.data)||m.data.length<2)return;
     const p=visibilityPanel(m);if(!p)return;
-    const x0=m.x0,x1=m.x1,plotW=x1-x0,step=Math.max(3,plotW/Math.max(1,m.data.length-1)),barW=Math.max(2.5,step*.58);
+    const x0=m.x0,x1=m.x1,plotW=x1-x0,step=Math.max(3,plotW/Math.max(1,m.data.length-1)),barW=Math.max(5,Math.min(14,step*.68));
     const baseY=yOnVisibilityScale(0,p),fullY=yOnVisibilityScale(FOG_FULL_SCALE_KM,p),fog100LabelY=yOnVisibilityScale(20,p),maxBarH=Math.max(12,baseY-fullY);
     const x=t=>clip(x0+(t-m.t0)/(m.t1-m.t0)*plotW,x0,x1),fogThreshold=fogDrawThreshold();
     ctx.save();ctx.beginPath();ctx.rect(x0,p.y,plotW,p.h);ctx.clip();
 
-    const fogSeries=fogRows().filter(r=>Number(r.score)>=fogThreshold&&Number(r.t)>=m.t0&&Number(r.t)<=m.t1);
+    // Słupki są próbkowane na dokładnie tej samej osi czasu co tooltip.
+    // Dzięki temu wartość FOG widoczna dla np. 05Z zawsze ma słupek przy 05Z,
+    // nawet gdy surowy rekord silnika jest przesunięty o kilkadziesiąt minut.
+    const sourceFog=fogRows(),fogSeries=[],seenTimes=new Set();
+    for(const z of m.data){
+      const t=Number(z?.t);if(!finite(t)||t<m.t0||t>m.t1)continue;
+      const fog=nearestAt(sourceFog,t),score=Number(fog?.score);
+      if(!finite(score)||score<fogThreshold)continue;
+      const key=Math.round(t/60000);if(seenTimes.has(key))continue;
+      seenTimes.add(key);fogSeries.push({t,score});
+    }
+    // Awaryjny fallback dla nietypowej osi czasu meteogramu.
+    if(!fogSeries.length){
+      for(const fog of sourceFog){
+        const t=Number(fog?.t),score=Number(fog?.score);
+        if(!finite(t)||!finite(score)||score<fogThreshold||t<m.t0||t>m.t1)continue;
+        fogSeries.push({t,score});
+      }
+    }
+    const minBarH=Math.min(10,Math.max(7,p.h*.05));
     for(const fog of fogSeries){
-      const score=Number(fog.score),frac=clip((score-fogThreshold)/Math.max(1,100-fogThreshold),0,1),minBarH=4,h=minBarH+frac*Math.max(0,maxBarH-minBarH),xx=x(Number(fog.t));
+      const score=Number(fog.score),frac=clip((score-fogThreshold)/Math.max(1,100-fogThreshold),0,1),h=minBarH+frac*Math.max(0,maxBarH-minBarH),xx=x(Number(fog.t));
       ctx.fillStyle=fogColor(score);ctx.fillRect(xx-barW/2,baseY-h,barW,h);
+      ctx.strokeStyle='rgba(255,206,140,.92)';ctx.lineWidth=.8;ctx.strokeRect(xx-barW/2+.4,baseY-h+.4,Math.max(.2,barW-.8),Math.max(.2,h-.8));
     }
 
     const mifg=mifgSeries().filter(r=>r&&finite(Number(r.t))&&finite(Number(r.score))&&Number(r.score)>=MIFG_DRAW_THRESHOLD&&Number(r.t)>=m.t0&&Number(r.t)<=m.t1);
