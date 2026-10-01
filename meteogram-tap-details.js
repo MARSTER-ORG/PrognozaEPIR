@@ -9,9 +9,11 @@
 
   const TAP_MAX_MS = 700;
   const TAP_MOVE_PX = 12;
+  const VIS_MATCH_MS = 70 * 60e3;
   const finite = Number.isFinite;
   let down = null;
   let selection = null;
+  let visibilitySnapshot = [];
 
   function valueCell(label, value) {
     if (typeof infoValue === 'function') return infoValue(label, value);
@@ -26,11 +28,53 @@
     catch (_) { return '—'; }
   }
 
+  // VIS shown in cards/tooltips must come from the exact values used by the
+  // most recent canvas draw. Keep primitive copies because model/fog updates can
+  // mutate the data objects after the orange line has already been painted.
+  function captureVisibilitySnapshot() {
+    const m = canvas._meta;
+    if (!m || !Array.isArray(m.data) || !m.data.length) return;
+    const next = [];
+    for (const row of m.data) {
+      const t = Number(row?.t);
+      const vis = Number(row?.VIS);
+      if (!finite(t) || !finite(vis)) continue;
+      next.push({t, vis});
+    }
+    if (!next.length) return;
+    visibilitySnapshot = next;
+    window.PrognozaEPIRMeteogramVisibilitySnapshot = next.map(row => ({...row}));
+  }
+
+  function visibilityFromSnapshot(t, fallback) {
+    const target = Number(t);
+    let best = null;
+    let bestDiff = Infinity;
+    if (finite(target)) {
+      for (const row of visibilitySnapshot) {
+        const diff = Math.abs(row.t - target);
+        if (diff < bestDiff) {
+          best = row;
+          bestDiff = diff;
+        }
+      }
+    }
+    if (best && bestDiff <= VIS_MATCH_MS) return best.vis;
+    const v = Number(fallback);
+    return finite(v) ? v : NaN;
+  }
+
   // The deployed meteogram combines rain and thunderstorm probability into one panel.
-  // Handle it explicitly so a tap always returns useful hourly values.
+  // Handle it explicitly so a tap always returns useful hourly values. For VIS,
+  // pass the immutable plotted value through all older info wrappers so the card
+  // can never drift away from the orange line.
   if (typeof showSectionInfo === 'function' && !window.__epirTapInfoWrapped) {
     const baseInfo = showSectionInfo;
     showSectionInfo = function(z, panelId) {
+      if (panelId === 'visfog' && z) {
+        const plottedVIS = visibilityFromSnapshot(z.t, z.VIS);
+        return baseInfo(finite(plottedVIS) ? {...z, VIS:plottedVIS} : z, panelId);
+      }
       if (panelId !== 'probstorm') return baseInfo(z, panelId);
       const box = document.getElementById('sectionInfo');
       if (!box || !z) return;
@@ -65,6 +109,34 @@
     }
     return {row, panel};
   }
+
+  // visual-style-fix.js builds the desktop hover tooltip before this module is
+  // loaded. Replace only its VIS text, after all earlier pointer handlers run.
+  function syncHoverVisibility(clientX, clientY) {
+    queueMicrotask(() => {
+      const hit = hitAt(clientX, clientY);
+      if (!hit || hit.panel.id !== 'visfog') return;
+      const tooltip = document.getElementById('epirMeteogramTooltip');
+      if (!tooltip || tooltip.style.display === 'none') return;
+      const vis = visibilityFromSnapshot(hit.row.t, hit.row.VIS);
+      if (!finite(vis)) return;
+      for (const row of tooltip.querySelectorAll('div')) {
+        const children = row.children;
+        if (children.length < 2) continue;
+        const key = children[0];
+        const val = children[1];
+        if (key.tagName === 'SPAN' && val.tagName === 'B' && String(key.textContent || '').trim() === 'Widzialność') {
+          val.textContent = (vis / 1000).toFixed(1) + ' km';
+          break;
+        }
+      }
+    });
+  }
+
+  canvas.addEventListener('pointermove', e => {
+    if (e.pointerType !== 'mouse') return;
+    syncHoverVisibility(e.clientX, e.clientY);
+  }, {passive:true});
 
   function drawSelectionMarker() {
     const s = selection || window.PrognozaEPIRMeteogramSelection;
@@ -119,6 +191,7 @@
     const baseDraw = draw;
     draw = function() {
       const out = baseDraw.apply(this, arguments);
+      captureVisibilitySnapshot();
       drawSelectionMarker();
       return out;
     };
@@ -158,4 +231,6 @@
     if (dt > TAP_MAX_MS || move > TAP_MOVE_PX) return;
     selectAt(e.clientX, e.clientY);
   }, {passive:true});
+
+  captureVisibilitySnapshot();
 })();
