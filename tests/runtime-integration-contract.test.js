@@ -73,15 +73,18 @@ function fakeStorage(mode) {
   assert(engine.includes('PrognozaEPIRMIFG={'));
 })();
 
-(function testMeteogramUsesCanonical244SeriesAndThreshold60() {
+(function testMeteogramUsesSelectedFogSeriesAndThreshold60() {
   const overlay = read('fog-meteogram-overlay.js');
   assert(overlay.includes('function selectedMode()'));
-  assert(overlay.includes('function canonicalFogSeries()'));
+  assert(overlay.includes('function activeFogSeries()'));
+  assert(overlay.includes('function canonicalFogSeries(){return activeFogSeries();}'));
+  assert(overlay.includes("if(mode==='legacy')"));
+  assert(overlay.includes("if(mode==='vnext')"));
   assert(overlay.includes('PrognozaEPIRFog244Context'));
   assert(overlay.includes('PrognozaEPIRFog244?.getAdjustedSeries?.()'));
   assert(overlay.includes('PrognozaEPIRFogVNextSeries'));
+  assert(overlay.includes('PrognozaEPIRFogLegacySeries'));
   assert(overlay.includes('PrognozaEPIRFogSeries'));
-  assert(!overlay.includes('PrognozaEPIRFogLegacySeries'));
   assert(/FOG_DRAW_THRESHOLD\s*=\s*60/.test(overlay));
   assert(/BR_DRAW_THRESHOLD\s*=\s*60/.test(overlay));
   assert(/MIFG_DRAW_THRESHOLD\s*=\s*60/.test(overlay));
