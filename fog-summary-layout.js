@@ -2,7 +2,9 @@
 (()=>{
   if(typeof window==='undefined'||typeof document==='undefined')return;
 
-  const ACTIVE_FOG_BRIDGE_VERSION='2026-10-01-active-fog-bars1';
+  const ACTIVE_FOG_BRIDGE_VERSION='2026-10-01-engine-vis-continuity2';
+  const HOUR=3600e3, VIS_INTERP_MAX_GAP=3*HOUR, VIS_EXACT_TOL=5*60e3, VIS_EDGE_TOL=45*60e3;
+  const finite=Number.isFinite;
 
   function loadOnce(src,selector,mark,onload){
     const existing=document.querySelector(selector);
@@ -38,6 +40,121 @@
     if(selectedFogMode()==='vnext'&&vnext)return vnext;
 
     return legacy||vnext||null;
+  }
+
+  function fogVisibility(row){
+    if(!row)return null;
+    for(const value of [row?.visGuidance?.point,row?.visProposed,row?.vis]){
+      if(value===null||value===undefined||value==='')continue;
+      const v=Number(value);
+      if(finite(v))return v;
+    }
+    return null;
+  }
+
+  function visibilitySeries(){
+    const rows=activeFogSeries();
+    if(!Array.isArray(rows)||!rows.length)return [];
+    return rows.map(row=>({t:Number(row?.t),vis:fogVisibility(row)}))
+      .filter(row=>finite(row.t)&&finite(row.vis))
+      .sort((a,b)=>a.t-b.t);
+  }
+
+  // VIS silnika ma pierwszeństwo w całym jego rzeczywistym horyzoncie. Krótkie
+  // luki (1–2 brakujące godziny, czyli maks. 3 h między sąsiednimi punktami)
+  // uzupełniamy liniowo między dwoma punktami silnika. Nie przełączamy wtedy
+  // pojedynczej godziny na konsensus modeli, bo tworzyło to sztuczne zęby 20–30 km.
+  function engineVisibilityAt(t,series=visibilitySeries()){
+    const target=Number(t);
+    if(!finite(target)||!series.length)return null;
+
+    let nearest=null,nearestDiff=Infinity,prev=null,next=null;
+    for(const row of series){
+      const diff=Math.abs(row.t-target);
+      if(diff<nearestDiff){nearest=row;nearestDiff=diff;}
+      if(row.t<=target)prev=row;
+      if(row.t>=target){next=row;break;}
+    }
+
+    // Dokładny (lub praktycznie dokładny) punkt silnika zawsze wygrywa.
+    if(nearest&&nearestDiff<=VIS_EXACT_TOL)return {vis:nearest.vis,source:'fog-engine',interpolated:false};
+
+    // Wewnątrz krótkiej luki używamy interpolacji silnika zamiast wartości modelowej.
+    if(prev&&next&&next.t>prev.t){
+      const gap=next.t-prev.t;
+      if(gap<=VIS_INTERP_MAX_GAP&&target>=prev.t&&target<=next.t){
+        const q=(target-prev.t)/gap;
+        return {vis:prev.vis+(next.vis-prev.vis)*q,source:'fog-engine-interpolated',interpolated:true};
+      }
+    }
+
+    // Na samym brzegu szeregu dopuszczamy tylko niewielkie przesunięcie znacznika czasu.
+    if(nearest&&nearestDiff<=VIS_EDGE_TOL)return {vis:nearest.vis,source:'fog-engine',interpolated:false};
+    return null;
+  }
+
+  function installVisibilityContinuityBridge(){
+    if(window.__EPIR_FOG_VIS_CONTINUITY__===ACTIVE_FOG_BRIDGE_VERSION)return true;
+    if(typeof dataVisible!=='function')return false;
+
+    const baseDataVisible=dataVisible;
+    dataVisible=function(){
+      const rows=baseDataVisible.apply(this,arguments);
+      if(!Array.isArray(rows)||!rows.length)return rows;
+
+      let useEngine=true;
+      try{if(typeof selected!=='undefined'&&selected!=='consensus')useEngine=false;}catch(_){}
+      if(!useEngine)return rows;
+
+      const visSeries=visibilitySeries();
+      if(!visSeries.length)return rows;
+
+      return rows.map(row=>{
+        const sample=engineVisibilityAt(row?.t,visSeries);
+        if(!sample||!finite(sample.vis))return row;
+        const modelVis=finite(Number(row?.VIS_MODEL))?Number(row.VIS_MODEL):Number(row?.VIS);
+        return {
+          ...row,
+          VIS:sample.vis,
+          VIS_MODEL:finite(modelVis)?modelVis:null,
+          VIS_SOURCE:sample.source,
+          VIS_INTERPOLATED:sample.interpolated===true
+        };
+      });
+    };
+
+    window.__EPIR_FOG_VIS_CONTINUITY__=ACTIVE_FOG_BRIDGE_VERSION;
+    window.PrognozaEPIRFogVisibilityContinuity=Object.freeze({
+      version:ACTIVE_FOG_BRIDGE_VERSION,
+      maxInterpolationGapMs:VIS_INTERP_MAX_GAP,
+      engineVisibilityAt:t=>engineVisibilityAt(t)
+    });
+    return true;
+  }
+
+  function visText(v){
+    v=Number(v);
+    if(!finite(v))return '—';
+    return v>=1000?(v/1000).toFixed(1)+' km':Math.round(v)+' m';
+  }
+
+  // Ostatnia korekta dolnej karty. fog-meteogram-overlay może pokazać surowy
+  // punkt FOG, natomiast karta ma odpowiadać dokładnie temu VIS, który został
+  // narysowany po interpolacji na pomarańczowej linii.
+  function syncSectionVisibility(z,panelId){
+    if((panelId!=='visfog'&&panelId!=='cloud')||!z||!finite(Number(z.VIS)))return;
+    const values=document.querySelector('#sectionInfo .section-values');
+    if(!values)return;
+    const cells=[...values.querySelectorAll('.section-value')].filter(cell=>
+      String(cell.querySelector('small')?.textContent||'').trim().toLowerCase().startsWith('widzialność')
+    );
+    let cell=cells[0];
+    if(!cell){cell=document.createElement('div');cell.className='section-value';values.prepend(cell);}
+    const source=String(z.VIS_SOURCE||'');
+    const label=source==='fog-engine-interpolated'?'Widzialność · FOG ENGINE (interp.)':
+      source==='fog-engine'?'Widzialność · FOG ENGINE':'Widzialność · konsensus modeli';
+    cell.innerHTML='<small>'+label+'</small><strong>'+visText(z.VIS)+'</strong>';
+    for(let i=1;i<cells.length;i++)cells[i].remove();
   }
 
   function withActiveFogSeries(fn){
@@ -86,12 +203,17 @@
   function installActiveFogMeteogramBridge(){
     if(window.__EPIR_ACTIVE_FOG_METEOGRAM_BRIDGE__===ACTIVE_FOG_BRIDGE_VERSION)return true;
     if(typeof draw!=='function'||typeof showSectionInfo!=='function')return false;
+    if(!installVisibilityContinuityBridge())return false;
 
     const baseDraw=draw;
     draw=function(){return withActiveFogSeries(()=>baseDraw());};
 
     const baseInfo=showSectionInfo;
-    showSectionInfo=function(z,panelId){return withActiveFogSeries(()=>baseInfo(z,panelId));};
+    showSectionInfo=function(z,panelId){
+      const out=withActiveFogSeries(()=>baseInfo(z,panelId));
+      syncSectionVisibility(z,panelId);
+      return out;
+    };
 
     window.__EPIR_ACTIVE_FOG_METEOGRAM_BRIDGE__=ACTIVE_FOG_BRIDGE_VERSION;
     return true;
