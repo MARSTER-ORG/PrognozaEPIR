@@ -97,6 +97,24 @@
     ctx.restore();
   }
 
+  // The wind panel has a dedicated foreground renderer which rebuilds the whole
+  // panel after some Fog/visibility redraws. That repaint used to erase only the
+  // wind selection marker. Re-apply the marker after every wind foreground pass.
+  function keepWindSelectionAboveForeground() {
+    const redraw = window.PrognozaEPIRRedrawWindForeground;
+    if (typeof redraw !== 'function' || redraw.__epirSelectionAware === true) return;
+    const wrapped = function() {
+      const out = redraw.apply(this, arguments);
+      const s = selection || window.PrognozaEPIRMeteogramSelection;
+      if (s && s.panelId === 'wind') drawSelectionMarker();
+      return out;
+    };
+    wrapped.__epirSelectionAware = true;
+    window.PrognozaEPIRRedrawWindForeground = wrapped;
+  }
+
+  keepWindSelectionAboveForeground();
+
   if (typeof draw === 'function' && !window.__epirTapDrawWrapped) {
     const baseDraw = draw;
     draw = function() {
@@ -116,6 +134,9 @@
     // Full redraw removes the previous marker and redraws only the current selection.
     if (typeof draw === 'function') draw();
     else drawSelectionMarker();
+    // A wind foreground repaint can be queued by another overlay in the same frame.
+    // Paint the selection once more on the next frame so it remains visible.
+    if (hit.panel.id === 'wind') requestAnimationFrame(drawSelectionMarker);
     return true;
   }
 
