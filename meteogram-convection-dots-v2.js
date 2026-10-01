@@ -34,6 +34,26 @@ if(typeof window.showSectionInfo==='function'){
  };
 }
 
+/* Desktop viewport guard: the details card belongs immediately under the actual
+   scaled meteogram. Vertical panning on desktop could previously move the canvas
+   up inside a fixed-height viewport and leave a large empty block below it. */
+(function installViewportGuard(){
+ var viewport=document.getElementById('canvasViewport'),stage=document.getElementById('canvasStage');
+ if(!viewport||!stage)return;
+ var style=document.createElement('style');style.id='epir-meteogram-viewport-guard';
+ style.textContent='@media (min-width:701px){html[data-epir-page="index"] .app{width:100%!important;max-width:1120px!important}html[data-epir-page="index"] .canvas-viewport{min-height:0!important}}';
+ document.head.appendChild(style);
+ var raf=0,busy=false;
+ function parts(){var raw=stage.style.transform||'',m=raw.match(/translate\(\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))px\s*,\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))px\s*\)\s*scale\(\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))\s*\)/i);if(m)return{x:Number(m[1])||0,scale:Number(m[3])>0?Number(m[3]):1};var tx=raw.match(/translate\(\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))px/i),sc=raw.match(/scale\(\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))/i);return{x:tx?(Number(tx[1])||0):0,scale:sc&&Number(sc[1])>0?Number(sc[1]):1};}
+ function sync(){raf=0;if(busy||innerWidth<=700)return;var h=parseFloat(stage.style.height)||parseFloat(cv.style.height)||0;if(!(h>0))return;var p=parts(),tr='translate('+p.x.toFixed(1)+'px,0px) scale('+p.scale.toFixed(4)+')',vh=Math.max(1,Math.ceil(h*p.scale));busy=true;try{if(stage.style.transform!==tr)stage.style.transform=tr;if(viewport.style.height!==vh+'px')viewport.style.height=vh+'px';}finally{busy=false;}}
+ function schedule(){if(raf)cancelAnimationFrame(raf);raf=requestAnimationFrame(sync);}
+ new MutationObserver(function(){if(!busy)schedule();}).observe(stage,{attributes:true,attributeFilter:['style']});
+ new MutationObserver(schedule).observe(cv,{attributes:true,attributeFilter:['style','width','height']});
+ addEventListener('resize',schedule,{passive:true});
+ document.querySelectorAll('#zoomOut,#zoomIn,#zoomReset,#zoomFit,[data-h],#view,#refresh').forEach(function(el){el.addEventListener('click',function(){requestAnimationFrame(schedule);});el.addEventListener('change',function(){requestAnimationFrame(schedule);});});
+ schedule();
+})();
+
 var legend=document.querySelector('.legend');if(legend&&!document.getElementById('convDotLegend')){var s=document.createElement('span');s.id='convDotLegend';s.textContent='TCu: pomarańczowa kropka · Cb: czerwona kropka · od 30% · wysokość = prawdopodobieństwo.';legend.appendChild(s);}
 window.addEventListener('prognozaepir:convection-12h-updated',function(){window.draw();});
 if(window.PrognozaEPIRConvection12h)window.draw();
