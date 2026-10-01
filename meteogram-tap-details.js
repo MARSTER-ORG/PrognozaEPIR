@@ -14,6 +14,8 @@
   let down = null;
   let selection = null;
   let visibilitySnapshot = [];
+  let hoverPoint = null;
+  let hoverPatchScheduled = false;
 
   function valueCell(label, value) {
     if (typeof infoValue === 'function') return infoValue(label, value);
@@ -64,6 +66,10 @@
     return finite(v) ? v : NaN;
   }
 
+  // Shared source for any late-loaded UI element that needs to display the
+  // visibility represented by the orange meteogram line.
+  window.PrognozaEPIRMeteogramVisibilityAt = visibilityFromSnapshot;
+
   // The deployed meteogram combines rain and thunderstorm probability into one panel.
   // Handle it explicitly so a tap always returns useful hourly values. For VIS,
   // pass the immutable plotted value through all older info wrappers so the card
@@ -110,33 +116,53 @@
     return {row, panel};
   }
 
-  // visual-style-fix.js builds the desktop hover tooltip before this module is
-  // loaded. Replace only its VIS text, after all earlier pointer handlers run.
-  function syncHoverVisibility(clientX, clientY) {
-    queueMicrotask(() => {
-      const hit = hitAt(clientX, clientY);
-      if (!hit || hit.panel.id !== 'visfog') return;
-      const tooltip = document.getElementById('epirMeteogramTooltip');
-      if (!tooltip || tooltip.style.display === 'none') return;
-      const vis = visibilityFromSnapshot(hit.row.t, hit.row.VIS);
-      if (!finite(vis)) return;
-      for (const row of tooltip.querySelectorAll('div')) {
-        const children = row.children;
-        if (children.length < 2) continue;
-        const key = children[0];
-        const val = children[1];
-        if (key.tagName === 'SPAN' && val.tagName === 'B' && String(key.textContent || '').trim() === 'Widzialność') {
-          val.textContent = (vis / 1000).toFixed(1) + ' km';
-          break;
-        }
+  // visual-style-fix.js creates the desktop hover tooltip earlier in the load
+  // order. Other overlays can still mutate that tooltip afterwards, so correct
+  // the VIS value both immediately and after the browser has processed all
+  // microtasks / DOM mutations for the current pointer event.
+  function patchHoverVisibility() {
+    hoverPatchScheduled = false;
+    if (!hoverPoint) return;
+    const hit = hitAt(hoverPoint.x, hoverPoint.y);
+    if (!hit || hit.panel.id !== 'visfog') return;
+    const tooltip = document.getElementById('epirMeteogramTooltip');
+    if (!tooltip || tooltip.style.display === 'none') return;
+    const vis = visibilityFromSnapshot(hit.row.t, hit.row.VIS);
+    if (!finite(vis)) return;
+    const wanted = (vis / 1000).toFixed(1) + ' km';
+    for (const row of tooltip.querySelectorAll('div')) {
+      const children = row.children;
+      if (children.length < 2) continue;
+      const key = children[0];
+      const val = children[1];
+      if (key.tagName === 'SPAN' && val.tagName === 'B' && String(key.textContent || '').trim() === 'Widzialność') {
+        if (val.textContent !== wanted) val.textContent = wanted;
+        return;
       }
+    }
+  }
+
+  function scheduleHoverVisibilityPatch() {
+    if (hoverPatchScheduled) return;
+    hoverPatchScheduled = true;
+    queueMicrotask(() => {
+      patchHoverVisibility();
+      requestAnimationFrame(patchHoverVisibility);
     });
   }
 
   canvas.addEventListener('pointermove', e => {
     if (e.pointerType !== 'mouse') return;
-    syncHoverVisibility(e.clientX, e.clientY);
+    hoverPoint = {x:e.clientX, y:e.clientY};
+    scheduleHoverVisibilityPatch();
   }, {passive:true});
+  canvas.addEventListener('pointerleave', () => { hoverPoint = null; }, {passive:true});
+
+  const hoverTooltip = document.getElementById('epirMeteogramTooltip');
+  if (hoverTooltip && typeof MutationObserver !== 'undefined') {
+    const observer = new MutationObserver(() => scheduleHoverVisibilityPatch());
+    observer.observe(hoverTooltip, {childList:true, subtree:true, characterData:true});
+  }
 
   function drawSelectionMarker() {
     const s = selection || window.PrognozaEPIRMeteogramSelection;
@@ -193,6 +219,7 @@
       const out = baseDraw.apply(this, arguments);
       captureVisibilitySnapshot();
       drawSelectionMarker();
+      scheduleHoverVisibilityPatch();
       return out;
     };
     window.__epirTapDrawWrapped = true;
