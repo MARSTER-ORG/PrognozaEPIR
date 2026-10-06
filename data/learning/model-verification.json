@@ -1,72 +1,1696 @@
 {
   "schema": "prognozaepir-model-verification-v1",
-  "generated_at": "2026-10-06T03:22:35Z",
+  "generated_at": "2026-10-06T07:37:06Z",
   "method": "Archived forecast vs corresponding-hour EPIR METAR/SPECI and WMO 12342 SYNOP; wind direction uses regular METAR priority with a centred 3-METAR circular mean for weak/rapidly changing flow; weighted aviation-parameter tolerance score",
   "models": {
     "consensus": {
       "name": "PrognozaEPIR CONSENSUS",
       "score_pct": 87,
-      "forecast_samples": 36641,
+      "forecast_samples": 36665,
       "sources": {
-        "METAR": 11627,
+        "METAR": 11651,
         "SPECI": 5,
         "SYNOP": 32602
       },
       "components": {
         "temperature": {
-          "n": 35684,
+          "n": 35705,
           "score_pct": 86
         },
         "dew_point": {
-          "n": 18184,
+          "n": 18205,
           "score_pct": 92
         },
         "pressure": {
-          "n": 18200,
+          "n": 18221,
           "score_pct": 95
         },
         "wind": {
-          "n": 18217,
+          "n": 18238,
           "score_pct": 85
         },
         "visibility": {
           "n": 337,
-          "score_pct": 86
+          "score_pct": 85
         },
         "cloud": {
-          "n": 14196,
+          "n": 14220,
           "score_pct": 80
         },
         "precipitation": {
-          "n": 18247,
+          "n": 18268,
           "score_pct": 91
         }
+      },
+      "wind_bias": {
+        "schema": "prognozaepir-consensus-wind-bias-v1",
+        "definition": "forecast_minus_observed",
+        "units": {
+          "speed": "m/s",
+          "direction": "deg"
+        },
+        "reference_policy": {
+          "wind_speed": "SYNOP_FIRST_METAR_SPECI_FALLBACK",
+          "wind_direction": "metar-3-circular-v1",
+          "direction_min_reliable_speed_ms": 1.5
+        },
+        "eligible_consensus_samples": 36693,
+        "overall": {
+          "wind_speed": {
+            "n": 18238,
+            "bias_ms": -0.444,
+            "mae_ms": 1.143
+          },
+          "wind_direction": {
+            "n": 16933,
+            "circular_bias_deg": 25.4,
+            "circular_mae_deg": 36.35
+          },
+          "speed_sources": {
+            "METAR_OR_SPECI": 3468,
+            "SYNOP": 14770
+          },
+          "direction_sources": {
+            "METAR_3_CIRCULAR_MEAN": 4138,
+            "METAR_SINGLE": 5977,
+            "SYNOP_FALLBACK": 6818
+          }
+        },
+        "by_lead_bucket": {
+          "0-3h": {
+            "wind_speed": {
+              "n": 1023,
+              "bias_ms": -0.036,
+              "mae_ms": 0.783
+            },
+            "wind_direction": {
+              "n": 948,
+              "circular_bias_deg": 38.05,
+              "circular_mae_deg": 41.44
+            },
+            "speed_sources": {
+              "METAR_OR_SPECI": 602,
+              "SYNOP": 421
+            },
+            "direction_sources": {
+              "METAR_3_CIRCULAR_MEAN": 315,
+              "METAR_SINGLE": 494,
+              "SYNOP_FALLBACK": 139
+            }
+          },
+          "3-6h": {
+            "wind_speed": {
+              "n": 1111,
+              "bias_ms": -0.042,
+              "mae_ms": 0.773
+            },
+            "wind_direction": {
+              "n": 1009,
+              "circular_bias_deg": 38.44,
+              "circular_mae_deg": 41.75
+            },
+            "speed_sources": {
+              "METAR_OR_SPECI": 644,
+              "SYNOP": 467
+            },
+            "direction_sources": {
+              "METAR_3_CIRCULAR_MEAN": 356,
+              "METAR_SINGLE": 504,
+              "SYNOP_FALLBACK": 149
+            }
+          },
+          "6-12h": {
+            "wind_speed": {
+              "n": 817,
+              "bias_ms": -0.382,
+              "mae_ms": 0.9
+            },
+            "wind_direction": {
+              "n": 755,
+              "circular_bias_deg": 31.52,
+              "circular_mae_deg": 37.14
+            },
+            "speed_sources": {
+              "METAR_OR_SPECI": 414,
+              "SYNOP": 403
+            },
+            "direction_sources": {
+              "METAR_3_CIRCULAR_MEAN": 246,
+              "METAR_SINGLE": 338,
+              "SYNOP_FALLBACK": 171
+            }
+          },
+          "12-24h": {
+            "wind_speed": {
+              "n": 826,
+              "bias_ms": -0.316,
+              "mae_ms": 0.965
+            },
+            "wind_direction": {
+              "n": 782,
+              "circular_bias_deg": 30.21,
+              "circular_mae_deg": 38.56
+            },
+            "speed_sources": {
+              "METAR_OR_SPECI": 437,
+              "SYNOP": 389
+            },
+            "direction_sources": {
+              "METAR_3_CIRCULAR_MEAN": 270,
+              "METAR_SINGLE": 346,
+              "SYNOP_FALLBACK": 166
+            }
+          },
+          "24-48h": {
+            "wind_speed": {
+              "n": 3453,
+              "bias_ms": -0.541,
+              "mae_ms": 1.087
+            },
+            "wind_direction": {
+              "n": 3216,
+              "circular_bias_deg": 23.42,
+              "circular_mae_deg": 31.55
+            },
+            "speed_sources": {
+              "METAR_OR_SPECI": 543,
+              "SYNOP": 2910
+            },
+            "direction_sources": {
+              "METAR_3_CIRCULAR_MEAN": 763,
+              "METAR_SINGLE": 1071,
+              "SYNOP_FALLBACK": 1382
+            }
+          },
+          "48-120h": {
+            "wind_speed": {
+              "n": 11008,
+              "bias_ms": -0.505,
+              "mae_ms": 1.262
+            },
+            "wind_direction": {
+              "n": 10223,
+              "circular_bias_deg": 22.38,
+              "circular_mae_deg": 36.62
+            },
+            "speed_sources": {
+              "METAR_OR_SPECI": 828,
+              "SYNOP": 10180
+            },
+            "direction_sources": {
+              "METAR_3_CIRCULAR_MEAN": 2188,
+              "METAR_SINGLE": 3224,
+              "SYNOP_FALLBACK": 4811
+            }
+          }
+        }
+      },
+      "diagnostics": {
+        "schema": "prognozaepir-consensus-diagnostics-v1",
+        "generated_at": "2026-10-06T07:33:26Z",
+        "continuous_error_definition": "forecast_minus_observed",
+        "event_vote_threshold": 0.5,
+        "reference_policy": {
+          "temperature_dewpoint_pressure": "SYNOP_FIRST_METAR_SPECI_FALLBACK",
+          "relative_humidity": "DERIVED_FROM_OBSERVED_TEMPERATURE_AND_DEWPOINT",
+          "visibility": "METAR_SPECI_FIRST_SYNOP_FALLBACK_CENSORED_LOWER_BOUNDS",
+          "cloud_low_mid_high": "METAR_SPECI_LAYER_OKTA_RANGES",
+          "cloud_total": "SYNOP_TOTAL_OKTAS",
+          "precipitation": "METAR_SPECI_THEN_SYNOP_PRESENT_WEATHER",
+          "fog": "METAR_SPECI_FG_FAMILY_THEN_SYNOP_WW40_49",
+          "thunderstorm": "METAR_SPECI_TS_THEN_SYNOP_WW17_95_99",
+          "wind_speed": "SYNOP_FIRST_METAR_SPECI_FALLBACK",
+          "wind_direction": "metar-3-circular-v1"
+        },
+        "overall": {
+          "eligible_samples": 36693,
+          "continuous": {
+            "temperature": {
+              "n": 35705,
+              "bias": 0.132,
+              "mae": 1.482,
+              "rmse": 2.086,
+              "unit": "degC",
+              "sources": {
+                "METAR": 3436,
+                "SPECI": 5,
+                "SYNOP": 32264
+              }
+            },
+            "dew_point": {
+              "n": 18205,
+              "bias": 0.47,
+              "mae": 1.348,
+              "rmse": 1.852,
+              "unit": "degC",
+              "sources": {
+                "METAR": 3436,
+                "SPECI": 5,
+                "SYNOP": 14764
+              }
+            },
+            "relative_humidity": {
+              "n": 18205,
+              "bias": 1.486,
+              "mae": 7.007,
+              "rmse": 9.137,
+              "unit": "pct",
+              "sources": {
+                "METAR": 3436,
+                "SPECI": 5,
+                "SYNOP": 14764
+              }
+            },
+            "pressure": {
+              "n": 18221,
+              "bias": 0.013,
+              "mae": 1.108,
+              "rmse": 2.131,
+              "unit": "hPa",
+              "sources": {
+                "METAR": 3441,
+                "SPECI": 5,
+                "SYNOP": 14775
+              }
+            },
+            "wind_gust": {
+              "n": 46,
+              "bias": -1.939,
+              "mae": 2.09,
+              "rmse": 2.552,
+              "unit": "m/s",
+              "sources": {
+                "METAR": 46
+              }
+            },
+            "visibility_exact": {
+              "n": 1179,
+              "bias": 16878.893,
+              "mae": 17787.619,
+              "rmse": 20835.098,
+              "unit": "m",
+              "sources": {
+                "METAR": 651,
+                "SYNOP": 528
+              }
+            },
+            "visibility_sub_10km": {
+              "n": 700,
+              "bias": 13738.42,
+              "mae": 14139.255,
+              "rmse": 17513.048,
+              "unit": "m",
+              "sources": {
+                "METAR": 651,
+                "SYNOP": 49
+              }
+            },
+            "cloud_low": {
+              "n": 4614,
+              "bias": -0.261,
+              "mae": 0.679,
+              "rmse": 1.503,
+              "unit": "okta",
+              "sources": {
+                "METAR": 4614
+              },
+              "within_reported_range_pct": 69.6
+            },
+            "cloud_mid": {
+              "n": 545,
+              "bias": -1.934,
+              "mae": 2.297,
+              "rmse": 3.019,
+              "unit": "okta",
+              "sources": {
+                "METAR": 545
+              },
+              "within_reported_range_pct": 25.1
+            },
+            "cloud_high": {
+              "n": 0,
+              "bias": null,
+              "mae": null,
+              "rmse": null,
+              "unit": "okta",
+              "sources": {}
+            },
+            "cloud_total": {
+              "n": 10834,
+              "bias": 0.5,
+              "mae": 1.689,
+              "rmse": 2.348,
+              "unit": "okta",
+              "sources": {
+                "SYNOP": 10834
+              }
+            }
+          },
+          "visibility_censored_lower_bound": {
+            "n": 3543,
+            "underforecast_n": 56,
+            "underforecast_rate_pct": 1.6,
+            "mean_underforecast_deficit_m": 2574.2,
+            "max_underforecast_deficit_m": 28300.0,
+            "note": "Lower-bound observations are not treated as exact visibility values."
+          },
+          "events": {
+            "precipitation": {
+              "n": 18268,
+              "hits": 478,
+              "misses": 302,
+              "false_alarms": 2029,
+              "correct_negatives": 15459,
+              "pod_pct": 61.3,
+              "far_pct": 80.9,
+              "csi_pct": 17.0,
+              "accuracy_pct": 87.2,
+              "observed_event_rate_pct": 4.3,
+              "sources": {
+                "METAR": 10441,
+                "SPECI": 5,
+                "SYNOP": 7822
+              }
+            },
+            "fog": {
+              "n": 18268,
+              "hits": 18,
+              "misses": 370,
+              "false_alarms": 120,
+              "correct_negatives": 17760,
+              "pod_pct": 4.6,
+              "far_pct": 87.0,
+              "csi_pct": 3.5,
+              "accuracy_pct": 97.3,
+              "observed_event_rate_pct": 2.1,
+              "sources": {
+                "METAR": 10754,
+                "SPECI": 5,
+                "SYNOP": 7509
+              },
+              "observed_mifg_n": 51,
+              "mifg_note": "MIFG is inventoried separately; model WMO weather codes do not distinguish MIFG from other fog types."
+            },
+            "thunderstorm": {
+              "n": 18268,
+              "hits": 0,
+              "misses": 111,
+              "false_alarms": 24,
+              "correct_negatives": 18133,
+              "pod_pct": 0.0,
+              "far_pct": 100.0,
+              "csi_pct": 0.0,
+              "accuracy_pct": 99.3,
+              "observed_event_rate_pct": 0.6,
+              "sources": {
+                "METAR": 10741,
+                "SPECI": 5,
+                "SYNOP": 7522
+              }
+            }
+          },
+          "wind": {
+            "wind_speed": {
+              "n": 18238,
+              "bias_ms": -0.444,
+              "mae_ms": 1.143
+            },
+            "wind_direction": {
+              "n": 16933,
+              "circular_bias_deg": 25.4,
+              "circular_mae_deg": 36.35
+            },
+            "speed_sources": {
+              "METAR_OR_SPECI": 3468,
+              "SYNOP": 14770
+            },
+            "direction_sources": {
+              "METAR_3_CIRCULAR_MEAN": 4138,
+              "METAR_SINGLE": 5977,
+              "SYNOP_FALLBACK": 6818
+            }
+          }
+        },
+        "by_lead_bucket": {
+          "0-3h": {
+            "eligible_samples": 1164,
+            "continuous": {
+              "temperature": {
+                "n": 1023,
+                "bias": 0.393,
+                "mae": 1.017,
+                "rmse": 1.434,
+                "unit": "degC",
+                "sources": {
+                  "METAR": 602,
+                  "SYNOP": 421
+                }
+              },
+              "dew_point": {
+                "n": 1023,
+                "bias": -0.104,
+                "mae": 0.848,
+                "rmse": 1.14,
+                "unit": "degC",
+                "sources": {
+                  "METAR": 602,
+                  "SYNOP": 421
+                }
+              },
+              "relative_humidity": {
+                "n": 1023,
+                "bias": -2.46,
+                "mae": 5.631,
+                "rmse": 7.296,
+                "unit": "pct",
+                "sources": {
+                  "METAR": 602,
+                  "SYNOP": 421
+                }
+              },
+              "pressure": {
+                "n": 1023,
+                "bias": 0.126,
+                "mae": 0.363,
+                "rmse": 0.763,
+                "unit": "hPa",
+                "sources": {
+                  "METAR": 602,
+                  "SYNOP": 421
+                }
+              },
+              "wind_gust": {
+                "n": 9,
+                "bias": -1.8,
+                "mae": 1.902,
+                "rmse": 2.157,
+                "unit": "m/s",
+                "sources": {
+                  "METAR": 9
+                }
+              },
+              "visibility_exact": {
+                "n": 125,
+                "bias": 10451.88,
+                "mae": 11142.746,
+                "rmse": 12886.163,
+                "unit": "m",
+                "sources": {
+                  "METAR": 121,
+                  "SYNOP": 4
+                }
+              },
+              "visibility_sub_10km": {
+                "n": 122,
+                "bias": 10805.614,
+                "mae": 10965.272,
+                "rmse": 12686.886,
+                "unit": "m",
+                "sources": {
+                  "METAR": 121,
+                  "SYNOP": 1
+                }
+              },
+              "cloud_low": {
+                "n": 876,
+                "bias": -0.208,
+                "mae": 0.521,
+                "rmse": 1.216,
+                "unit": "okta",
+                "sources": {
+                  "METAR": 876
+                },
+                "within_reported_range_pct": 75.0
+              },
+              "cloud_mid": {
+                "n": 132,
+                "bias": -2.242,
+                "mae": 2.288,
+                "rmse": 2.977,
+                "unit": "okta",
+                "sources": {
+                  "METAR": 132
+                },
+                "within_reported_range_pct": 26.5
+              },
+              "cloud_high": {
+                "n": 0,
+                "bias": null,
+                "mae": null,
+                "rmse": null,
+                "unit": "okta",
+                "sources": {}
+              },
+              "cloud_total": {
+                "n": 297,
+                "bias": 0.923,
+                "mae": 1.609,
+                "rmse": 2.262,
+                "unit": "okta",
+                "sources": {
+                  "SYNOP": 297
+                }
+              }
+            },
+            "visibility_censored_lower_bound": {
+              "n": 734,
+              "underforecast_n": 10,
+              "underforecast_rate_pct": 1.4,
+              "mean_underforecast_deficit_m": 1245.6,
+              "max_underforecast_deficit_m": 5016.5,
+              "note": "Lower-bound observations are not treated as exact visibility values."
+            },
+            "events": {
+              "precipitation": {
+                "n": 1024,
+                "hits": 24,
+                "misses": 14,
+                "false_alarms": 59,
+                "correct_negatives": 927,
+                "pod_pct": 63.2,
+                "far_pct": 71.1,
+                "csi_pct": 24.7,
+                "accuracy_pct": 92.9,
+                "observed_event_rate_pct": 3.7,
+                "sources": {
+                  "METAR": 846,
+                  "SYNOP": 178
+                }
+              },
+              "fog": {
+                "n": 1024,
+                "hits": 0,
+                "misses": 4,
+                "false_alarms": 6,
+                "correct_negatives": 1014,
+                "pod_pct": 0.0,
+                "far_pct": 100.0,
+                "csi_pct": 0.0,
+                "accuracy_pct": 99.0,
+                "observed_event_rate_pct": 0.4,
+                "sources": {
+                  "METAR": 855,
+                  "SYNOP": 169
+                },
+                "observed_mifg_n": 2,
+                "mifg_note": "MIFG is inventoried separately; model WMO weather codes do not distinguish MIFG from other fog types."
+              },
+              "thunderstorm": {
+                "n": 1024,
+                "hits": 0,
+                "misses": 2,
+                "false_alarms": 0,
+                "correct_negatives": 1022,
+                "pod_pct": 0.0,
+                "far_pct": null,
+                "csi_pct": 0.0,
+                "accuracy_pct": 99.8,
+                "observed_event_rate_pct": 0.2,
+                "sources": {
+                  "METAR": 853,
+                  "SYNOP": 171
+                }
+              }
+            },
+            "wind": {
+              "wind_speed": {
+                "n": 1023,
+                "bias_ms": -0.036,
+                "mae_ms": 0.783
+              },
+              "wind_direction": {
+                "n": 948,
+                "circular_bias_deg": 38.05,
+                "circular_mae_deg": 41.44
+              },
+              "speed_sources": {
+                "METAR_OR_SPECI": 602,
+                "SYNOP": 421
+              },
+              "direction_sources": {
+                "METAR_3_CIRCULAR_MEAN": 315,
+                "METAR_SINGLE": 494,
+                "SYNOP_FALLBACK": 139
+              }
+            }
+          },
+          "3-6h": {
+            "eligible_samples": 1252,
+            "continuous": {
+              "temperature": {
+                "n": 1111,
+                "bias": 0.407,
+                "mae": 0.955,
+                "rmse": 1.362,
+                "unit": "degC",
+                "sources": {
+                  "METAR": 644,
+                  "SYNOP": 467
+                }
+              },
+              "dew_point": {
+                "n": 1111,
+                "bias": -0.014,
+                "mae": 0.875,
+                "rmse": 1.17,
+                "unit": "degC",
+                "sources": {
+                  "METAR": 644,
+                  "SYNOP": 467
+                }
+              },
+              "relative_humidity": {
+                "n": 1111,
+                "bias": -2.097,
+                "mae": 5.243,
+                "rmse": 6.844,
+                "unit": "pct",
+                "sources": {
+                  "METAR": 644,
+                  "SYNOP": 467
+                }
+              },
+              "pressure": {
+                "n": 1111,
+                "bias": 0.144,
+                "mae": 0.366,
+                "rmse": 0.634,
+                "unit": "hPa",
+                "sources": {
+                  "METAR": 644,
+                  "SYNOP": 467
+                }
+              },
+              "wind_gust": {
+                "n": 5,
+                "bias": -1.037,
+                "mae": 1.435,
+                "rmse": 1.602,
+                "unit": "m/s",
+                "sources": {
+                  "METAR": 5
+                }
+              },
+              "visibility_exact": {
+                "n": 272,
+                "bias": 13133.89,
+                "mae": 13913.735,
+                "rmse": 16131.861,
+                "unit": "m",
+                "sources": {
+                  "METAR": 159,
+                  "SYNOP": 113
+                }
+              },
+              "visibility_sub_10km": {
+                "n": 173,
+                "bias": 12286.116,
+                "mae": 12495.814,
+                "rmse": 15074.948,
+                "unit": "m",
+                "sources": {
+                  "METAR": 159,
+                  "SYNOP": 14
+                }
+              },
+              "cloud_low": {
+                "n": 965,
+                "bias": -0.26,
+                "mae": 0.627,
+                "rmse": 1.371,
+                "unit": "okta",
+                "sources": {
+                  "METAR": 965
+                },
+                "within_reported_range_pct": 69.5
+              },
+              "cloud_mid": {
+                "n": 119,
+                "bias": -2.05,
+                "mae": 2.387,
+                "rmse": 3.051,
+                "unit": "okta",
+                "sources": {
+                  "METAR": 119
+                },
+                "within_reported_range_pct": 18.5
+              },
+              "cloud_high": {
+                "n": 0,
+                "bias": null,
+                "mae": null,
+                "rmse": null,
+                "unit": "okta",
+                "sources": {}
+              },
+              "cloud_total": {
+                "n": 437,
+                "bias": 0.753,
+                "mae": 1.961,
+                "rmse": 2.689,
+                "unit": "okta",
+                "sources": {
+                  "SYNOP": 437
+                }
+              }
+            },
+            "visibility_censored_lower_bound": {
+              "n": 766,
+              "underforecast_n": 13,
+              "underforecast_rate_pct": 1.7,
+              "mean_underforecast_deficit_m": 1107.0,
+              "max_underforecast_deficit_m": 5520.0,
+              "note": "Lower-bound observations are not treated as exact visibility values."
+            },
+            "events": {
+              "precipitation": {
+                "n": 1112,
+                "hits": 16,
+                "misses": 10,
+                "false_alarms": 58,
+                "correct_negatives": 1028,
+                "pod_pct": 61.5,
+                "far_pct": 78.4,
+                "csi_pct": 19.0,
+                "accuracy_pct": 93.9,
+                "observed_event_rate_pct": 2.3,
+                "sources": {
+                  "METAR": 918,
+                  "SYNOP": 194
+                }
+              },
+              "fog": {
+                "n": 1112,
+                "hits": 0,
+                "misses": 32,
+                "false_alarms": 3,
+                "correct_negatives": 1077,
+                "pod_pct": 0.0,
+                "far_pct": 100.0,
+                "csi_pct": 0.0,
+                "accuracy_pct": 96.9,
+                "observed_event_rate_pct": 2.9,
+                "sources": {
+                  "METAR": 930,
+                  "SYNOP": 182
+                },
+                "observed_mifg_n": 15,
+                "mifg_note": "MIFG is inventoried separately; model WMO weather codes do not distinguish MIFG from other fog types."
+              },
+              "thunderstorm": {
+                "n": 1112,
+                "hits": 0,
+                "misses": 2,
+                "false_alarms": 1,
+                "correct_negatives": 1109,
+                "pod_pct": 0.0,
+                "far_pct": 100.0,
+                "csi_pct": 0.0,
+                "accuracy_pct": 99.7,
+                "observed_event_rate_pct": 0.2,
+                "sources": {
+                  "METAR": 930,
+                  "SYNOP": 182
+                }
+              }
+            },
+            "wind": {
+              "wind_speed": {
+                "n": 1111,
+                "bias_ms": -0.042,
+                "mae_ms": 0.773
+              },
+              "wind_direction": {
+                "n": 1009,
+                "circular_bias_deg": 38.44,
+                "circular_mae_deg": 41.75
+              },
+              "speed_sources": {
+                "METAR_OR_SPECI": 644,
+                "SYNOP": 467
+              },
+              "direction_sources": {
+                "METAR_3_CIRCULAR_MEAN": 356,
+                "METAR_SINGLE": 504,
+                "SYNOP_FALLBACK": 149
+              }
+            }
+          },
+          "6-12h": {
+            "eligible_samples": 959,
+            "continuous": {
+              "temperature": {
+                "n": 817,
+                "bias": 0.238,
+                "mae": 1.02,
+                "rmse": 1.435,
+                "unit": "degC",
+                "sources": {
+                  "METAR": 414,
+                  "SYNOP": 403
+                }
+              },
+              "dew_point": {
+                "n": 817,
+                "bias": 0.214,
+                "mae": 1.052,
+                "rmse": 1.425,
+                "unit": "degC",
+                "sources": {
+                  "METAR": 414,
+                  "SYNOP": 403
+                }
+              },
+              "relative_humidity": {
+                "n": 817,
+                "bias": -0.765,
+                "mae": 5.495,
+                "rmse": 7.277,
+                "unit": "pct",
+                "sources": {
+                  "METAR": 414,
+                  "SYNOP": 403
+                }
+              },
+              "pressure": {
+                "n": 817,
+                "bias": 0.107,
+                "mae": 0.426,
+                "rmse": 0.81,
+                "unit": "hPa",
+                "sources": {
+                  "METAR": 414,
+                  "SYNOP": 403
+                }
+              },
+              "wind_gust": {
+                "n": 10,
+                "bias": -1.4,
+                "mae": 1.446,
+                "rmse": 1.614,
+                "unit": "m/s",
+                "sources": {
+                  "METAR": 10
+                }
+              },
+              "visibility_exact": {
+                "n": 267,
+                "bias": 19228.43,
+                "mae": 19922.949,
+                "rmse": 22862.526,
+                "unit": "m",
+                "sources": {
+                  "METAR": 120,
+                  "SYNOP": 147
+                }
+              },
+              "visibility_sub_10km": {
+                "n": 139,
+                "bias": 15263.243,
+                "mae": 15587.535,
+                "rmse": 19607.84,
+                "unit": "m",
+                "sources": {
+                  "METAR": 120,
+                  "SYNOP": 19
+                }
+              },
+              "cloud_low": {
+                "n": 693,
+                "bias": -0.339,
+                "mae": 0.726,
+                "rmse": 1.628,
+                "unit": "okta",
+                "sources": {
+                  "METAR": 693
+                },
+                "within_reported_range_pct": 68.8
+              },
+              "cloud_mid": {
+                "n": 82,
+                "bias": -1.768,
+                "mae": 2.134,
+                "rmse": 2.805,
+                "unit": "okta",
+                "sources": {
+                  "METAR": 82
+                },
+                "within_reported_range_pct": 26.8
+              },
+              "cloud_high": {
+                "n": 0,
+                "bias": null,
+                "mae": null,
+                "rmse": null,
+                "unit": "okta",
+                "sources": {}
+              },
+              "cloud_total": {
+                "n": 405,
+                "bias": 0.43,
+                "mae": 1.916,
+                "rmse": 2.661,
+                "unit": "okta",
+                "sources": {
+                  "SYNOP": 405
+                }
+              }
+            },
+            "visibility_censored_lower_bound": {
+              "n": 513,
+              "underforecast_n": 7,
+              "underforecast_rate_pct": 1.4,
+              "mean_underforecast_deficit_m": 2247.7,
+              "max_underforecast_deficit_m": 8400.0,
+              "note": "Lower-bound observations are not treated as exact visibility values."
+            },
+            "events": {
+              "precipitation": {
+                "n": 818,
+                "hits": 17,
+                "misses": 15,
+                "false_alarms": 54,
+                "correct_negatives": 732,
+                "pod_pct": 53.1,
+                "far_pct": 76.1,
+                "csi_pct": 19.8,
+                "accuracy_pct": 91.6,
+                "observed_event_rate_pct": 3.9,
+                "sources": {
+                  "METAR": 626,
+                  "SYNOP": 192
+                }
+              },
+              "fog": {
+                "n": 818,
+                "hits": 0,
+                "misses": 25,
+                "false_alarms": 6,
+                "correct_negatives": 787,
+                "pod_pct": 0.0,
+                "far_pct": 100.0,
+                "csi_pct": 0.0,
+                "accuracy_pct": 96.2,
+                "observed_event_rate_pct": 3.1,
+                "sources": {
+                  "METAR": 633,
+                  "SYNOP": 185
+                },
+                "observed_mifg_n": 3,
+                "mifg_note": "MIFG is inventoried separately; model WMO weather codes do not distinguish MIFG from other fog types."
+              },
+              "thunderstorm": {
+                "n": 818,
+                "hits": 0,
+                "misses": 4,
+                "false_alarms": 0,
+                "correct_negatives": 814,
+                "pod_pct": 0.0,
+                "far_pct": null,
+                "csi_pct": 0.0,
+                "accuracy_pct": 99.5,
+                "observed_event_rate_pct": 0.5,
+                "sources": {
+                  "METAR": 633,
+                  "SYNOP": 185
+                }
+              }
+            },
+            "wind": {
+              "wind_speed": {
+                "n": 817,
+                "bias_ms": -0.382,
+                "mae_ms": 0.9
+              },
+              "wind_direction": {
+                "n": 755,
+                "circular_bias_deg": 31.52,
+                "circular_mae_deg": 37.14
+              },
+              "speed_sources": {
+                "METAR_OR_SPECI": 414,
+                "SYNOP": 403
+              },
+              "direction_sources": {
+                "METAR_3_CIRCULAR_MEAN": 246,
+                "METAR_SINGLE": 338,
+                "SYNOP_FALLBACK": 171
+              }
+            }
+          },
+          "12-24h": {
+            "eligible_samples": 973,
+            "continuous": {
+              "temperature": {
+                "n": 825,
+                "bias": 0.028,
+                "mae": 1.082,
+                "rmse": 1.494,
+                "unit": "degC",
+                "sources": {
+                  "METAR": 436,
+                  "SYNOP": 389
+                }
+              },
+              "dew_point": {
+                "n": 825,
+                "bias": 0.345,
+                "mae": 1.2,
+                "rmse": 1.752,
+                "unit": "degC",
+                "sources": {
+                  "METAR": 436,
+                  "SYNOP": 389
+                }
+              },
+              "relative_humidity": {
+                "n": 825,
+                "bias": 0.861,
+                "mae": 6.809,
+                "rmse": 9.363,
+                "unit": "pct",
+                "sources": {
+                  "METAR": 436,
+                  "SYNOP": 389
+                }
+              },
+              "pressure": {
+                "n": 825,
+                "bias": 0.041,
+                "mae": 0.455,
+                "rmse": 0.968,
+                "unit": "hPa",
+                "sources": {
+                  "METAR": 436,
+                  "SYNOP": 389
+                }
+              },
+              "wind_gust": {
+                "n": 5,
+                "bias": -2.295,
+                "mae": 2.295,
+                "rmse": 2.401,
+                "unit": "m/s",
+                "sources": {
+                  "METAR": 5
+                }
+              },
+              "visibility_exact": {
+                "n": 210,
+                "bias": 19437.894,
+                "mae": 20135.99,
+                "rmse": 22751.97,
+                "unit": "m",
+                "sources": {
+                  "METAR": 99,
+                  "SYNOP": 111
+                }
+              },
+              "visibility_sub_10km": {
+                "n": 105,
+                "bias": 15389.099,
+                "mae": 16056.908,
+                "rmse": 19725.021,
+                "unit": "m",
+                "sources": {
+                  "METAR": 99,
+                  "SYNOP": 6
+                }
+              },
+              "cloud_low": {
+                "n": 709,
+                "bias": -0.271,
+                "mae": 0.68,
+                "rmse": 1.592,
+                "unit": "okta",
+                "sources": {
+                  "METAR": 709
+                },
+                "within_reported_range_pct": 71.9
+              },
+              "cloud_mid": {
+                "n": 86,
+                "bias": -1.756,
+                "mae": 2.151,
+                "rmse": 2.879,
+                "unit": "okta",
+                "sources": {
+                  "METAR": 86
+                },
+                "within_reported_range_pct": 27.9
+              },
+              "cloud_high": {
+                "n": 0,
+                "bias": null,
+                "mae": null,
+                "rmse": null,
+                "unit": "okta",
+                "sources": {}
+              },
+              "cloud_total": {
+                "n": 356,
+                "bias": 0.494,
+                "mae": 1.831,
+                "rmse": 2.65,
+                "unit": "okta",
+                "sources": {
+                  "SYNOP": 356
+                }
+              }
+            },
+            "visibility_censored_lower_bound": {
+              "n": 543,
+              "underforecast_n": 8,
+              "underforecast_rate_pct": 1.5,
+              "mean_underforecast_deficit_m": 3615.6,
+              "max_underforecast_deficit_m": 8900.0,
+              "note": "Lower-bound observations are not treated as exact visibility values."
+            },
+            "events": {
+              "precipitation": {
+                "n": 827,
+                "hits": 19,
+                "misses": 11,
+                "false_alarms": 57,
+                "correct_negatives": 740,
+                "pod_pct": 63.3,
+                "far_pct": 75.0,
+                "csi_pct": 21.8,
+                "accuracy_pct": 91.8,
+                "observed_event_rate_pct": 3.6,
+                "sources": {
+                  "METAR": 636,
+                  "SYNOP": 191
+                }
+              },
+              "fog": {
+                "n": 827,
+                "hits": 0,
+                "misses": 27,
+                "false_alarms": 3,
+                "correct_negatives": 797,
+                "pod_pct": 0.0,
+                "far_pct": 100.0,
+                "csi_pct": 0.0,
+                "accuracy_pct": 96.4,
+                "observed_event_rate_pct": 3.3,
+                "sources": {
+                  "METAR": 644,
+                  "SYNOP": 183
+                },
+                "observed_mifg_n": 3,
+                "mifg_note": "MIFG is inventoried separately; model WMO weather codes do not distinguish MIFG from other fog types."
+              },
+              "thunderstorm": {
+                "n": 827,
+                "hits": 0,
+                "misses": 5,
+                "false_alarms": 0,
+                "correct_negatives": 822,
+                "pod_pct": 0.0,
+                "far_pct": null,
+                "csi_pct": 0.0,
+                "accuracy_pct": 99.4,
+                "observed_event_rate_pct": 0.6,
+                "sources": {
+                  "METAR": 643,
+                  "SYNOP": 184
+                }
+              }
+            },
+            "wind": {
+              "wind_speed": {
+                "n": 826,
+                "bias_ms": -0.316,
+                "mae_ms": 0.965
+              },
+              "wind_direction": {
+                "n": 782,
+                "circular_bias_deg": 30.21,
+                "circular_mae_deg": 38.56
+              },
+              "speed_sources": {
+                "METAR_OR_SPECI": 437,
+                "SYNOP": 389
+              },
+              "direction_sources": {
+                "METAR_3_CIRCULAR_MEAN": 270,
+                "METAR_SINGLE": 346,
+                "SYNOP_FALLBACK": 166
+              }
+            }
+          },
+          "24-48h": {
+            "eligible_samples": 7122,
+            "continuous": {
+              "temperature": {
+                "n": 6954,
+                "bias": 0.095,
+                "mae": 1.23,
+                "rmse": 1.765,
+                "unit": "degC",
+                "sources": {
+                  "METAR": 536,
+                  "SPECI": 1,
+                  "SYNOP": 6417
+                }
+              },
+              "dew_point": {
+                "n": 3446,
+                "bias": 0.578,
+                "mae": 1.199,
+                "rmse": 1.639,
+                "unit": "degC",
+                "sources": {
+                  "METAR": 536,
+                  "SPECI": 1,
+                  "SYNOP": 2909
+                }
+              },
+              "relative_humidity": {
+                "n": 3446,
+                "bias": 2.233,
+                "mae": 6.38,
+                "rmse": 8.223,
+                "unit": "pct",
+                "sources": {
+                  "METAR": 536,
+                  "SPECI": 1,
+                  "SYNOP": 2909
+                }
+              },
+              "pressure": {
+                "n": 3449,
+                "bias": -0.071,
+                "mae": 0.617,
+                "rmse": 1.626,
+                "unit": "hPa",
+                "sources": {
+                  "METAR": 537,
+                  "SPECI": 1,
+                  "SYNOP": 2911
+                }
+              },
+              "wind_gust": {
+                "n": 12,
+                "bias": -1.907,
+                "mae": 2.207,
+                "rmse": 2.952,
+                "unit": "m/s",
+                "sources": {
+                  "METAR": 12
+                }
+              },
+              "visibility_exact": {
+                "n": 223,
+                "bias": 20468.661,
+                "mae": 21788.445,
+                "rmse": 24944.083,
+                "unit": "m",
+                "sources": {
+                  "METAR": 87,
+                  "SYNOP": 136
+                }
+              },
+              "visibility_sub_10km": {
+                "n": 94,
+                "bias": 14553.101,
+                "mae": 15590.46,
+                "rmse": 19713.848,
+                "unit": "m",
+                "sources": {
+                  "METAR": 87,
+                  "SYNOP": 7
+                }
+              },
+              "cloud_low": {
+                "n": 712,
+                "bias": -0.195,
+                "mae": 0.698,
+                "rmse": 1.491,
+                "unit": "okta",
+                "sources": {
+                  "METAR": 712
+                },
+                "within_reported_range_pct": 67.3
+              },
+              "cloud_mid": {
+                "n": 57,
+                "bias": -1.86,
+                "mae": 2.421,
+                "rmse": 3.095,
+                "unit": "okta",
+                "sources": {
+                  "METAR": 57
+                },
+                "within_reported_range_pct": 15.8
+              },
+              "cloud_high": {
+                "n": 0,
+                "bias": null,
+                "mae": null,
+                "rmse": null,
+                "unit": "okta",
+                "sources": {}
+              },
+              "cloud_total": {
+                "n": 2143,
+                "bias": 0.583,
+                "mae": 1.497,
+                "rmse": 2.115,
+                "unit": "okta",
+                "sources": {
+                  "SYNOP": 2143
+                }
+              }
+            },
+            "visibility_censored_lower_bound": {
+              "n": 529,
+              "underforecast_n": 12,
+              "underforecast_rate_pct": 2.3,
+              "mean_underforecast_deficit_m": 5036.4,
+              "max_underforecast_deficit_m": 28300.0,
+              "note": "Lower-bound observations are not treated as exact visibility values."
+            },
+            "events": {
+              "precipitation": {
+                "n": 3459,
+                "hits": 110,
+                "misses": 38,
+                "false_alarms": 351,
+                "correct_negatives": 2960,
+                "pod_pct": 74.3,
+                "far_pct": 76.1,
+                "csi_pct": 22.0,
+                "accuracy_pct": 88.8,
+                "observed_event_rate_pct": 4.3,
+                "sources": {
+                  "METAR": 1887,
+                  "SPECI": 1,
+                  "SYNOP": 1571
+                }
+              },
+              "fog": {
+                "n": 3459,
+                "hits": 6,
+                "misses": 60,
+                "false_alarms": 22,
+                "correct_negatives": 3371,
+                "pod_pct": 9.1,
+                "far_pct": 78.6,
+                "csi_pct": 6.8,
+                "accuracy_pct": 97.6,
+                "observed_event_rate_pct": 1.9,
+                "sources": {
+                  "METAR": 1947,
+                  "SPECI": 1,
+                  "SYNOP": 1511
+                },
+                "observed_mifg_n": 6,
+                "mifg_note": "MIFG is inventoried separately; model WMO weather codes do not distinguish MIFG from other fog types."
+              },
+              "thunderstorm": {
+                "n": 3459,
+                "hits": 0,
+                "misses": 22,
+                "false_alarms": 3,
+                "correct_negatives": 3434,
+                "pod_pct": 0.0,
+                "far_pct": 100.0,
+                "csi_pct": 0.0,
+                "accuracy_pct": 99.3,
+                "observed_event_rate_pct": 0.6,
+                "sources": {
+                  "METAR": 1945,
+                  "SPECI": 1,
+                  "SYNOP": 1513
+                }
+              }
+            },
+            "wind": {
+              "wind_speed": {
+                "n": 3453,
+                "bias_ms": -0.541,
+                "mae_ms": 1.087
+              },
+              "wind_direction": {
+                "n": 3216,
+                "circular_bias_deg": 23.42,
+                "circular_mae_deg": 31.55
+              },
+              "speed_sources": {
+                "METAR_OR_SPECI": 543,
+                "SYNOP": 2910
+              },
+              "direction_sources": {
+                "METAR_3_CIRCULAR_MEAN": 763,
+                "METAR_SINGLE": 1071,
+                "SYNOP_FALLBACK": 1382
+              }
+            }
+          },
+          "48-120h": {
+            "eligible_samples": 25223,
+            "continuous": {
+              "temperature": {
+                "n": 24975,
+                "bias": 0.119,
+                "mae": 1.624,
+                "rmse": 2.247,
+                "unit": "degC",
+                "sources": {
+                  "METAR": 804,
+                  "SPECI": 4,
+                  "SYNOP": 24167
+                }
+              },
+              "dew_point": {
+                "n": 10983,
+                "bias": 0.566,
+                "mae": 1.522,
+                "rmse": 2.05,
+                "unit": "degC",
+                "sources": {
+                  "METAR": 804,
+                  "SPECI": 4,
+                  "SYNOP": 10175
+                }
+              },
+              "relative_humidity": {
+                "n": 10983,
+                "bias": 2.195,
+                "mae": 7.638,
+                "rmse": 9.846,
+                "unit": "pct",
+                "sources": {
+                  "METAR": 804,
+                  "SPECI": 4,
+                  "SYNOP": 10175
+                }
+              },
+              "pressure": {
+                "n": 10996,
+                "bias": 0.007,
+                "mae": 1.505,
+                "rmse": 2.546,
+                "unit": "hPa",
+                "sources": {
+                  "METAR": 808,
+                  "SPECI": 4,
+                  "SYNOP": 10184
+                }
+              },
+              "wind_gust": {
+                "n": 5,
+                "bias": -3.886,
+                "mae": 3.886,
+                "rmse": 4.131,
+                "unit": "m/s",
+                "sources": {
+                  "METAR": 5
+                }
+              },
+              "visibility_exact": {
+                "n": 82,
+                "bias": 15132.343,
+                "mae": 16919.695,
+                "rmse": 20135.397,
+                "unit": "m",
+                "sources": {
+                  "METAR": 65,
+                  "SYNOP": 17
+                }
+              },
+              "visibility_sub_10km": {
+                "n": 67,
+                "bias": 15935.426,
+                "mae": 16116.322,
+                "rmse": 19284.714,
+                "unit": "m",
+                "sources": {
+                  "METAR": 65,
+                  "SYNOP": 2
+                }
+              },
+              "cloud_low": {
+                "n": 659,
+                "bias": -0.308,
+                "mae": 0.897,
+                "rmse": 1.784,
+                "unit": "okta",
+                "sources": {
+                  "METAR": 659
+                },
+                "within_reported_range_pct": 63.4
+              },
+              "cloud_mid": {
+                "n": 69,
+                "bias": -1.623,
+                "mae": 2.435,
+                "rmse": 3.371,
+                "unit": "okta",
+                "sources": {
+                  "METAR": 69
+                },
+                "within_reported_range_pct": 36.2
+              },
+              "cloud_high": {
+                "n": 0,
+                "bias": null,
+                "mae": null,
+                "rmse": null,
+                "unit": "okta",
+                "sources": {}
+              },
+              "cloud_total": {
+                "n": 7196,
+                "bias": 0.446,
+                "mae": 1.714,
+                "rmse": 2.36,
+                "unit": "okta",
+                "sources": {
+                  "SYNOP": 7196
+                }
+              }
+            },
+            "visibility_censored_lower_bound": {
+              "n": 458,
+              "underforecast_n": 6,
+              "underforecast_rate_pct": 1.3,
+              "mean_underforecast_deficit_m": 2035.4,
+              "max_underforecast_deficit_m": 2829.3,
+              "note": "Lower-bound observations are not treated as exact visibility values."
+            },
+            "events": {
+              "precipitation": {
+                "n": 11028,
+                "hits": 292,
+                "misses": 214,
+                "false_alarms": 1450,
+                "correct_negatives": 9072,
+                "pod_pct": 57.7,
+                "far_pct": 83.2,
+                "csi_pct": 14.9,
+                "accuracy_pct": 84.9,
+                "observed_event_rate_pct": 4.6,
+                "sources": {
+                  "METAR": 5528,
+                  "SPECI": 4,
+                  "SYNOP": 5496
+                }
+              },
+              "fog": {
+                "n": 11028,
+                "hits": 12,
+                "misses": 222,
+                "false_alarms": 80,
+                "correct_negatives": 10714,
+                "pod_pct": 5.1,
+                "far_pct": 87.0,
+                "csi_pct": 3.8,
+                "accuracy_pct": 97.3,
+                "observed_event_rate_pct": 2.1,
+                "sources": {
+                  "METAR": 5745,
+                  "SPECI": 4,
+                  "SYNOP": 5279
+                },
+                "observed_mifg_n": 22,
+                "mifg_note": "MIFG is inventoried separately; model WMO weather codes do not distinguish MIFG from other fog types."
+              },
+              "thunderstorm": {
+                "n": 11028,
+                "hits": 0,
+                "misses": 76,
+                "false_alarms": 20,
+                "correct_negatives": 10932,
+                "pod_pct": 0.0,
+                "far_pct": 100.0,
+                "csi_pct": 0.0,
+                "accuracy_pct": 99.1,
+                "observed_event_rate_pct": 0.7,
+                "sources": {
+                  "METAR": 5737,
+                  "SPECI": 4,
+                  "SYNOP": 5287
+                }
+              }
+            },
+            "wind": {
+              "wind_speed": {
+                "n": 11008,
+                "bias_ms": -0.505,
+                "mae_ms": 1.262
+              },
+              "wind_direction": {
+                "n": 10223,
+                "circular_bias_deg": 22.38,
+                "circular_mae_deg": 36.62
+              },
+              "speed_sources": {
+                "METAR_OR_SPECI": 828,
+                "SYNOP": 10180
+              },
+              "direction_sources": {
+                "METAR_3_CIRCULAR_MEAN": 2188,
+                "METAR_SINGLE": 3224,
+                "SYNOP_FALLBACK": 4811
+              }
+            }
+          }
+        },
+        "limitations": {
+          "cloud_base": "Not diagnosed: archived consensus forecast has no cloud-base field.",
+          "precipitation_amount": "Not diagnosed: central verification observation set has occurrence but no guaranteed hourly accumulation reference.",
+          "mifg_prediction": "Observed MIFG is counted, but WMO model weather codes do not provide a distinct MIFG forecast class."
+        },
+        "wind_bias_schema": "prognozaepir-consensus-wind-bias-v1"
       }
     },
     "ecmwf_ifs": {
       "name": "ECMWF",
       "score_pct": 86,
-      "forecast_samples": 9123,
+      "forecast_samples": 9146,
       "sources": {
-        "METAR": 8010,
+        "METAR": 8033,
         "SPECI": 0,
         "SYNOP": 5605
       },
       "components": {
         "temperature": {
-          "n": 8184,
+          "n": 8204,
           "score_pct": 90
         },
         "dew_point": {
-          "n": 8179,
+          "n": 8199,
           "score_pct": 92
         },
         "pressure": {
-          "n": 8221,
+          "n": 8241,
           "score_pct": 97
         },
         "wind": {
-          "n": 8185,
+          "n": 8205,
           "score_pct": 85
         },
         "visibility": {
@@ -74,11 +1698,11 @@
           "score_pct": 84
         },
         "cloud": {
-          "n": 7859,
-          "score_pct": 73
+          "n": 7882,
+          "score_pct": 74
         },
         "precipitation": {
-          "n": 8174,
+          "n": 8194,
           "score_pct": 91
         }
       }
@@ -86,27 +1710,27 @@
     "ecmwf_aifs025_single": {
       "name": "ECMWF AIFS (AI)",
       "score_pct": 88,
-      "forecast_samples": 9740,
+      "forecast_samples": 9756,
       "sources": {
-        "METAR": 9709,
+        "METAR": 9725,
         "SPECI": 5,
         "SYNOP": 6328
       },
       "components": {
         "temperature": {
-          "n": 8834,
+          "n": 8847,
           "score_pct": 92
         },
         "dew_point": {
-          "n": 8834,
+          "n": 8847,
           "score_pct": 95
         },
         "pressure": {
-          "n": 8840,
+          "n": 8853,
           "score_pct": 96
         },
         "wind": {
-          "n": 8851,
+          "n": 8864,
           "score_pct": 85
         },
         "visibility": {
@@ -114,11 +1738,11 @@
           "score_pct": null
         },
         "cloud": {
-          "n": 8981,
+          "n": 8997,
           "score_pct": 79
         },
         "precipitation": {
-          "n": 8851,
+          "n": 8864,
           "score_pct": 82
         }
       }
@@ -126,27 +1750,27 @@
     "ncep_gfs_global": {
       "name": "GFS",
       "score_pct": 81,
-      "forecast_samples": 34815,
+      "forecast_samples": 34831,
       "sources": {
-        "METAR": 10724,
+        "METAR": 10740,
         "SPECI": 5,
         "SYNOP": 31325
       },
       "components": {
         "temperature": {
-          "n": 33883,
+          "n": 33896,
           "score_pct": 82
         },
         "dew_point": {
-          "n": 16383,
+          "n": 16396,
           "score_pct": 84
         },
         "pressure": {
-          "n": 16398,
+          "n": 16411,
           "score_pct": 91
         },
         "wind": {
-          "n": 16413,
+          "n": 16426,
           "score_pct": 82
         },
         "visibility": {
@@ -154,11 +1778,11 @@
           "score_pct": 84
         },
         "cloud": {
-          "n": 12818,
+          "n": 12834,
           "score_pct": 66
         },
         "precipitation": {
-          "n": 16438,
+          "n": 16451,
           "score_pct": 91
         }
       }
@@ -166,27 +1790,27 @@
     "icon_d2": {
       "name": "ICON-D2",
       "score_pct": 89,
-      "forecast_samples": 6550,
+      "forecast_samples": 6565,
       "sources": {
-        "METAR": 5224,
+        "METAR": 5239,
         "SPECI": 1,
         "SYNOP": 3661
       },
       "components": {
         "temperature": {
-          "n": 5849,
+          "n": 5861,
           "score_pct": 93
         },
         "dew_point": {
-          "n": 5849,
+          "n": 5861,
           "score_pct": 95
         },
         "pressure": {
-          "n": 5852,
+          "n": 5864,
           "score_pct": 99
         },
         "wind": {
-          "n": 5855,
+          "n": 5867,
           "score_pct": 86
         },
         "visibility": {
@@ -194,11 +1818,11 @@
           "score_pct": 83
         },
         "cloud": {
-          "n": 5580,
+          "n": 5595,
           "score_pct": 79
         },
         "precipitation": {
-          "n": 5860,
+          "n": 5872,
           "score_pct": 95
         }
       }
@@ -206,27 +1830,27 @@
     "icon_eu": {
       "name": "ICON-EU",
       "score_pct": 86,
-      "forecast_samples": 14690,
+      "forecast_samples": 14706,
       "sources": {
-        "METAR": 9409,
+        "METAR": 9425,
         "SPECI": 4,
         "SYNOP": 11300
       },
       "components": {
         "temperature": {
-          "n": 13767,
+          "n": 13780,
           "score_pct": 90
         },
         "dew_point": {
-          "n": 13767,
+          "n": 13780,
           "score_pct": 90
         },
         "pressure": {
-          "n": 13779,
+          "n": 13792,
           "score_pct": 95
         },
         "wind": {
-          "n": 13791,
+          "n": 13804,
           "score_pct": 84
         },
         "visibility": {
@@ -234,11 +1858,11 @@
           "score_pct": 85
         },
         "cloud": {
-          "n": 11075,
+          "n": 11091,
           "score_pct": 75
         },
         "precipitation": {
-          "n": 13811,
+          "n": 13824,
           "score_pct": 91
         }
       }
@@ -246,27 +1870,27 @@
     "icon_global": {
       "name": "ICON",
       "score_pct": 85,
-      "forecast_samples": 17421,
+      "forecast_samples": 17435,
       "sources": {
-        "METAR": 10830,
+        "METAR": 10844,
         "SPECI": 5,
         "SYNOP": 13858
       },
       "components": {
         "temperature": {
-          "n": 16477,
+          "n": 16488,
           "score_pct": 88
         },
         "dew_point": {
-          "n": 16472,
+          "n": 16483,
           "score_pct": 88
         },
         "pressure": {
-          "n": 16492,
+          "n": 16503,
           "score_pct": 92
         },
         "wind": {
-          "n": 16502,
+          "n": 16513,
           "score_pct": 83
         },
         "visibility": {
@@ -274,11 +1898,11 @@
           "score_pct": null
         },
         "cloud": {
-          "n": 12919,
+          "n": 12933,
           "score_pct": 74
         },
         "precipitation": {
-          "n": 16532,
+          "n": 16543,
           "score_pct": 91
         }
       }
@@ -286,27 +1910,27 @@
     "chmi_aladin_central_europe_2km": {
       "name": "ALADIN",
       "score_pct": 84,
-      "forecast_samples": 4455,
+      "forecast_samples": 4469,
       "sources": {
-        "METAR": 4452,
+        "METAR": 4466,
         "SPECI": 0,
         "SYNOP": 1723
       },
       "components": {
         "temperature": {
-          "n": 3747,
+          "n": 3758,
           "score_pct": 91
         },
         "dew_point": {
-          "n": 2927,
+          "n": 2938,
           "score_pct": 93
         },
         "pressure": {
-          "n": 3747,
+          "n": 3758,
           "score_pct": 100
         },
         "wind": {
-          "n": 3747,
+          "n": 3758,
           "score_pct": 81
         },
         "visibility": {
@@ -314,39 +1938,39 @@
           "score_pct": 65
         },
         "cloud": {
-          "n": 4190,
+          "n": 4204,
           "score_pct": 78
         },
         "precipitation": {
-          "n": 3747,
-          "score_pct": 94
+          "n": 3758,
+          "score_pct": 95
         }
       }
     },
     "meteofrance_arpege_europe": {
       "name": "ARPEGE EU",
       "score_pct": 85,
-      "forecast_samples": 12069,
+      "forecast_samples": 12085,
       "sources": {
-        "METAR": 8102,
+        "METAR": 8118,
         "SPECI": 3,
         "SYNOP": 8774
       },
       "components": {
         "temperature": {
-          "n": 11187,
+          "n": 11200,
           "score_pct": 86
         },
         "dew_point": {
-          "n": 11187,
+          "n": 11200,
           "score_pct": 85
         },
         "pressure": {
-          "n": 11196,
+          "n": 11209,
           "score_pct": 97
         },
         "wind": {
-          "n": 4016,
+          "n": 4029,
           "score_pct": 85
         },
         "visibility": {
@@ -354,51 +1978,51 @@
           "score_pct": null
         },
         "cloud": {
-          "n": 9328,
+          "n": 9344,
           "score_pct": 74
         },
         "precipitation": {
-          "n": 11220,
+          "n": 11233,
           "score_pct": 91
         }
       }
     },
     "ukmo_global_deterministic_10km": {
       "name": "UKMO",
-      "score_pct": 85,
-      "forecast_samples": 13603,
+      "score_pct": 84,
+      "forecast_samples": 13619,
       "sources": {
-        "METAR": 10769,
+        "METAR": 10785,
         "SPECI": 5,
         "SYNOP": 10049
       },
       "components": {
         "temperature": {
-          "n": 10898,
+          "n": 10911,
           "score_pct": 88
         },
         "dew_point": {
-          "n": 9544,
+          "n": 9557,
           "score_pct": 88
         },
         "pressure": {
-          "n": 10192,
+          "n": 10205,
           "score_pct": 93
         },
         "wind": {
-          "n": 11901,
+          "n": 11914,
           "score_pct": 83
         },
         "visibility": {
           "n": 337,
-          "score_pct": 85
+          "score_pct": 84
         },
         "cloud": {
-          "n": 9653,
+          "n": 9669,
           "score_pct": 72
         },
         "precipitation": {
-          "n": 10310,
+          "n": 10323,
           "score_pct": 91
         }
       }
@@ -406,27 +2030,27 @@
     "cmc_gem_gdps": {
       "name": "GEM",
       "score_pct": 82,
-      "forecast_samples": 16834,
+      "forecast_samples": 16850,
       "sources": {
-        "METAR": 10244,
+        "METAR": 10260,
         "SPECI": 5,
         "SYNOP": 13337
       },
       "components": {
         "temperature": {
-          "n": 15889,
+          "n": 15902,
           "score_pct": 84
         },
         "dew_point": {
-          "n": 15870,
+          "n": 15883,
           "score_pct": 85
         },
         "pressure": {
-          "n": 15885,
+          "n": 15898,
           "score_pct": 91
         },
         "wind": {
-          "n": 15928,
+          "n": 15941,
           "score_pct": 82
         },
         "visibility": {
@@ -434,11 +2058,11 @@
           "score_pct": null
         },
         "cloud": {
-          "n": 12299,
+          "n": 12315,
           "score_pct": 69
         },
         "precipitation": {
-          "n": 15944,
+          "n": 15957,
           "score_pct": 88
         }
       }
@@ -500,7 +2124,7 @@
       },
       "ukmo_global_deterministic_10km": {
         "n": 337,
-        "score_pct": 85,
+        "score_pct": 84,
         "metar_speci_n": 337,
         "synop_n": 0
       },
@@ -512,7 +2136,7 @@
       },
       "consensus": {
         "n": 337,
-        "score_pct": 86,
+        "score_pct": 85,
         "metar_speci_n": 337,
         "synop_n": 0
       }
