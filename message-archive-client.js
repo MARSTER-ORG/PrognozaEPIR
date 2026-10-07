@@ -6,7 +6,7 @@
   const SUPABASE_ENABLED=window.PROGNOZAEPIR_SUPABASE_DISABLED!==true;
   const GITHUB_ROOT='https://raw.githubusercontent.com/MARSTER-ORG/PrognozaEPIR/main/data/messages';
   const STATIC_ROOT='data/messages';
-  const RAILWAY_ROOT=''; // Railway is OPERA-only; MessageArchive uses Supabase -> GitHub/static fallback.
+  const RAILWAY_ROOT='https://central-ingestor-production.up.railway.app/data/messages';
   const CUSTOM_ROOT=window.PROGNOZAEPIR_ARCHIVE_ROOT?String(window.PROGNOZAEPIR_ARCHIVE_ROOT).replace(/\/+$/,''):'';
   const PRIMARY_ROOT=SUPABASE_ENABLED?SUPABASE_API:(CUSTOM_ROOT||RAILWAY_ROOT);
   const TTL_MS=30_000,DAY_MS=86_400_000,MAX_FALLBACK_DAYS=400,cache=new Map(),nativeFetch=window.fetch.bind(window);
