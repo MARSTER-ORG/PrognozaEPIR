@@ -7,7 +7,7 @@
   if (window.__PrognozaEPIRLightningLFLInstalled) return;
   window.__PrognozaEPIRLightningLFLInstalled = true;
 
-  const ENDPOINT='https://central-ingestor-production.up.railway.app/data/lightning/latest.json';
+  const ENDPOINT='https://qozgntzeormujmqzkkmd.supabase.co/functions/v1/lightning-latest';
   const REFRESH_MS=5*60*1000, MAX_AGE_MS=22*60*1000, MAP_WINDOW_MIN=20;
   const PANEL_RADII=[10,25,50,75,100];
   const $=id=>document.getElementById(id);
