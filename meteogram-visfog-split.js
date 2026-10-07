@@ -12,6 +12,7 @@
   const PROB_RAIN = '#0b9f2b';
   const PROB_STORM = '#8b3db8';
   const VIS_COLOR = '#d66c12';
+  const VIS_PLOT_MAX_KM = 15;
   const INNER_PAD = 9;
 
   const splitPanels = [
@@ -109,7 +110,7 @@
     if(id==='probstorm') return [0,100];
     if(id==='press') return niceRange(d.map(z=>z.P),1,8);
     if(id==='wind') return [0,windMax];
-    if(id==='visfog') return [0,30];
+    if(id==='visfog') return [0,VIS_PLOT_MAX_KM];
     if(id==='cloud') return [0,15];
     if(id==='okta') return [0,8];
     return null;
@@ -225,7 +226,7 @@
 
     p=byId('visfog');
     withClip(x0,x1,p,()=>{
-      drawSeries(d.map(z=>({x:x(z.t),y:panelScale(clamp((z.VIS||0)/1000,0,30),0,30,p.y,p.h)})),VIS_COLOR,2.4);
+      drawSeries(d.map(z=>({x:x(z.t),y:panelScale(clamp((z.VIS||0)/1000,0,VIS_PLOT_MAX_KM),0,VIS_PLOT_MAX_KM,p.y,p.h)})),VIS_COLOR,2.4);
     });
 
     p=byId('cloud');
