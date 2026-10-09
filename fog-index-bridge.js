@@ -61,8 +61,9 @@
       if(group.length)groups.push(group);
       const x0=m.x0,x1=m.x1,plotW=x1-x0,x=t=>Math.max(x0,Math.min(x1,x0+(t-m.t0)/(m.t1-m.t0)*plotW));
       const yFor=score=>{const q=Math.max(0,Math.min(1,(Number(score)-ACTIVE)/(100-ACTIVE)));return p.y+p.h-8-q*Math.max(16,p.h-22);};
-      ctx.save();ctx.beginPath();ctx.rect(x0,p.y,plotW,p.h);ctx.clip();ctx.lineWidth=1.4;ctx.font='bold 7.5px Arial';ctx.textAlign='center';ctx.textBaseline='bottom';
-      for(const row of rows){const xx=x(Number(row.t)),yy=yFor(Number(row.score));ctx.strokeStyle='rgba(255,157,70,.98)';ctx.beginPath();ctx.moveTo(xx-3.5,yy);ctx.lineTo(xx+3.5,yy);ctx.stroke();}
+      ctx.save();ctx.beginPath();ctx.rect(x0,p.y,plotW,p.h);ctx.clip();ctx.font='bold 7.5px Arial';ctx.textAlign='center';ctx.textBaseline='bottom';
+      // Słupki FG pokazują wartości godzinowe; dodatkowe poziome kreski były zbędne.
+      // Pozostaw wyłącznie etykietę najwyższego wyniku FG w każdym epizodzie.
       for(const g of groups){const peak=g.reduce((a,b)=>!a||Number(b.score)>Number(a.score)?b:a,null);if(!peak)continue;const xx=x(Number(peak.t)),yy=yFor(Number(peak.score));ctx.fillStyle=typeof canvasPalette==='function'?(canvasPalette().text||'#fff'):'#fff';ctx.fillText('FG '+Math.round(Number(peak.score)),xx,Math.max(p.y+10,yy-3));}
       ctx.restore();
     }catch(_){}
