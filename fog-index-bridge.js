@@ -64,7 +64,7 @@
       ctx.save();ctx.beginPath();ctx.rect(x0,p.y,plotW,p.h);ctx.clip();ctx.font='bold 7.5px Arial';ctx.textAlign='center';ctx.textBaseline='bottom';
       // Słupki FG pokazują wartości godzinowe; dodatkowe poziome kreski były zbędne.
       // Pozostaw wyłącznie etykietę najwyższego wyniku FG w każdym epizodzie.
-      for(const g of groups){const peak=g.reduce((a,b)=>!a||Number(b.score)>Number(a.score)?b:a,null);if(!peak)continue;const xx=x(Number(peak.t)),yy=yFor(Number(peak.score));ctx.fillStyle=typeof canvasPalette==='function'?(canvasPalette().text||'#fff'):'#fff';ctx.fillText('FG '+Math.round(Number(peak.score)),xx,Math.max(p.y+10,yy-3));}
+      for(const g of groups){const peak=g.reduce((a,b)=>!a||Number(b.score)>Number(a.score)?b:a,null);if(!peak)continue;const xx=x(Number(peak.t)),yy=yFor(Number(peak.score));ctx.fillStyle=typeof canvasPalette==='function'?(canvasPalette().text||'#fff'):'#fff';ctx.fillText(String(Math.round(Number(peak.score))),xx,Math.max(p.y+10,yy-3));}
       ctx.restore();
     }catch(_){}
   }
