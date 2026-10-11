@@ -45,13 +45,13 @@ assert.equal(E.validateTaf('TAF EPIR 132300Z 1400/1412 27004KT 0800 FG OVC004 TE
 // PROB30: if FG is more probable than BR, encode FG alternative, not mean-vis BR.
 let rows=Array.from({length:12},(_,i)=>row(i,{vis:7000}));
 rows[5]=row(5,{vis:2600,fgRisk:42,brRisk:35,fogRisk:60,fogAltVisM:700,mv:[model({vis:700,code:45,w:.42}),model({vis:3000,w:.35}),model({vis:9000,w:.23})]});
-let r=gen(rows);assert.match(r.taf,/PROB30\s+1404\/1406\s+0\d{3}\s+(?:FZ)?FG/);assert.ok(!/TEMPO\s+1405/.test(r.taf));
+let r=gen(rows);assert.match(r.taf,/PROB30\s+1405\/1406\s+0\d{3}\s+(?:FZ)?FG/);assert.ok(!/TEMPO\s+1405/.test(r.taf));
 
 // Explicit already-calibrated probability >=50% may become prevailing FG/BECMG when persistent.
 rows=Array.from({length:12},(_,i)=>row(i,{vis:8000,fogRisk:i>=4?65:0,fgRisk:i>=4?65:0,fogVis1000Risk:i>=4?55:0,fogAltVisM:800}));
 r=gen(rows);assert.ok(r.taf.includes('BECMG'),r.taf);assert.match(r.taf,/BECMG[^\n]*0\d{3} (?:FZ)?FG/,r.taf);
 
-// Operational FOG 60/100 = 40% TAF probability: one 2 h PROB30 onset window, no later BECMG.
+// Operational FOG 60/100 = 30% TAF probability: cover every consecutive eligible forecast hour.
 {
   const s=Date.UTC(2026,8,13,18),e=s+12*H,iss=s-H;
   const opRows=Array.from({length:12},(_,i)=>{
@@ -59,7 +59,7 @@ r=gen(rows);assert.ok(r.taf.includes('BECMG'),r.taf);assert.match(r.taf,/BECMG[^
     x.t=s+i*H;return x;
   });
   const q=E.createEngine().generate({station:'EPIR',issue:iss,start:s,end:e,rows:opRows,rowsAlreadyAnchored:true});
-  assert.match(q.taf,/PROB30\s+1321\/1323\s+0900\s+FG/,q.taf);
+  assert.match(q.taf,/PROB30\s+1322\/1406\s+0900\s+FG/,q.taf);
   assert.equal((q.taf.match(/PROB30/g)||[]).length,1,q.taf);
   assert.ok(!q.taf.includes('BECMG'),q.taf);
   assert.ok(!q.taf.includes('1321/1401'),q.taf);
@@ -91,7 +91,7 @@ assert.equal(E.validateTaf('TAF EPIR 132300Z 1400/1412 22004KT CAVOK PROB30 TEMP
   const mix=Array.from({length:12},(_,i)=>row(i,{vis:7000}));
   mix[5]=row(5,{vis:7000,mv:[model({vis:700,code:61,w:.4}),model({vis:7000,code:0,w:.6})],fogAltVisM:700});
   const q=gen(mix);
-  assert.match(q.taf,/PROB30\s+1404\/1406\s+0700\s+-RA\s+(?:FZ)?FG/,q.taf);
+  assert.match(q.taf,/PROB30\s+1405\/1406\s+0700\s+-RA\s+(?:FZ)?FG/,q.taf);
 }
 
 // Intermittent convective/shower alternative at 30-49% uses PROB30 TEMPO.
@@ -105,12 +105,12 @@ assert.equal(E.validateTaf('TAF EPIR 132300Z 1400/1412 22004KT CAVOK PROB30 TEMP
 
 // Direct calibrated 30-49% probability must create PROB30 even with no deterministic threshold crossing.
 rows=Array.from({length:12},(_,i)=>row(i,{vis:8000,fogRisk:i===5?40:0,fgRisk:i===5?40:0,fogVis1000Risk:i===5?35:0,fogAltVisM:900}));
-r=gen(rows);assert.match(r.taf,/PROB30\s+1404\/1406\s+0900\s+(?:FZ)?FG/,r.taf);
+r=gen(rows);assert.match(r.taf,/PROB30\s+1405\/1406\s+0900\s+(?:FZ)?FG/,r.taf);
 
-// PROB30 BR: one 2h probability window, never duplicate TEMPO/BECMG for the same event.
+// PROB30 BR: an isolated one-hour signal gets a one-hour probability window.
 rows=Array.from({length:12},(_,i)=>row(i,{vis:7000}));
 rows[5]=row(5,{vis:2800,fgRisk:10,brRisk:40,fogRisk:45,brAltVisM:2800,mv:[model({vis:2800,w:.4}),model({vis:7000,w:.6})]});
-r=gen(rows);assert.match(r.taf,/PROB30\s+1404\/1406\s+2800\s+BR/);assert.equal((r.taf.match(/PROB30/g)||[]).length,1,r.taf);assert.ok(!r.taf.includes('TEMPO'),r.taf);assert.ok(!r.taf.includes('BECMG'),r.taf);
+r=gen(rows);assert.match(r.taf,/PROB30\s+1405\/1406\s+2800\s+BR/);assert.equal((r.taf.match(/PROB30/g)||[]).length,1,r.taf);assert.ok(!r.taf.includes('TEMPO'),r.taf);assert.ok(!r.taf.includes('BECMG'),r.taf);
 
 // An isolated last-hour deterioration cannot be promoted to lasting BECMG.
 rows=Array.from({length:12},(_,i)=>row(i,{vis:i===11?2800:7000,brRisk:i===11?70:0,fogRisk:i===11?70:0}));
