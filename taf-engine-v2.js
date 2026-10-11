@@ -740,7 +740,7 @@
     for(let i=0;i<lines.length;i++){
       const line=lines[i];
       if(/^BECMG\b/.test(line)){const p=resolvePeriod(line,issue||start||Date.now());if(p){const h=(p.e-p.s)/HOUR;if(h>4)errors.push(`BECMG ${h} h > 4 h.`);else if(h>2)warnings.push(`BECMG ${h} h > zalecane 2 h.`);}}
-      if(/^PROB30\\s+\\d{4}\\/\\d{4}\\b/.test(line)&&/\\b(?:FG|FZFG|BR)\\b/.test(line)){
+      if(/^PROB30\s+\d{4}\/\d{4}\b/.test(line)&&/\b(?:FG|FZFG|BR)\b/.test(line)){
         const p=resolvePeriod(line,issue||start||Date.now());
         if(p&&(p.e-p.s)>RULES.prob30FogOnsetPreferredMaxHours*HOUR)
           warnings.push('PROB30 FG/BR trwa >3 h: sprawdź, czy zakodowano okres alternatywy czy okno początku (preferencja EPIR, nie bezwzględny limit instrukcji).');
