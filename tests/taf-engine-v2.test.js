@@ -51,7 +51,7 @@ let r=gen(rows);assert.match(r.taf,/PROB30\s+1405\/1406\s+0\d{3}\s+(?:FZ)?FG/);a
 rows=Array.from({length:12},(_,i)=>row(i,{vis:8000,fogRisk:i>=4?65:0,fgRisk:i>=4?65:0,fogVis1000Risk:i>=4?55:0,fogAltVisM:800}));
 r=gen(rows);assert.ok(r.taf.includes('BECMG'),r.taf);assert.match(r.taf,/BECMG[^\n]*0\d{3} (?:FZ)?FG/,r.taf);
 
-// Operational FOG 60/100 = 30% TAF probability: cover every consecutive eligible forecast hour.
+// Operational FOG 60/100 = 30% TAF probability: an uncertain onset spans up to 3h, not the whole risk episode.
 {
   const s=Date.UTC(2026,8,13,18),e=s+12*H,iss=s-H;
   const opRows=Array.from({length:12},(_,i)=>{
@@ -59,7 +59,7 @@ r=gen(rows);assert.ok(r.taf.includes('BECMG'),r.taf);assert.match(r.taf,/BECMG[^
     x.t=s+i*H;return x;
   });
   const q=E.createEngine().generate({station:'EPIR',issue:iss,start:s,end:e,rows:opRows,rowsAlreadyAnchored:true});
-  assert.match(q.taf,/PROB30\s+1322\/1406\s+0900\s+FG/,q.taf);
+  assert.match(q.taf,/PROB30\s+1322\/1401\s+0900\s+FG/,q.taf);
   assert.equal((q.taf.match(/PROB30/g)||[]).length,1,q.taf);
   assert.ok(!q.taf.includes('BECMG'),q.taf);
   assert.ok(!q.taf.includes('1321/1401'),q.taf);

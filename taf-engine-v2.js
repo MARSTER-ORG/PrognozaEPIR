@@ -30,6 +30,8 @@
     visibilityThresholds:VIS_THRESH,
     ceilingThresholdsFt:CEIL_THRESH,
     becmgPreferredMaxHours:2,
+    // EPIR preference, not a mandatory limit stated in TAF instruction 3.13.
+    prob30FogOnsetPreferredMaxHours:3,
     becmgAbsoluteMaxHours:4,
     tempoSingleEpisodeMaxHours:1,
     tempoTotalFractionMax:.5,
@@ -541,8 +543,9 @@
     return{s,e};
   }
 
-  // Each hourly forecast represents [t,t+1h). PROB30 FG/BR covers
-  // consecutive eligible hours instead of a fixed 2h period around one row.
+  // The window of an uncertain FG/BR onset is NOT the duration of the whole
+  // weather episode. BECMG later changes the prevailing forecast; PROB30
+  // formally applies only to the stated alternative period (TAF §3.13).
   function fogEpisodeWindow(states,index,family,start,end){
     const eligible=s=>{
       const p=s?.prob||{};
@@ -550,11 +553,34 @@
       if(family==='BR')return prob30Band(p.br)&&p.br>p.fg&&num(p.alt?.brM);
       return false;
     };
-    if(!eligible(states[index]))return twoHourWindow(states[index].t,start,end);
+    if(!eligible(states[index])){
+      const w=twoHourWindow(states[index].t,start,end);
+      return {...w,episodeStart:w.s,episodeEnd:w.e};
+    }
     let first=index,last=index;
     while(first>0&&eligible(states[first-1])&&states[first].t-states[first-1].t===HOUR)first--;
     while(last+1<states.length&&eligible(states[last+1])&&states[last+1].t-states[last].t===HOUR)last++;
-    return{s:Math.max(start,states[first].t),e:Math.min(end,states[last].t+HOUR)};
+    const episodeStart=Math.max(start,states[first].t);
+    const episodeEnd=Math.min(end,states[last].t+HOUR);
+    return {
+      s:episodeStart,
+      e:Math.min(episodeEnd,episodeStart+RULES.prob30FogOnsetPreferredMaxHours*HOUR),
+      episodeStart,episodeEnd
+    };
+  }
+
+  // An intermittent PROB30 TEMPO event uses the period of repeated hourly
+  // evidence (not just its initial hour). A lone hourly signal retains the
+  // existing two-hour timing-uncertainty interval.
+  function intermittentProbabilityWindow(states,index,start,end){
+    const p=states[index]?.prob||{};
+    const key=prob30Band(p.ts)?'ts':prob30Band(p.shower)?'shower':null;
+    if(!key)return twoHourWindow(states[index].t,start,end);
+    let first=index,last=index;
+    while(first>0&&prob30Band(states[first-1].prob?.[key])&&states[first].t-states[first-1].t===HOUR)first--;
+    while(last+1<states.length&&prob30Band(states[last+1].prob?.[key])&&states[last+1].t-states[last].t===HOUR)last++;
+    return first===last?twoHourWindow(states[index].t,start,end):
+      {s:Math.max(start,states[first].t),e:Math.min(end,states[last].t+HOUR)};
   }
 
   function persistenceFrom(states,i,target){
@@ -596,10 +622,10 @@
         if(used){skipped.push(`${code(target.t)} UTC: pominięto kolejne ${kind} — polityka EPIR zachowuje pierwszą grupę danego rodzaju.`);continue;}
         target=alternativeProbabilityState(prevailing,target);fields=[...new Set([...fields,...alt.fields])];
         const family=target.prob?.fg>=.30&&target.prob.fg>=target.prob.br?'FG':'BR';
-        const w=alt.newFog?fogEpisodeWindow(states,i,family,start,end):twoHourWindow(target.t,start,end);
-        // A multi-hour FG/BR group must not inherit only the first hour's
-        // visibility. Use a conservative conditional 35th percentile over
-        // the actual risk episode (same percentile as member alternatives).
+        const w=alt.newFog?fogEpisodeWindow(states,i,family,start,end):
+          (alt.temporary?intermittentProbabilityWindow(states,i,start,end):twoHourWindow(target.t,start,end));
+        // VVVV describes the alternative inside the onset window, not a
+        // possible stronger deterioration many hours after that window.
         let eventVisibility=null;
         if(alt.newFog){
           const fogKey=family==='FG'?'fg':'br',visKey=family==='FG'?'fgM':'brM';
@@ -615,11 +641,16 @@
           }
         }
         const g={kind,s:w.s,e:w.e,fields,payload:payload(prevailing,target,fields,kind,msaFt),probability:alt.probability};
-        if(eventVisibility!==null)g.visibilityEvidence={source:'risk-episode-p35',meters:Math.round(eventVisibility)};
+        if(eventVisibility!==null)g.visibilityEvidence={source:'onset-window-p35',meters:Math.round(eventVisibility)};
+        if(alt.newFog)g.scenario={
+          type:'uncertain-fog-onset',family,onsetStart:w.s,onsetEnd:w.e,
+          modelRiskUntil:w.episodeEnd,persistentConditionsNotGuaranteed:true
+        };
+        if(kind==='PROB30 TEMPO')g.scenario={type:'intermittent',occurrenceStart:w.s,occurrenceEnd:w.e};
         if(g.payload&&!conflicts(groups,g)){
           g.text=`${kind} ${period(g.s,g.e)} ${g.payload}`;groups.push(g);
           if(alt.temporary)prob30TempoUsed=true;else prob30Used=true;
-          reasons.push(`${g.text}: alternatywne warunki ${Math.round(alt.probability*100)}%; ${alt.temporary?'zmiana chwilowa → PROB30 TEMPO':'zmiana alternatywna/trwała → PROB30'}.`);
+          reasons.push(`${g.text}: alternatywne warunki ${Math.round(alt.probability*100)}%; ${alt.temporary?'okno okresowego występowania → PROB30 TEMPO':alt.newFog?'okno niepewnego początku FG/BR → PROB30; dalszy sygnał ryzyka do '+code(w.episodeEnd)+' UTC (bez automatycznej zmiany przeważającej)':'alternatywa → PROB30'}.`);
         }
         continue;
       }
@@ -660,11 +691,24 @@
       if(kind==='BECMG'||kind==='FM')prevailing=mergePrevailing(prevailing,target,fields);
     }
 
-    // Adjacent non-fog TEMPO groups can merge; fog PROB30 already reflects
-    // the contiguous observed-model hourly-risk episode.
+    // PROB30 fog onset is separate from possible later risk; TEMPO groups
+    // denote intervals of intermittent changes, not persistent conditions.
     groups.sort((a,b)=>a.s-b.s||a.e-b.e);
     const merged=[];
     for(const g of groups){const last=merged.at(-1);if(last&&last.kind===g.kind&&last.payload===g.payload&&sameFields(last.fields,g.fields)&&g.kind!=='FM'&&g.kind!=='PROB30'&&g.s<=last.e){last.e=Math.max(last.e,g.e);last.text=`${last.kind} ${period(last.s,last.e)} ${last.payload}`;last.probability=Math.max(last.probability,g.probability);}else merged.push({...g});}
+    // Only FM and BECMG update prevailing conditions until another change.
+    // PROB30 and TEMPO never replace the prevailing baseline.
+    for(let k=0;k<merged.length;k++){
+      const g=merged[k];
+      if(g.kind==='BECMG'||g.kind==='FM'){
+        const next=merged.slice(k+1).find(x=>x.kind==='BECMG'||x.kind==='FM');
+        g.scenario={type:'prevailing-transition',transitionStart:g.s,
+          transitionEnd:g.kind==='FM'?g.s:g.e,
+          prevailingUntil:next?(next.kind==='FM'?next.s:next.e):end};
+      }else if(g.kind==='TEMPO'){
+        g.scenario={type:'intermittent',occurrenceStart:g.s,occurrenceEnd:g.e};
+      }
+    }
     return{groups:merged.slice(0,MAX_GROUPS),reasons:[...reasons,...skipped]};
   }
 
@@ -696,6 +740,11 @@
     for(let i=0;i<lines.length;i++){
       const line=lines[i];
       if(/^BECMG\b/.test(line)){const p=resolvePeriod(line,issue||start||Date.now());if(p){const h=(p.e-p.s)/HOUR;if(h>4)errors.push(`BECMG ${h} h > 4 h.`);else if(h>2)warnings.push(`BECMG ${h} h > zalecane 2 h.`);}}
+      if(/^PROB30\s+\d{4}\/\d{4}\b/.test(line)&&/\b(?:FG|FZFG|BR)\b/.test(line)){
+        const p=resolvePeriod(line,issue||start||Date.now());
+        if(p&&(p.e-p.s)>RULES.prob30FogOnsetPreferredMaxHours*HOUR)
+          warnings.push('PROB30 FG/BR trwa >3 h: sprawdź, czy zakodowano okres alternatywy czy okno początku (preferencja EPIR, nie bezwzględny limit instrukcji).');
+      }
       if(/^TEMPO\b/.test(line)){
         const wx=(line.match(/\b(?:FZFG|FG|BR)\b/)||[])[0]||'NONE';
         if((wx==='FG'||wx==='FZFG')&&prevailingFog!=='FG')errors.push(`TEMPO nie może prognozować pojawienia się FG: ${line}`);
@@ -746,7 +795,7 @@
           base:{state:base,text:encodeFullState(base,msa)},groups:cg.groups,hourly,
           checks:{...checks,noProb40:!taf.includes('PROB40'),oneProb30:(taf.match(/\bPROB30\b/g)||[]).length<=RULES.maxProb30Groups,noVV:!/\bVV/.test(taf),max5:cg.groups.length<=5,periodHours:12,instructionLocked:true},
           confidence:clamp(Math.round(70+Math.min(20,maxModels*2)+(checks.ok?10:0)),0,100),
-          diagnostics:{instructionLocked:true,authority:AUTH,reasons:cg.reasons,msaMode:msa?'explicit':'fallback',msaFt:msa||NSC_FT,cloudPipeline:'profile→METAR credibility gate→instruction layer order→ceiling→TAF/table',windPolicy:'VRB02: 75%/12h dominant or sustained >=3h hourly; weak-direction change alone never creates BECMG',fogProbabilityPolicy:'operational gate 60→30%, 70→40%, 80→50%; PROB30 fog windows use contiguous hourly risk; no fabricated 0800 visibility',observationPolicy:'METAR/SPECI anchor must be timestamp <= TAF issue time; future observations are rejected',legacyMutators:false},
+          diagnostics:{instructionLocked:true,authority:AUTH,reasons:cg.reasons,msaMode:msa?'explicit':'fallback',msaFt:msa||NSC_FT,cloudPipeline:'profile→METAR credibility gate→instruction layer order→ceiling→TAF/table',windPolicy:'VRB02: 75%/12h dominant or sustained >=3h hourly; weak-direction change alone never creates BECMG',fogProbabilityPolicy:'FG/BR PROB30 prefers up to 3h uncertain-onset window; later risk kept diagnostically; BECMG/FM update prevailing; TEMPO denotes intermittent occurrence; no fabricated 0800 visibility',observationPolicy:'METAR/SPECI anchor must be timestamp <= TAF issue time; future observations are rejected',legacyMutators:false},
           learning:{cells:0,note:'Uczenie może zmieniać estymację meteorologiczną, nigdy reguły instrukcji.'}
         };
       },

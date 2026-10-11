@@ -65,7 +65,7 @@ for(const engine of [Kernel,Operational]){
   for(let i=4;i<8;i++)br[i]=row(i,{fogEngineVisM:2600,brOperationalScore:70,
     fogOperationalScore:0,fgOperationalScore:0});
   const brResult=gen(engine,br);
-  assert.match(brResult.taf,/PROB30 1122\/1202 2600 BR/,brResult.taf);
+  assert.match(brResult.taf,/PROB30 1122\/1201 2600 BR/,brResult.taf);
   assert.doesNotMatch(brResult.taf,/\b0800 FG\b/,brResult.taf);
 }
 console.log('TAF actual FG/BR visibility and duration: OK');
