@@ -140,13 +140,22 @@
     };
   }
 
+  // TAF ed. A (11.2023) sections 3.6-3.7: VVVV must reflect a forecast,
+  // never a constant invented from P(VIS<1000). Prefer selected Fog Engine
+  // guidance, then conditional NWP-member distribution or NWP consensus.
   function visibilityAlternatives(row){
     const members=Array.isArray(row?.mv)?row.mv:[];
-    const fgVis=members.filter(m=>num(m.vis)).map(m=>+m.vis).filter(v=>v<1000);
-    const brVis=members.filter(m=>num(m.vis)).map(m=>+m.vis).filter(v=>v>=1000&&v<=5000);
+    const fgVis=members.filter(m=>num(m?.vis)).map(m=>+m.vis).filter(v=>v>=0&&v<1000);
+    const brVis=members.filter(m=>num(m?.vis)).map(m=>+m.vis).filter(v=>v>=1000&&v<=5000);
+    const valid=(v,low,high)=>num(v)&&+v>=low&&+v<=high?+v:null;
+    const fgEngine=valid(row?.fogAltVisM,0,999)??valid(row?.fogEngineVisM,0,999);
+    const brEngine=valid(row?.brAltVisM,1000,5000)??valid(row?.fogEngineVisM,1000,5000);
+    const fgNwp=fgVis.length?quantile(fgVis,.35):valid(row?.VIS,0,999);
+    const brNwp=brVis.length?quantile(brVis,.35):valid(row?.VIS,1000,5000);
     return {
-      fgM:num(row?.fogAltVisM)?+row.fogAltVisM:(fgVis.length?clamp(Math.floor(quantile(fgVis,.35)/50)*50,100,900):800),
-      brM:num(row?.brAltVisM)?+row.brAltVisM:(brVis.length?clamp(Math.floor(quantile(brVis,.35)/100)*100,1000,5000):clamp(+row?.VIS||4000,1000,5000))
+      fgM:fgEngine??fgNwp,brM:brEngine??brNwp,
+      fgSource:fgEngine!==null?'fog-engine':fgNwp!==null?'nwp':'missing',
+      brSource:brEngine!==null?'fog-engine':brNwp!==null?'nwp':'missing'
     };
   }
 
@@ -189,6 +198,10 @@
     if(p.fog>=.30&&p.br<.30&&p.fg<.30&&num(row?.VIS)&&+row.VIS>=1000&&+row.VIS<=5000)p.br=Math.max(p.br,p.fog);
     if(num(row?.VIS)&&+row.VIS<5000)p.lowVis=Math.max(p.lowVis,.50);
     const alt=visibilityAlternatives(row);
+    // Event probability without a corresponding physical visibility value
+    // must not create a phantom FG/BR TAF group.
+    if(!num(alt.fgM))p.fg=0;
+    if(!num(alt.brM))p.br=0;
     return {...p,alt};
   }
 
@@ -309,8 +322,8 @@
     const ws=num(row?.WS)?+row.WS*KT:0,g=num(row?.G)?+row.G*KT:ws;
     let visM=num(row.VIS)?+row.VIS:10000;
     // A prevailing >=50% FG/BR forecast cannot coexist with a contradictory prevailing visibility.
-    if(p.fg>=.50&&p.fg>=p.br)visM=Math.min(visM,clamp(p.alt?.fgM||800,100,900));
-    else if(p.br>=.50&&p.br>p.fg)visM=Math.min(visM,clamp(p.alt?.brM||4000,1000,5000));
+    if(p.fg>=.50&&p.fg>=p.br&&num(p.alt?.fgM))visM=Math.min(visM,clamp(+p.alt.fgM,0,900));
+    else if(p.br>=.50&&p.br>p.fg&&num(p.alt?.brM))visM=Math.min(visM,clamp(+p.alt.brM,1000,5000));
     return {
       t:+row.t,windKt:ws,windDir:num(row.WD)?(+row.WD+360)%360:null,gustKt:g,dirSpreadDeg:num(row.dirSpread)?+row.dirSpread:0,
       visM,T:num(row.T)?+row.T:null,Td:num(row.Td)?+row.Td:null,RH:num(row.RH)?+row.RH:null,RR:num(row.RR)?+row.RR:0,
@@ -436,7 +449,9 @@
     s.dirSpreadDeg=Math.max(...z.map(x=>finite(x.windDir)?circ(x.windDir,s.windDir):0));
     s.visM=quantile(z.map(x=>x.visM),.45);
     s.prob={...z[0].prob};for(const k of Object.keys(s.prob))if(k!=='alt')s.prob[k]=mean(z.map(x=>x.prob?.[k]).filter(finite));
-    s.prob.alt={fgM:Math.round(mean(z.map(x=>x.prob?.alt?.fgM).filter(finite))||800),brM:Math.round(mean(z.map(x=>x.prob?.alt?.brM).filter(finite))||4000)};
+    const fgAlt=mean(z.map(x=>x.prob?.alt?.fgM).filter(finite));
+    const brAlt=mean(z.map(x=>x.prob?.alt?.brM).filter(finite));
+    s.prob.alt={fgM:finite(fgAlt)?Math.round(fgAlt):null,brM:finite(brAlt)?Math.round(brAlt):null};
     s.RR=mean(z.map(x=>x.RR).filter(finite));
     // Do not average cloud geometry: use the first representative state so ceiling/layers remain internally coherent.
     s.clouds=z[0].clouds;s.ceilingFt=z[0].ceilingFt;
@@ -491,10 +506,12 @@
       const v=+x.prob[k]||0;if(v>=.30&&v<.50)x.prob[k]=.50;
     }
     if((p.fg||0)>=.30&&(p.fg||0)>=(p.br||0)){
-      x.visM=clamp(p.alt?.fgM||800,100,900);x.prob.fg=Math.max(.5,x.prob.fg||0);x.prob.br=0;x.prob.fog=Math.max(x.prob.fog||0,x.prob.fg);return x;
+      if(!num(p.alt?.fgM))return x;
+      x.visM=clamp(+p.alt.fgM,0,900);x.prob.fg=Math.max(.5,x.prob.fg||0);x.prob.br=0;x.prob.fog=Math.max(x.prob.fog||0,x.prob.fg);return x;
     }
     if((p.br||0)>=.30){
-      x.visM=clamp(p.alt?.brM||4000,1000,5000);x.prob.br=Math.max(.5,x.prob.br||0);x.prob.fg=0;x.prob.fog=Math.max(x.prob.fog||0,x.prob.br);return x;
+      if(!num(p.alt?.brM))return x;
+      x.visM=clamp(+p.alt.brM,1000,5000);x.prob.br=Math.max(.5,x.prob.br||0,x.prob.br);x.prob.fg=0;x.prob.fog=Math.max(x.prob.fog||0,x.prob.br);return x;
     }
     return x;
   }
@@ -507,7 +524,7 @@
     const prevFog=fogFamily(prev,.5);
     const altFog=(prob30Band(p.fg)&&p.fg>=p.br)?'FG':prob30Band(p.br)?'BR':'NONE';
     const newFog=altFog!=='NONE'&&altFog!==prevFog;
-    if(newFog){fields.push('visibility');values.push(altFog==='FG'?+p.fg:+p.br);}
+    if(newFog&&num(altFog==='FG'?p.alt?.fgM:p.alt?.brM)){fields.push('visibility');values.push(altFog==='FG'?+p.fg:+p.br);}
     const convective=prob30Band(p.ts)||prob30Band(p.shower);
     if(prob30Band(p.ts)){fields.push('weather','clouds');values.push(+p.ts);}
     if(prob30Band(p.shower)){fields.push('weather');values.push(+p.shower);}
@@ -522,6 +539,22 @@
     let s=Math.max(start,t-HOUR),e=Math.min(end,t+HOUR);
     if(e-s<2*HOUR){if(s===start)e=Math.min(end,s+2*HOUR);else if(e===end)s=Math.max(start,e-2*HOUR);}
     return{s,e};
+  }
+
+  // Each hourly forecast represents [t,t+1h). PROB30 FG/BR covers
+  // consecutive eligible hours instead of a fixed 2h period around one row.
+  function fogEpisodeWindow(states,index,family,start,end){
+    const eligible=s=>{
+      const p=s?.prob||{};
+      if(family==='FG')return prob30Band(p.fg)&&p.fg>=p.br&&num(p.alt?.fgM);
+      if(family==='BR')return prob30Band(p.br)&&p.br>p.fg&&num(p.alt?.brM);
+      return false;
+    };
+    if(!eligible(states[index]))return twoHourWindow(states[index].t,start,end);
+    let first=index,last=index;
+    while(first>0&&eligible(states[first-1])&&states[first].t-states[first-1].t===HOUR)first--;
+    while(last+1<states.length&&eligible(states[last+1])&&states[last+1].t-states[last].t===HOUR)last++;
+    return{s:Math.max(start,states[first].t),e:Math.min(end,states[last].t+HOUR)};
   }
 
   function persistenceFrom(states,i,target){
@@ -562,7 +595,9 @@
         const used=alt.temporary?prob30TempoUsed:prob30Used;
         if(used){skipped.push(`${code(target.t)} UTC: pominięto kolejne ${kind} — polityka EPIR zachowuje pierwszą grupę danego rodzaju.`);continue;}
         target=alternativeProbabilityState(prevailing,target);fields=[...new Set([...fields,...alt.fields])];
-        const w=twoHourWindow(target.t,start,end),g={kind,s:w.s,e:w.e,fields,payload:payload(prevailing,target,fields,kind,msaFt),probability:alt.probability};
+        const family=target.prob?.fg>=.30&&target.prob.fg>=target.prob.br?'FG':'BR';
+        const w=alt.newFog?fogEpisodeWindow(states,i,family,start,end):twoHourWindow(target.t,start,end);
+        const g={kind,s:w.s,e:w.e,fields,payload:payload(prevailing,target,fields,kind,msaFt),probability:alt.probability};
         if(g.payload&&!conflicts(groups,g)){
           g.text=`${kind} ${period(g.s,g.e)} ${g.payload}`;groups.push(g);
           if(alt.temporary)prob30TempoUsed=true;else prob30Used=true;
@@ -607,7 +642,8 @@
       if(kind==='BECMG'||kind==='FM')prevailing=mergePrevailing(prevailing,target,fields);
     }
 
-    // Merge adjacent identical TEMPO/general probability windows; continuous fog PROB30 episodes are already collapsed above to one 2 h onset window.
+    // Adjacent non-fog TEMPO groups can merge; fog PROB30 already reflects
+    // the contiguous observed-model hourly-risk episode.
     groups.sort((a,b)=>a.s-b.s||a.e-b.e);
     const merged=[];
     for(const g of groups){const last=merged.at(-1);if(last&&last.kind===g.kind&&last.payload===g.payload&&sameFields(last.fields,g.fields)&&g.kind!=='FM'&&g.kind!=='PROB30'&&g.s<=last.e){last.e=Math.max(last.e,g.e);last.text=`${last.kind} ${period(last.s,last.e)} ${last.payload}`;last.probability=Math.max(last.probability,g.probability);}else merged.push({...g});}
@@ -692,7 +728,7 @@
           base:{state:base,text:encodeFullState(base,msa)},groups:cg.groups,hourly,
           checks:{...checks,noProb40:!taf.includes('PROB40'),oneProb30:(taf.match(/\bPROB30\b/g)||[]).length<=RULES.maxProb30Groups,noVV:!/\bVV/.test(taf),max5:cg.groups.length<=5,periodHours:12,instructionLocked:true},
           confidence:clamp(Math.round(70+Math.min(20,maxModels*2)+(checks.ok?10:0)),0,100),
-          diagnostics:{instructionLocked:true,authority:AUTH,reasons:cg.reasons,msaMode:msa?'explicit':'fallback',msaFt:msa||NSC_FT,cloudPipeline:'profile→METAR credibility gate→instruction layer order→ceiling→TAF/table',windPolicy:'VRB02: 75%/12h dominant or sustained >=3h hourly; weak-direction change alone never creates BECMG',fogProbabilityPolicy:'operational 40→30%, 60→40%, 80→50%; max one PROB30 per TAF, first qualifying event, 2h window',observationPolicy:'METAR/SPECI anchor must be timestamp <= TAF issue time; future observations are rejected',legacyMutators:false},
+          diagnostics:{instructionLocked:true,authority:AUTH,reasons:cg.reasons,msaMode:msa?'explicit':'fallback',msaFt:msa||NSC_FT,cloudPipeline:'profile→METAR credibility gate→instruction layer order→ceiling→TAF/table',windPolicy:'VRB02: 75%/12h dominant or sustained >=3h hourly; weak-direction change alone never creates BECMG',fogProbabilityPolicy:'operational gate 60→30%, 70→40%, 80→50%; PROB30 fog windows use contiguous hourly risk; no fabricated 0800 visibility',observationPolicy:'METAR/SPECI anchor must be timestamp <= TAF issue time; future observations are rejected',legacyMutators:false},
           learning:{cells:0,note:'Uczenie może zmieniać estymację meteorologiczną, nigdy reguły instrukcji.'}
         };
       },
