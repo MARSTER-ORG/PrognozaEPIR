@@ -114,7 +114,9 @@
 
     if(num(x.fogEngineVisM)&&+x.fogEngineVisM>=1000&&+x.fogEngineVisM<=5000){
       const brp=Math.max(scoreToProbability(score),scoreToProbability(x.fogVis1500Risk));
-      x.brOperationalScore=probabilityToOperationalScore(brp);
+      // Keep the dedicated BR forecast from Fog Engine. A generic process
+      // score must never overwrite explicit BR probability or its hard veto.
+      if(!num(x.brOperationalScore))x.brOperationalScore=probabilityToOperationalScore(brp);
     }
     x.taf241Fog={engineScore:score,engineProbabilityProxy:engineProb,modelFg,fusedProbability:fused,confidence:conf};
     return x;

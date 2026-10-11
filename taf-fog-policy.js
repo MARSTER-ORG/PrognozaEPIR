@@ -173,15 +173,14 @@
     // EPIR FOG 2.4.4 risk is kept intact. The visibility checks below are only
     // the formal TAF weather-code eligibility gate; they no longer redefine the
     // displayed FG/BR/MIFG probabilities.
-    const fgVisibilitySupported=finite(vis)?vis<1000:(finite(vis1000)&&vis1000>=50);
+    // A probability threshold is not a forecast VVVV. Require real Fog Engine VIS.
+    const fgVisibilitySupported=finite(vis)&&vis>=0&&vis<1000;
     const brVisibilitySupported=finite(vis)&&vis>=1000&&vis<=5000;
     const fgOperationalScore=fgVisibilitySupported?mappedScore:0;
     const brOperationalScore=finite(brRawScore)
       ? (brVisibilitySupported?clamp(brRawScore):0)
       : (brVisibilitySupported?mappedScore:null);
-    const fogAltVisM=finite(vis)
-      ? (vis<1000?Math.max(100,Math.min(900,vis)):null)
-      : (finite(vis1000)&&vis1000>=50?(finite(vis500)&&vis500>=50?500:800):null);
+    const fogAltVisM=fgVisibilitySupported?Math.max(0,Math.min(900,vis)):null;
 
     return {
       mode,rawScore,engineFogScore:mappedScore,
