@@ -37,6 +37,13 @@ for(const engine of [Kernel,Operational]){
     assert.match(q.taf,new RegExp('PROB30 1122/1201 '+coded+' FG'),q.taf);
     assert.equal(q.checks.ok,true,q.taf);
   }
+  // A three-hour episode with 900/600/300m must not use only 900m.
+  const changing=fogRows(900,4,3);
+  changing[5]=row(5,{fogOperationalScore:70,fgOperationalScore:70,fogAltVisM:600,fogEngineVisM:600});
+  changing[6]=row(6,{fogOperationalScore:70,fgOperationalScore:70,fogAltVisM:300,fogEngineVisM:300});
+  const variable=gen(engine,changing);
+  assert.match(variable.taf,/PROB30 1122\/1201 0500 FG/,variable.taf);
+  assert.equal(variable.groups.find(g=>g.kind==='PROB30')?.visibilityEvidence?.meters,510);
   const two=gen(engine,fogRows(650,4,2));
   assert.match(two.taf,/PROB30 1122\/(?:1124|1200) 0650 FG/,two.taf);
   const single=gen(engine,fogRows(420,4,1));
