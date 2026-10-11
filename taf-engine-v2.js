@@ -511,7 +511,7 @@
     }
     if((p.br||0)>=.30){
       if(!num(p.alt?.brM))return x;
-      x.visM=clamp(+p.alt.brM,1000,5000);x.prob.br=Math.max(.5,x.prob.br||0,x.prob.br);x.prob.fg=0;x.prob.fog=Math.max(x.prob.fog||0,x.prob.br);return x;
+      x.visM=clamp(+p.alt.brM,1000,5000);x.prob.br=Math.max(.5,x.prob.br||0);x.prob.fg=0;x.prob.fog=Math.max(x.prob.fog||0,x.prob.br);return x;
     }
     return x;
   }
