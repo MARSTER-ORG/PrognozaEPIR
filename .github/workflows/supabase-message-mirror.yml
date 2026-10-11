@@ -16,6 +16,7 @@ on:
         type: string
   push:
     branches:
+      - main
       - fix/supabase-message-mirror-2025
     paths:
       - '.github/workflows/supabase-message-mirror.yml'
@@ -26,6 +27,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: supabase-message-mirror-${{ github.ref_name }}
@@ -114,9 +116,11 @@ jobs:
           PY
 
       - name: Commit mirrored archive
+        id: persist
         run: |
           if git diff --quiet -- data/messages; then
             echo 'Canonical message archive unchanged.'
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git config user.name 'prognozaepir-message-mirror'
@@ -125,6 +129,7 @@ jobs:
           git commit -m 'archive: mirror Supabase and historical SYNOP into canonical history'
           for n in 1 2 3 4 5; do
             if git pull --rebase origin '${{ github.ref_name }}' && git push origin HEAD:'${{ github.ref_name }}'; then
+              echo 'changed=true' >> "$GITHUB_OUTPUT"
               exit 0
             fi
             git rebase --abort >/dev/null 2>&1 || true
@@ -132,3 +137,14 @@ jobs:
           done
           echo 'Unable to publish canonical message mirror after retries.' >&2
           exit 1
+
+      - name: Refresh EPIR models after canonical archive update
+        if: steps.persist.outputs.changed == 'true' && github.ref_name == 'main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The adaptive rebuild covers verification, cloud/fog weights,
+          # historical and synoptic skills, and the production model snapshot.
+          gh workflow run adaptive-runtime-rollout.yml --ref main
+          # Fog vNext shadow evaluation is deliberately separate from production weights.
+          gh workflow run fog-vnext-archive.yml --ref main
