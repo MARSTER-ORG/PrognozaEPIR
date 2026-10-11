@@ -2,11 +2,13 @@ name: Convection TCu-Cb learning
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: [Adaptive learning rebuild]
+    types: [completed]
   push:
     branches: [main]
     paths:
       - scripts/build_convection_skill.py
-      - .github/workflows/convection-learning.yml
   schedule:
     - cron: '17 4 * * *'
 
@@ -20,6 +22,7 @@ concurrency:
 
 jobs:
   learn:
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
