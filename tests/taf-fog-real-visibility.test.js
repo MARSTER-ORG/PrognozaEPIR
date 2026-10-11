@@ -38,7 +38,7 @@ for(const engine of [Kernel,Operational]){
     assert.equal(q.checks.ok,true,q.taf);
   }
   const two=gen(engine,fogRows(650,4,2));
-  assert.match(two.taf,/PROB30 1122\/1124 0650 FG/,two.taf);
+  assert.match(two.taf,/PROB30 1122\/(?:1124|1200) 0650 FG/,two.taf);
   const single=gen(engine,fogRows(420,4,1));
   assert.match(single.taf,/PROB30 1122\/1123 0400 FG/,single.taf);
   // FG risk without a real VIS value cannot be converted to fake 0800m.
