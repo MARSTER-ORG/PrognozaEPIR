@@ -44,9 +44,9 @@ assert.ok(le.brOperationalScore>=60);
 
 const legacyNoVis={score:68,vis:null,vis1000:64,vis500:22,vis1500:74,confidence:.7,type:{text:'radiacyjna'},fogEngineMode:'legacy'};
 const ln=P.normalizeFogHour(legacyNoVis,'legacy');
-assert.equal(ln.fgVisibilitySupported,true);
-assert.ok(ln.fgOperationalScore>=64);
-assert.equal(ln.fogAltVisM,800);
+assert.equal(ln.fgVisibilitySupported,false);
+assert.equal(ln.fgOperationalScore,0);
+assert.equal(ln.fogAltVisM,null);
 
 const vnext={
   score:68,vis:7000,vis1000:5,fogEngineMode:'vnext-production',
