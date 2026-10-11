@@ -49,7 +49,7 @@ for(const engine of [Kernel,Operational]){
   assert.doesNotMatch(noVis.taf,/\bPROB30[^\n]*\b(?:FG|FZFG)\b/,noVis.taf);
   // NWP conditional visibility is valid when Fog Engine point is missing.
   const modelAlt=blank();
-  modelAlt[4]=row(4,{vis:9000,fgOperationalScore:0,fogOperationalScore:0,
+  modelAlt[4]=row(4,{vis:9000,fogEngineAvailable:false,
     mv:[member(470,.4),member(9000,.6)]});
   const modeled=gen(engine,modelAlt);
   assert.match(modeled.taf,/PROB30[^\n]*0450 FG/,modeled.taf);
