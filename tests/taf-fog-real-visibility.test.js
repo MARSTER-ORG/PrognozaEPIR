@@ -58,6 +58,7 @@ for(const engine of [Kernel,Operational]){
   for(let i=4;i<8;i++)br[i]=row(i,{fogEngineVisM:2600,brOperationalScore:70,
     fogOperationalScore:0,fgOperationalScore:0});
   const brResult=gen(engine,br);
+  console.log('DEBUG BR',engine===Kernel?'kernel':'operational',JSON.stringify(Kernel.helpers.stateFromRow(br[4]).prob),JSON.stringify(brResult.diagnostics.reasons));
   assert.match(brResult.taf,/PROB30 1122\/1202 2600 BR/,brResult.taf);
   assert.doesNotMatch(brResult.taf,/\b0800 FG\b/,brResult.taf);
 }
