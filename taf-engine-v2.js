@@ -597,7 +597,25 @@
         target=alternativeProbabilityState(prevailing,target);fields=[...new Set([...fields,...alt.fields])];
         const family=target.prob?.fg>=.30&&target.prob.fg>=target.prob.br?'FG':'BR';
         const w=alt.newFog?fogEpisodeWindow(states,i,family,start,end):twoHourWindow(target.t,start,end);
+        // A multi-hour FG/BR group must not inherit only the first hour's
+        // visibility. Use a conservative conditional 35th percentile over
+        // the actual risk episode (same percentile as member alternatives).
+        let eventVisibility=null;
+        if(alt.newFog){
+          const fogKey=family==='FG'?'fg':'br',visKey=family==='FG'?'fgM':'brM';
+          const eventValues=states.filter(s=>{
+            const p=s.prob||{};
+            return s.t>=w.s&&s.t<w.e&&prob30Band(p[fogKey])&&
+              (family==='FG'?p.fg>=p.br:p.br>p.fg);
+          }).map(s=>s.prob?.alt?.[visKey]).filter(num).map(Number);
+          if(eventValues.length){
+            const low=family==='FG'?0:1000,high=family==='FG'?900:5000;
+            eventVisibility=clamp(quantile(eventValues,.35),low,high);
+            target.visM=eventVisibility;
+          }
+        }
         const g={kind,s:w.s,e:w.e,fields,payload:payload(prevailing,target,fields,kind,msaFt),probability:alt.probability};
+        if(eventVisibility!==null)g.visibilityEvidence={source:'risk-episode-p35',meters:Math.round(eventVisibility)};
         if(g.payload&&!conflicts(groups,g)){
           g.text=`${kind} ${period(g.s,g.e)} ${g.payload}`;groups.push(g);
           if(alt.temporary)prob30TempoUsed=true;else prob30Used=true;
