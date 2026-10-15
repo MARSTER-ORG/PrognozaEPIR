@@ -2,12 +2,12 @@
 """Lightweight official-IMGW METAR/SPECI fast path for PrognozaEPIR.
 
 Fast path intentionally does only:
-1. one bounded official IMGW Aviation `metar` request for EPIR METAR/SPECI,
+1. one bounded official IMGW Aviation `metar` request for EPIR and neighbor observations,
 2. first-seen latency telemetry,
 3. stage records missing from the local fallback archive,
 4. normalize only when a new bulletin appears.
 
-It performs no TAF, SYNOP, lightning, neighbour-airport or multi-source fallback
+It performs no TAF, SYNOP, lightning or multi-source fallback
 work. The five-minute full cycle owns broader recovery. Supabase synchronisation
 is performed by railway_ingestor_fast_server.py immediately after this script.
 """
@@ -26,6 +26,7 @@ from pathlib import Path
 
 import imgw_publication_latency as latency
 import live_metar_collector as live
+import neighbor_observations as neighbor
 import refresh_epir_metar as refresh
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -103,6 +104,40 @@ def try_exclusive_lock(path: Path):
         handle.close()
 
 
+def capture_imgw_neighbor_observations(payload: object) -> dict:
+    """Persist real EPBY/EPKS/EPPW METAR/SPECI from the *same* official API response.
+
+    No extra HTTP call is needed. Station and type must be explicit; there
+    is deliberately no synthetic conversion of EPIR METAR to neighbor/SYNOP.
+    """
+    counts = {}
+    if not isinstance(payload, dict):
+        return counts
+    for station in sorted(neighbor.NEIGHBORS):
+        node = payload.get(station)
+        metars = node.get("metars") if isinstance(node, dict) else None
+        raws = []
+        for item in live._walk_message_records(metars):
+            raw = str(item.get("message") or "").strip()
+            if not raw or station not in raw.upper():
+                continue
+            kind = str(item.get("messageType") or "").upper()
+            if kind == "SPECI" and not raw.upper().startswith("SPECI "):
+                raw = "SPECI " + raw
+            raws.append(raw)
+        if raws:
+            result = neighbor.capture_pilothub_page(
+                station, "\n".join(raws), FAST_IMGW_URL, source="IMGW Aviation API",
+            )
+            counts[station] = {
+                "decoded": result.get("decoded", 0),
+                "added": result.get("added", 0),
+            }
+    if counts:
+        print("IMGW Aviation neighbor observations:", json.dumps(counts, sort_keys=True), flush=True)
+    return counts
+
+
 def fetch_fast_imgw_reports() -> list[dict]:
     """Use only the cheapest currently supported IMGW query.
 
@@ -111,6 +146,10 @@ def fetch_fast_imgw_reports() -> list[dict]:
     """
     try:
         payload = json.loads(refresh.c.get_text(FAST_IMGW_URL, timeout=FAST_IMGW_TIMEOUT))
+        try:
+            capture_imgw_neighbor_observations(payload)
+        except Exception as exc:
+            print(f"IMGW Aviation neighbor archive warning: {exc}", flush=True)
         rows = live._decode_imgw_payload(payload, "metar-fast")
         print(f"IMGW Aviation fast selected query=metar rows={len(rows)}", flush=True)
         return rows
