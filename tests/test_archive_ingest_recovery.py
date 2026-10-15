@@ -12,6 +12,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import collect_neighbor_tafs as taf
 import collect_neighbor_tafs_tiered as tiered
+import metar_fast_check as fast
 import neighbor_observations as neighbor
 
 
@@ -40,6 +41,26 @@ class ArchiveIngestRecoveryTests(unittest.TestCase):
         self.assertEqual(records[0]["source"], "AWC METAR")
         self.assertEqual(records[0]["station"], "EPBY")
         self.assertEqual(records[0]["sources"][0]["name"], "AWC METAR")
+
+    def test_official_imgw_payload_archives_neighbors_without_new_http_call(self):
+        raw = "EPBY 151400Z 26005KT 9999 SCT030 12/08 Q1022="
+        payload = {
+            "EPBY": {"metars": [{"message": raw, "messageType": "SPECI"}]},
+            "EPKS": {"metars": []},
+            "EPPW": {"metars": []},
+        }
+        captured = []
+
+        def record(station, page, source_url, source=None):
+            captured.append((station, page, source_url, source))
+            return {"decoded": 1, "added": 1}
+
+        with patch.object(fast.neighbor, "capture_pilothub_page", side_effect=record):
+            counts = fast.capture_imgw_neighbor_observations(payload)
+        self.assertEqual(counts["EPBY"]["decoded"], 1)
+        self.assertEqual(len(captured), 1)
+        self.assertTrue(captured[0][1].startswith("SPECI EPBY"))
+        self.assertEqual(captured[0][3], "IMGW Aviation API")
 
     def test_neighbour_awc_collection_runs_without_pilothub(self):
         sample = "METAR EPBY 151000Z 26005KT 9999 SCT030 12/08 Q1022="
