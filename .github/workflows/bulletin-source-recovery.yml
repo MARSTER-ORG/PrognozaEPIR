@@ -1,0 +1,35 @@
+name: Verify bulletin source recovery
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/collect_neighbor_tafs.py'
+      - 'scripts/collect_neighbor_tafs_tiered.py'
+      - 'scripts/neighbor_observations.py'
+      - 'tests/test_archive_ingest_recovery.py'
+      - '.github/workflows/bulletin-source-recovery.yml'
+  push:
+    branches: [main, 'fix/archive-ingest-20261015']
+    paths:
+      - 'scripts/collect_neighbor_tafs.py'
+      - 'scripts/collect_neighbor_tafs_tiered.py'
+      - 'scripts/neighbor_observations.py'
+      - 'tests/test_archive_ingest_recovery.py'
+      - '.github/workflows/bulletin-source-recovery.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  source-recovery-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check Python syntax
+        run: python -m py_compile scripts/collect_neighbor_tafs.py scripts/collect_neighbor_tafs_tiered.py scripts/neighbor_observations.py tests/test_archive_ingest_recovery.py
+      - name: Test source recovery without contacting providers
+        run: python -m unittest discover -s tests -p test_archive_ingest_recovery.py -v

@@ -61,10 +61,19 @@ def with_cache_buster(url: str) -> str:
 def fetch_text(url: str, accept: str = "text/plain", retries: int = 1) -> str:
     last: Exception | None = None
     for attempt in range(retries):
+        # Strict aviation APIs reject undocumented cache-busting parameters.
+        # Keep browser-page cache busting but send documented API URLs unchanged.
+        host = urllib.parse.urlsplit(url).hostname or ""
+        strict_api = host in {"aviationweather.gov", "aviation-api.imgw.pl"}
+        request_url = url if strict_api else with_cache_buster(url)
+        user_agent = (
+            "PrognozaEPIR/1.0 (+https://github.com/MARSTER-ORG/PrognozaEPIR)"
+            if host == "aviationweather.gov" else UA
+        )
         req = urllib.request.Request(
-            with_cache_buster(url),
+            request_url,
             headers={
-                "User-Agent": UA,
+                "User-Agent": user_agent,
                 "Accept": accept,
                 "Accept-Language": "pl-PL,pl;q=0.9,en;q=0.7",
                 "Referer": "https://awiacja.imgw.pl/",

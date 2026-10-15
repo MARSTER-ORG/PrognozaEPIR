@@ -147,7 +147,7 @@ def _canonical(kind: str, raw: str) -> str:
     return core + "="
 
 
-def _parse(raw: str, station: str, source_url: str) -> dict | None:
+def _parse(raw: str, station: str, source_url: str, source: str = SOURCE) -> dict | None:
     raw = _normalise(raw)
     if not raw or len(raw) > _MAX_RAW_LEN or _VALIDITY_RE.search(raw):
         return None
@@ -201,9 +201,9 @@ def _parse(raw: str, station: str, source_url: str) -> dict | None:
         "obs_time": _utc_iso(dt),
         "canonical_raw": canonical,
         "raw": core.rstrip("=").strip(),
-        "source": SOURCE,
+        "source": source,
         "source_url": source_url,
-        "sources": [{"name": SOURCE, "url": source_url}],
+        "sources": [{"name": source, "url": source_url}],
         "temperature_c": temp,
         "dew_point_c": dew,
         "relative_humidity_pct": _rh(temp, dew),
@@ -223,7 +223,7 @@ def _parse(raw: str, station: str, source_url: str) -> dict | None:
     }
 
 
-def _extract(page: str, station: str, source_url: str) -> list[dict]:
+def _extract(page: str, station: str, source_url: str, source: str = SOURCE) -> list[dict]:
     text = _plain(page)
     pattern = re.compile(
         rf"\b((?:(?:METAR|SPECI)\s+)?(?:COR\s+)?{re.escape(station)}\s+\d{{6}}Z\s+(?:AUTO\s+)?(?:VRB|\d{{3}})\d{{2,3}}(?:G\d{{2,3}})?KT\b.*?\bQ\d{{4}}\b)=?",
@@ -232,7 +232,7 @@ def _extract(page: str, station: str, source_url: str) -> list[dict]:
     out = []
     seen = set()
     for match in pattern.finditer(text):
-        row = _parse(match.group(1), station, source_url)
+        row = _parse(match.group(1), station, source_url, source)
         if not row or row["message_id"] in seen:
             continue
         seen.add(row["message_id"])
@@ -294,12 +294,12 @@ def _update_latest(records: list[dict]) -> bool:
     return True
 
 
-def capture_pilothub_page(station: str, page: str, source_url: str) -> dict:
+def capture_pilothub_page(station: str, page: str, source_url: str, source: str = SOURCE) -> dict:
     """Extract and persist neighbor METAR/SPECI from an already-fetched page."""
     station = str(station or "").upper()
     if station not in NEIGHBORS:
         return {"station": station, "decoded": 0, "added": 0, "latest_changed": False}
-    records = _extract(page, station, source_url)
+    records = _extract(page, station, source_url, source)
     added = 0
     with _LOCK:
         for row in records:

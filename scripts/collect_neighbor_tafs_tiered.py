@@ -152,6 +152,30 @@ def _pilot_worker(station: str, url: str):
     return station, url, rows
 
 
+def _collect_awc_neighbor_observations() -> None:
+    """Archive independent METAR/SPECI context even if PilotHub blocks access.
+
+    AWC is a separate provider, queried once for the three nearby stations.
+    It is not a replacement for EPIR's authoritative IMGW aviation feed.
+    """
+    ids = ",".join(sorted(legacy.neighbor_obs.NEIGHBORS))
+    url = "https://aviationweather.gov/api/data/metar?" + urllib.parse.urlencode({
+        "ids": ids, "format": "raw",
+    })
+    try:
+        page = legacy.fetch_text(url, "text/plain,*/*;q=0.8", retries=1)
+        if not page:
+            print("Neighbor OBS AWC: no current reports")
+            return
+        for station in sorted(legacy.neighbor_obs.NEIGHBORS):
+            result = legacy.neighbor_obs.capture_pilothub_page(
+                station, page, url, source="AWC METAR",
+            )
+            print(f"Neighbor OBS AWC {station}: decoded={result['decoded']} added={result['added']}")
+    except Exception as exc:
+        print(f"Neighbor OBS AWC warning: {type(exc).__name__}: {exc}")
+
+
 def _collect_pilothub(store: dict[str, list[dict]]) -> None:
     jobs = [
         (sid, url)
@@ -278,6 +302,7 @@ def _fallback_awc(store: dict[str, list[dict]], missing: set[str]) -> set[str]:
 def collect_candidates() -> dict[str, list[dict]]:
     store: dict[str, list[dict]] = defaultdict(list)
 
+    _collect_awc_neighbor_observations()
     _collect_pilothub(store)
     missing = _missing_current(store)
     if not missing:
