@@ -261,6 +261,23 @@ def cycle(*, publish: bool, state_path: Path) -> dict:
         results.append(run_step("observations-primary", script("collect_epir_observations.py"), attempts=2, timeout=120))
         results.append(run_step("synop-supplement", script("supplement_synop_12342.py"), attempts=2, timeout=90))
 
+        # Ogimet FM-12 may omit 12342; periodically consult the independent
+        # WIS2/BUFR source. It writes original reported observations only.
+        utc_cycle = datetime.now(timezone.utc)
+        if utc_cycle.minute < 6:
+            results.append(run_step("synop-wis2", script("supplement_synop_wis2.py"), attempts=1, timeout=90))
+        else:
+            skipped.append("synop-wis2-hourly")
+
+        # Fill historical TAF/SYNOP gaps from real dated bulletins, not model
+        # extrapolation. The recovery script upserts older rows to Supabase
+        # directly because the normal mirror only scans recent days.
+        if utc_cycle.hour % 6 == 0 and utc_cycle.minute < 6:
+            results.append(run_step("message-gap-recovery", script("recover_recent_message_gaps.py"), attempts=1, timeout=150))
+        else:
+            skipped.append("message-gap-recovery-6h")
+
+
         metar_precheck = run_step(
             "metar-precheck",
             script("check_epir_archive_freshness.py", "--metar-only"),
