@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 
 import collect_neighbor_tafs as legacy
+import collect_epir_observations as epir_observations
 
 _UI_STOP_RE = re.compile(
     r"\b(?:Pokaż\s+zdekodowaną\s+prognozę|Prognoza\s+ważna|Chmury\s+i\s+widoczność|"
@@ -299,6 +300,50 @@ def _fallback_awc(store: dict[str, list[dict]], missing: set[str]) -> set[str]:
     return _missing_current(store)
 
 
+def _fallback_ogimet_epir(store: dict[str, list[dict]], missing: set[str]) -> set[str]:
+    """Try genuine timestamped historical TAFs when current EPIR feed is unreachable.
+
+    OGIMET is used sparingly (two short checks per hour) to avoid
+    repeated historical queries. Reject mismatched timestamps, other stations,
+    older cycles and malformed reports. A missing report is *not* fabricated.
+    """
+    if "EPIR" not in missing:
+        return missing
+    now = datetime.now(timezone.utc)
+    if not (now.minute < 6 or 30 <= now.minute < 36):
+        print("TAF fallback Ogimet EPIR: deferred to twice-hourly check")
+        return missing
+    start = now - timedelta(hours=12)
+    end = now + timedelta(minutes=5)
+    url = "https://www.ogimet.com/cgi-bin/gettafor?" + urllib.parse.urlencode({
+        "icao": "EPIR",
+        "begin": start.strftime("%Y%m%d%H%M"),
+        "end": end.strftime("%Y%m%d%H%M"),
+        "header": "yes",
+        "lang": "eng",
+    })
+    try:
+        payload = epir_observations.get_text(url, timeout=18)
+        if not payload.strip() or "<html" in payload[:500].lower():
+            raise ValueError("unexpected non-CSV reply")
+        accepted = []
+        for issue, report in epir_observations.csv_rows(payload, "EPIR"):
+            raw = legacy.normalize_taf(report)
+            if re.match(r"^EPIR\\s+\\d{6}Z\\b", raw, re.I):
+                raw = legacy.normalize_taf("TAF " + raw)
+            match = re.match(r"^TAF\\s+(?:(?:AMD|COR)\\s+)?EPIR\\s+(\\d{2})(\\d{2})(\\d{2})Z\\b", raw, re.I)
+            if not match or (issue.day, issue.hour, issue.minute) != tuple(map(int, match.groups())):
+                continue
+            if not legacy.is_current(raw, now):
+                continue
+            accepted.append(("EPIR", raw))
+        _add_rows(store, accepted, "Ogimet historical TAF", url, {"EPIR"})
+        print(f"TAF fallback Ogimet EPIR: validated={len(accepted)}")
+    except Exception as exc:
+        print(f"TAF fallback Ogimet EPIR warning: {type(exc).__name__}: {exc}")
+    return _missing_current(store)
+
+
 def collect_candidates() -> dict[str, list[dict]]:
     store: dict[str, list[dict]] = defaultdict(list)
 
@@ -313,6 +358,7 @@ def collect_candidates() -> dict[str, list[dict]]:
     missing = _fallback_imgw_api(store, missing)
     missing = _fallback_imgw_page(store, missing)
     missing = _fallback_awc(store, missing)
+    missing = _fallback_ogimet_epir(store, missing)
     if missing:
         print(f"TAF fallback chain exhausted; still missing expected cycle: {sorted(missing)}")
     else:
@@ -322,6 +368,7 @@ def collect_candidates() -> dict[str, list[dict]]:
 
 def main() -> int:
     legacy.is_current = _scheduled_is_current
+    legacy.SOURCE_PRIORITY.setdefault("Ogimet historical TAF", 8)
     legacy.collect_candidates = collect_candidates
     return legacy.main()
 
