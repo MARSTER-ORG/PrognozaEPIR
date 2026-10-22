@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 import urllib.parse
+import urllib.request
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
@@ -45,7 +46,12 @@ _TAF_GRACE_MIN_BY_STATION = {
 }
 # The IMGW /data/last endpoint accepts the same supported query shape used by
 # the working METAR fast path. The former count=4 parameter returns HTTP 400.
-_IMGW_TAF_URL = "https://aviation-api.imgw.pl/data/last?params=taf&format=json"
+_IMGW_TAF_URLS = (
+    # The current METAR collector independently uses the combined query form.
+    # Try both permitted forms: IMGW periodically stalls on taf-only queries.
+    "https://aviation-api.imgw.pl/data/last?params=metar,taf&format=json",
+    "https://aviation-api.imgw.pl/data/last?params=taf&format=json",
+)
 _legacy_is_current = legacy.is_current
 
 
@@ -196,20 +202,38 @@ def _collect_pilothub(store: dict[str, list[dict]]) -> None:
 
 
 def _fallback_imgw_api(store: dict[str, list[dict]], missing: set[str]) -> set[str]:
+    """Retry IMGW through two documented query forms without cache-busters.
+
+    An 8-second socket timeout was causing the entire military TAF source to be
+    skipped even when the same IMGW host supplied METARs after 8 seconds.
+    The upstream may still block requests: never synthesize a missing bulletin.
+    """
     if not missing:
         return missing
-    try:
-        page = legacy.fetch_text(
-            _IMGW_TAF_URL,
-            "application/json,text/plain,*/*;q=0.8",
-            retries=1,
-        )
-        rows = legacy.extract_imgw_api_tafs(page)
-        _add_rows(store, rows, "IMGW Aviation API", _IMGW_TAF_URL, missing)
-        print(f"TAF fallback IMGW API: decoded={len(rows)} missing_before={sorted(missing)}")
-    except Exception as exc:
-        print(f"TAF fallback IMGW API failed: {exc}")
-    return _missing_current(store)
+    for url in _IMGW_TAF_URLS:
+        try:
+            request = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": legacy.UA,
+                    "Accept": "application/json,text/plain,*/*;q=0.8",
+                    "Accept-Language": "pl-PL,pl;q=0.9,en;q=0.7",
+                    "Referer": "https://awiacja.imgw.pl/",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=20) as response:
+                page = response.read(5_000_001)
+                if len(page) > 5_000_000:
+                    raise ValueError("IMGW TAF response exceeded 5 MB")
+            rows = legacy.extract_imgw_api_tafs(page.decode("utf-8", errors="replace"))
+            _add_rows(store, rows, "IMGW Aviation API", url, missing)
+            print(f"TAF IMGW API {url}: decoded={len(rows)}; missing_before={sorted(missing)}")
+        except Exception as exc:
+            print(f"TAF IMGW API {url}: {type(exc).__name__}: {exc}")
+        missing = _missing_current(store)
+        if not missing:
+            break
+    return missing
 
 
 def _fallback_imgw_page(store: dict[str, list[dict]], missing: set[str]) -> set[str]:
