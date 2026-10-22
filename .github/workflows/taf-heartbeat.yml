@@ -1,38 +1,122 @@
-name: EPIR neighbor TAF archive watchdog
+name: EPIR TAF independent recovery
 
+# Unlike the old heartbeat this runs a real collector on GitHub-hosted compute.
+# Railway stays primary; GitHub runs a separately networked recovery path.
 on:
   schedule:
-    - cron: '47 5,11,17,23 * * *'
+    - cron: '47 0,6,12,18 * * *'
+    - cron: '27 1,7,13,19 * * *'
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/taf-heartbeat.yml'
+      - 'scripts/collect_neighbor_tafs_tiered.py'
+      - 'scripts/collect_neighbor_tafs.py'
+      - 'scripts/message_archive.py'
+      - 'scripts/finalize_central_message_architecture_v2.py'
 
 permissions:
-  contents: read
-  actions: write
+  contents: write
 
 concurrency:
-  group: prognozaepir-taf-watchdog
-  cancel-in-progress: true
+  group: prognozaepir-taf-independent-recovery
+  cancel-in-progress: false
 
 jobs:
-  watchdog:
+  acquire:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout canonical source and archive
+        uses: actions/checkout@v4
         with:
           ref: main
+          fetch-depth: 0
+          persist-credentials: true
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Check TAF freshness and refresh GitHub only from Railway
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Validate collector modules
+        run: |
+          python3 -m py_compile scripts/collect_neighbor_tafs.py scripts/collect_neighbor_tafs_tiered.py scripts/message_archive.py scripts/finalize_central_message_architecture_v2.py scripts/supabase_message_mirror.py
+      - name: Acquire from independent runner
+        run: |
+          set -euo pipefail
+          python3 scripts/collect_neighbor_tafs_tiered.py
+          python3 scripts/message_archive.py
+          python3 scripts/finalize_central_message_architecture_v2.py
+          python3 scripts/message_archive.py --validate-only
+      - name: Determine current station coverage
+        id: coverage
         shell: bash
         run: |
-          if python3 scripts/check_epir_archive_freshness.py --taf-only --all-tafs; then
-            echo 'TAF archive is fresh.'
+          python3 - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timedelta, timezone
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, 'scripts')
+          import collect_neighbor_tafs_tiered as collector
+
+          cache = json.loads(Path('data/taf/neighbors.json').read_text(encoding='utf-8'))
+          stations = cache.get('stations') or {}
+          now = datetime.now(timezone.utc)
+          fresh = []
+          missing = []
+          for sid in ('EPIR', 'EPBY', 'EPPW', 'EPKS'):
+              row = stations.get(sid) or {}
+              raw = row.get('raw') or ''
+              valid = bool(raw and collector._scheduled_is_current(raw, now))
+              if valid:
+                  fresh.append(sid)
+              else:
+                  missing.append(sid)
+              print(f"{sid}: {'current' if valid else 'missing/stale'} | {row.get('source') or 'none'}")
+          if missing:
+              print('::warning::Unrecovered TAF cycles: '+', '.join(missing))
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write('fresh=' + ('true' if fresh else 'false') + '\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as summary:
+              summary.write('TAF independent recovery (UTC): '+now.isoformat()+'\n')
+              summary.write('Fresh: '+(', '.join(fresh) or 'none')+'\n')
+              summary.write('Missing or stale: '+(', '.join(missing) or 'none')+'\n')
+          PY
+      - name: Mirror validated TAFs to Supabase
+        if: steps.coverage.outputs.fresh == 'true'
+        env:
+          SUPABASE_URL: https://qozgntzeormujmqzkkmd.supabase.co
+          MESSAGE_INGEST_TOKEN: ${{ secrets.MESSAGE_INGEST_TOKEN }}
+          SUPABASE_INGEST_TOKEN: ${{ secrets.SUPABASE_INGEST_TOKEN }}
+          SUPABASE_INGEST_ENABLED: '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$MESSAGE_INGEST_TOKEN" && -z "$SUPABASE_INGEST_TOKEN" ]]; then
+            echo '::warning::Independent runner has no MESSAGE_INGEST_TOKEN or SUPABASE_INGEST_TOKEN secret; GitHub mirror still updates.'
+          else
+            python3 scripts/supabase_message_mirror.py --lookback-days 3 --force
+          fi
+      - name: Preserve independent recovery in GitHub archive
+        if: steps.coverage.outputs.fresh == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -- data/taf/neighbors.json data/taf/latest.json data/taf/epir data/messages/taf data/messages/taf-neighbors.json data/messages/latest.json data/messages/recent.json data/messages/status.json
+          if git diff --cached --quiet; then
+            echo 'No new canonical TAF content.'
             exit 0
           fi
-          echo '::warning::TAF archive stale; requesting a validated Railway-to-GitHub mirror refresh'
-          gh workflow run mirror-central-archive.yml --repo "${{ github.repository }}" --ref main
+          git config user.name 'prognozaepir-taf-recovery'
+          git config user.email 'taf-recovery@prognozaepir.invalid'
+          git commit -m 'archive(taf): restore verified current TAFs from independent runner'
+          for attempt in 1 2 3; do
+            if git pull --rebase origin main && git push origin HEAD:main; then
+              exit 0
+            fi
+            git rebase --abort >/dev/null 2>&1 || true
+            sleep "$attempt"
+          done
+          echo 'Could not publish independent archive TAF changes.' >&2
           exit 1
