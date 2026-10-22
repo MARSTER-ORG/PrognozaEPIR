@@ -300,6 +300,35 @@ def _fallback_awc(store: dict[str, list[dict]], missing: set[str]) -> set[str]:
     return _missing_current(store)
 
 
+def _parse_ogimet_epir_tafs(payload: str, now: datetime) -> list[tuple[str, str]]:
+    """Validate dated Ogimet CSV reports without inventing or rewriting TAF content.
+
+    gettafor returns ICAO,YEAR,MONTH,DAY,HOUR,MIN,REPORT; REPORT may omit
+    the leading TAF keyword.  Keep its issue stamp and require a current
+    publication cycle before accepting the telegram.
+    """
+    accepted: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for issued_at, report in epir_observations.csv_rows(payload, "EPIR"):
+        raw = legacy.normalize_taf(report)
+        if re.match(r"^EPIR\s+\d{6}Z\b", raw, re.I):
+            raw = legacy.normalize_taf("TAF " + raw)
+        match = re.match(
+            r"^TAF\s+(?:(?:AMD|COR)\s+)?EPIR\s+(\d{2})(\d{2})(\d{2})Z\b",
+            raw, re.I,
+        )
+        if not match or (issued_at.day, issued_at.hour, issued_at.minute) != tuple(
+            map(int, match.groups())
+        ):
+            continue
+        if re.search(r"\bNIL\b", raw, re.I) or not _scheduled_is_current(raw, now):
+            continue
+        if raw not in seen:
+            seen.add(raw)
+            accepted.append(("EPIR", raw))
+    return accepted
+
+
 def _fallback_ogimet_epir(store: dict[str, list[dict]], missing: set[str]) -> set[str]:
     """Try genuine timestamped historical TAFs when current EPIR feed is unreachable.
 
@@ -326,17 +355,7 @@ def _fallback_ogimet_epir(store: dict[str, list[dict]], missing: set[str]) -> se
         payload = epir_observations.get_text(url, timeout=18)
         if not payload.strip() or "<html" in payload[:500].lower():
             raise ValueError("unexpected non-CSV reply")
-        accepted = []
-        for issue, report in epir_observations.csv_rows(payload, "EPIR"):
-            raw = legacy.normalize_taf(report)
-            if re.match(r"^EPIR\\s+\\d{6}Z\\b", raw, re.I):
-                raw = legacy.normalize_taf("TAF " + raw)
-            match = re.match(r"^TAF\\s+(?:(?:AMD|COR)\\s+)?EPIR\\s+(\\d{2})(\\d{2})(\\d{2})Z\\b", raw, re.I)
-            if not match or (issue.day, issue.hour, issue.minute) != tuple(map(int, match.groups())):
-                continue
-            if not legacy.is_current(raw, now):
-                continue
-            accepted.append(("EPIR", raw))
+        accepted = _parse_ogimet_epir_tafs(payload, now)
         _add_rows(store, accepted, "Ogimet historical TAF", url, {"EPIR"})
         print(f"TAF fallback Ogimet EPIR: validated={len(accepted)}")
     except Exception as exc:
