@@ -106,6 +106,29 @@ class ArchiveIngestRecoveryTests(unittest.TestCase):
             tiered.collect_candidates()
         self.assertEqual(order, ["IMGW", "PilotHub", "Awiacja", "AWC", "Ogimet"])
 
+    def test_github_taf_schedule_requires_new_six_hour_cycle(self):
+        # At 05:45 UTC, the new 05:00 TAF and the EPBY 05:30 TAF
+        # must be available; the previous evening's issues must not pass.
+        check = datetime(2026, 10, 23, 5, 45, tzinfo=timezone.utc)
+        with patch.dict("os.environ", {"PROGNOZAEPIR_TAF_REQUIRE_NEW_CYCLE": "1"}):
+            self.assertEqual(
+                tiered._expected_taf_cycle("EPIR", check),
+                datetime(2026, 10, 23, 5, 0, tzinfo=timezone.utc),
+            )
+            self.assertEqual(
+                tiered._expected_taf_cycle("EPBY", check),
+                datetime(2026, 10, 23, 5, 30, tzinfo=timezone.utc),
+            )
+            self.assertFalse(tiered._scheduled_is_current(
+                "TAF EPIR 222300Z 2300/2312 24006KT CAVOK=", check))
+            self.assertTrue(tiered._scheduled_is_current(
+                "TAF EPIR 230500Z 2306/2318 24006KT CAVOK=", check))
+        with patch.dict("os.environ", {"PROGNOZAEPIR_TAF_REQUIRE_NEW_CYCLE": "0"}):
+            self.assertEqual(
+                tiered._expected_taf_cycle("EPIR", check),
+                datetime(2026, 10, 22, 23, 0, tzinfo=timezone.utc),
+            )
+
     def test_neighbour_awc_collection_runs_without_pilothub(self):
         sample = "METAR EPBY 151000Z 26005KT 9999 SCT030 12/08 Q1022="
         captured = []
