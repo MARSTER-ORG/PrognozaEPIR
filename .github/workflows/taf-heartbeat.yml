@@ -60,12 +60,18 @@ jobs:
           cache = json.loads(Path('data/taf/neighbors.json').read_text(encoding='utf-8'))
           stations = cache.get('stations') or {}
           now = datetime.now(timezone.utc)
+          latest = json.loads(Path('data/messages/latest.json').read_text(encoding='utf-8'))
+          metar = latest.get('metar_only') or latest.get('metar') or {}
+          epir_auto = 'AUTO' in str(metar.get('raw') or '').upper().split()
           fresh = []
           missing = []
           for sid in ('EPIR', 'EPBY', 'EPPW', 'EPKS'):
               row = stations.get(sid) or {}
               raw = row.get('raw') or ''
               valid = bool(raw and collector._scheduled_is_current(raw, now))
+              if sid == 'EPIR' and epir_auto and not valid:
+                  print('EPIR: TAF not published during AUTO METAR; history retained')
+                  continue
               if valid:
                   fresh.append(sid)
               else:

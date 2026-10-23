@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -128,12 +129,20 @@ def taf_result(payload: dict, station: str, now: datetime, grace_min: int) -> tu
     row = (by_station.get(station) or payload.get("taf")) if station == "EPIR" else by_station.get(station)
     latest = record_time(row, "issue_time", "message_time")
     expected = expected_taf_cycle(now, grace_min, station)
-    ok = bool(latest and latest >= expected)
+    issue_current = bool(latest and latest >= expected)
+    metar = payload.get("metar_only") or payload.get("metar") or {}
+    metar_raw = str(metar.get("raw") or "")
+    # An AUTO METAR does not constitute a TAF. During automated-only EPIR
+    # operations the unavailable forecast is reported rather than fabricated.
+    auto_without_taf = station == "EPIR" and not issue_current and bool(re.search(r"\bAUTO\b", metar_raw, re.I))
+    ok = issue_current or auto_without_taf
     return {
         "latest": iso(latest),
         "expected_at_least": iso(expected),
         "grace_min": grace_min,
         "ok": ok,
+        "issued_current_cycle": issue_current,
+        "availability": "not_published_during_auto_metar" if auto_without_taf else ("current" if issue_current else "missing_or_stale"),
         "raw": (row or {}).get("raw"),
         "source": (row or {}).get("source"),
         "snapshot_only": (row or {}).get("snapshot_only") if station != "EPIR" else False,

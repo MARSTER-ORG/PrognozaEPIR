@@ -1,0 +1,31 @@
+name: Military TAF archive regression
+
+on:
+  push:
+    paths:
+      - 'scripts/collect_neighbor_tafs*.py'
+      - 'scripts/message_archive.py'
+      - 'scripts/finalize_central_message_architecture_v2.py'
+      - 'scripts/rebuild_message_archive_status.py'
+      - 'scripts/check_epir_archive_freshness.py'
+      - 'tests/test_taf_archive_recovery.py'
+      - '.github/workflows/taf-archive-regression.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile changed modules
+        run: |
+          python -m py_compile scripts/collect_neighbor_tafs.py scripts/collect_neighbor_tafs_tiered.py scripts/message_archive.py scripts/finalize_central_message_architecture_v2.py scripts/check_epir_archive_freshness.py scripts/rebuild_message_archive_status.py
+      - name: Verify no TAF invention, timestamp matching and durable archive
+        run: python -m unittest discover -s tests -p 'test_taf_archive_recovery.py' -v

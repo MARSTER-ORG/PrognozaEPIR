@@ -33,7 +33,7 @@ def rebuild(root: Path, neighbor_mode: str, neighbor_keep_days: int) -> dict:
                     row = json.loads(raw_line)
                     if row.get("type") != kind:
                         raise RuntimeError(f"unexpected type in {path}: {row.get('type')} != {kind}")
-                    if kind == "TAF" and str(row.get("station") or "").upper() != "EPIR":
+                    if kind == "TAF" and str(row.get("station") or "").upper() not in ("EPIR", "EPPW", "EPKS"):
                         raise RuntimeError(f"neighbor TAF leaked into history: {path}")
                     count += 1
                     message_time = str(row.get("message_time") or "")
@@ -62,8 +62,8 @@ def rebuild(root: Path, neighbor_mode: str, neighbor_keep_days: int) -> dict:
         "archive_updated_at": archive_updated_at,
         "deduplication": "sha256(type + station + canonical_raw)",
         "legacy_archives_authoritative": False,
-        "taf_history_scope": "EPIR only",
-        "taf_neighbors": "current snapshot only; not archived; not learning data",
+        "taf_history_scope": "EPIR, EPPW, EPKS",
+        "taf_neighbors": "EPBY snapshot; EPPW/EPKS history plus snapshots; excluded from EPIR learning",
         "neighbor_observations": (
             f"EPBY/EPPW/EPKS METAR/SPECI context; {neighbor_policy}; excluded from EPIR counts"
         ),

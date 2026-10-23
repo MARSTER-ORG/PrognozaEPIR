@@ -53,6 +53,13 @@ _IMGW_TAF_URLS = (
     "https://aviation-api.imgw.pl/data/last?params=metar,taf&format=json",
     "https://aviation-api.imgw.pl/data/last?params=taf&format=json",
 )
+# Secondary public pages can carry the same source-issued military TAF.
+# All responses must still pass ICAO, issuance-time and validity checks.
+legacy.PILOTHUB_PAGES["EPKS"] += ("https://en.pilothub.pl/airports/epze",)
+legacy.PILOTHUB_PAGES["EPPW"] += (
+    "https://pilothub.pl/lotniska/pleszew-h",
+    "https://pilothub.cz/letiste/epom",
+)
 _legacy_is_current = legacy.is_current
 
 
@@ -97,6 +104,12 @@ def _add_rows(store: dict[str, list[dict]], rows, source: str, source_url: str, 
         sid = str(sid or "").upper()
         if allowed is not None and sid not in allowed:
             continue
+        # NIL/CNL are publication status messages, not usable forecasts.
+        # Require a validity group, so partial HTML and stale page fragments
+        # cannot become an archived operational TAF.
+        raw = legacy.normalize_taf(raw)
+        if re.search(r"\b(?:NIL|CNL)\b", raw, re.I) or not re.search(r"\b\d{4}/\d{4}\b", raw):
+            continue
         legacy.add_candidate(store, sid, raw, source, source_url)
 
 
@@ -125,6 +138,8 @@ def _scheduled_is_current(raw: str, now: datetime | None = None) -> bool:
     """Apply both validity and station publication schedule to CURRENT state."""
     now = now or datetime.now(timezone.utc)
     normalized = legacy.normalize_taf(raw)
+    if re.search(r"\b(?:NIL|CNL)\b", normalized, re.I):
+        return False
     match = re.search(r"\bTAF(?:\s+(?:AMD|COR))?\s+([A-Z0-9]{4,5})\b", normalized, re.I)
     if not match:
         return _legacy_is_current(raw, now)
@@ -330,66 +345,78 @@ def _fallback_awc(store: dict[str, list[dict]], missing: set[str]) -> set[str]:
     return _missing_current(store)
 
 
-def _parse_ogimet_epir_tafs(payload: str, now: datetime) -> list[tuple[str, str]]:
-    """Validate dated Ogimet CSV reports without inventing or rewriting TAF content.
-
-    gettafor returns ICAO,YEAR,MONTH,DAY,HOUR,MIN,REPORT; REPORT may omit
-    the leading TAF keyword.  Keep its issue stamp and require a current
-    publication cycle before accepting the telegram.
-    """
+def _parse_ogimet_tafs(payload: str, station: str, now: datetime) -> list[tuple[str, str]]:
+    """Accept only real, timestamp-matched, valid TAFs from OGIMET CSV."""
     accepted: list[tuple[str, str]] = []
     seen: set[str] = set()
-    for issued_at, report in epir_observations.csv_rows(payload, "EPIR"):
+    pattern = re.compile(
+        rf"^TAF\s+(?:(?:AMD|COR)\s+)?{re.escape(station)}\s+(\d{{2}})(\d{{2}})(\d{{2}})Z\b",
+        re.I,
+    )
+    for issued_at, report in epir_observations.csv_rows(payload, station):
         raw = legacy.normalize_taf(report)
-        if re.match(r"^EPIR\s+\d{6}Z\b", raw, re.I):
+        if re.match(rf"^{re.escape(station)}\s+\d{{6}}Z\b", raw, re.I):
             raw = legacy.normalize_taf("TAF " + raw)
-        match = re.match(
-            r"^TAF\s+(?:(?:AMD|COR)\s+)?EPIR\s+(\d{2})(\d{2})(\d{2})Z\b",
-            raw, re.I,
-        )
-        if not match or (issued_at.day, issued_at.hour, issued_at.minute) != tuple(
-            map(int, match.groups())
-        ):
+        match = pattern.match(raw)
+        if not match or (issued_at.day, issued_at.hour, issued_at.minute) != tuple(map(int, match.groups())):
             continue
-        if re.search(r"\bNIL\b", raw, re.I) or not _scheduled_is_current(raw, now):
+        if re.search(r"\b(?:NIL|CNL)\b", raw, re.I):
+            continue
+        if not re.search(r"\b\d{4}/\d{4}\b", raw):
+            continue
+        if not _scheduled_is_current(raw, now):
             continue
         if raw not in seen:
             seen.add(raw)
-            accepted.append(("EPIR", raw))
+            accepted.append((station, raw))
     return accepted
 
 
-def _fallback_ogimet_epir(store: dict[str, list[dict]], missing: set[str]) -> set[str]:
-    """Try genuine timestamped historical TAFs when current EPIR feed is unreachable.
+def _parse_ogimet_epir_tafs(payload: str, now: datetime) -> list[tuple[str, str]]:
+    """Compatibility helper for existing EPIR-only tests and callers."""
+    return _parse_ogimet_tafs(payload, "EPIR", now)
 
-    OGIMET is used sparingly (two short checks per hour) to avoid
-    repeated historical queries. Reject mismatched timestamps, other stations,
-    older cycles and malformed reports. A missing report is *not* fabricated.
+
+def _fallback_ogimet_missing(store: dict[str, list[dict]], missing: set[str]) -> set[str]:
+    """Independent dated OGIMET recovery for military stations (twice hourly).
+
+    Avoids arbitrary scraping, verifies report timestamps and never invents
+    reports if a station is not currently publishing a TAF.
     """
-    if "EPIR" not in missing:
+    targets = sorted(missing & {"EPIR", "EPPW", "EPKS"})
+    if not targets:
         return missing
     now = datetime.now(timezone.utc)
     if not (now.minute < 6 or 30 <= now.minute < 36):
-        print("TAF fallback Ogimet EPIR: deferred to twice-hourly check")
+        print("TAF fallback OGIMET: deferred to twice-hourly check")
         return missing
+
     start = now - timedelta(hours=12)
     end = now + timedelta(minutes=5)
-    url = "https://www.ogimet.com/cgi-bin/gettafor?" + urllib.parse.urlencode({
-        "icao": "EPIR",
-        "begin": start.strftime("%Y%m%d%H%M"),
-        "end": end.strftime("%Y%m%d%H%M"),
-        "header": "yes",
-        "lang": "eng",
-    })
-    try:
-        payload = epir_observations.get_text(url, timeout=18)
+
+    def worker(station: str):
+        url = "https://www.ogimet.com/cgi-bin/gettafor?" + urllib.parse.urlencode({
+            "icao": station,
+            "begin": start.strftime("%Y%m%d%H%M"),
+            "end": end.strftime("%Y%m%d%H%M"),
+            "header": "yes",
+            "lang": "eng",
+        })
+        payload = epir_observations.get_text(url, timeout=14)
         if not payload.strip() or "<html" in payload[:500].lower():
             raise ValueError("unexpected non-CSV reply")
-        accepted = _parse_ogimet_epir_tafs(payload, now)
-        _add_rows(store, accepted, "Ogimet historical TAF", url, {"EPIR"})
-        print(f"TAF fallback Ogimet EPIR: validated={len(accepted)}")
-    except Exception as exc:
-        print(f"TAF fallback Ogimet EPIR warning: {type(exc).__name__}: {exc}")
+        return station, url, _parse_ogimet_tafs(payload, station, now)
+
+    with ThreadPoolExecutor(max_workers=min(3, len(targets))) as pool:
+        future_map = {pool.submit(worker, station): station for station in targets}
+        for future in as_completed(future_map):
+            station = future_map[future]
+            try:
+                sid, url, rows = future.result()
+                _add_rows(store, rows, "Ogimet historical TAF", url, {sid})
+                print(f"TAF fallback OGIMET {sid}: validated={len(rows)}")
+            except Exception as exc:
+                print(f"TAF fallback OGIMET {station}: {type(exc).__name__}: {exc}")
     return _missing_current(store)
 
 
@@ -413,7 +440,7 @@ def collect_candidates() -> dict[str, list[dict]]:
     print(f"TAF additional fallback chain activated for: {sorted(missing)}")
     missing = _fallback_imgw_page(store, missing)
     missing = _fallback_awc(store, missing)
-    missing = _fallback_ogimet_epir(store, missing)
+    missing = _fallback_ogimet_missing(store, missing)
     if missing:
         print(f"TAF fallback chain exhausted; still missing expected cycle: {sorted(missing)}")
     else:

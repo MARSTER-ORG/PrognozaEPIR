@@ -363,6 +363,8 @@ def add_candidate(store: dict[str, list[dict]], station: str, raw: str, source: 
     if station not in STATIONS or not raw:
         return
     raw = normalize_taf(raw)
+    if re.search(r"\b(?:NIL|CNL)\b", raw, re.I) or not re.search(r"\b\d{4}/\d{4}\b", raw):
+        return
     if not re.search(rf"\bTAF(?:\s+(?:AMD|COR))?\s+{re.escape(station)}\b", raw, re.I):
         return
     if any(x["raw"] == raw and x["source"] == source and x["source_url"] == url for x in store[station]):

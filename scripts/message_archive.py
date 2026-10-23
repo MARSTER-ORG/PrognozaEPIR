@@ -2,8 +2,8 @@
 """Single source of truth for PrognozaEPIR METAR/SPECI/TAF/SYNOP.
 
 TAF policy is strict:
-- historical TAF JSONL contains EPIR only;
-- EPBY/EPPW/EPKS are current snapshots in data/messages/taf-neighbors.json;
+- historical TAF JSONL contains EPIR/EPPW/EPKS;
+- EPBY remains a current snapshot; EPPW/EPKS also retain current snapshots;
 - rebuilding METAR/SYNOP views must never regress a newer neighbor snapshot.
 """
 from __future__ import annotations
@@ -144,9 +144,9 @@ def ingest(rows):
     groups=defaultdict(list)
     for r in rows:
         if not r: continue
-        # Neighbor TAFs are operational context only. Never create historical
-        # JSONL rows for EPBY/EPPW/EPKS, regardless of the input source.
-        if r.get('type')=='TAF' and str(r.get('station') or '').upper()!='EPIR':
+        # EPBY retains its current snapshot behaviour; the other military
+        # stations have genuine issue history for archive/verification.
+        if r.get('type')=='TAF' and str(r.get('station') or '').upper() not in ('EPIR','EPPW','EPKS'):
             continue
         groups[dayfile(r)].append(r)
     stat={'input':0,'added':0,'duplicates':0,'enriched':0,'added_by_type':{x.lower():0 for x in TYPES},'files':[]}
@@ -271,7 +271,7 @@ def prune_neighbor_taf_history():
     root=A/'taf'; removed=0
     if not root.exists(): return removed
     for p in sorted(root.rglob('*.jsonl')):
-        rows=lines(p); keep=[r for r in rows if str(r.get('station') or '').upper()=='EPIR']
+        rows=lines(p); keep=[r for r in rows if str(r.get('station') or '').upper() in ('EPIR','EPPW','EPKS')]
         removed += len(rows)-len(keep)
         if keep:
             text=''.join(json.dumps(x,ensure_ascii=False,separators=(',',':'),sort_keys=True)+'\n' for x in sorted(keep,key=lambda x:(x.get('message_time',''),x.get('message_id',''))))
@@ -320,10 +320,10 @@ def views(stat,full=False):
             if row and (not last.get(k) or row['message_time']>last[k]): last[k]=row['message_time']
     # TAF is small enough to recount every run. This also repairs any old count
     # that included neighbor snapshots by mistake.
-    all_epir_taf=[x for x in stream('TAF') if x.get('station')=='EPIR']
-    counts['taf']=len(all_epir_taf)
-    last['taf']=all_epir_taf[-1]['message_time'] if all_epir_taf else None
-    writej(A/'status.json',{'schema':'prognozaepir-message-archive-status-v1','archive':'data/messages','types':list(TYPES),'counts':counts,'latest':last,'archive_updated_at':latest['updated_at'],'deduplication':'sha256(type + station + canonical_raw)','legacy_archives_authoritative':False,'taf_history_scope':'EPIR only','taf_neighbors':'current snapshot only; not archived; not learning data'})
+    all_taf=stream('TAF')
+    counts['taf']=len(all_taf)
+    last['taf']=all_taf[-1]['message_time'] if all_taf else None
+    writej(A/'status.json',{'schema':'prognozaepir-message-archive-status-v1','archive':'data/messages','types':list(TYPES),'counts':counts,'latest':last,'archive_updated_at':latest['updated_at'],'deduplication':'sha256(type + station + canonical_raw)','legacy_archives_authoritative':False,'taf_history_scope':'EPIR, EPPW, EPKS','taf_neighbors':'EPBY snapshot; EPPW/EPKS archived plus snapshots; excluded from EPIR learning'})
     return counts
 
 def validate():
@@ -336,7 +336,7 @@ def validate():
             for r in lines(p):
                 n+=1
                 if r.get('type')!=k or not r.get('message_id') or not r.get('canonical_raw') or not r.get('message_time'): raise ValueError(f'bad record {p}')
-                if k=='TAF' and str(r.get('station') or '').upper()!='EPIR': raise ValueError(f'neighbor TAF leaked into history: {p} {r.get("station")}')
+                if k=='TAF' and str(r.get('station') or '').upper() not in ('EPIR','EPPW','EPKS'): raise ValueError(f'unexpected TAF station in history: {p} {r.get("station")}')
                 if r['message_id'] in seen: raise ValueError(f'duplicate {p} {r["message_id"]}')
                 seen.add(r['message_id'])
                 if r['message_id']!=mid(k,str(r.get('station') or ''),str(r['canonical_raw'])): raise ValueError(f'bad hash {p}')

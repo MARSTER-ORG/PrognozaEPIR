@@ -19,6 +19,7 @@ TAF_HISTORY = ARCHIVE / "taf"
 NEIGHBOR_STAGING = ROOT / "data" / "taf" / "neighbors.json"
 NEIGHBOR_SNAPSHOT = ARCHIVE / "taf-neighbors.json"
 NEIGHBORS = ("EPBY", "EPPW", "EPKS")
+ARCHIVED_NEIGHBORS = ("EPPW", "EPKS")
 
 
 def utcnow() -> datetime:
@@ -148,7 +149,7 @@ def prune_neighbor_taf_history() -> tuple[int, int]:
         return removed, kept
     for path in sorted(TAF_HISTORY.rglob("*.jsonl")):
         rows = read_jsonl(path)
-        keep = [row for row in rows if str(row.get("station") or "").upper() == "EPIR"]
+        keep = [row for row in rows if str(row.get("station") or "").upper() in ("EPIR", *ARCHIVED_NEIGHBORS)]
         removed += len(rows) - len(keep)
         kept += len(keep)
         if keep:
@@ -158,6 +159,51 @@ def prune_neighbor_taf_history() -> tuple[int, int]:
         elif path.exists():
             path.unlink()
     return removed, kept
+
+
+def archive_published_neighbor_tafs(snapshot: dict) -> int:
+    """Persist verified EPPW/EPKS issue history, retaining the live snapshot.
+
+    Only actual and recent issue cycles are admitted. Stale restored snapshots,
+    NIL/CNL status and malformed/undated content cannot create new history.
+    EPBY deliberately keeps its existing operational snapshot behaviour.
+    """
+    from message_archive import apply_taf_validity
+
+    added = 0
+    current = utcnow()
+    for station in ARCHIVED_NEIGHBORS:
+        row = (snapshot.get("stations") or {}).get(station)
+        if not isinstance(row, dict):
+            continue
+        raw = normalize_raw(row.get("raw"))
+        if not re.match(rf"^TAF\s+(?:(?:AMD|COR)\s+)?{station}\s+\d{{6}}Z\b", raw, re.I):
+            continue
+        if re.search(r"\b(?:NIL|CNL)\b", raw, re.I) or not re.search(r"\b\d{4}/\d{4}\b", raw):
+            continue
+        issue = parse_dt(row.get("issue_time") or row.get("message_time"))
+        if issue is None or issue < current - timedelta(hours=30) or issue > current + timedelta(minutes=10):
+            continue
+        record = dict(row)
+        record["snapshot_only"] = False
+        record["archived_from_snapshot"] = True
+        record["available"] = True
+        record["stale"] = False
+        if not apply_taf_validity(record, issue):
+            # May legitimately return False when a complete older record is
+            # already normalized; inspect fields rather than the return value.
+            pass
+        if not record.get("valid_start") or not record.get("valid_end"):
+            continue
+        path = TAF_HISTORY / f"{issue:%Y}" / f"{issue:%m}" / f"{issue:%d}.jsonl"
+        rows = read_jsonl(path)
+        if any(existing.get("message_id") == record.get("message_id") for existing in rows):
+            continue
+        rows.append(record)
+        rows.sort(key=lambda item: (item.get("message_time") or "", item.get("message_id") or ""))
+        write_jsonl(path, rows)
+        added += 1
+    return added
 
 
 def all_epir_tafs() -> list[dict]:
@@ -236,13 +282,17 @@ def refresh_views(snapshot: dict) -> None:
     recent["taf_neighbors_current"] = snapshot.get("stations") or {}
 
     counts = dict(status.get("counts") or {})
-    counts["taf"] = len(epir)
+    history_rows = []
+    if TAF_HISTORY.exists():
+        for path in TAF_HISTORY.rglob("*.jsonl"):
+            history_rows.extend(read_jsonl(path))
+    counts["taf"] = len(history_rows)
     latest_times = dict(status.get("latest") or {})
-    latest_times["taf"] = epir_latest.get("message_time") if epir_latest else None
+    latest_times["taf"] = max((row.get("message_time") for row in history_rows if row.get("message_time")), default=None)
     status["counts"] = counts
     status["latest"] = latest_times
-    status["taf_history_scope"] = "EPIR only"
-    status["taf_neighbors"] = "current snapshot only; not archived; not learning data"
+    status["taf_history_scope"] = "EPIR, EPPW, EPKS"
+    status["taf_neighbors"] = "EPBY current snapshot; EPPW/EPKS issue history and current snapshots; excluded from EPIR learning"
     if latest.get("updated_at"):
         status["archive_updated_at"] = latest["updated_at"]
 
@@ -417,11 +467,13 @@ def validate_verifier_file() -> None:
 def main() -> int:
     removed, kept = prune_neighbor_taf_history()
     snapshot = build_neighbor_snapshot()
+    neighbor_archived = archive_published_neighbor_tafs(snapshot)
     refresh_views(snapshot)
     frontend_mode = validate_taf_frontend()
     validate_verifier_file()
     print(json.dumps({
-        "taf_history_epir": kept,
+        "taf_history_preserved": kept,
+        "neighbor_taf_history_added": neighbor_archived,
         "neighbor_taf_history_removed": removed,
         "neighbor_snapshot_stations": sorted((snapshot.get("stations") or {}).keys()),
         "taf_html_native_message_archive": True,
