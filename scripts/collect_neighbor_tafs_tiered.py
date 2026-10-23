@@ -57,7 +57,6 @@ _IMGW_TAF_URLS = (
 # All responses must still pass ICAO, issuance-time and validity checks.
 legacy.PILOTHUB_PAGES["EPKS"] += ("https://en.pilothub.pl/airports/epze",)
 legacy.PILOTHUB_PAGES["EPPW"] += (
-    "https://pilothub.pl/lotniska/pleszew-h",
     "https://pilothub.cz/letiste/epom",
 )
 _legacy_is_current = legacy.is_current
