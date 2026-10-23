@@ -2,9 +2,9 @@
 """Low-cost tiered TAF acquisition for the central archive.
 
 Normal path:
-  PilotHub/IMGW pages -> current TAFs + neighbour METAR/SPECI context.
+  Official IMGW Aviation API (TAF / combined METAR+TAF) -> current TAFs.
 Fallbacks are activated only for stations that still lack the expected scheduled TAF:
-  IMGW Aviation API -> IMGW Awiacja -> AWC.
+  PilotHub -> IMGW Awiacja -> AWC -> Ogimet for EPIR.
 
 The existing collect_neighbor_tafs module remains the parser/persistence authority;
 this module replaces only source scheduling and tightens PilotHub extraction.
@@ -391,14 +391,20 @@ def collect_candidates() -> dict[str, list[dict]]:
     store: dict[str, list[dict]] = defaultdict(list)
 
     _collect_awc_neighbor_observations()
-    _collect_pilothub(store)
     missing = _missing_current(store)
+
+    # The official IMGW Aviation API is also the proven primary METAR source.
+    # Try its TAF and combined METAR+TAF queries before scraping PilotHub,
+    # which frequently returns HTTP 403 from datacenter addresses.
+    missing = _fallback_imgw_api(store, missing)
+    if missing:
+        _collect_pilothub(store)
+        missing = _missing_current(store)
     if not missing:
-        print("TAF fallback chain: skipped; PilotHub/IMGW supplied all expected cycles")
+        print("TAF official IMGW/PilotHub acquisition: all expected cycles available")
         return store
 
-    print(f"TAF fallback chain activated for: {sorted(missing)}")
-    missing = _fallback_imgw_api(store, missing)
+    print(f"TAF additional fallback chain activated for: {sorted(missing)}")
     missing = _fallback_imgw_page(store, missing)
     missing = _fallback_awc(store, missing)
     missing = _fallback_ogimet_epir(store, missing)
