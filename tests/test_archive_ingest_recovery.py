@@ -62,6 +62,50 @@ class ArchiveIngestRecoveryTests(unittest.TestCase):
         self.assertTrue(captured[0][1].startswith("SPECI EPBY"))
         self.assertEqual(captured[0][3], "IMGW Aviation API")
 
+    def test_imgw_api_is_first_and_skips_blocked_pilothub_when_current(self):
+        order = []
+        missing = set(taf.STATIONS)
+
+        def api(store, stations):
+            self.assertEqual(stations, missing)
+            order.append("IMGW")
+            return set()
+
+        with patch.object(tiered, "_collect_awc_neighbor_observations"), \
+             patch.object(tiered, "_missing_current", return_value=missing), \
+             patch.object(tiered, "_fallback_imgw_api", side_effect=api), \
+             patch.object(tiered, "_collect_pilothub", side_effect=lambda store: order.append("PilotHub")):
+            result = tiered.collect_candidates()
+        self.assertEqual(order, ["IMGW"])
+        self.assertEqual(dict(result), {})
+
+    def test_additional_fallbacks_follow_imgw_failure(self):
+        order = []
+        missing = {"EPIR"}
+
+        def imgw(store, stations):
+            order.append("IMGW")
+            return missing
+
+        def pilot(store):
+            order.append("PilotHub")
+
+        def failover(source):
+            def fake(store, stations):
+                order.append(source)
+                return missing if source != "Ogimet" else set()
+            return fake
+
+        with patch.object(tiered, "_collect_awc_neighbor_observations"), \
+             patch.object(tiered, "_missing_current", return_value=missing), \
+             patch.object(tiered, "_fallback_imgw_api", side_effect=imgw), \
+             patch.object(tiered, "_collect_pilothub", side_effect=pilot), \
+             patch.object(tiered, "_fallback_imgw_page", side_effect=failover("Awiacja")), \
+             patch.object(tiered, "_fallback_awc", side_effect=failover("AWC")), \
+             patch.object(tiered, "_fallback_ogimet_epir", side_effect=failover("Ogimet")):
+            tiered.collect_candidates()
+        self.assertEqual(order, ["IMGW", "PilotHub", "Awiacja", "AWC", "Ogimet"])
+
     def test_neighbour_awc_collection_runs_without_pilothub(self):
         sample = "METAR EPBY 151000Z 26005KT 9999 SCT030 12/08 Q1022="
         captured = []
