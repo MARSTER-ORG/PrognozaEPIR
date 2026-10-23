@@ -4,8 +4,11 @@ name: EPIR TAF independent recovery
 # Railway stays primary; GitHub runs a separately networked recovery path.
 on:
   schedule:
+    # Three independent attempts after each 6-hour military TAF issue cycle.
+    # These start after the expected publication grace; avoid minute 00 load.
     - cron: '47 0,6,12,18 * * *'
     - cron: '27 1,7,13,19 * * *'
+    - cron: '07 2,8,14,20 * * *'
   workflow_dispatch:
   push:
     branches: [main]
@@ -78,12 +81,14 @@ jobs:
               print('::warning::Unrecovered TAF cycles: '+', '.join(missing))
           with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
               output.write('fresh=' + ('true' if fresh else 'false') + '\n')
+              output.write('missing=' + ','.join(missing) + '\n')
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as summary:
               summary.write('TAF independent recovery (UTC): '+now.isoformat()+'\n')
               summary.write('Fresh: '+(', '.join(fresh) or 'none')+'\n')
               summary.write('Missing or stale: '+(', '.join(missing) or 'none')+'\n')
           PY
       - name: Mirror validated TAFs to Supabase
+        id: mirror
         if: steps.coverage.outputs.fresh == 'true'
         env:
           SUPABASE_URL: https://qozgntzeormujmqzkkmd.supabase.co
@@ -94,9 +99,11 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "$MESSAGE_INGEST_TOKEN" && -z "$SUPABASE_INGEST_TOKEN" ]]; then
-            echo '::warning::Independent runner has no MESSAGE_INGEST_TOKEN or SUPABASE_INGEST_TOKEN secret; GitHub mirror still updates.'
+            echo '::error::Missing GitHub Actions secret MESSAGE_INGEST_TOKEN (or SUPABASE_INGEST_TOKEN); recovered TAFs cannot be published to primary Supabase archive.'
+            echo 'mirror_ok=false' >> "$GITHUB_OUTPUT"
           else
             python3 scripts/supabase_message_mirror.py --lookback-days 3 --force
+            echo 'mirror_ok=true' >> "$GITHUB_OUTPUT"
           fi
       - name: Preserve independent recovery in GitHub archive
         if: steps.coverage.outputs.fresh == 'true'
@@ -120,3 +127,21 @@ jobs:
           done
           echo 'Could not publish independent archive TAF changes.' >&2
           exit 1
+
+      - name: Enforce TAF availability and primary archive publishing
+        if: always() && steps.coverage.outcome == 'success'
+        shell: bash
+        env:
+          TAF_MISSING: ${{ steps.coverage.outputs.missing }}
+          TAF_FRESH: ${{ steps.coverage.outputs.fresh }}
+          MIRROR_OK: ${{ steps.mirror.outputs.mirror_ok }}
+        run: |
+          if [[ -n "$TAF_MISSING" ]]; then
+            echo "::error::Official TAF issue cycles still missing for: $TAF_MISSING. See acquisition logs and provider errors."
+            exit 1
+          fi
+          if [[ "$TAF_FRESH" == 'true' && "$MIRROR_OK" != 'true' ]]; then
+            echo '::error::TAFs recovered but not verified as sent to the Supabase archive.'
+            exit 1
+          fi
+          echo 'Current scheduled TAF cycles found and mirrored to Supabase.'
