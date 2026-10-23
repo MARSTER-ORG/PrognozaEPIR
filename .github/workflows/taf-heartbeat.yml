@@ -4,11 +4,10 @@ name: EPIR TAF independent recovery
 # Railway stays primary; GitHub runs a separately networked recovery path.
 on:
   schedule:
-    # Three independent attempts after each 6-hour military TAF issue cycle.
-    # These start after the expected publication grace; avoid minute 00 load.
-    - cron: '47 0,6,12,18 * * *'
-    - cron: '27 1,7,13,19 * * *'
-    - cron: '07 2,8,14,20 * * *'
+    # Four acquisitions per day, near the six-hour TAF issuance windows.
+    # 15 minutes after 05:30/11:30/17:30/23:30 UTC allows EPBY's :30 issue to appear.
+    # GitHub Actions may start scheduled jobs later than the cron minute.
+    - cron: '45 5,11,17,23 * * *'
   workflow_dispatch:
   push:
     branches: [main]
@@ -30,6 +29,8 @@ jobs:
   acquire:
     runs-on: ubuntu-latest
     timeout-minutes: 12
+    env:
+      PROGNOZAEPIR_TAF_REQUIRE_NEW_CYCLE: '1'
     steps:
       - name: Checkout canonical source and archive
         uses: actions/checkout@v4
