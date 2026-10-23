@@ -420,6 +420,11 @@ def _fallback_ogimet_missing(store: dict[str, list[dict]], missing: set[str]) ->
     return _missing_current(store)
 
 
+def _fallback_ogimet_epir(store: dict[str, list[dict]], missing: set[str]) -> set[str]:
+    """Compatibility hook: now recovers EPIR, EPPW and EPKS via OGIMET."""
+    return _fallback_ogimet_missing(store, missing)
+
+
 def collect_candidates() -> dict[str, list[dict]]:
     store: dict[str, list[dict]] = defaultdict(list)
 
@@ -440,7 +445,7 @@ def collect_candidates() -> dict[str, list[dict]]:
     print(f"TAF additional fallback chain activated for: {sorted(missing)}")
     missing = _fallback_imgw_page(store, missing)
     missing = _fallback_awc(store, missing)
-    missing = _fallback_ogimet_missing(store, missing)
+    missing = _fallback_ogimet_epir(store, missing)
     if missing:
         print(f"TAF fallback chain exhausted; still missing expected cycle: {sorted(missing)}")
     else:
