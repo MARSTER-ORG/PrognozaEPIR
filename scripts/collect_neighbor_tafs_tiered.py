@@ -11,6 +11,7 @@ this module replaces only source scheduling and tightens PilotHub extraction.
 """
 from __future__ import annotations
 
+import os
 import json
 import re
 import urllib.parse
@@ -104,6 +105,11 @@ def _expected_taf_cycle(station: str, now: datetime) -> datetime | None:
     if not schedule:
         return None
     grace_min = _TAF_GRACE_MIN_BY_STATION.get(station, 100)
+    # The independent GitHub run takes place shortly after each issuance cycle.
+    # Requiring that specific cycle prevents treating the previous six-hour TAF
+    # as current when the official 05/11/17/23 UTC issue is missing.
+    if os.environ.get("PROGNOZAEPIR_TAF_REQUIRE_NEW_CYCLE") == "1":
+        grace_min = 0
     eligible = now - timedelta(minutes=grace_min)
     candidates: list[datetime] = []
     for day_delta in (-1, 0):
