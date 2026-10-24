@@ -182,7 +182,7 @@ def compact_findings(report):
 
 
 def main():
-    cases = mv.load_jsonl(verify.CASES_PATH)
+    cases = verify.load_cases()
     report = {
         "schema": "prognozaepir-fog-vnext-ssfc-diagnostics-v1",
         "generated_at": mv.iso(mv.utcnow()),
