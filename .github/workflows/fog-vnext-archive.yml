@@ -170,6 +170,9 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          # Keep the full case table local for diagnostics; persist only
+          # lossless monthly shards to avoid GitHub's 100MB per-file limit.
+          git rm --cached -f --ignore-unmatch data/learning/fog-vnext-verification/cases.jsonl
           git add data/learning/fog-vnext-forecasts data/learning/model-forecasts/fog-vnext-*.jsonl \
             data/learning/adaptive-weights-vnext-shadow.json data/learning/fog-event-skill-vnext-shadow.json \
             data/learning/fog-transition-priors-vnext.json \
