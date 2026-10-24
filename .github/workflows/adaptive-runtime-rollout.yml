@@ -168,13 +168,33 @@ jobs:
             echo "No learning changes"
           else
             git commit -m "weather: rebuild adaptive and historical model learning"
-            git reset --hard HEAD
-            git clean -fd
             for attempt in 1 2 3 4; do
-              git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin HEAD:"${GITHUB_REF_NAME}" && exit 0
-              echo "learning push retry $attempt"
+              if git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin HEAD:"${GITHUB_REF_NAME}"; then
+                exit 0
+              fi
+              # Abort conflicted rebases and recompute on the newest archive.
+              # Retrying git pull while unmerged files remain cannot succeed.
+              git rebase --abort || true
+              git fetch origin "${GITHUB_REF_NAME}"
+              git reset --hard "origin/${GITHUB_REF_NAME}"
+              echo "Concurrent learning update; regenerating on latest branch (retry $attempt)"
+              python3 scripts/model_verification.py
+              python3 scripts/cloud_learning_backfill.py
+              python3 scripts/build_adaptive_weights.py
+              python3 scripts/build_historical_model_skill.py
+              python3 scripts/build_synoptic_regime_learning.py
+              python3 scripts/build_fog_event_learning.py
+              python3 scripts/embed_model_verification.py
+              python3 scripts/build_model_snapshot.py
+              git add data/runtime data/learning
+              if git diff --cached --quiet; then
+                echo "Latest branch already includes equivalent learning data"
+                exit 0
+              fi
+              git commit -m "weather: rebuild adaptive and historical model learning"
               sleep $((attempt*3))
             done
+            echo "Learning push failed after 4 fully regenerated attempts" >&2
             exit 1
           fi
 
