@@ -470,6 +470,53 @@ def activation_gate(cases, metrics, ablation, lead_metrics):
     }
 
 
+
+# The full intermediate cases.jsonl is not tracked in Git: it can exceed the
+# 100 MiB GitHub file limit. Track lossless monthly shards, each <= 8 MiB.
+CASE_SHARD_MAX_BYTES = 8 * 1024 * 1024
+
+
+def write_case_shards(cases):
+    grouped = defaultdict(list)
+    for case in cases:
+        month = str(case.get("valid_time") or "")[:7]
+        if len(month) != 7 or month[4] != "-" or not (month[:4] + month[5:]).isdigit():
+            month = "unknown"
+        grouped[month].append(case)
+
+    for stale in OUT_DIR.glob("cases-????-??-???.jsonl"):
+        stale.unlink()
+    for stale in OUT_DIR.glob("cases-unknown-???.jsonl"):
+        stale.unlink()
+
+    for month, rows in sorted(grouped.items()):
+        part, part_bytes, stream = 0, 0, None
+        try:
+            for case in rows:
+                line = json.dumps(case, ensure_ascii=False, separators=(",", ":")) + "\n"
+                length = len(line.encode("utf-8"))
+                if stream is None or (part_bytes and part_bytes + length > CASE_SHARD_MAX_BYTES):
+                    if stream:
+                        stream.close()
+                    part += 1
+                    stream = (OUT_DIR / f"cases-{month}-{part:03d}.jsonl").open("w", encoding="utf-8")
+                    part_bytes = 0
+                stream.write(line)
+                part_bytes += length
+        finally:
+            if stream:
+                stream.close()
+
+
+def load_cases():
+    # Prefer the fresh per-run file; in a checkout use committed shards.
+    if CASES_PATH.exists():
+        return mv.load_jsonl(CASES_PATH)
+    files = sorted(OUT_DIR.glob("cases-????-??-???.jsonl"))
+    files.extend(sorted(OUT_DIR.glob("cases-unknown-???.jsonl")))
+    return [row for file in files for row in mv.load_jsonl(file)]
+
+
 def main():
     rows = load_full_rows()
     by_batch = defaultdict(list)
@@ -589,6 +636,7 @@ def main():
     }
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    write_case_shards(cases)
     CASES_PATH.write_text("".join(json.dumps(c, ensure_ascii=False, separators=(",", ":")) + "\n" for c in cases), encoding="utf-8")
     SUMMARY_PATH.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     ACTIVATION_PATH.write_text(json.dumps(activation, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
