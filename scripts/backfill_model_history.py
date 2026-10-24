@@ -305,7 +305,17 @@ def main():
     # Fail only when virtually nothing could be recovered, which usually means
     # an API-wide problem rather than model-specific missing history.
     if tasks and success == 0 and len(tasks) >= 5:
-        raise SystemExit(f"recovery failed: 0/{len(tasks)} pending runs recovered")
+        # A provider-side gap should remain visible, but a nearly complete
+        # archive must not block regenerating unrelated learning artifacts.
+        if completeness < 0.90:
+            raise SystemExit(
+                f"recovery failed: 0/{len(tasks)} runs; historical coverage {completeness:.1%}"
+            )
+        print(
+            f"WARNING: 0/{len(tasks)} pending runs recovered; "
+            f"historical coverage remains {complete_runs}/{expected_runs} "
+            f"({completeness:.1%}). Failed runs remain recorded for later retry."
+        )
 
     print("backfill recovery complete:", json.dumps({k: v for k, v in report.items() if k != "failures"}, ensure_ascii=False))
     if failures:

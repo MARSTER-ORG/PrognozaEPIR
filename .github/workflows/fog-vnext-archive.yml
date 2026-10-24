@@ -114,6 +114,19 @@ jobs:
 
       - name: Validate learning artifacts and activation gate
         run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          directory = Path("data/learning/fog-vnext-verification")
+          summary = json.loads((directory / "summary.json").read_text(encoding="utf-8"))
+          shards = sorted(directory.glob("cases-????-??-???.jsonl"))
+          assert shards, "Fog vNext case shards not generated"
+          rows = sum(sum(1 for _ in p.open(encoding="utf-8")) for p in shards)
+          assert rows == summary["cases"], f"case shard mismatch: {rows}/{summary['cases']}"
+          oversized = [str(p) for p in shards if p.stat().st_size > 8 * 1024 * 1024]
+          assert not oversized, f"oversized case shards: {oversized}"
+          print("Fog vNext lossless verification shards:", len(shards), "cases:", rows)
+          PY
           python3 -m json.tool data/learning/adaptive-weights-vnext-shadow.json >/dev/null
           python3 -m json.tool data/learning/fog-event-skill-vnext-shadow.json >/dev/null
           python3 -m json.tool data/learning/fog-transition-priors-vnext.json >/dev/null
@@ -170,6 +183,9 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          # Keep the full case table local for diagnostics; persist only
+          # lossless monthly shards to avoid GitHub's 100MB per-file limit.
+          git rm --cached -f --ignore-unmatch data/learning/fog-vnext-verification/cases.jsonl
           git add data/learning/fog-vnext-forecasts data/learning/model-forecasts/fog-vnext-*.jsonl \
             data/learning/adaptive-weights-vnext-shadow.json data/learning/fog-event-skill-vnext-shadow.json \
             data/learning/fog-transition-priors-vnext.json \

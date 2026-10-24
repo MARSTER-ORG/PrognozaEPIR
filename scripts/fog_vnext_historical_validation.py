@@ -140,7 +140,7 @@ def forecast_inventory():
 
 
 def load_cases():
-    return mv.load_jsonl(verify.CASES_PATH)
+    return verify.load_cases()
 
 
 def metrics_for(rows):

@@ -98,7 +98,7 @@ def objective(block):
 
 
 def main():
-    cases = mv.load_jsonl(verify.CASES_PATH)
+    cases = verify.load_cases()
     priors = json.loads(PRIORS.read_text(encoding="utf-8"))
     global_prior = float(priors["rates"]["onset_next_1h_global"])
     train = onset_rows(cases, 2025)
