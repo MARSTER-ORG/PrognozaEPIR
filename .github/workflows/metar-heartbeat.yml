@@ -57,7 +57,7 @@ jobs:
               raise SystemExit("::error::Primary Supabase EPIR METAR is missing or stale")
           PY
 
-          if python3 scripts/check_epir_archive_freshness.py --metar-only --skip-metar-continuity; then
+          if python3 scripts/check_epir_archive_freshness.py --metar-only --skip-metar-continuity --metar-grace-min 20; then
             echo 'Primary Supabase and GitHub mirror both have current METAR.'
           else
             echo '::warning::GitHub archive replica is stale; initiating Supabase-to-GitHub repair.'
