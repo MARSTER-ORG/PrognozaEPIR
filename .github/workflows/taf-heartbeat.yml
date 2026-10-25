@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: prognozaepir-taf-independent-recovery
+  group: prognozaepir-message-archive-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -62,7 +62,26 @@ jobs:
           now = datetime.now(timezone.utc)
           latest = json.loads(Path('data/messages/latest.json').read_text(encoding='utf-8'))
           metar = latest.get('metar_only') or latest.get('metar') or {}
-          epir_auto = 'AUTO' in str(metar.get('raw') or '').upper().split()
+          epir_auto = False
+          try:
+              # The checked-out GitHub latest.json may be weeks old. Check
+              # the current primary archive before deciding whether EPIR is
+              # running AUTO-only and has no currently published TAF.
+              from sync_supabase_messages_to_git import fetch_type, parse_time
+              primary = fetch_type("METAR", now - timedelta(hours=3), now + timedelta(minutes=1), station="EPIR")
+              recent = [
+                  (parse_time(r.get("observed_at") or r.get("message_time")), r)
+                  for r in primary
+              ]
+              recent = [(stamp, r) for stamp, r in recent if stamp]
+              if recent:
+                  stamp, newest = max(recent, key=lambda x: x[0])
+                  if stamp >= now - timedelta(minutes=90):
+                      raw = str(newest.get("raw_text") or newest.get("raw") or newest.get("canonical_raw") or "")
+                      epir_auto = 'AUTO' in raw.upper().split()
+              print("EPIR AUTO confirmed by current Supabase METAR:", epir_auto)
+          except Exception as exc:
+              print("::warning::Cannot verify EPIR AUTO state in primary archive:", exc)
           fresh = []
           missing = []
           for sid in ('EPIR', 'EPBY', 'EPPW', 'EPKS'):
@@ -81,6 +100,7 @@ jobs:
               print('::warning::Unrecovered TAF cycles: '+', '.join(missing))
           with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
               output.write('fresh=' + ('true' if fresh else 'false') + '\n')
+              output.write('epir_auto=' + ('true' if epir_auto else 'false') + '\n')
               output.write('missing=' + ','.join(missing) + '\n')
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as summary:
               summary.write('TAF independent recovery (UTC): '+now.isoformat()+'\n')
@@ -95,16 +115,40 @@ jobs:
           MESSAGE_INGEST_TOKEN: ${{ secrets.MESSAGE_INGEST_TOKEN }}
           SUPABASE_INGEST_TOKEN: ${{ secrets.SUPABASE_INGEST_TOKEN }}
           SUPABASE_INGEST_ENABLED: '1'
+          EPIR_AUTO: ${{ steps.coverage.outputs.epir_auto }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "$MESSAGE_INGEST_TOKEN" && -z "$SUPABASE_INGEST_TOKEN" ]]; then
-            echo '::error::Missing GitHub Actions secret MESSAGE_INGEST_TOKEN (or SUPABASE_INGEST_TOKEN); recovered TAFs cannot be published to primary Supabase archive.'
-            echo 'mirror_ok=false' >> "$GITHUB_OUTPUT"
-          else
+          if [[ -n "$MESSAGE_INGEST_TOKEN" || -n "$SUPABASE_INGEST_TOKEN" ]]; then
             python3 scripts/supabase_message_mirror.py --lookback-days 3 --force
-            echo 'mirror_ok=true' >> "$GITHUB_OUTPUT"
+          else
+            echo '::notice::GitHub ingest token unavailable; the Railway ingestor owns primary Supabase writes. Verifying published TAF cycles through the read API.'
           fi
+          python3 - <<'PY'
+          import os
+          import sys
+          from datetime import datetime, timedelta, timezone
+          sys.path.insert(0, "scripts")
+          from sync_supabase_messages_to_git import fetch_type, parse_time
+          from check_epir_archive_freshness import expected_taf_cycle, TAF_GRACE_MIN_BY_STATION
+
+          now = datetime.now(timezone.utc)
+          stations = ["EPBY", "EPPW", "EPKS"]
+          if os.environ.get("EPIR_AUTO") != "true":
+              stations.append("EPIR")
+          for station in stations:
+              rows = fetch_type("TAF", now - timedelta(days=2), now + timedelta(minutes=1), station=station)
+              issue_times = [
+                  parse_time(r.get("issued_at") or r.get("issue_time") or r.get("message_time"))
+                  for r in rows
+              ]
+              latest = max((x for x in issue_times if x), default=None)
+              expected = expected_taf_cycle(now, TAF_GRACE_MIN_BY_STATION[station], station)
+              print(f"Primary Supabase {station} TAF: latest={latest}, required={expected}")
+              if latest is None or latest < expected:
+                  raise SystemExit(f"::error::TAF {station} not yet published to primary Supabase")
+          PY
+          echo 'mirror_ok=true' >> "$GITHUB_OUTPUT"
       - name: Preserve independent recovery in GitHub archive
         if: steps.coverage.outputs.fresh == 'true'
         shell: bash
@@ -119,7 +163,7 @@ jobs:
           git config user.email 'taf-recovery@prognozaepir.invalid'
           git commit -m 'archive(taf): restore verified current TAFs from independent runner'
           for attempt in 1 2 3; do
-            if git pull --rebase origin main && git push origin HEAD:main; then
+            if git -c rebase.autoStash=true pull --rebase origin main && git push origin HEAD:main; then
               exit 0
             fi
             git rebase --abort >/dev/null 2>&1 || true
