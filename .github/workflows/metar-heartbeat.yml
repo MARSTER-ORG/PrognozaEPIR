@@ -29,10 +29,33 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
+          set -euo pipefail
+          # Supabase is the primary read archive; the GitHub copy may lag it.
+          # Do not generate an operational ingestion-failure alert solely
+          # because a separate repository mirror is stale.
+          python3 - <<'PY'
+          import sys
+          from datetime import datetime, timedelta, timezone
+          sys.path.insert(0, "scripts")
+          from check_epir_archive_freshness import expected_metar_slot
+          from sync_supabase_messages_to_git import fetch_type, parse_time
+
+          now = datetime.now(timezone.utc)
+          rows = fetch_type("METAR", now - timedelta(hours=3), now + timedelta(minutes=1), station="EPIR")
+          stamps = [
+              parse_time(row.get("observed_at") or row.get("obs_time") or row.get("message_time"))
+              for row in rows
+          ]
+          latest = max((stamp for stamp in stamps if stamp is not None), default=None)
+          expected = expected_metar_slot(now, 20)
+          print(f"Primary Supabase EPIR METAR latest={latest}, required={expected}", flush=True)
+          if latest is None or latest < expected:
+              raise SystemExit("::error::Primary Supabase EPIR METAR is missing or stale")
+          PY
+
           if python3 scripts/check_epir_archive_freshness.py --metar-only --skip-metar-continuity; then
-            echo 'Current METAR/SPECI archive is fresh.'
-            exit 0
+            echo 'Primary Supabase and GitHub mirror both have current METAR.'
+          else
+            echo '::warning::GitHub archive replica is stale; initiating Supabase-to-GitHub repair.'
+            gh workflow run mirror-central-archive.yml --repo "${{ github.repository }}" --ref main
           fi
-          echo '::warning::Current METAR archive is stale; requesting a validated Railway-to-GitHub mirror refresh'
-          gh workflow run mirror-central-archive.yml --repo "${{ github.repository }}" --ref main
-          exit 1
