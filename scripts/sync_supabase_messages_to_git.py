@@ -44,6 +44,14 @@ TYPE_CONFIG = {
     "SYNOP": {"station": "12342", "time_col": "observed_at"},
     "TAF": {"station": "EPIR", "time_col": "issued_at"},
 }
+# These are public aviation observations. The canonical archive retains TAF
+# history only for EPIR/EPPW/EPKS; EPBY TAF is kept as a current snapshot.
+STATIONS_BY_TYPE = {
+    "METAR": ("EPIR", "EPBY", "EPPW", "EPKS"),
+    "SPECI": ("EPIR", "EPBY", "EPPW", "EPKS"),
+    "SYNOP": ("12342",),
+    "TAF": ("EPIR", "EPPW", "EPKS"),
+}
 
 
 def public_anon_key() -> str:
@@ -73,7 +81,7 @@ def iso(dt: datetime | None) -> str | None:
     return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z") if dt else None
 
 
-def fetch_type(kind: str, start: datetime, end: datetime) -> list[dict]:
+def fetch_type(kind: str, start: datetime, end: datetime, station: str | None = None) -> list[dict]:
     cfg = TYPE_CONFIG[kind]
     key = public_anon_key()
     offset = 0
@@ -82,7 +90,7 @@ def fetch_type(kind: str, start: datetime, end: datetime) -> list[dict]:
         params = {
             "op": "search",
             "type": kind,
-            "station": cfg["station"],
+            "station": station or cfg["station"],
             "from": iso(start),
             "to": iso(end - timedelta(microseconds=1)),
             "sort": "asc",
@@ -117,6 +125,9 @@ def canonical_from_row(row: dict) -> dict | None:
     cfg = TYPE_CONFIG.get(kind)
     if not cfg:
         return None
+    station = str(row.get("station_code") or row.get("station") or cfg["station"]).strip().upper()
+    if station not in STATIONS_BY_TYPE[kind]:
+        return None
     payload = row.get("payload") if isinstance(row.get("payload"), dict) else (row if row.get("type") else {})
     raw = str(row.get("raw_text") or row.get("raw") or row.get("canonical_raw") or payload.get("raw") or "").strip()
     when = parse_time(
@@ -144,18 +155,21 @@ def canonical_from_row(row: dict) -> dict | None:
     else:  # TAF payload already contains the canonical issue-time metadata.
         decoded = dict(payload)
         decoded.setdefault("raw", raw)
-        decoded.setdefault("station", cfg["station"])
+        decoded["station"] = station
         decoded.setdefault("issue_time", iso(when))
         decoded.setdefault("source", source)
 
     if not decoded:
         decoded = dict(payload)
-        decoded.update(raw=raw, station=cfg["station"], source=source)
+        decoded.update(raw=raw, station=station, source=source)
         if kind == "TAF":
             decoded.setdefault("issue_time", iso(when))
         else:
             decoded.setdefault("obs_time", iso(when))
 
+    # Always retain the station validated by the database query; a historical
+    # payload may otherwise carry EPIR as an old fallback.
+    decoded["station"] = station
     if source_ref:
         decoded["archive_source_file"] = source_ref
         decoded["source_file"] = source_ref
@@ -203,9 +217,10 @@ def main() -> int:
     db_rows: list[dict] = []
     fetched_by_type: Counter[str] = Counter()
     for kind in kinds:
-        rows = fetch_type(kind, start, end)
-        db_rows.extend(rows)
-        fetched_by_type[kind] += len(rows)
+        for station in STATIONS_BY_TYPE[kind]:
+            rows = fetch_type(kind, start, end, station=station)
+            db_rows.extend(rows)
+            fetched_by_type[kind] += len(rows)
 
     canonical: list[dict] = []
     rejected: list[dict] = []

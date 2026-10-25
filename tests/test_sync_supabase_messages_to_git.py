@@ -78,6 +78,38 @@ class MirrorTests(unittest.TestCase):
         self.assertEqual(msg["valid_start"], "2025-01-02T06:00:00Z")
         self.assertEqual(msg["valid_end"], "2025-01-02T18:00:00Z")
 
+    def test_neighbor_metar_retains_actual_airport(self):
+        row = {
+            "id": 789,
+            "message_type": "METAR",
+            "station_code": "EPKS",
+            "observed_at": "2026-10-25T16:00:00Z",
+            "raw_text": "METAR EPKS 251600Z 18010KT 9999 SCT020 10/06 Q1000=",
+            "payload": {"station": "EPIR", "source": "IMGW"},
+        }
+        msg = mirror.canonical_from_row(row)
+        self.assertIsNotNone(msg)
+        self.assertEqual(msg["station"], "EPKS")
+        self.assertEqual(msg["message_id"], mirror.archive.mid("METAR", "EPKS", msg["canonical_raw"]))
+
+    def test_mirror_station_selection_keeps_epby_taf_as_snapshot(self):
+        self.assertEqual(mirror.STATIONS_BY_TYPE["METAR"], ("EPIR", "EPBY", "EPPW", "EPKS"))
+        self.assertEqual(mirror.STATIONS_BY_TYPE["TAF"], ("EPIR", "EPPW", "EPKS"))
+
+    def test_neighbor_taf_is_archivable(self):
+        row = {
+            "message_type": "TAF",
+            "station_code": "EPPW",
+            "issued_at": "2026-10-25T11:06:00Z",
+            "raw_text": "TAF EPPW 251106Z 2512/2524 18012KT CAVOK=",
+            "payload": {"source": "IMGW"},
+        }
+        msg = mirror.canonical_from_row(row)
+        self.assertIsNotNone(msg)
+        self.assertEqual(msg["station"], "EPPW")
+        self.assertEqual(msg["type"], "TAF")
+        self.assertEqual(msg["issue_time"], "2026-10-25T11:06:00Z")
+
     def test_parse_time_normalizes_utc(self):
         got = mirror.parse_time("2025-01-01 01:00:00+01:00")
         self.assertEqual(got, datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc))
