@@ -117,7 +117,11 @@ function fakeStorage(mode) {
   assert(cleanup.includes('function brAt(t)'));
   assert(cleanup.includes("appendHoverRow(tooltip,'Zamglenie · BR'"));
   assert(cleanup.includes('data-epir-br-hover'));
-  assert(cleanup.includes('FOG / BR / MIFG ≥60/100'));
+  assert(cleanup.includes("symbol('FOG (słupki ≥60)'"));
+  assert(cleanup.includes("symbol('BR (romby ≥60)'"));
+  assert(cleanup.includes("dot('MIFG (pkt ≥60)'"));
+  assert(cleanup.includes("sample('Średnie 2–6 km'"));
+  assert(cleanup.includes("sample('Wysokie 6–13 km'"));
 })();
 
 (function testSectionInfoUsesSameThreshold60() {
