@@ -316,39 +316,68 @@
 
   drawLegend = function(top,totalH) {
     const x=8;
-    const w=Math.max(120,LEGEND_W-LEGEND_RIGHT_GAP-18);
+    const w=Math.max(136,LEGEND_W-LEGEND_RIGHT_GAP-18);
     const cp=canvasPalette();
     ctx.fillStyle=cp.legend;ctx.fillRect(x,top,w,totalH);
     ctx.strokeStyle=cp.border;ctx.lineWidth=.9;ctx.strokeRect(x,top,w,totalH);
     let y=top+14,sx=x+9;
-    legendTitle(sx,y,'Temperatury');y+=14;
-    legendSample(sx,y,'#d43d31','Temp. powietrza');y+=13;
-    legendSample(sx,y,'#25278f','Punkt rosy',[2,2]);y+=18;
-    legendTitle(sx,y,'Opady / wilgotność');y+=14;
-    legendSample(sx,y,'#039c29','Opad');y+=13;
-    legendSample(sx,y,'#bd4723','Wilgotność');y+=18;
-    legendTitle(sx,y,'Prawdopodobieństwo');y+=14;
-    legendSample(sx,y,'#0b9f2b','Szansa opadu');y+=13;
-    legendSample(sx,y,'#8b3db8','Szansa burzy');y+=18;
-    legendTitle(sx,y,'Ciśnienie');y+=14;
-    legendSample(sx,y,activeTheme()==='dark'?'#e7e9ed':'#222','QNH / MSLP');y+=18;
-    legendTitle(sx,y,'Wiatr');y+=14;
-    legendSample(sx,y,'#152f9a','Wiatr 10 m');y+=13;
-    legendSample(sx,y,'#c33b2b','Porywy',[5,4]);y+=13;
-    legendSample(sx,y,'#ef4444','Kierunek');y+=18;
-    legendTitle(sx,y,'Widzialność / mgła');y+=14;
-    legendSample(sx,y,'#edb62d','Widzialność');y+=13;
-    legendSample(sx,y,'#d49a28','FOG / BR / MIFG ≥60/100');y+=18;
-    legendTitle(sx,y,'Chmury');y+=14;
-    legendSample(sx,y,'#8d4a1a','Podstawa ≥5/8');y+=13;
-    legendDot(sx,y,activeTheme()==='dark'?'#fff':'#555','Profil zachmurzenia');y+=18;
-    legendTitle(sx,y,'Warstwy chmur');y+=14;
-    legendSample(sx,y,'#f59e0b','Niskie 0–2 km');y+=13;
-    legendSample(sx,y,'#22c55e','Średnie 2–5 km');y+=13;
-    legendSample(sx,y,'#3b82f6','Wysokie 5–13 km');y+=18;
+    function title(name){ legendTitle(sx,y,name);y+=14; }
+    function sample(name,color,dash=[]){ legendSample(sx,y,color,name,dash);y+=13; }
+    function dot(name,color){ legendDot(sx,y,color,name);y+=13; }
+    function symbol(name,color,kind) {
+      ctx.save();
+      ctx.fillStyle=color;
+      ctx.strokeStyle=color;
+      if(kind==='bar'){ ctx.fillRect(sx+4,y-6,9,10); }
+      else if(kind==='diamond'){
+        ctx.translate(sx+9,y-1);ctx.rotate(Math.PI/4);
+        ctx.fillRect(-4,-4,8,8);
+      } else if(kind==='arrow'){
+        ctx.font='bold 14px Arial';ctx.textAlign='center';ctx.fillText('↑',sx+9,y+4);
+      }
+      ctx.restore();
+      ctx.fillStyle=cp.text;ctx.textAlign='left';ctx.font='9px Arial';
+      ctx.fillText(name,sx+24,y+3);
+      y+=13;
+    }
+    title('Temperatura');
+    sample('Temp. powietrza','#d43d31');
+    sample('Punkt rosy',activeTheme()==='dark'?'#627dff':'#25278f',[2,2]);
+    y+=6;
+    title('Opad / wilgotność');
+    sample('Opad (mm/h)','#039c29');
+    sample('Wilgotność RH (%)','#bd4723');
+    y+=6;
+    title('Udział modeli (%)');
+    sample('Modele z opadem','#0b9f2b');
+    sample('Modele z burzą','#8b3db8',[6,4]);
+    y+=6;
+    title('Ciśnienie');
+    sample('MSLP / QNH (hPa)',activeTheme()==='dark'?'#e7e9ed':'#222');
+    y+=6;
+    title('Wiatr');
+    sample('Wiatr 10 m',activeTheme()==='dark'?'#4f7cff':'#152f9a');
+    sample('Porywy','#c33b2b',[5,4]);
+    symbol('Kierunek wiatru','#ef4444','arrow');
+    y+=6;
+    title('Widzialność / mgła');
+    sample('Widzialność (km)','#d66c12');
+    symbol('FOG (słupki ≥60)','#d86c2f','bar');
+    symbol('BR (romby ≥60)','#c084fc','diamond');
+    dot('MIFG (pkt ≥60)','#d63434');
+    y+=6;
+    title('Profil chmur');
+    sample('Podstawa ≥5/8','#8d4a1a');
+    dot('Zachmurzenie',activeTheme()==='dark'?'#fff':'#555');
+    y+=6;
+    title('Warstwy chmur');
+    sample('Niskie 0–2 km','#f59e0b');
+    sample('Średnie 2–6 km','#22c55e');
+    sample('Wysokie 6–13 km','#3b82f6');
+    y+=8;
     ctx.fillStyle=cp.muted;ctx.font='8px Arial';ctx.textAlign='left';
-    ctx.fillText('Dotknij panelu, aby',sx,y);
-    ctx.fillText('zobaczyć parametry godziny.',sx,y+11);
+    ctx.fillText('Czas: UTC · chmury AGL',sx,y);
+    ctx.fillText('FOG/BR/MIFG: skala 0–100',sx,y+11);
   };
 
   if (typeof draw === 'function' && !window.__epirMergedWindPanelWrapped) {
