@@ -73,7 +73,11 @@
       .pressure-altitude__result small{display:block;font-size:9px;color:var(--muted,#666)}
       .pressure-altitude__result strong{display:block;font-size:22px;line-height:1.1;margin:2px 0;color:var(--ink,inherit)}
       .pressure-altitude__result em{display:block;font-size:10px;font-style:normal;color:var(--muted,#666)}
-      .pressure-altitude__meta{margin-top:7px;font-size:9px;color:var(--muted,#666);line-height:1.35}
+      .pressure-altitude__meta{margin-top:8px;font-size:10px;color:var(--muted,#666);line-height:1.45}
+      .pressure-altitude__meta strong{color:var(--ink,inherit)}
+      .pressure-altitude__method{margin-top:6px;font-size:11px;line-height:1.45}
+      .pressure-altitude__method summary{cursor:pointer;font-weight:600;color:var(--blueText,#1f2a75)}
+      .pressure-altitude__method p{margin:5px 0 0;color:var(--muted,#666)}
       .pressure-altitude__error{display:none;margin-top:5px;font-size:9px;color:#b42318}
       .pressure-altitude.invalid .pressure-altitude__error{display:block}
       @media(max-width:700px){.pressure-altitude__head{display:block}.pressure-altitude__head span{display:block;text-align:left;margin-top:2px}.pressure-altitude__grid{grid-template-columns:1fr}.pressure-altitude__result strong{font-size:20px}}
@@ -117,7 +121,14 @@
           <em id="pressureAltitudeM">— m</em>
         </div>
       </div>
-      <div class="pressure-altitude__meta">Wysokość lotniska ${station.icao}: <b>${Math.round(station.elevationFt)} ft (${fmtNumber(station.elevationM,4)} m) AMSL</b>. Obliczenie wykorzystuje pełne równanie atmosfery standardowej ISA, bez przybliżenia ft/hPa.</div>`;
+      <div class="pressure-altitude__meta">
+        Wysokość lotniska ${station.icao}: <b>${Math.round(station.elevationFt)} ft (${fmtNumber(station.elevationM,4)} m) AMSL</b>.
+        <div><strong>Metoda: pełne równanie barometryczne ISA.</strong> Bez uproszczenia 1000 ft na 1 inHg.</div>
+      </div>
+      <details class="pressure-altitude__method">
+        <summary>Jak obliczamy wysokość ciśnieniową?</summary>
+        <p>QNH przeliczamy według atmosfery standardowej ISA na ciśnienie na poziomie lotniska EPIR, a następnie na wysokość odpowiadającą temu ciśnieniu względem standardowych 1013,25 hPa. Nie korzystamy z przybliżonego wzoru (29,92 − QNH w inHg) × 1000 + wysokość lotniska. Wynik oznacza wysokość ciśnieniową (PA), nie rzeczywistą wysokość nad poziomem morza.</p>
+      </details>`;
     anchor.insertAdjacentElement('afterend',section);
     const input=section.querySelector('#pressureAltitudeQnh'),outFt=section.querySelector('#pressureAltitudeFt'),outM=section.querySelector('#pressureAltitudeM');
     const update=()=>{
