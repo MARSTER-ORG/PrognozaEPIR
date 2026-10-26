@@ -337,7 +337,7 @@
     legendSample(sx,y,'#c33b2b','Porywy',[5,4]);y+=13;
     legendSample(sx,y,'#ef4444','Kierunek');y+=18;
     legendTitle(sx,y,'Widzialność / mgła');y+=14;
-    legendSample(sx,y,'#d66c12','Widzialność');y+=13;
+    legendSample(sx,y,'#edb62d','Widzialność');y+=13;
     legendSample(sx,y,'#d49a28','FOG / BR / MIFG ≥60/100');y+=18;
     legendTitle(sx,y,'Chmury');y+=14;
     legendSample(sx,y,'#8d4a1a','Podstawa ≥5/8');y+=13;
