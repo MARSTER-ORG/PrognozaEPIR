@@ -2,7 +2,7 @@
 (() => {
   const FOG_DRAW_THRESHOLD=60, MIFG_DRAW_THRESHOLD=60, BR_DRAW_THRESHOLD=60;
   const FOG_INFO_THRESHOLD=60, MIFG_INFO_THRESHOLD=60, BR_INFO_THRESHOLD=60;
-  const BR_COLOR='#c084fc', FOG_FULL_SCALE_KM=19.5, VIS_SCALE_MAX_KM=30;
+  const BR_COLOR='#c084fc', FOG_FULL_SCALE_KM=3, VIS_SCALE_MAX_KM=15;
   const VIS_INNER_PAD=9, PRESSURE_INNER_PAD=9, MAX_MATCH_MS=70*60e3, HOUR=3600e3, BR_HORIZON_HOURS=48;
   const VERSION='2026-10-01-engine-vis1';
   const finite=Number.isFinite, clip=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -178,7 +178,7 @@
     const d=m.data.filter(z=>z&&finite(z.t)),vals=d.map(z=>z.P).filter(finite);if(d.length<2||!vals.length)return;
     const range=typeof niceRange==='function'?niceRange(vals,1,8):[Math.floor(Math.min(...vals)-1),Math.ceil(Math.max(...vals)+1)];
     const min=range[0],max=range[1],x0=m.x0,x1=m.x1,plotW=x1-x0,x=t=>clip(x0+(t-m.t0)/(m.t1-m.t0)*plotW,x0,x1),bottom=p.y+p.h;
-    const dark=typeof activeTheme==='function'&&activeTheme()==='dark',alpha=dark?.46:.52;
+    const dark=typeof activeTheme==='function'&&activeTheme()==='dark',alpha=dark?.12:.12;
     ctx.save();ctx.beginPath();ctx.rect(x0,p.y,plotW,p.h);ctx.clip();
     for(let i=0;i<d.length-1;i++){
       const a=d[i],b=d[i+1];if(!finite(a.P)||!finite(b.P))continue;
@@ -196,7 +196,7 @@
     const m=cv._meta;if(!m||!Array.isArray(m.data)||m.data.length<2)return;
     const p=visibilityPanel(m);if(!p)return;
     const x0=m.x0,x1=m.x1,plotW=x1-x0,step=Math.max(3,plotW/Math.max(1,m.data.length-1)),barW=Math.max(5,Math.min(14,step*.68));
-    const baseY=yOnVisibilityScale(0,p),fullY=yOnVisibilityScale(FOG_FULL_SCALE_KM,p),fog100LabelY=yOnVisibilityScale(20,p),maxBarH=Math.max(12,baseY-fullY);
+    const baseY=yOnVisibilityScale(0,p),fullY=yOnVisibilityScale(FOG_FULL_SCALE_KM,p),fog100LabelY=yOnVisibilityScale(FOG_FULL_SCALE_KM,p),maxBarH=Math.max(12,baseY-fullY);
     const x=t=>clip(x0+(t-m.t0)/(m.t1-m.t0)*plotW,x0,x1),fogThreshold=fogDrawThreshold();
     ctx.save();ctx.beginPath();ctx.rect(x0,p.y,plotW,p.h);ctx.clip();
 
@@ -228,14 +228,14 @@
 
     const mifg=mifgSeries().filter(r=>r&&finite(Number(r.t))&&finite(Number(r.score))&&Number(r.score)>=MIFG_DRAW_THRESHOLD&&Number(r.t)>=m.t0&&Number(r.t)<=m.t1);
     ctx.font='bold 7.5px Arial';ctx.textAlign='center';ctx.textBaseline='bottom';
-    for(const row of mifg){const score=Number(row.score),xx=x(Number(row.t)),yy=yOnRiskScale(score,p,MIFG_DRAW_THRESHOLD);ctx.beginPath();ctx.arc(xx,yy,3.2,0,Math.PI*2);ctx.fillStyle='rgba(214,52,52,.98)';ctx.fill();ctx.lineWidth=1;ctx.strokeStyle='rgba(255,235,235,.95)';ctx.stroke();ctx.fillStyle='rgba(205,38,38,.99)';ctx.fillText(String(Math.round(score)),xx,yy-5);}
+    for(const row of mifg){const score=Number(row.score),xx=x(Number(row.t)),yy=yOnRiskScale(score,p,MIFG_DRAW_THRESHOLD);ctx.beginPath();ctx.arc(xx,yy,3.2,0,Math.PI*2);ctx.fillStyle='rgba(214,52,52,.98)';ctx.fill();ctx.lineWidth=1;ctx.strokeStyle='rgba(255,235,235,.95)';ctx.stroke();ctx.fillStyle='rgba(205,38,38,.99)';}
 
     const br=brSeries().filter(r=>Number(r.score)>=BR_DRAW_THRESHOLD&&Number(r.t)>=m.t0&&Number(r.t)<=m.t1);
     ctx.strokeStyle=BR_COLOR;ctx.lineWidth=2.1;ctx.setLineDash([6,3]);ctx.lineJoin='round';ctx.lineCap='round';
     const groups=[];let group=[];for(const row of br){const prev=group.at(-1);if(!prev||Number(row.t)-Number(prev.t)<=1.6*HOUR)group.push(row);else{groups.push(group);group=[row];}}if(group.length)groups.push(group);
     for(const g of groups){ctx.beginPath();if(g.length===1){const row=g[0],xx=x(Number(row.t)),yy=yOnRiskScale(Number(row.score),p,BR_DRAW_THRESHOLD),half=Math.max(5,Math.min(step*.45,14));ctx.moveTo(xx-half,yy);ctx.lineTo(xx+half,yy);}else g.forEach((row,i)=>{const xx=x(Number(row.t)),yy=yOnRiskScale(Number(row.score),p,BR_DRAW_THRESHOLD);if(i===0)ctx.moveTo(xx,yy);else ctx.lineTo(xx,yy);});ctx.stroke();}
     ctx.setLineDash([]);ctx.font='bold 7.5px Arial';ctx.textAlign='center';ctx.textBaseline='bottom';
-    for(const row of br){const score=Number(row.score),xx=x(Number(row.t)),yy=yOnRiskScale(score,p,BR_DRAW_THRESHOLD),r=4.1;ctx.save();ctx.translate(xx,yy);ctx.rotate(Math.PI/4);ctx.fillStyle='rgba(192,132,252,.96)';ctx.strokeStyle='rgba(248,240,255,.98)';ctx.lineWidth=1;ctx.fillRect(-r,-r,2*r,2*r);ctx.strokeRect(-r,-r,2*r,2*r);ctx.restore();ctx.fillStyle='rgba(218,180,255,.99)';ctx.fillText(String(Math.round(score)),xx,yy-7);}
+    for(const row of br){const score=Number(row.score),xx=x(Number(row.t)),yy=yOnRiskScale(score,p,BR_DRAW_THRESHOLD),r=4.1;ctx.save();ctx.translate(xx,yy);ctx.rotate(Math.PI/4);ctx.fillStyle='rgba(192,132,252,.96)';ctx.strokeStyle='rgba(248,240,255,.98)';ctx.lineWidth=1;ctx.fillRect(-r,-r,2*r,2*r);ctx.strokeRect(-r,-r,2*r,2*r);ctx.restore();ctx.fillStyle='rgba(218,180,255,.99)';}
 
     const cp=typeof canvasPalette==='function'?canvasPalette():{muted:'#666',grid2:'#999'};
     ctx.strokeStyle=cp.grid2||'#999';ctx.globalAlpha=.52;ctx.setLineDash([3,3]);ctx.lineWidth=.8;ctx.beginPath();ctx.moveTo(x0,baseY);ctx.lineTo(x1,baseY);ctx.stroke();ctx.beginPath();ctx.moveTo(x0,fullY);ctx.lineTo(x1,fullY);ctx.stroke();ctx.setLineDash([]);ctx.restore();
