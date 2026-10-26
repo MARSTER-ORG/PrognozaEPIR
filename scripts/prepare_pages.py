@@ -109,7 +109,7 @@ def patch_index() -> None:
         "axis-layout-fix.js", "visual-style-fix.js", "meteogram-layout-v2.js",
         "meteogram-visfog-split.js", "meteogram-visfog-cleanup.js",
         "rh-axis-fix.js", "day-night-fix.js", "shortcut-mode.js",
-        "meteogram-tap-details.js",
+        "meteogram-tap-details.js", "meteogram-aviation-ux.js",
     ]
     for name in names:
         s = strip_script(s, name)
@@ -127,6 +127,7 @@ def patch_index() -> None:
         f'<script src="fog-meteogram-overlay.js?v={ASSET_V}"></script>',
         f'<script src="shortcut-mode.js?v={ASSET_V}"></script>',
         f'<script src="meteogram-tap-details.js?v={ASSET_V}"></script>',
+        f'<script src="meteogram-aviation-ux.js?v={ASSET_V}"></script>',
     ]
     s = s.replace("</body>", "\n".join(addons) + "\n</body>", 1)
     wr(p, s)
@@ -236,7 +237,7 @@ def validate() -> None:
         "index.html", "radar.html", "taf.html", "sat-fog.html", "arch.html",
         "taf-engine-v2.js", "taf-engine-v24.js", "taf-app-v2.js", "message-archive-client.js",
         "fog-engine.js", "observation-engine.js", "mifg-engine.js",
-        "meteogram-tap-details.js",
+        "meteogram-tap-details.js", "meteogram-aviation-ux.js",
         "radar-risk-policy.js", "lightning-alerts.html", "lightning-alert-sw.js",
     ]
     missing = [x for x in required if not (SITE / x).is_file()]
