@@ -91,34 +91,36 @@
       let title,vals;
 
       if (panelId === 'cloud') {
-        title = 'Profil chmur / widzialność';
+        title = 'Profil chmur';
+        const sameCloudBands=window.PrognozaEPIRCloudBands?.fromProfile(z.profile);
+        const c=sameCloudBands?.coverage||{};
+        const asOkta=v=>finite(v)?v+'/8 '+oktaName(v):'brak danych';
         vals = [
-          infoValue('Podstawa ≥5/8',finite(z.ceiling)?Math.round(z.ceiling)+' m AGL':'brak ≥5/8'),
-          infoValue('Podstawa',finite(z.ceiling)?Math.round(window.PrognozaEPIRUnits.mToFt(z.ceiling))+' ft AGL':'—'),
-          infoValue('Widzialność',finite(z.VIS)?f(z.VIS/1000,1)+' km':'—'),
-          infoValue('Niskie',detailedCloudLayerText(z.oktaL,z.lowH,z.profile,0,2000)),
-          infoValue('Średnie',detailedCloudLayerText(z.oktaM,z.midH,z.profile,2000,6000)),
-          infoValue('Wysokie',detailedCloudLayerText(z.oktaH,z.highH,z.profile,6000,13001))
+          infoValue('Podstawa BKN/OVC (≥5/8)',finite(z.ceiling)?Math.round(z.ceiling)+' m AGL':'brak'),
+          infoValue('Podstawa (ft)',finite(z.ceiling)?Math.round(window.PrognozaEPIRUnits.mToFt(z.ceiling))+' ft AGL':'—'),
+          infoValue('Bardzo niskie 0–450 m',asOkta(c.veryLow)),
+          infoValue('Niskie 450–2000 m',asOkta(c.low)),
+          infoValue('Średnie 2–6 km',asOkta(c.mid)),
+          infoValue('Wysokie 6–13 km',asOkta(c.high))
         ];
       } else {
         title = 'Warstwy chmur w oktach';
         const cloudBands=window.PrognozaEPIRCloudBands?.fromProfile(z.profile);
         const c=cloudBands?.coverage||{};
         const fmtBand=v=>finite(v)?v+'/8 '+oktaName(v):'brak danych';
-        const quality=cloudBands?.veryLowQuality;
         vals = [
           infoValue('Bardzo niskie 0–450 m',fmtBand(c.veryLow)),
           infoValue('Niskie 450–2000 m',fmtBand(c.low)),
           infoValue('Średnie 2–6 km',fmtBand(c.mid)),
           infoValue('Wysokie 6–13 km',fmtBand(c.high)),
           infoValue('Podstawa ≥5/8',finite(z.ceiling)?Math.round(z.ceiling)+' m AGL':'brak'),
-          infoValue('Dane 0–450 m',quality==='supported'?'pełniejsze':quality==='partial'?'częściowe':'niewystarczające')
+          infoValue('Najniższy poziom modelu',finite(cloudBands?.lowestLevelM)?Math.round(cloudBands.lowestLevelM)+' m AGL':'brak danych')
         ];
       }
 
       box.innerHTML = '<div class="section-head"><b>'+title+'</b><span>'+time+'</span></div>'+
         '<div class="section-values">'+vals.join('')+'</div>'+
-        '<div class="section-help">'+(panelId==='okta'?'Pokrycie warstw to najwyższa wykryta ilość zachmurzenia w profilu modelowym, nie suma czterech warstw. Warstwa 0–450 m wymaga dostępnych danych pionowych; „brak danych” nie oznacza 0/8.':'Wartość główna pokazuje maksymalne zachmurzenie w danym przedziale i najniższą wysokość, na której jest ono osiągane. W nawiasie podana jest najniższa wykryta chmura.')+'</div>';
+        '<div class="section-help">'+(panelId==='okta'?'Pokrycie warstw to najwyższa wykryta ilość zachmurzenia w profilu modelowym, nie suma czterech warstw. Warstwa 0–450 m wymaga dostępnych danych pionowych; „brak danych” nie oznacza 0/8.':'Profil i warstwy chmur korzystają z jednego zestawu danych. Podstawa ≥5/8 jest szacunkiem interpolowanym, nie pomiarem. Brak danych pionowych nie oznacza 0/8.')+'</div>';
     };
   }
 
