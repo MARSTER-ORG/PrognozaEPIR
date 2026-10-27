@@ -126,6 +126,23 @@ function fakeStorage(mode) {
   assert(cleanup.includes("sample('Niskie 450–2000 m'"));
 })();
 
+(function testCloudProfileConsistentAndVisibilityOnlyInItsOwnPanel() {
+  const fogOverlay = read('fog-meteogram-overlay.js');
+  const cleanup = read('meteogram-visfog-cleanup.js');
+  const rh = read('rh-axis-fix.js');
+  const canvas = read('meteogram-visfog-split.js');
+  assert(fogOverlay.includes("const isVisibilityPanelId=id=>id==='visfog'"));
+  assert(cleanup.includes('PrognozaEPIRCloudBands?.fromProfile(z.profile)'));
+  assert(rh.includes("title = 'Profil chmur';"));
+  assert(!rh.includes("title = 'Profil chmur / widzialność';"));
+  const cloudDetails = rh.split("if (panelId === 'cloud') {")[1].split("} else {")[0];
+  assert(!cloudDetails.includes("infoValue('Widzialność'"));
+  assert(cleanup.includes("infoValue('Wysokie 6–13 km',asOkta(cover.high))"));
+  assert(canvas.includes("const bknHeight=finite(base?.bkn)&&finite(z.ceiling)?z.ceiling:base?.bkn"));
+  assert(canvas.includes("key==='bkn'&&finite(z.ceiling)?z.ceiling:bands(z).bases[key]"));
+  assert(canvas.includes("if(altitude<lower||altitude>upper)continue"));
+})();
+
 (function testSectionInfoUsesSameThreshold60() {
   const section = read('fog-section-info-fix.js');
   assert(section.includes('const ACTIVE=60'));
