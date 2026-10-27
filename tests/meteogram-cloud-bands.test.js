@@ -38,7 +38,7 @@ const bands=require('../meteogram-cloud-bands.js');
   assert.equal(result.veryLowQuality,'partial');
   assert.ok(result.coverage.veryLow>=5);
   assert.ok(result.coverage.low>=1);
-  assert.equal(result.bases.few,null);
+  assert.ok(result.bases.few>450,'a higher FEW layer may coexist with low BKN');
   assert.ok(result.bases.bkn>=250);
 })();
 
