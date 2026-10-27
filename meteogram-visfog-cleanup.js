@@ -306,8 +306,8 @@
       infoValue('Podstawa ≥5/8',finite(z.ceiling)?Math.round(z.ceiling)+' m AGL':'brak ≥5/8'),
       infoValue('Podstawa',finite(z.ceiling)?Math.round(window.PrognozaEPIRUnits.mToFt(z.ceiling))+' ft AGL':'—'),
       infoValue('Niskie',detailedCloudLayerText(z.oktaL,z.lowH,z.profile,0,2000)),
-      infoValue('Średnie',detailedCloudLayerText(z.oktaM,z.midH,z.profile,2000,5000)),
-      infoValue('Wysokie',detailedCloudLayerText(z.oktaH,z.highH,z.profile,5000,13001))
+      infoValue('Średnie',detailedCloudLayerText(z.oktaM,z.midH,z.profile,2000,6000)),
+      infoValue('Wysokie',detailedCloudLayerText(z.oktaH,z.highH,z.profile,6000,13001))
     ];
     box.innerHTML = '<div class="section-head"><b>Profil chmur</b><span>'+time+'</span></div>'+
       '<div class="section-values">'+vals.join('')+'</div>'+
@@ -316,7 +316,7 @@
 
   drawLegend = function(top,totalH) {
     const x=8;
-    const w=Math.max(136,LEGEND_W-LEGEND_RIGHT_GAP-18);
+    const w=Math.max(136,LEGEND_W-LEGEND_RIGHT_GAP-6);
     const cp=canvasPalette();
     ctx.fillStyle=cp.legend;ctx.fillRect(x,top,w,totalH);
     ctx.strokeStyle=cp.border;ctx.lineWidth=.9;ctx.strokeRect(x,top,w,totalH);
@@ -370,8 +370,14 @@
     sample('Podstawa ≥5/8','#8d4a1a');
     dot('Zachmurzenie',activeTheme()==='dark'?'#fff':'#555');
     y+=6;
+    title('Podstawy chmur AGL');
+    sample('BKN/OVC (≥5/8)','#e65d5d');
+    sample('SCT (3–4/8)','#f29d38',[4,3]);
+    sample('FEW (1–2/8)','#e5bf35',[5,3]);
+    y+=6;
     title('Warstwy chmur');
-    sample('Niskie 0–2 km','#f59e0b');
+    sample('B. niskie 0–450 m','#b678f0');
+    sample('Niskie 450–2000 m','#f59e0b');
     sample('Średnie 2–6 km','#22c55e');
     sample('Wysokie 6–13 km','#3b82f6');
     y+=8;
