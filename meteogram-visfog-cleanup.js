@@ -302,16 +302,22 @@
     const box = $('sectionInfo');
     box.classList.remove('empty');
     const time = fmt(z.t,{weekday:'short',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+    const cloud=window.PrognozaEPIRCloudBands?.fromProfile(z.profile);
+    const cover=cloud?.coverage||{};
+    const asOkta=v=>finite(v)?v+'/8 '+oktaName(v):'brak danych';
+    const lowLevel=cloud&&finite(cloud.lowestLevelM)?Math.round(cloud.lowestLevelM)+' m AGL':'brak danych';
     const vals = [
-      infoValue('Podstawa ≥5/8',finite(z.ceiling)?Math.round(z.ceiling)+' m AGL':'brak ≥5/8'),
-      infoValue('Podstawa',finite(z.ceiling)?Math.round(window.PrognozaEPIRUnits.mToFt(z.ceiling))+' ft AGL':'—'),
-      infoValue('Niskie',detailedCloudLayerText(z.oktaL,z.lowH,z.profile,0,2000)),
-      infoValue('Średnie',detailedCloudLayerText(z.oktaM,z.midH,z.profile,2000,6000)),
-      infoValue('Wysokie',detailedCloudLayerText(z.oktaH,z.highH,z.profile,6000,13001))
+      infoValue('Podstawa BKN/OVC (≥5/8)',finite(z.ceiling)?Math.round(z.ceiling)+' m AGL':'brak'),
+      infoValue('Podstawa (ft)',finite(z.ceiling)?Math.round(window.PrognozaEPIRUnits.mToFt(z.ceiling))+' ft AGL':'—'),
+      infoValue('Bardzo niskie 0–450 m',asOkta(cover.veryLow)),
+      infoValue('Niskie 450–2000 m',asOkta(cover.low)),
+      infoValue('Średnie 2–6 km',asOkta(cover.mid)),
+      infoValue('Wysokie 6–13 km',asOkta(cover.high)),
+      infoValue('Najniższy poziom profilu',lowLevel)
     ];
     box.innerHTML = '<div class="section-head"><b>Profil chmur</b><span>'+time+'</span></div>'+
       '<div class="section-values">'+vals.join('')+'</div>'+
-      '<div class="section-help">Wartość główna pokazuje maksymalne zachmurzenie w danym przedziale i najniższą wysokość, na której jest ono osiągane. W nawiasie podana jest najniższa wykryta chmura w tym samym przedziale wraz z jej zachmurzeniem.</div>';
+      '<div class="section-help">Wszystkie warstwy korzystają z tej samej diagnozy modelowego pokrycia chmur co panel oktantów. Brak danych pionowych nie oznacza 0/8. Podstawa ≥5/8 jest szacunkiem interpolowanym; nie jest pomiarem.</div>';
   };
 
   drawLegend = function(top,totalH) {
