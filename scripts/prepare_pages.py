@@ -107,7 +107,7 @@ def patch_index() -> None:
         "fog-engine.js", "observation-engine.js", "mifg-engine.js",
         "fog-meteogram-overlay.js", "fog-summary-layout.js", "index-fixes.js",
         "axis-layout-fix.js", "visual-style-fix.js", "meteogram-layout-v2.js",
-        "meteogram-visfog-split.js", "meteogram-visfog-cleanup.js",
+        "meteogram-visfog-split.js", "meteogram-visfog-cleanup.js", "meteogram-cloud-bands.js",
         "rh-axis-fix.js", "day-night-fix.js", "shortcut-mode.js",
         "meteogram-tap-details.js",
     ]
@@ -118,6 +118,7 @@ def patch_index() -> None:
         f'<script src="axis-layout-fix.js?v={ASSET_V}"></script>',
         f'<script src="visual-style-fix.js?v={ASSET_V}"></script>',
         f'<script src="meteogram-layout-v2.js?v={ASSET_V}"></script>',
+        f'<script src="meteogram-cloud-bands.js?v={ASSET_V}"></script>',
         f'<script src="meteogram-visfog-split.js?v={ASSET_V}"></script>',
         f'<script src="rh-axis-fix.js?v={ASSET_V}"></script>',
         f'<script src="meteogram-visfog-cleanup.js?v={ASSET_V}"></script>',
@@ -236,7 +237,7 @@ def validate() -> None:
         "index.html", "radar.html", "taf.html", "sat-fog.html", "arch.html",
         "taf-engine-v2.js", "taf-engine-v24.js", "taf-app-v2.js", "message-archive-client.js",
         "fog-engine.js", "observation-engine.js", "mifg-engine.js",
-        "meteogram-tap-details.js",
+        "meteogram-tap-details.js", "meteogram-cloud-bands.js",
         "radar-risk-policy.js", "lightning-alerts.html", "lightning-alert-sw.js",
     ]
     missing = [x for x in required if not (SITE / x).is_file()]

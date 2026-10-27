@@ -5,6 +5,7 @@
   const HOUR = 3600e3;
   const THREE_HOURS = 3 * HOUR;
   const UTC_MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+  const CLOUD_VERY_LOW = '#b678f0';
   const CLOUD_LOW = '#f59e0b';
   const CLOUD_MID = '#22c55e';
   const CLOUD_HIGH = '#3b82f6';
@@ -23,8 +24,9 @@
     {id:'wind',h:84,label:'wiatr',unit:'(m/s)'},
     {id:'dir',h:54,label:'kier. wiatru',unit:''},
     {id:'visfog',h:96,label:'widzialność / mgła',unit:'(km / FOG)'},
+    {id:'cloudbase',h:128,label:'podstawy chmur <3 km',unit:'(m AGL)'},
     {id:'cloud',h:142,label:'profil chmur',unit:'(km)'},
-    {id:'okta',h:94,label:'warstwy chmur',unit:'(oktanty)'}
+    {id:'okta',h:108,label:'warstwy chmur',unit:'(oktanty)'}
   ];
   PANELS.splice(0, PANELS.length, ...splitPanels);
 
@@ -36,6 +38,7 @@
     wind:'Wiatr',
     dir:'Kierunek wiatru',
     visfog:'Widzialność / mgła',
+    cloudbase:'Podstawy chmur ≤3 km',
     cloud:'Profil chmur',
     okta:'Warstwy chmur'
   };
@@ -53,6 +56,25 @@
       box.innerHTML = '<div class="section-head"><b>Widzialność / mgła</b><span>'+time+'</span></div>'+
         '<div class="section-values">'+vals.join('')+'</div>'+
         '<div class="section-help">Pomarańczowa linia pokazuje widzialność konsensusu modeli. Słupki ryzyka mgły pochodzą z EPIR FOG ENGINE i są wyświetlane od 40/100.</div>';
+      return;
+    }
+    if (panelId === 'cloudbase') {
+      const info=window.PrognozaEPIRCloudBands?.fromProfile(z.profile);
+      const box=$('sectionInfo');
+      const time=fmt(z.t,{weekday:'short',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+      const base=info?.bases;
+      const fmtHeight=v=>finite(v)?Math.round(v)+' m AGL':'—';
+      box.classList.remove('empty');
+      const vals=[
+        infoValue('BKN/OVC (≥5/8)',fmtHeight(base?.bkn)),
+        infoValue('SCT (3–4/8)',fmtHeight(base?.sct)),
+        infoValue('FEW (1–2/8)',fmtHeight(base?.few)),
+        infoValue('Bardzo niskie 0–450 m',finite(info?.coverage?.veryLow)?info.coverage.veryLow+'/8':'brak danych'),
+        infoValue('Pokrycie dolnych poziomów',info?.veryLowQuality==='supported'?'pełniejsze':info?.veryLowQuality==='partial'?'częściowe':'brak')
+      ];
+      box.innerHTML='<div class="section-head"><b>Podstawy chmur (szacunek modelowy)</b><span>'+time+'</span></div>'+
+        '<div class="section-values">'+vals.join('')+'</div>'+
+        '<div class="section-help">Wykres pokazuje najniższe wykryte poziomy FEW/SCT/BKN/OVC w profilu modelowym, nie pomiar podstawy chmur. Skala 0–450 m jest powiększona. Brak wystarczających danych pionowych nie oznacza bezchmurnego nieba.</div>';
       return;
     }
     if (panelId === 'cloud') {
@@ -100,6 +122,20 @@
     ctx.stroke();ctx.setLineDash([]);
   }
 
+  const CLOUD_BANDS_CACHE=new WeakMap();
+  function bands(z) {
+    const profile=z?.profile;
+    if (!Array.isArray(profile))return null;
+    if (!CLOUD_BANDS_CACHE.has(profile))CLOUD_BANDS_CACHE.set(profile,window.PrognozaEPIRCloudBands?.fromProfile(profile)||null);
+    return CLOUD_BANDS_CACHE.get(profile);
+  }
+  // The first 450 m receive extra vertical space; the next 2.55 km remain visible.
+  function cloudBaseY(height,p) {
+    const pad=9,inner=Math.max(1,p.h-2*pad);
+    const v=clamp(height,0,3000);
+    const q=v<=450?(v/450)*.57:.57+(v-450)/(3000-450)*.43;
+    return p.y+p.h-pad-q*inner;
+  }
   function withClip(x0,x1,p,fn) {
     ctx.save();ctx.beginPath();ctx.rect(x0,p.y,x1-x0,p.h);ctx.clip();fn();ctx.restore();
   }
@@ -229,6 +265,33 @@
       drawSeries(d.map(z=>({x:x(z.t),y:panelScale(clamp((z.VIS||0)/1000,0,VIS_PLOT_MAX_KM),0,VIS_PLOT_MAX_KM,p.y,p.h)})),VIS_COLOR,2.4);
     });
 
+    p=byId('cloudbase');
+    withClip(x0,x1,p,()=>{
+      const lo=cloudBaseY(0,p),hi=cloudBaseY(450,p);
+      ctx.fillStyle='rgba(182,120,240,.09)';
+      ctx.fillRect(x0,hi,plotW,lo-hi);
+      for(const h of [0,150,300,450,1000,2000,3000]) {
+        const yy=cloudBaseY(h,p);
+        ctx.strokeStyle=h===450?'rgba(182,120,240,.75)':cp.grid2;
+        ctx.lineWidth=h===450?1.3:.7;
+        ctx.setLineDash(h===450?[5,4]:[2,4]);
+        ctx.beginPath();ctx.moveTo(x0,yy);ctx.lineTo(x1,yy);ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      const baseLines=[
+        ['few','#e5bf35',[5,3]],['sct','#f29d38',[4,3]],['bkn','#e65d5d',[]]
+      ];
+      for(const [key,color,dash] of baseLines) {
+        drawSeries(d.map(z=>({x:x(z.t),
+          y:finite(bands(z)?.bases?.[key])?cloudBaseY(bands(z).bases[key],p):NaN
+        })),color,key==='bkn'?2.8:2.1,dash);
+      }
+    });
+    ctx.save();ctx.font='8px Arial';ctx.textAlign='right';ctx.textBaseline='middle';
+    ctx.fillStyle=cp.muted;
+    for(const h of [0,150,300,450,1000,2000,3000])ctx.fillText(String(h),x0-8,cloudBaseY(h,p));
+    ctx.restore();
+
     p=byId('cloud');
     withClip(x0,x1,p,()=>{
       const colW=Math.max(2,plotW/(d.length-1)),bands=60;
@@ -246,9 +309,27 @@
 
     p=byId('okta');
     withClip(x0,x1,p,()=>{
-      drawSeries(d.map(z=>({x:x(z.t),y:panelScale(z.oktaL,0,8,p.y,p.h)})),CLOUD_LOW,3.0);
-      drawSeries(d.map(z=>({x:x(z.t),y:panelScale(z.oktaM,0,8,p.y,p.h)})),CLOUD_MID,3.0);
-      drawSeries(d.map(z=>({x:x(z.t),y:panelScale(z.oktaH,0,8,p.y,p.h)})),CLOUD_HIGH,3.1);
+      // The bands overlap physically: transparent area fills are NOT stacked sums.
+      const layers=[
+        ['high',CLOUD_HIGH,'rgba(59,130,246,.10)'],
+        ['mid',CLOUD_MID,'rgba(34,197,94,.10)'],
+        ['low',CLOUD_LOW,'rgba(245,158,11,.12)'],
+        ['veryLow',CLOUD_VERY_LOW,'rgba(182,120,240,.20)']
+      ];
+      const barWidth=Math.max(2,plotW/Math.max(1,d.length-1));
+      for(const [key,color,fill] of layers) {
+        ctx.fillStyle=fill;
+        for(const z of d) {
+          const value=bands(z)?.coverage?.[key];
+          if(!finite(value))continue;
+          const high=panelScale(value,0,8,p.y,p.h);
+          const base=panelScale(0,0,8,p.y,p.h);
+          ctx.fillRect(x(z.t)-barWidth/2,high,barWidth+.5,Math.max(0,base-high));
+        }
+        drawSeries(d.map(z=>({x:x(z.t),y:finite(bands(z)?.coverage?.[key])?
+          panelScale(bands(z).coverage[key],0,8,p.y,p.h):NaN
+        })),color,key==='veryLow'?3.2:2.5,key==='veryLow'?[]:[]);
+      }
     });
 
     ctx.strokeStyle=cp.border;ctx.globalAlpha=.98;ctx.lineWidth=1;

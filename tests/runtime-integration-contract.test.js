@@ -122,6 +122,8 @@ function fakeStorage(mode) {
   assert(cleanup.includes("dot('MIFG (pkt ≥60)'"));
   assert(cleanup.includes("sample('Średnie 2–6 km'"));
   assert(cleanup.includes("sample('Wysokie 6–13 km'"));
+  assert(cleanup.includes("sample('B. niskie 0–450 m'"));
+  assert(cleanup.includes("sample('Niskie 450–2000 m'"));
 })();
 
 (function testSectionInfoUsesSameThreshold60() {
