@@ -63,14 +63,17 @@
       const box=$('sectionInfo');
       const time=fmt(z.t,{weekday:'short',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
       const base=info?.bases;
+      // Use the canonical interpolated ceiling for BKN/OVC, where the
+      // pressure-level profile independently supports a BKN/OVC base.
+      const bknHeight=finite(base?.bkn)&&finite(z.ceiling)?z.ceiling:base?.bkn;
       const fmtHeight=v=>finite(v)?Math.round(v)+' m AGL':'—';
       box.classList.remove('empty');
       const vals=[
-        infoValue('BKN/OVC (≥5/8)',fmtHeight(base?.bkn)),
+        infoValue('BKN/OVC (≥5/8)',fmtHeight(bknHeight)),
         infoValue('SCT (3–4/8)',fmtHeight(base?.sct)),
         infoValue('FEW (1–2/8)',fmtHeight(base?.few)),
         infoValue('Bardzo niskie 0–450 m',finite(info?.coverage?.veryLow)?info.coverage.veryLow+'/8':'brak danych'),
-        infoValue('Pokrycie dolnych poziomów',info?.veryLowQuality==='supported'?'pełniejsze':info?.veryLowQuality==='partial'?'częściowe':'brak')
+        infoValue('Najniższy poziom modelu',finite(info?.lowestLevelM)?Math.round(info.lowestLevelM)+' m AGL':'brak danych')
       ];
       box.innerHTML='<div class="section-head"><b>Podstawy chmur (szacunek modelowy)</b><span>'+time+'</span></div>'+
         '<div class="section-values">'+vals.join('')+'</div>'+
@@ -283,7 +286,7 @@
       ];
       for(const [key,color,dash] of baseLines) {
         drawSeries(d.map(z=>({x:x(z.t),
-          y:finite(bands(z)?.bases?.[key])?cloudBaseY(bands(z).bases[key],p):NaN
+          y:finite(bands(z)?.bases?.[key])?cloudBaseY(key==='bkn'&&finite(z.ceiling)?z.ceiling:bands(z).bases[key],p):NaN
         })),color,key==='bkn'?2.8:2.1,dash);
       }
     });
@@ -297,8 +300,14 @@
       const colW=Math.max(2,plotW/(d.length-1)),bands=60;
       for(const z of d){
         const xx=x(z.t);
+        // Never paint cloud cover above/below the physically sampled model profile.
+        if(!Array.isArray(z.profile)||z.profile.length<2)continue;
+        const lower=z.profile[0].agl,upper=z.profile[z.profile.length-1].agl;
+        if(!finite(lower)||!finite(upper)||upper<=lower)continue;
         for(let b=0;b<bands;b++){
-          const hkm=(b+.5)/bands*15,cc=interpCC(z.profile,hkm*1000);if(!finite(cc)||cc<8)continue;
+          const hkm=(b+.5)/bands*15,altitude=hkm*1000;
+          if(altitude<lower||altitude>upper)continue;
+          const cc=interpCC(z.profile,altitude);if(!finite(cc)||cc<8)continue;
           ctx.fillStyle=activeTheme()==='dark'?'rgba(255,255,255,'+(0.10+0.82*cc/100)+')':'rgba(55,65,70,'+(0.08+0.82*cc/100)+')';
           const y1=panelScale(hkm,0,15,p.y,p.h),y2=panelScale((b+1)/bands*15,0,15,p.y,p.h);
           ctx.fillRect(xx-colW/2,y2,colW+1,Math.max(1,y1-y2));

@@ -21,7 +21,8 @@
     const panels=Array.isArray(meta?.panelYs)?meta.panelYs:[];
     return panels.find(p=>p?.id==='visfog')||panels.find(p=>p?.id==='cloud')||null;
   }
-  const isVisibilityPanelId=id=>id==='visfog'||id==='cloud';
+  // Fog and visibility belong only to the dedicated visibility panel.
+  const isVisibilityPanelId=id=>id==='visfog';
   const validSeries=rows=>Array.isArray(rows)&&rows.length?rows:null;
 
   // Meteogram ma korzystać z tej samej aktywnej serii FOG, którą publikuje
