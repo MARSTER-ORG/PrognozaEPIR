@@ -102,17 +102,23 @@
         ];
       } else {
         title = 'Warstwy chmur w oktach';
+        const cloudBands=window.PrognozaEPIRCloudBands?.fromProfile(z.profile);
+        const c=cloudBands?.coverage||{};
+        const fmtBand=v=>finite(v)?v+'/8 '+oktaName(v):'brak danych';
+        const quality=cloudBands?.veryLowQuality;
         vals = [
-          infoValue('Niskie 0–2 km',detailedCloudLayerText(z.oktaL,z.lowH,z.profile,0,2000)),
-          infoValue('Średnie 2–6 km',detailedCloudLayerText(z.oktaM,z.midH,z.profile,2000,6000)),
-          infoValue('Wysokie 6–13 km',detailedCloudLayerText(z.oktaH,z.highH,z.profile,6000,13001)),
-          infoValue('Podstawa ≥5/8',finite(z.ceiling)?Math.round(z.ceiling)+' m AGL':'brak')
+          infoValue('Bardzo niskie 0–450 m',fmtBand(c.veryLow)),
+          infoValue('Niskie 450–2000 m',fmtBand(c.low)),
+          infoValue('Średnie 2–6 km',fmtBand(c.mid)),
+          infoValue('Wysokie 6–13 km',fmtBand(c.high)),
+          infoValue('Podstawa ≥5/8',finite(z.ceiling)?Math.round(z.ceiling)+' m AGL':'brak'),
+          infoValue('Dane 0–450 m',quality==='supported'?'pełniejsze':quality==='partial'?'częściowe':'niewystarczające')
         ];
       }
 
       box.innerHTML = '<div class="section-head"><b>'+title+'</b><span>'+time+'</span></div>'+
         '<div class="section-values">'+vals.join('')+'</div>'+
-        '<div class="section-help">Wartość główna pokazuje maksymalne zachmurzenie w danym przedziale i najniższą wysokość, na której jest ono osiągane. W nawiasie podana jest najniższa wykryta chmura w tym samym przedziale wraz z jej zachmurzeniem.</div>';
+        '<div class="section-help">'+(panelId==='okta'?'Pokrycie warstw to najwyższa wykryta ilość zachmurzenia w profilu modelowym, nie suma czterech warstw. Warstwa 0–450 m wymaga dostępnych danych pionowych; „brak danych” nie oznacza 0/8.':'Wartość główna pokazuje maksymalne zachmurzenie w danym przedziale i najniższą wysokość, na której jest ono osiągane. W nawiasie podana jest najniższa wykryta chmura.')+'</div>';
     };
   }
 
