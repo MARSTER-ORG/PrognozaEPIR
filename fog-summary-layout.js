@@ -239,7 +239,7 @@
   const loadContext=()=>{
     loadModeSync();
     if(window.__EPIR_FOG_244_CONTEXT__)return;
-    loadOnce('fog-engine-v244-context.js?v=20260922-fog244-context2','script[data-epir-fog244-context="1"]','epirFog244Context');
+    loadOnce('fog-engine-v244-context.js?v=20261028-br-vis-gate','script[data-epir-fog244-context="1"]','epirFog244Context');
   };
 
   // The meteogram keeps the lightweight legacy fog series as the default.
@@ -250,7 +250,7 @@
   if(window.__EPIR_FOG_244_LOADER__)return;
   window.__EPIR_FOG_244_LOADER__=true;
   const s=document.createElement('script');
-  s.src='fog-engine-v244.js?v=20260922-fog244-threshold60-1';
+  s.src='fog-engine-v244.js?v=20261028-br-vis-gate';
   s.async=false;s.dataset.epirFog244='1';
   s.onload=loadContext;
   s.onerror=()=>{window.__EPIR_FOG_244_LOADER__=false;console.error('EPIR FOG 2.4.4: nie udało się załadować fog-engine-v244.js');};
