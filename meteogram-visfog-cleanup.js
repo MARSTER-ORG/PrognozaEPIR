@@ -46,9 +46,13 @@
     }
   }
 
-  function brAt(t) {
+  // Check against the same VIS that the user sees on the meteogram.
+  function brAt(t,visibleVis) {
+    if (!finite(visibleVis) || visibleVis < 1000 || visibleVis > 5000) return null;
     try {
-      return nearestRiskRow(Array.isArray(window.PrognozaEPIRBRSeries) ? window.PrognozaEPIRBRSeries : [],t);
+      const row = nearestRiskRow(Array.isArray(window.PrognozaEPIRBRSeries) ? window.PrognozaEPIRBRSeries : [],t);
+      if (row && finite(row.visibility) && (row.visibility < 1000 || row.visibility > 5000)) return null;
+      return row;
     } catch (_) {
       return null;
     }
@@ -229,7 +233,7 @@
 
       const fog = fogAt(best.t);
       const mifg = mifgAt(best.t);
-      const br = brAt(best.t);
+      const br = brAt(best.t,best.VIS);
       if (fog && fog.score >= FOG_TOOLTIP_THRESHOLD) {
         appendHoverRow(tooltip,'Ryzyko mgły · FOG',fog.score,'data-epir-fog-hover');
       }
@@ -284,7 +288,7 @@
       values.querySelectorAll('[data-fog-risk],[data-mifg-risk],[data-br-risk]').forEach(el => el.remove());
       const fog = fogAt(z?.t);
       const mifg = mifgAt(z?.t);
-      const br = brAt(z?.t);
+      const br = brAt(z?.t,z?.VIS);
       if (fog && fog.score >= FOG_TOOLTIP_THRESHOLD) {
         appendRiskCell(values,'Ryzyko mgły · FOG ENGINE',fog.score,'fogRisk');
       }
