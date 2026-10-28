@@ -136,7 +136,7 @@ def build(as_of):
         "window_start": start.isoformat().replace("+00:00", "Z"),
         "window_end": end.isoformat().replace("+00:00", "Z"),
         "source": "legacy-issued-snapshots-nwp-mean-vs-epir-metar",
-        "training_uses_observations_after_issue": False,
+        "forecast_precedes_verifying_observation": True,
         "censoring": "9999/CAVOK treated as lower bounds, never as exact 10000",
         "min_lead_hours": LEAD_MIN_H,
         "max_lead_hours": LEAD_MAX_H,
