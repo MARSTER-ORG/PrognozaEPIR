@@ -1,6 +1,6 @@
 'use strict';
 (() => {
-  const VERSION='2026-09-22-section-threshold60-br-1';
+  const VERSION='2026-10-28-section-br-vis5000';
   const ACTIVE=60;
   const MAX_MATCH_MS=70*60e3;
   const finite=Number.isFinite;
@@ -61,13 +61,16 @@
     const values=box.querySelector('.section-values');
     if(!values)return;
     const rows=series(),t=Number(z?.t);
-    const fog=nearest(rows.fog,t),br=nearest(rows.br,t),mifg=nearest(rows.mifg,t);
+    const fog=nearest(rows.fog,t),mifg=nearest(rows.mifg,t);
+    const vis=z?.VIS,brAllowed=finite(vis)&&vis>=1000&&vis<=5000;
+    const candidate=brAllowed?nearest(rows.br,t):null;
+    const br=candidate&&(!finite(candidate.visibility)||(candidate.visibility>=1000&&candidate.visibility<=5000))?candidate:null;
     const fogThreshold=finite(Number(window.PrognozaEPIRFogRenderThreshold))?Number(window.PrognozaEPIRFogRenderThreshold):ACTIVE;
     addOrReplace(values,'fog','Ryzyko mgły · FOG ENGINE',fog,fogThreshold);
     addOrReplace(values,'br','Zamglenie · BR',br,ACTIVE);
     addOrReplace(values,'mifg','Niska mgła <2 m · MIFG',mifg,ACTIVE);
     const help=box.querySelector('.section-help');
-    if(help)help.textContent=`Pomarańczowa linia pokazuje widzialność konsensusu. FOG, BR i MIFG są oznaczane dopiero od ${ACTIVE}/100.`;
+    if(help)help.textContent=`Pomarańczowa linia pokazuje widzialność konsensusu. FOG i MIFG od ${ACTIVE}/100. BR tylko przy VIS 1000–5000 m i wyniku co najmniej ${ACTIVE}/100.`;
   }
 
   function install(){
