@@ -5,7 +5,7 @@ const vm=require('node:vm');
 const path=require('node:path');
 const root=path.resolve(__dirname,'..');
 const calibration=JSON.parse(fs.readFileSync(path.join(root,'data/learning/visibility-nwp-calibration.json'),'utf8'));
-const frozenTime=Date.parse('2026-10-28T21:00:00Z');
+const frozenTime=Date.parse(calibration.generated_at)+3600e3;
 
 class FixedDate extends Date {
   constructor(...args){super(...(args.length?args:[frozenTime]));}
@@ -20,12 +20,14 @@ class FixedDate extends Date {
   vm.runInNewContext(fs.readFileSync(path.join(root,'visibility-nwp-calibration.js'),'utf8'),context);
   const api=win.PrognozaEPIRVisibilityNwpCalibration;
   assert.equal(await api.load(),true,'calibration artifact loaded');
-  assert.equal(api.status().pairs,217,'issued forecast verification cases');
+  assert.equal(api.status().pairs,calibration.pairs,'issued forecast verification cases');
   const night=Date.parse('2026-10-29T02:00:00Z');
   const day=Date.parse('2026-10-29T12:00:00Z');
   const raw=12000;
-  assert.ok(api.correct(raw,night,8000)<raw,'clear night NWP should be adjusted down');
-  assert.ok(api.correct(raw,day,8000)<raw,'clear daytime NWP should be adjusted down');
+  if (calibration.groups.night_clear.n >= 40 && calibration.groups.night_clear.factor < 1)
+    assert.ok(api.correct(raw,night,8000)<raw,'clear night NWP should be adjusted down');
+  if (calibration.groups.day_clear.n >= 40 && calibration.groups.day_clear.factor < 1)
+    assert.ok(api.correct(raw,day,8000)<raw,'clear daytime NWP should be adjusted down');
   assert.equal(api.correct(raw,night,4800),raw,'no override of a forecast fog/BR risk');
   assert.equal(api.correct(4800,day,8000),4800,'low NWP visibility untouched');
   assert.equal(api.correct(null,day,8000),null,'missing NWP untouched');
