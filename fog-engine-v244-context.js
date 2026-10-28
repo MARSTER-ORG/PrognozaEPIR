@@ -147,6 +147,9 @@
   function adjustAux(series,kind,trend){
     return (series||[]).map(r=>{
       const t=num(r?.t),lead=finite(t)?Math.max(0,(t-Date.now())/HOUR):99,taf=tafSignalAt(t),base=num(r?.score);if(!finite(base))return r;
+      // A TAF/observation bonus must never revive BR outside its VIS interval.
+      if(kind==='br'&&!(finite(num(r?.visibility))&&num(r.visibility)>=1000&&num(r.visibility)<=5000))
+        return {...r,score:0,scoreCore244:base,visibilityEligible:false};
       const tafTarget=kind==='br'?(taf.epir*.45+taf.neighbors*.20):kind==='mifg'?(taf.epir*.25+taf.neighbors*.12):0;
       const obsFactor=kind==='br'?(trend.last?.br?.35:0):kind==='mifg'?(trend.last?.mifg?.40:0):0;
       let score=base+5*tafTarget*(.4+.6*Math.exp(-lead/30))+100*obsFactor*Math.exp(-lead/3.2);
