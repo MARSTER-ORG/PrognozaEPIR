@@ -78,6 +78,8 @@ function fakeStorage(mode) {
   assert(overlay.includes('function selectedMode()'));
   assert(overlay.includes('function activeFogSeries()'));
   assert(overlay.includes('function canonicalFogSeries(){return activeFogSeries();}'));
+  assert(overlay.includes('brValidAt(r,m.data)'));
+  assert(overlay.includes('brAt(z?.t,z?.VIS)'));
   assert(overlay.includes("if(mode==='legacy')"));
   assert(overlay.includes("if(mode==='vnext')"));
   assert(overlay.includes('PrognozaEPIRFog244Context'));
@@ -98,7 +100,8 @@ function fakeStorage(mode) {
   assert(bridge.includes('const ACTIVE=60'));
   assert(bridge.includes('function activeRows(rows)'));
   assert(bridge.includes('mifg=activeRows(m)'));
-  assert(bridge.includes('return activeRows(src.map(row=>engine.scoreRow'));
+  assert(bridge.includes('return activeRows(src.map(row=>{'));
+  assert(bridge.includes('brVisibilityEligible(vis)'));
   assert(bridge.includes('PrognozaEPIRFogRenderThreshold=ACTIVE'));
 })();
 
@@ -114,7 +117,7 @@ function fakeStorage(mode) {
 (function testQuickPreviewShowsBrAndSuppressesSub60Rows() {
   const cleanup = read('meteogram-visfog-cleanup.js');
   assert(cleanup.includes('const FOG_TOOLTIP_THRESHOLD = 60'));
-  assert(cleanup.includes('function brAt(t)'));
+  assert(cleanup.includes('function brAt(t,visibleVis)'));
   assert(cleanup.includes("appendHoverRow(tooltip,'Zamglenie · BR'"));
   assert(cleanup.includes('data-epir-br-hover'));
   assert(cleanup.includes("symbol('FOG (słupki ≥60)'"));
