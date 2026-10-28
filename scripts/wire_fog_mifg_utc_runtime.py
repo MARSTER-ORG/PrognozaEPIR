@@ -14,6 +14,7 @@ SITE = ROOT / "_site"
 ASSET_V = os.environ.get("GITHUB_SHA", "dev")[:12]
 FOG_PAGE_ASSETS = (
     "fog-engine-v244.js",
+    "fog-engine-v244-context.js",
     "fog-engine.js",
 )
 INDEX_FOG_RUNTIME_ASSETS = (
@@ -161,7 +162,7 @@ def validate() -> None:
 
     for marker in (
         "FOG_TOOLTIP_THRESHOLD = 60",
-        "function brAt(t)",
+        "function brAt(t,visibleVis)",
         "Zamglenie · BR",
         "data-epir-br-hover",
     ):
