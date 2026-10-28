@@ -2,7 +2,7 @@
 (() => {
   const FRAME_ID='epirFogCanonicalRuntime';
   const MODE_KEY='prognozaepir-fog-engine-mode';
-  const VERSION='2026-09-23-mode-visible-2';
+  const VERSION='2026-10-28-br-vis-gate-1';
   const SECTION_FIX='fog-section-info-fix.js';
   const ACTIVE=60,HOUR=3600e3;
   const finite=Number.isFinite;
