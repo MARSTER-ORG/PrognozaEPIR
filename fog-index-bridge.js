@@ -78,13 +78,22 @@
       return true;
     }catch(_){return false;}
   }
+  const brVisibilityEligible=v=>v!==null&&v!==undefined&&v!==''&&finite(Number(v))&&Number(v)>=1000&&Number(v)<=5000;
   function computeSelectedBR(cw,mode,legacy,vnext){
     try{
       const engine=cw?.PrognozaEPIRBREngine;
       const src=mode==='vnext'&&vnext.length?vnext:legacy;
       if(!engine?.scoreRow||!src.length)return [];
       const now=Date.now();
-      return activeRows(src.map(row=>engine.scoreRow(row,mode,now)).filter(r=>r&&finite(Number(r.t))&&finite(Number(r.score))));
+      // The bridge must use VIS from the currently selected fog engine, not
+      // the background Next engine or a stale BR series.
+      return activeRows(src.map(row=>{
+        const prediction=engine.scoreRow(row,mode,now);
+        if(!prediction)return null;
+        const vis=row?.visGuidance?.point??row?.visProposed??row?.vis;
+        return {...prediction,t:row.t,visibility:brVisibilityEligible(vis)?Number(vis):null,
+          score:brVisibilityEligible(vis)?Number(prediction.score):0,mode};
+      }).filter(r=>r&&finite(Number(r.t))&&finite(Number(r.score))));
     }catch(_){return [];}
   }
   function sync(){
