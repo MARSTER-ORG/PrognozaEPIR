@@ -202,6 +202,9 @@ def bootstrap_from_github() -> dict:
 
 
 def _dispatch_archive_changed(generated_at: str, fingerprint: str) -> dict:
+    # Supabase is the live archive; GitHub Actions dispatch must be opt-in.
+    if os.environ.get('GITHUB_ARCHIVE_DISPATCH_ENABLED', '0').strip().lower() not in {'1', 'true', 'yes', 'on'}:
+        return {'enabled': False, 'sent': False, 'reason': 'GitHub Actions dispatch disabled; Supabase authoritative'}
     if not _DISPATCH_TOKEN:
         return {"enabled": False, "sent": False, "reason": "missing GITHUB_ARCHIVE_DISPATCH_TOKEN"}
 
