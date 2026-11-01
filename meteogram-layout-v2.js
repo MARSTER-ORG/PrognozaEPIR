@@ -253,7 +253,7 @@
         }
       }
       drawSeries(d.map(z=>({x:x(z.t),y:finite(z.ceiling)?panelScale(z.ceiling/1000,0,15,p.y,p.h):NaN})),'#8d4a1a',2.4);
-      drawSeries(d.map(z=>({x:x(z.t),y:panelScale(clamp((z.VIS||0)/1000,0,30),0,30,p.y,p.h)})),'#d66c12',2);
+      drawSeries(d.map(z=>({x:x(z.t),y:panelScale(clamp((finite(z.VIS)?z.VIS:NaN)/1000,0,30),0,30,p.y,p.h)})),'#d66c12',2);
     });
 
     p=byId('okta');
