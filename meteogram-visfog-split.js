@@ -265,7 +265,7 @@
 
     p=byId('visfog');
     withClip(x0,x1,p,()=>{
-      drawSeries(d.map(z=>({x:x(z.t),y:panelScale(clamp((z.VIS||0)/1000,0,VIS_PLOT_MAX_KM),0,VIS_PLOT_MAX_KM,p.y,p.h)})),VIS_COLOR,2.4);
+      drawSeries(d.map(z=>({x:x(z.t),y:panelScale(clamp((finite(z.VIS)?z.VIS:NaN)/1000,0,VIS_PLOT_MAX_KM),0,VIS_PLOT_MAX_KM,p.y,p.h)})),VIS_COLOR,2.4);
     });
 
     p=byId('cloudbase');
