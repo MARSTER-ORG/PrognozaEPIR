@@ -122,8 +122,15 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           rm -rf scripts/__pycache__
-          git add data/learning
-          git commit -m 'weather: autofill historical model and synoptic context'
+          # Keep the checkpoint and authentic run rows distinct from derived
+          # Cloud Learning scores. Parallel learners must not rewrite them.
+          git add -- data/learning/observation-history-autofill-state.json \
+            'data/learning/model-forecasts/backfill-single-runs-*.jsonl'
+          if git diff --cached --quiet; then
+            echo 'No new historical issued forecast rows or checkpoint updates'
+            exit 0
+          fi
+          git commit -m 'weather: autofill authentic historical model runs'
           git reset --hard HEAD
           git clean -fd
           for attempt in 1 2 3 4 5; do
@@ -140,4 +147,6 @@ jobs:
         if: steps.acquire.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run pages-v2.yml --repo "${{ github.repository }}" --ref main
+        run: |
+          gh workflow run cloud-learning.yml --repo "${{ github.repository }}" --ref main
+          gh workflow run pages-v2.yml --repo "${{ github.repository }}" --ref main
