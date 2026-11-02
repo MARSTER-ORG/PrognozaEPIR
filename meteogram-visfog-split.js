@@ -160,7 +160,7 @@
     if(d.length<2)return;
     const {W,H}=sizeCanvas();
     const L=LEGEND_W+AXIS_W,R=RIGHT_W,top=HEADER_H,x0=L,x1=W-R,plotW=x1-x0;
-    const t0=d[0].t,t1=d[d.length-1].t;
+    const t0=d[0].t,t1=t0+horizon*HOUR;
     const xRaw=t=>x0+(t-t0)/(t1-t0)*plotW;
     const x=t=>clamp(xRaw(t),x0,x1);
     const cp=canvasPalette();
@@ -265,7 +265,7 @@
 
     p=byId('visfog');
     withClip(x0,x1,p,()=>{
-      drawSeries(d.map(z=>({x:x(z.t),y:panelScale(clamp((z.VIS||0)/1000,0,VIS_PLOT_MAX_KM),0,VIS_PLOT_MAX_KM,p.y,p.h)})),VIS_COLOR,2.4);
+      drawSeries(d.map(z=>({x:x(z.t),y:panelScale(clamp((finite(z.VIS)?z.VIS:NaN)/1000,0,VIS_PLOT_MAX_KM),0,VIS_PLOT_MAX_KM,p.y,p.h)})),VIS_COLOR,2.4);
     });
 
     p=byId('cloudbase');
