@@ -180,9 +180,15 @@ jobs:
           if git diff --cached --quiet; then
             echo "No backfill changes"
           else
-            git commit -m "weather: recover history and rebuild consensus fog learning"
+            git commit -m "weather: recover authentic issued model history"
+            # Derived scoring files were intentionally not staged. Remove
+            # their local changes before rebasing the raw history commit.
+            git reset --hard HEAD
+            git clean -fd
             for attempt in 1 2 3 4; do
-              git pull --rebase origin main && git push origin HEAD:main && break
+              git fetch origin main
+              if git rebase origin/main && git push origin HEAD:main; then break; fi
+              git rebase --abort 2>/dev/null || true
               test "$attempt" = 4 && exit 1
               sleep $((attempt * 5))
             done
