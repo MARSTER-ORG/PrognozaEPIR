@@ -172,7 +172,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           rm -rf scripts/__pycache__
-          git add data/learning
+          # Checkpoint and authentic issued forecast rows are this job's
+          # outputs. Keep derived consensus/skill JSON single-writer in Cloud
+          # Learning, otherwise parallel rebase conflicts discard backfills.
+          git add -- data/learning/model-backfill-state.json \
+            'data/learning/model-forecasts/backfill-single-runs-*.jsonl'
           if git diff --cached --quiet; then
             echo "No backfill changes"
           else
@@ -189,5 +193,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          gh workflow run cloud-learning.yml --ref main
           gh workflow run pages-v2.yml --ref main
           gh workflow run model-snapshot.yml --ref main
