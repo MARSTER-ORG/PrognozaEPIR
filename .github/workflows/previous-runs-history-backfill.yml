@@ -97,8 +97,15 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           rm -rf scripts/__pycache__
-          git add data/learning
-          git commit -m 'weather: extend consensus learning with Previous Runs history'
+          # Publish only source archive and checkpoint. Shared computed model
+          # weights are rebuilt later by Cloud Learning on the latest main.
+          git add -- data/learning/previous-runs-backfill-state.json \
+            'data/learning/model-forecasts/backfill-previous-runs-*.jsonl'
+          if git diff --cached --quiet; then
+            echo 'No new Previous Runs archive/checkpoint files'
+            exit 0
+          fi
+          git commit -m 'weather: extend authentic Previous Runs archive'
           git reset --hard HEAD
           git clean -fd
           for attempt in 1 2 3 4 5; do
@@ -116,5 +123,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          gh workflow run cloud-learning.yml --repo "${{ github.repository }}" --ref main
           gh workflow run pages-v2.yml --repo "${{ github.repository }}" --ref main
           gh workflow run model-snapshot.yml --repo "${{ github.repository }}" --ref main
