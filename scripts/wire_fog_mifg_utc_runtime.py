@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "_site"
 ASSET_V = os.environ.get("GITHUB_SHA", "dev")[:12]
 FOG_PAGE_ASSETS = (
+    "visibility-nwp-calibration.js",
     "fog-engine-v244.js",
     "fog-engine-v244-context.js",
     "fog-engine.js",
@@ -71,7 +72,8 @@ def wire_meteogram_bridge() -> None:
     provider = f'<script src="fog-index-bridge.js?v={ASSET_V}"></script>'
     guard = f'<script src="fog-index-mode-guard.js?v={ASSET_V}"></script>'
     overlay = f'<script src="fog-meteogram-overlay.js?v={ASSET_V}"></script>'
-    s = s.replace('</body>', provider + '\n' + guard + '\n' + overlay + '\n</body>', 1)
+    comparison = f'<script src="meteogram-vis-comparison.js?v={ASSET_V}"></script>'
+    s = s.replace('</body>', provider + '\n' + guard + '\n' + overlay + '\n' + comparison + '\n</body>', 1)
     p.write_text(s, encoding="utf-8")
 
 

@@ -6,6 +6,7 @@ on:
     paths:
       - 'scripts/fog_legacy_capture_browser.js'
       - 'scripts/fog_legacy_archive.py'
+      - 'scripts/train_visibility_nwp.py'
       - 'tests/test_fog_legacy_archive.py'
       - '.github/workflows/fog-legacy-archive.yml'
       - 'fog-engine.js'
@@ -36,7 +37,7 @@ jobs:
 
       - name: Validate archive code
         run: |
-          python3 -m py_compile scripts/fog_legacy_archive.py
+          python3 -m py_compile scripts/fog_legacy_archive.py scripts/train_visibility_nwp.py
           node --check scripts/fog_legacy_capture_browser.js
           python3 tests/test_fog_legacy_archive.py
 
@@ -92,6 +93,11 @@ jobs:
       - name: Verify matured forecasts against METAR and SPECI
         run: python3 scripts/fog_legacy_archive.py verify
 
+      - name: Calibrate the two-week NWP VIS reference (not FG probabilities)
+        run: |
+          python3 scripts/train_visibility_nwp.py
+          python3 -m json.tool data/learning/visibility-nwp-calibration.json >/dev/null
+
       - name: Validate generated archive
         run: |
           python3 -m json.tool data/learning/fog-legacy-verification/summary.json >/dev/null
@@ -120,7 +126,7 @@ jobs:
           rm -f index-legacy-archive.html
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add data/learning/fog-legacy-forecasts data/learning/fog-legacy-verification
+          git add data/learning/fog-legacy-forecasts data/learning/fog-legacy-verification data/learning/visibility-nwp-calibration.json
           if git diff --cached --quiet; then
             echo 'No LEGACY archive changes'
             exit 0

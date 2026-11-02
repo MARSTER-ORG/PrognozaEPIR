@@ -199,13 +199,19 @@ def validate() -> list[str]:
             errors.append(f'{rel}: missing global UTC UI guard ({expected})')
 
     required = {
-        'index.html': ["tz:'UTC'", "?value+' UTC':value", "Aktualizacja: '+fmt(Date.now()"],
+        'index.html': ["tz:'UTC'", "?value+' UTC':value"],
         'arch.html': ["replace('T',' ')+' UTC'"],
         'taf.html': ['TAF ENGINE 2.4.3 ·', 'Cykl TAF — wszystkie czasy UTC', '<th>Czas UTC</th>', 'czasy prezentowane wyłącznie w UTC'],
         'taf-app-v25.js': ['function fmtUtc(ms,withDate=true)', 'getUTCHours()', 'getUTCMinutes()', '} UTC`'],
         'radar.html': ["function fmtTime(ms)", "timeZone:'UTC'", ".format(new Date(ms))+' UTC'", 'function fmtUtc(sec)', 'fmtExternalUtc(od)', '<th>Czas UTC</th>'],
         'sat-fog.html': ["timeZone:'UTC'", "+' UTC'"],
     }
+    # Meteogram can display the actual completed fetch time instead of a
+    # misleading 'updated now' wall clock. Both labels must use the UTC formatter.
+    index_text = (ROOT / 'index.html').read_text(encoding='utf-8')
+    if "Aktualizacja: '+fmt(Date.now()" not in index_text and "Pobrano: '+fmt(lastLoadedAt" not in index_text:
+        errors.append('index.html: missing UTC timestamp for forecast data fetch')
+
     for rel, tokens in required.items():
         path = ROOT / rel
         if not path.exists():
