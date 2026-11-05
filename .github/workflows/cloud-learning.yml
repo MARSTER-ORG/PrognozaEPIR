@@ -82,8 +82,36 @@ jobs:
           else
             git commit -m "weather: update historical learning and adaptive model weights"
             for attempt in 1 2 3 4; do
-              git pull --rebase origin main && git push origin HEAD:main && break
-              echo "learning push retry $attempt"
+              if git pull --rebase origin main && git push origin HEAD:main; then
+                echo "Learning artifacts published successfully"
+                exit 0
+              fi
+
+              # Parallel archive/verification jobs may update the same derived
+              # JSON. A conflicted rebase cannot be retried in-place. Rebuild
+              # against the newest canonical history instead of choosing stale
+              # conflict sides or silently returning success after failed push.
+              git rebase --abort || true
+              git fetch origin main
+              git reset --hard origin/main
+              echo "Concurrent learning writer; recomputing on latest main (retry $attempt)"
+              python3 scripts/cloud_learning.py
+              python3 scripts/model_verification.py
+              python3 scripts/model_verification_realtime.py
+              python3 scripts/cloud_learning_backfill.py
+              python3 scripts/build_adaptive_weights.py
+              python3 scripts/embed_model_verification.py
+              python3 -m json.tool data/learning/cloud-skill.json >/dev/null
+              python3 -m json.tool data/learning/model-verification.json >/dev/null
+              python3 -m json.tool data/learning/adaptive-weights.json >/dev/null
+              git add data/learning
+              if git diff --cached --quiet; then
+                echo "Latest main already contains equivalent learning artifacts"
+                exit 0
+              fi
+              git commit -m "weather: update historical learning and adaptive model weights"
               sleep $((attempt*3))
             done
+            echo "Cloud learning publication failed after 4 recomputed attempts" >&2
+            exit 1
           fi
