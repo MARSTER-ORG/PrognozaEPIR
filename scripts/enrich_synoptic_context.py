@@ -48,12 +48,16 @@ def transient_http(code):
     return code in {408, 425, 429} or 500 <= code <= 599
 
 
-def get_json(url, retries=5, timeout=80):
+def get_json(url, retries=2, timeout=15, deadline=None):
     last = None
     for attempt in range(retries):
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError("synoptic enrichment per-run budget exhausted")
+        remaining = (deadline - time.monotonic()) if deadline is not None else timeout
+        request_timeout = max(1.0, min(float(timeout), remaining))
         try:
             req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json", "Connection": "close"})
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            with urllib.request.urlopen(req, timeout=request_timeout) as r:
                 return json.loads(r.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             last = exc
@@ -64,11 +68,15 @@ def get_json(url, retries=5, timeout=80):
         except (urllib.error.URLError, socket.timeout, TimeoutError, json.JSONDecodeError, ValueError) as exc:
             last = exc
         if attempt + 1 < retries:
-            time.sleep(min(18.0, 1.5 * (2 ** attempt)) + random.uniform(0, 0.8))
+            pause = min(5.0, 1.5 * (2 ** attempt)) + random.uniform(0, 0.8)
+            if deadline is not None:
+                pause = min(pause, max(0.0, deadline - time.monotonic()))
+            if pause > 0:
+                time.sleep(pause)
     raise last
 
 
-def request(model_id, run, variables):
+def request(model_id, run, variables, deadline=None):
     params = {
         "latitude": mv.LAT,
         "longitude": mv.LON,
@@ -79,7 +87,7 @@ def request(model_id, run, variables):
         "wind_speed_unit": "ms",
         "run": run.strftime("%Y-%m-%dT%H:%M"),
     }
-    return get_json(API + "?" + urllib.parse.urlencode(params))
+    return get_json(API + "?" + urllib.parse.urlencode(params), deadline=deadline)
 
 
 def merge_payload(base, extra):
@@ -97,14 +105,16 @@ def merge_payload(base, extra):
     return base
 
 
-def fetch_resilient(model_id, run, variables):
+def fetch_resilient(model_id, run, variables, deadline=None):
     failures = []
 
     def rec(chunk):
         if not chunk:
             return None
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError("synoptic enrichment per-run budget exhausted")
         try:
-            return request(model_id, run, chunk)
+            return request(model_id, run, chunk, deadline=deadline)
         except urllib.error.HTTPError as exc:
             if exc.code != 400:
                 raise
@@ -181,8 +191,9 @@ def candidate_runs(files, now):
     return pending
 
 
-def fetch_one(run, model_id):
-    payload, unsupported = fetch_resilient(model_id, run, PROFILE_VARS)
+def fetch_one(run, model_id, max_seconds=75):
+    deadline = time.monotonic() + max_seconds
+    payload, unsupported = fetch_resilient(model_id, run, PROFILE_VARS, deadline=deadline)
     context = context_from_payload(payload)
     if not context:
         raise RuntimeError("no finite pressure-level context returned")
@@ -197,7 +208,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--max-runs", type=int, default=36)
     ap.add_argument("--workers", type=int, default=2)
+    ap.add_argument("--per-run-seconds", type=float, default=75.0)
     args = ap.parse_args()
+    if args.per_run_seconds <= 0:
+        ap.error("--per-run-seconds must be positive")
 
     files = load_files()
     now = mv.utcnow()
@@ -208,8 +222,9 @@ def main():
     failures = []
     unsupported_total = defaultdict(int)
 
+    print(f"synoptic enrichment: pending={len(pending_all)}, selected={len(selected)}", flush=True)
     with ThreadPoolExecutor(max_workers=max(1, min(args.workers, 3))) as pool:
-        futs = {pool.submit(fetch_one, run, model): (run, model, refs) for run, model, refs in selected}
+        futs = {pool.submit(fetch_one, run, model, args.per_run_seconds): (run, model, refs) for run, model, refs in selected}
         for fut in as_completed(futs):
             run, model, refs = futs[fut]
             try:
@@ -236,6 +251,7 @@ def main():
                     failures.append((mv.iso(run), model, "no matching finite pressure-level context"))
             except Exception as exc:
                 failures.append((mv.iso(run), model, str(exc)))
+            print(f"synoptic enrichment completed: {run.isoformat()} {model}; enriched={success} failures={len(failures)}", flush=True)
 
     for path in changed:
         write_jsonl(path, files[path])

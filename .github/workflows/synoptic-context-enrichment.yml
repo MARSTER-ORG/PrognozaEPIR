@@ -2,6 +2,11 @@ name: Synoptic context enrichment
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/enrich_synoptic_context.py'
+      - '.github/workflows/synoptic-context-enrichment.yml'
   schedule:
     - cron: '47 2 * * *'
 
@@ -15,7 +20,7 @@ concurrency:
 jobs:
   enrich:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,7 +29,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Enrich archived operational runs
-        run: python3 scripts/enrich_synoptic_context.py --max-runs 36 --workers 2
+        run: python3 -u scripts/enrich_synoptic_context.py --max-runs 36 --workers 3 --per-run-seconds 75
       - name: Rebuild contextual skill
         run: python3 scripts/build_synoptic_regime_learning.py
       - name: Validate generated JSON
