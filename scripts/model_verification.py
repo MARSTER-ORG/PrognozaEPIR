@@ -272,7 +272,8 @@ def observation_station(row):
 
 
 def is_corrected_report(row):
-    raw = str(row.get("canonical_raw") or row.get("raw") or "").upper()
+    # Normalization can omit COR from canonical_raw while raw retains it.
+    raw = " ".join(str(row.get(k) or "") for k in ("raw", "canonical_raw")).upper()
     return bool(re.search(r"\bCOR\b", raw))
 
 
