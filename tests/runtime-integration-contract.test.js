@@ -154,7 +154,7 @@ function fakeStorage(mode) {
   const end = canvas.indexOf('  function withClip(',start);
   assert(start >= 0 && end > start, 'cloud base scale code missing');
   const scaleCode = canvas.slice(start,end);
-  const y = require('vm').runInNewContext(scaleCode + '\\ncloudBaseY', {finite:Number.isFinite});
+  const y = require('vm').runInNewContext(scaleCode + '; cloudBaseY', {finite:Number.isFinite});
   const p = {y:100,h:164};
   const ticks = [0,150,300,450,600,1000,1500];
   const positions = ticks.map(t => y(t,p));
