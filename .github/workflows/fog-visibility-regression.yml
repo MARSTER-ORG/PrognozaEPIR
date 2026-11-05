@@ -1,0 +1,36 @@
+name: EPIR fog visibility regressions
+
+on:
+  push:
+    branches:
+      - fix/fog-visibility-epir-isolation-20261105
+  pull_request:
+    paths:
+      - 'scripts/model_verification.py'
+      - 'scripts/fog_legacy_archive.py'
+      - 'fog-engine.js'
+      - 'tests/test_epir_observation_isolation.py'
+      - 'tests/test_fog_engine_null_values.js'
+      - '.github/workflows/fog-visibility-regression.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fog-isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Python and JavaScript syntax
+        run: |
+          python3 -m py_compile scripts/model_verification.py scripts/fog_legacy_archive.py
+          node --check fog-engine.js
+          node --check fog-visibility-vnext.js
+      - name: Verify EPIR-only truth with historical 5 November regression
+        run: python3 tests/test_epir_observation_isolation.py
+      - name: Existing LEGACY archive regression
+        run: python3 tests/test_fog_legacy_archive.py
+      - name: Missing-value regression
+        run: node tests/test_fog_engine_null_values.js

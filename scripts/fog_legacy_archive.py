@@ -203,23 +203,35 @@ def obs_truth(obs: dict) -> dict:
 
 
 def load_observations() -> list[dict]:
-    rows = []
-    seen = set()
+    # The repository archives multiple aerodromes in each UTC-day file.
+    # A different airport's lower visibility must never verify an EPIR forecast.
+    by_time_and_type = {}
     for source, directory in (("METAR", mv.METAR_DIR), ("SPECI", mv.SPECI_DIR)):
         for row in mv.all_jsonl(directory):
+            if mv.observation_station(row) != "EPIR":
+                continue
             dt = parse_dt(row.get("obs_time") or row.get("message_time"))
             if not dt:
                 continue
-            raw = str(row.get("canonical_raw") or row.get("raw") or "")
-            key = (iso(dt), raw)
-            if key in seen:
-                continue
-            seen.add(key)
-            rr = dict(row)
-            rr["_dt"] = dt
-            rr["_source"] = "SPECI" if source == "SPECI" or str(row.get("type") or row.get("report_type") or "").upper() == "SPECI" else "METAR"
-            rr["_truth"] = obs_truth(row)
-            rows.append(rr)
+            kind = "SPECI" if source == "SPECI" or str(row.get("type") or row.get("report_type") or "").upper() == "SPECI" else "METAR"
+            key = (iso(dt), kind)
+            prior = by_time_and_type.get(key)
+            corrected = mv.is_corrected_report(row)
+            if prior is not None:
+                prior_corrected = mv.is_corrected_report(prior)
+                if prior_corrected and not corrected:
+                    continue
+                if prior_corrected == corrected and sum(v is not None for v in row.values()) <= sum(v is not None for v in prior.values()):
+                    continue
+            by_time_and_type[key] = row
+
+    rows = []
+    for (instant, kind), row in by_time_and_type.items():
+        rr = dict(row)
+        rr["_dt"] = parse_dt(instant)
+        rr["_source"] = kind
+        rr["_truth"] = obs_truth(row)
+        rows.append(rr)
     rows.sort(key=lambda r: r["_dt"])
     return rows
 
