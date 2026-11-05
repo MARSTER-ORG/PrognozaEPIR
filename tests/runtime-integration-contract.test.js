@@ -146,6 +146,30 @@ function fakeStorage(mode) {
   assert(canvas.includes("if(altitude<lower||altitude>upper)continue"));
 })();
 
+(function testCloudBaseAxisHasRequestedScaleAndDoesNotFlattenHighClouds() {
+  const canvas = read('meteogram-visfog-split.js');
+  assert(canvas.includes("label:'Podstawy chmur ≤1500 m'"));
+  assert(canvas.includes("cloudbase:'Podstawy chmur ≤1500 m'"));
+  const start = canvas.indexOf('  const CLOUD_BASE_TICKS=');
+  const end = canvas.indexOf('  function withClip(',start);
+  assert(start >= 0 && end > start, 'cloud base scale code missing');
+  const scaleCode = canvas.slice(start,end);
+  const y = require('vm').runInNewContext(scaleCode + '\\ncloudBaseY', {finite:Number.isFinite});
+  const p = {y:100,h:164};
+  const ticks = [0,150,300,450,600,1000,1500];
+  const positions = ticks.map(t => y(t,p));
+  assert(positions.every(Number.isFinite));
+  for (let i=1;i<positions.length;i++) {
+    assert(positions[i] < positions[i-1], 'height must grow upwards');
+    assert(Math.abs((positions[i-1]-positions[i])-(p.h-18)/6)<1e-8,
+      'axis marks must be separated evenly');
+  }
+  assert(y(525,p)<y(450,p) && y(525,p)>y(600,p));
+  assert(Number.isNaN(y(1501,p)), 'heights above 1500 m must not be pinned to 1500');
+  assert(Number.isNaN(y(-1,p)), 'negative cloud bases are invalid');
+  assert(!canvas.includes('[0,150,300,450,1000,2000,3000]'));
+})();
+
 (function testSectionInfoUsesSameThreshold60() {
   const section = read('fog-section-info-fix.js');
   assert(section.includes('const ACTIVE=60'));
