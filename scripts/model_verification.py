@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import urllib.parse
 import urllib.request
 from collections import defaultdict
@@ -248,6 +249,33 @@ def unique_rows(rows, key_fields):
     return list(out.values())
 
 
+def observation_station(row):
+    """Identify the observed station, rejecting contradictory archive metadata.
+
+    A multi-airport METAR file is not an EPIR-only truth source. SYNOP 12342
+    represents the separate Inowroclaw observer and is accepted only as a
+    SYNOP fallback, not as an aerodrome METAR.
+    """
+    declared = {
+        str(row.get(field)).strip().upper()
+        for field in ("station", "station_code", "icao", "wmo")
+        if row.get(field) is not None and str(row.get(field)).strip()
+    }
+    raw = str(row.get("canonical_raw") or row.get("raw") or "").upper().strip()
+    aviation = re.match(r"^(?:(?:METAR|SPECI|COR)\\s+){0,3}([A-Z]{4})\\s+\\d{6}Z\\b", raw)
+    synop = re.match(r"^AAXX\\s+\\d{5}\\s+(\\d{5})\\b", raw)
+    if aviation:
+        declared.add(aviation.group(1))
+    if synop:
+        declared.add(synop.group(1))
+    return next(iter(declared)) if len(declared) == 1 else None
+
+
+def is_corrected_report(row):
+    raw = str(row.get("canonical_raw") or row.get("raw") or "").upper()
+    return bool(re.search(r"\\bCOR\\b", raw))
+
+
 def round_hour(dt):
     hour = dt.replace(minute=0, second=0, microsecond=0)
     if dt.minute >= 30:
@@ -260,9 +288,16 @@ def build_observation_maps():
     # Keep regular METAR separate from SPECI for the direction reference.
     # SPECI may still be the closest observation for visibility/weather/cloud,
     # but it must not disturb the regular 30-minute 3-METAR direction window.
-    regular_metars = unique_rows(all_jsonl(METAR_DIR), ("obs_time", "raw"))
-    metars = unique_rows(regular_metars + all_jsonl(SPECI_DIR), ("obs_time", "raw"))
-    synops = unique_rows(all_jsonl(SYNOP_DIR), ("obs_time", "raw"))
+    regular_metars = unique_rows(
+        [r for r in all_jsonl(METAR_DIR) if observation_station(r) == "EPIR"],
+        ("obs_time", "raw"),
+    )
+    speci = [r for r in all_jsonl(SPECI_DIR) if observation_station(r) == "EPIR"]
+    metars = unique_rows(regular_metars + speci, ("obs_time", "raw"))
+    synops = unique_rows(
+        [r for r in all_jsonl(SYNOP_DIR) if observation_station(r) == "12342"],
+        ("obs_time", "raw"),
+    )
 
     regular_wind_points = []
     for m in regular_metars:
@@ -282,7 +317,12 @@ def build_observation_maps():
             continue
         k = iso(h)
         prev = metar_by_hour.get(k)
-        if prev is None or diff < prev[0]:
+        # The same METAR may be archived in original and COR variants.
+        # On an exact-time tie, the corrected report must win.
+        if prev is None or diff < prev[0] or (
+            diff == prev[0] and is_corrected_report(m)
+            and not is_corrected_report(prev[1])
+        ):
             metar_by_hour[k] = (diff, m)
 
     # Enrich the closest METAR/SPECI row with an independently derived regular
