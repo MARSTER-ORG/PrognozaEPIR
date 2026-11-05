@@ -24,7 +24,7 @@
     {id:'wind',h:84,label:'wiatr',unit:'(m/s)'},
     {id:'dir',h:54,label:'kier. wiatru',unit:''},
     {id:'visfog',h:96,label:'widzialność / mgła',unit:'(km / FOG)'},
-    {id:'cloudbase',h:128,label:'podstawy chmur <3 km',unit:'(m AGL)'},
+    {id:'cloudbase',h:164,label:'Podstawy chmur ≤1500 m',unit:'(m AGL)'},
     {id:'cloud',h:142,label:'profil chmur',unit:'(km)'},
     {id:'okta',h:108,label:'warstwy chmur',unit:'(oktanty)'}
   ];
@@ -38,7 +38,7 @@
     wind:'Wiatr',
     dir:'Kierunek wiatru',
     visfog:'Widzialność / mgła',
-    cloudbase:'Podstawy chmur ≤3 km',
+    cloudbase:'Podstawy chmur ≤1500 m',
     cloud:'Profil chmur',
     okta:'Warstwy chmur'
   };
@@ -77,7 +77,7 @@
       ];
       box.innerHTML='<div class="section-head"><b>Podstawy chmur (szacunek modelowy)</b><span>'+time+'</span></div>'+
         '<div class="section-values">'+vals.join('')+'</div>'+
-        '<div class="section-help">Wykres pokazuje najniższe wykryte poziomy FEW/SCT/BKN/OVC w profilu modelowym, nie pomiar podstawy chmur. Skala 0–450 m jest powiększona. Brak wystarczających danych pionowych nie oznacza bezchmurnego nieba.</div>';
+        '<div class="section-help">Wykres pokazuje najniższe wykryte poziomy FEW/SCT/BKN/OVC w profilu modelowym, nie pomiar podstawy chmur. Oś 0–1500 m AGL ma czytelne odstępy między poziomami 0, 150, 300, 450, 600, 1000 i 1500 m. Wyższe podstawy pozostają w szczegółach i nie są rysowane przy granicy skali. Brak wystarczających danych pionowych nie oznacza bezchmurnego nieba.</div>';
       return;
     }
     if (panelId === 'cloud') {
@@ -132,12 +132,17 @@
     if (!CLOUD_BANDS_CACHE.has(profile))CLOUD_BANDS_CACHE.set(profile,window.PrognozaEPIRCloudBands?.fromProfile(profile)||null);
     return CLOUD_BANDS_CACHE.get(profile);
   }
-  // The first 450 m receive extra vertical space; the next 2.55 km remain visible.
+  // Equal spacing for operational thresholds; values between marks are interpolated.
+  // Bases above 1500 m are outside this panel, not displayed as 1500 m.
+  const CLOUD_BASE_TICKS=Object.freeze([0,150,300,450,600,1000,1500]);
   function cloudBaseY(height,p) {
+    if(!finite(height)||height<0||height>1500)return NaN;
     const pad=9,inner=Math.max(1,p.h-2*pad);
-    const v=clamp(height,0,3000);
-    const q=v<=450?(v/450)*.57:.57+(v-450)/(3000-450)*.43;
-    return p.y+p.h-pad-q*inner;
+    let i=0;
+    while(i<CLOUD_BASE_TICKS.length-2&&height>CLOUD_BASE_TICKS[i+1])i++;
+    const lo=CLOUD_BASE_TICKS[i],hi=CLOUD_BASE_TICKS[i+1];
+    const fraction=(height-lo)/(hi-lo);
+    return p.y+p.h-pad-((i+fraction)/(CLOUD_BASE_TICKS.length-1))*inner;
   }
   function withClip(x0,x1,p,fn) {
     ctx.save();ctx.beginPath();ctx.rect(x0,p.y,x1-x0,p.h);ctx.clip();fn();ctx.restore();
@@ -273,7 +278,7 @@
       const lo=cloudBaseY(0,p),hi=cloudBaseY(450,p);
       ctx.fillStyle='rgba(182,120,240,.09)';
       ctx.fillRect(x0,hi,plotW,lo-hi);
-      for(const h of [0,150,300,450,1000,2000,3000]) {
+      for(const h of CLOUD_BASE_TICKS) {
         const yy=cloudBaseY(h,p);
         ctx.strokeStyle=h===450?'rgba(182,120,240,.75)':cp.grid2;
         ctx.lineWidth=h===450?1.3:.7;
@@ -292,7 +297,7 @@
     });
     ctx.save();ctx.font='8px Arial';ctx.textAlign='right';ctx.textBaseline='middle';
     ctx.fillStyle=cp.muted;
-    for(const h of [0,150,300,450,1000,2000,3000])ctx.fillText(String(h),x0-8,cloudBaseY(h,p));
+    for(const h of CLOUD_BASE_TICKS)ctx.fillText(String(h),x0-8,cloudBaseY(h,p));
     ctx.restore();
 
     p=byId('cloud');
