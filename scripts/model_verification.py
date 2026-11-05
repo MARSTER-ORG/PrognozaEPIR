@@ -262,8 +262,8 @@ def observation_station(row):
         if row.get(field) is not None and str(row.get(field)).strip()
     }
     raw = str(row.get("canonical_raw") or row.get("raw") or "").upper().strip()
-    aviation = re.match(r"^(?:(?:METAR|SPECI|COR)\\s+){0,3}([A-Z]{4})\\s+\\d{6}Z\\b", raw)
-    synop = re.match(r"^AAXX\\s+\\d{5}\\s+(\\d{5})\\b", raw)
+    aviation = re.match(r"^(?:(?:METAR|SPECI|COR)\s+){0,3}([A-Z]{4})\s+\d{6}Z\b", raw)
+    synop = re.match(r"^AAXX\s+\d{5}\s+(\d{5})\b", raw)
     if aviation:
         declared.add(aviation.group(1))
     if synop:
@@ -273,7 +273,7 @@ def observation_station(row):
 
 def is_corrected_report(row):
     raw = str(row.get("canonical_raw") or row.get("raw") or "").upper()
-    return bool(re.search(r"\\bCOR\\b", raw))
+    return bool(re.search(r"\bCOR\b", raw))
 
 
 def round_hour(dt):
