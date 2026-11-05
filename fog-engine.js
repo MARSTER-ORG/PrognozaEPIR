@@ -54,7 +54,8 @@
 
   const clip = (v,a,b) => Math.max(a,Math.min(b,v));
   const finite = Number.isFinite;
-  const n = v => finite(Number(v)) ? Number(v) : null;
+  // Missing model fields are NOT measurements of zero (especially VIS/RH/Td).
+  const n = v => v===null||v===undefined||v==='' ? null : (finite(Number(v)) ? Number(v) : null);
   const mean = a => { const x=a.filter(finite); return x.length?x.reduce((s,v)=>s+v,0)/x.length:null; };
   const sum = a => a.filter(finite).reduce((s,v)=>s+v,0);
   const fmt0 = v => finite(v)?String(Math.round(v)):'—';
