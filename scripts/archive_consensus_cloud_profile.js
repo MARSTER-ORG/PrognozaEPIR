@@ -5,7 +5,7 @@
  * Reconstructed with archived model weights; not a historical browser replay.
  */
 const fs=require('node:fs'),path=require('node:path');
-const root=path.resolve(__dirname,'..');
+const root=process.env.EPIR_CLOUD_ARCHIVE_ROOT?path.resolve(process.env.EPIR_CLOUD_ARCHIVE_ROOT):path.resolve(__dirname,'..');
 const cloudBands=require('../meteogram-cloud-bands.js');
 const cloudCalibration=require('../cloud-consensus-calibration.js');
 function read(p){try{return JSON.parse(fs.readFileSync(path.join(root,p),'utf8'));}catch(_){return null;}}
@@ -63,8 +63,8 @@ for(const t of validTimes){
    items.push({...m,index,w:overall,cw:cloudWeight});
  }
  if(items.length<2)continue;
- const terrain=items.reduce((a,i)=>a+(finite(i.model.elevation)?i.model.elevation*i.w:0),0)/
-   (items.reduce((a,i)=>a+(finite(i.model.elevation)?i.w:0),0)||1);
+ const terrainWeight=items.reduce((a,i)=>a+(finite(i.model.elevation)?i.w:0),0);
+ const terrain=terrainWeight?items.reduce((a,i)=>a+(finite(i.model.elevation)?i.model.elevation*i.w:0),0)/terrainWeight:90;
  const levels=new Set();
  for(const i of items)for(const k of Object.keys(i.hourly))
    if(/^cloud_cover_\d+hPa$/.test(k))levels.add(Number(k.slice(12,-3)));
