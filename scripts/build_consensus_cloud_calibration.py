@@ -3,12 +3,15 @@
 import json
 import math
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import model_verification as mv
 import consensus_cloud_two_month_audit as audit
 
 OUT=mv.LEARNING/"consensus-cloud-calibration.json"
-CUTOFF=datetime(2026,10,16,tzinfo=timezone.utc)
+NOW=mv.utcnow()
+END=NOW-timedelta(hours=1)
+CUTOFF=END-timedelta(days=21)
+START=END-timedelta(days=61)
 SHIFTS=[-.0,-.25,-.5,-.75,-1.,-1.25,-1.5,.25,.5,.75,1.,1.25,1.5]
 
 def corrected(x,delta):
@@ -51,7 +54,7 @@ def fit(rows,kind):
     return out
 
 def main():
-    _,_,sel=audit.scan_archived_forecasts()
+    _,_,sel=audit.scan_archived_forecasts(start=START,end=END)
     metars,synops=mv.build_observation_maps()
     samples=defaultdict(list)
     for (bucket,t),(_,c,_) in sel.items():
@@ -73,7 +76,7 @@ def main():
             "mid":{"all":fit(samples[b,"mid","all"],"mid")}}
     result={"schema":"prognozaepir-consensus-cloud-calibration-v1",
        "generated_at":mv.iso(mv.utcnow()),"station":"EPIR",
-       "training_before":mv.iso(CUTOFF),"holdout_from":mv.iso(CUTOFF),
+       "training_start":mv.iso(START),"training_before":mv.iso(CUTOFF),"holdout_from":mv.iso(CUTOFF),"window_end":mv.iso(END),
        "method":"Base-weight historical consensus, time-separated training and later holdout, interval-aware METAR, bounded shifts",
        "lead_buckets":buckets,
        "applies_to":["surface cloud_cover","surface cloud_cover_mid"],
