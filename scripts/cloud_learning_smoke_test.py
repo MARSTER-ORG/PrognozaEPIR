@@ -15,3 +15,10 @@ assert m.lead_bucket(2.9)=='0-3h'
 assert m.lead_bucket(5.9)=='3-6h'
 assert m.lead_bucket(47.9)=='24-48h'
 print('Cloud Learning smoke test: OK')
+
+assert m.is_epir_observation({'station':'EPIR', 'raw':'EPIR 060900Z FEW040'})
+assert m.is_epir_observation({'station':'EPBY', 'raw':'EPBY 060900Z FEW040'}) is False
+assert m.is_epir_observation({'raw':'METAR EPIR 060900Z FEW040'})
+assert m.is_epir_observation({'raw':'EPKS 060900Z FEW040'}) is False
+assert m.is_epir_verification({'metar_raw':'EPIR 060900Z FEW040'})
+assert m.is_epir_verification({'metar_raw':'EPBY 050000Z FEW027'}) is False

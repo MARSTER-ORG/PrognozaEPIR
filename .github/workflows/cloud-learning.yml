@@ -9,6 +9,7 @@ on:
     branches: [main]
     paths:
       - 'scripts/cloud_learning.py'
+      - 'scripts/consensus_cloud_two_month_audit.py'
       - 'scripts/cloud_learning_backfill.py'
       - 'scripts/build_adaptive_weights.py'
       - 'scripts/cloud_learning_smoke_test.py'
@@ -36,7 +37,9 @@ jobs:
           fetch-depth: 0
 
       - name: Smoke test Cloud Learning
-        run: python3 scripts/cloud_learning_smoke_test.py
+        run: |
+          python3 -m py_compile scripts/cloud_learning.py scripts/consensus_cloud_two_month_audit.py
+          python3 scripts/cloud_learning_smoke_test.py
 
       - name: Archive current cloud forecasts
         run: python3 scripts/cloud_learning.py
@@ -54,12 +57,16 @@ jobs:
       - name: Build adaptive model weights from METAR and SYNOP verification
         run: python3 scripts/build_adaptive_weights.py
 
+      - name: Audit two-month EPIR CONSENSUS cloud forecasts
+        run: python3 scripts/consensus_cloud_two_month_audit.py
+
       - name: Embed model verification
         run: python3 scripts/embed_model_verification.py
 
       - name: Validate generated JSON
         run: |
           python3 -m json.tool data/learning/cloud-skill.json >/dev/null
+          python3 -m json.tool data/learning/consensus-cloud-audit-2026-09-06_2026-11-06.json >/dev/null
           python3 -m json.tool data/learning/model-verification.json >/dev/null
           python3 -m json.tool data/learning/adaptive-weights.json >/dev/null
           python3 - <<'PY'
@@ -103,8 +110,10 @@ jobs:
               python3 scripts/model_verification_realtime.py
               python3 scripts/cloud_learning_backfill.py
               python3 scripts/build_adaptive_weights.py
+              python3 scripts/consensus_cloud_two_month_audit.py
               python3 scripts/embed_model_verification.py
               python3 -m json.tool data/learning/cloud-skill.json >/dev/null
+              python3 -m json.tool data/learning/consensus-cloud-audit-2026-09-06_2026-11-06.json >/dev/null
               python3 -m json.tool data/learning/model-verification.json >/dev/null
               python3 -m json.tool data/learning/adaptive-weights.json >/dev/null
               git add data/learning

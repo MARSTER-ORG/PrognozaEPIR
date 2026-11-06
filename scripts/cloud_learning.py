@@ -8,6 +8,7 @@ conservative model weight factors used only by the cloud consensus.
 from __future__ import annotations
 
 import json
+import re
 import urllib.parse
 import urllib.request
 from collections import defaultdict
@@ -113,6 +114,21 @@ def okta_from_pct(v):
 
 def metar_cover_range(code):
     return {"FEW": (1, 2), "SCT": (3, 4), "BKN": (5, 7), "OVC": (8, 8)}.get(code)
+
+
+def is_epir_observation(row):
+    """Neighboring-airport METAR must never be used as observed EPIR clouds."""
+    station = str(row.get("station") or row.get("icao") or "").strip().upper()
+    if station:
+        return station == "EPIR"
+    raw = str(row.get("raw") or row.get("canonical_raw") or "").upper()
+    return bool(re.search(r"\bEPIR\b", raw))
+
+
+def is_epir_verification(row):
+    """Exclude previously archived EPBY/EPPW/EPKS verification contamination."""
+    raw = str(row.get("metar_raw") or "").upper()
+    return bool(re.search(r"\bEPIR\b", raw))
 
 
 def distance_to_range(value, lo, hi):
@@ -247,7 +263,7 @@ def observed_bands_from_metar(m):
 
 def verify_new():
     forecasts = all_jsonl(FORECAST_DIR)
-    metars = all_jsonl(METAR_DIR) + all_jsonl(SPECI_DIR)
+    metars = [m for m in all_jsonl(METAR_DIR) + all_jsonl(SPECI_DIR) if is_epir_observation(m)]
     if not forecasts or not metars:
         return
     existing = all_jsonl(VERIFY_DIR)
@@ -314,7 +330,7 @@ def verify_new():
 
 
 def build_skill():
-    rows = all_jsonl(VERIFY_DIR)
+    rows = [r for r in all_jsonl(VERIFY_DIR) if is_epir_verification(r)]
     base = {m: w for m, _, w in MODELS}
     stats = defaultdict(lambda: {"n": 0, "sum": 0.0, "bands": defaultdict(lambda: [0, 0.0])})
     for r in rows:
