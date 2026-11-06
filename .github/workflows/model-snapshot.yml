@@ -8,6 +8,9 @@ on:
     branches: [main]
     paths:
       - 'scripts/build_model_snapshot.py'
+      - 'scripts/archive_consensus_cloud_profile.js'
+      - 'cloud-consensus-calibration.js'
+      - 'meteogram-cloud-bands.js'
       - '.github/workflows/model-snapshot.yml'
 
 permissions:
@@ -48,11 +51,19 @@ jobs:
           print('validated models:', ', '.join(models))
           PY
 
+      - name: Archive future cloud profile and very-low cloud base
+        run: |
+          node --check scripts/archive_consensus_cloud_profile.js
+          node --check cloud-consensus-calibration.js
+          node tests/cloud-consensus-archive.test.js
+          node tests/cloud-consensus-calibration.test.js
+          node scripts/archive_consensus_cloud_profile.js
+
       - name: Commit refreshed snapshot
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/runtime/models-latest.json
+          git add data/runtime/models-latest.json data/learning/consensus-cloud-forecasts/
           if git diff --cached --quiet; then
             echo "No model snapshot changes"
             exit 0
