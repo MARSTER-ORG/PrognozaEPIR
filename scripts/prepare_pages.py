@@ -96,7 +96,7 @@ def patch_index() -> None:
         s = s.replace(old_cloud, new_cloud, 1)
 
     old_load = "async function load(){setBadge('ŁADOWANIE','');failures=[];datasets.clear();demo=false;"
-    new_load = "async function load(){try{await window.PrognozaEPIRCloudLearning?.loadSkill?.()}catch(_){ }setBadge('ŁADOWANIE','');failures=[];datasets.clear();demo=false;"
+    new_load = "async function load(){try{await Promise.all([window.PrognozaEPIRCloudLearning?.loadSkill?.(),window.PrognozaEPIRCloudCalibration?.load?.()])}catch(_){ }setBadge('ŁADOWANIE','');failures=[];datasets.clear();demo=false;"
     if new_load not in s:
         if old_load not in s:
             raise RuntimeError("Cloud Learning load hook missing")
