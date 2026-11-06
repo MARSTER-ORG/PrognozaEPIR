@@ -31,14 +31,14 @@ jobs:
 
       - name: Validate JavaScript and runtime tests
         run: |
-          python3 -m py_compile scripts/prepare_pages.py scripts/prepare_pages_v241.py scripts/wire_fog_mifg_utc_runtime.py
+          python3 -m py_compile scripts/prepare_pages.py scripts/prepare_pages_v241.py scripts/wire_fog_mifg_utc_runtime.py scripts/build_consensus_cloud_calibration.py scripts/consensus_cloud_two_month_audit.py
           for f in \
             theme.js taf-engine-v2.js taf-engine-v24.js taf-engine-v241.js taf-engine-v242.js taf-engine-v243.js taf-fog-policy.js taf-fog-mode-sync.js taf-app-v25.js taf-runtime-bootstrap.js \
             message-archive-client.js neighbor-observation-context.js fog-engine.js fog-engine-v244.js fog-index-bridge.js fog-index-mode-guard.js fog-meteogram-overlay.js fog-section-info-fix.js visibility-nwp-calibration.js meteogram-vis-comparison.js \
-            visual-style-fix.js meteogram-visfog-cleanup.js meteogram-visfog-split.js meteogram-cloud-bands.js radar-risk-policy.js lightning-alert-sw.js opera-nowcast.js opera-convection-bridge.js \
+            visual-style-fix.js meteogram-visfog-cleanup.js meteogram-visfog-split.js meteogram-cloud-bands.js cloud-consensus-calibration.js scripts/archive_consensus_cloud_profile.js radar-risk-policy.js lightning-alert-sw.js opera-nowcast.js opera-convection-bridge.js \
             _site/theme.js _site/taf-engine-v2.js _site/taf-engine-v24.js _site/taf-engine-v241.js _site/taf-engine-v242.js _site/taf-engine-v243.js _site/taf-fog-policy.js _site/taf-fog-mode-sync.js _site/taf-app-v25.js _site/taf-runtime-bootstrap.js \
             _site/fog-engine.js _site/fog-engine-v244.js _site/fog-index-bridge.js _site/fog-index-mode-guard.js _site/fog-meteogram-overlay.js _site/fog-section-info-fix.js _site/visibility-nwp-calibration.js _site/meteogram-vis-comparison.js \
-            _site/meteogram-visfog-cleanup.js _site/meteogram-visfog-split.js _site/meteogram-cloud-bands.js _site/radar-risk-policy.js _site/lightning-alert-sw.js; do
+            _site/meteogram-visfog-cleanup.js _site/meteogram-visfog-split.js _site/meteogram-cloud-bands.js _site/cloud-consensus-calibration.js _site/radar-risk-policy.js _site/lightning-alert-sw.js; do
             node --check "$f"
           done
           node tests/taf-engine-v2.test.js
@@ -52,6 +52,9 @@ jobs:
           node tests/br-engine.test.js
           node tests/br-visibility-gate.test.js
           node tests/meteogram-cloud-bands.test.js
+          node tests/cloud-consensus-calibration.test.js
+          node tests/cloud-consensus-archive.test.js
+          python3 tests/test_consensus_cloud_calibration.py
           node tests/meteogram-cloud-tooltip.test.js
           node tests/meteogram-coverage.test.js
           node tests/runtime-integration-contract.test.js
@@ -68,7 +71,7 @@ jobs:
               'index.html','fog.html','radar.html','taf.html','sat-fog.html','arch.html','theme.js','app.css',
               'taf-engine-v2.js','taf-engine-v24.js','taf-engine-v241.js','taf-engine-v242.js','taf-engine-v243.js','taf-fog-policy.js','taf-fog-mode-sync.js','taf-app-v25.js','taf-runtime-bootstrap.js',
               'fog-engine.js','fog-engine-v244.js','fog-index-bridge.js','fog-index-mode-guard.js','fog-meteogram-overlay.js','fog-section-info-fix.js','meteogram-visfog-cleanup.js','visibility-nwp-calibration.js','meteogram-vis-comparison.js',
-              'radar-risk-policy.js','lightning-alert-sw.js',
+              'radar-risk-policy.js','lightning-alert-sw.js','cloud-consensus-calibration.js',
               'pages-build.json','data/messages/latest.json','data/messages/recent.json','data/messages/status.json',
               'data/learning/adaptive-weights.json','data/learning/fog-event-skill.json','data/learning/model-verification.json'
           ]
@@ -93,7 +96,7 @@ jobs:
           taf_app = (site / 'taf-app-v25.js').read_text(encoding='utf-8')
           taf_bootstrap = (site / 'taf-runtime-bootstrap.js').read_text(encoding='utf-8')
 
-          for marker in ['theme.js?v=','app.css?v=','fog-index-bridge.js?v=','fog-index-mode-guard.js?v=','fog-meteogram-overlay.js?v=','utc-ui-guard.js?v=']:
+          for marker in ['theme.js?v=','app.css?v=','fog-index-bridge.js?v=','fog-index-mode-guard.js?v=','fog-meteogram-overlay.js?v=','utc-ui-guard.js?v=','cloud-consensus-calibration.js?v=']:
               if marker not in index: raise SystemExit(f'index contract missing: {marker}')
           if '["taf.html","TAF GENERATOR","taf"]' not in theme:
               raise SystemExit('shared navigation is missing TAF Generator')
