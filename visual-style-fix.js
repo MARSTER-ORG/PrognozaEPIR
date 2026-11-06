@@ -46,16 +46,24 @@
     document.body.appendChild(tooltip);
 
     const hideTooltip = () => { tooltip.style.display = 'none'; };
-    const finiteNum = v => Number.isFinite(Number(v));
+    const finiteNum = v => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
     const n = (v,d=0) => finiteNum(v) ? Number(v).toFixed(d) : '—';
     const kt = v => finiteNum(v) ? Math.round(window.PrognozaEPIRUnits.mpsToKt(Number(v))) : null;
     const DIRS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
     const dir = deg => finiteNum(deg) ? DIRS[Math.round(Number(deg)/22.5)%16] : '—';
     const h = v => finiteNum(v) ? Math.round(Number(v))+' m' : '—';
-    const layer = (okta,height) => {
-      if (!finiteNum(okta)) return '—';
-      const o = Math.round(Number(okta));
-      return o+'/8'+(finiteNum(height)?' · ~'+Math.round(Number(height))+' m':'');
+    // The graph uses the four altitude bands from this same profile adapter.
+    // Do not reuse old 0–2 km okta fields for the 450–2000 m band.
+    const cloudRows = z => {
+      const bands = window.PrognozaEPIRCloudBands?.fromProfile(z.profile);
+      const c = bands?.coverage || {};
+      const okta = value => Number.isFinite(value) ? Math.round(value)+'/8' : 'brak danych';
+      return [
+        ['Bardzo niskie 0–450 m',okta(c.veryLow)],
+        ['Niskie 450–2000 m',okta(c.low)],
+        ['Średnie 2–6 km',okta(c.mid)],
+        ['Wysokie 6–13 km',okta(c.high)]
+      ];
     };
     const utcLabel = t => {
       const d = new Date(t);
@@ -102,18 +110,12 @@
         title:'Profil chmur',
         rows:[
           ['Podstawa ≥5/8',finiteNum(z.ceiling)?h(z.ceiling):'brak'],
-          ['Niskie',layer(z.oktaL,z.lowH)],
-          ['Średnie',layer(z.oktaM,z.midH)],
-          ['Wysokie',layer(z.oktaH,z.highH)]
+          ...cloudRows(z)
         ]
       };
       if (id === 'okta') return {
         title:'Warstwy chmur',
-        rows:[
-          ['Niskie',layer(z.oktaL,z.lowH)],
-          ['Średnie',layer(z.oktaM,z.midH)],
-          ['Wysokie',layer(z.oktaH,z.highH)]
-        ]
+        rows:cloudRows(z)
       };
       return null;
     };
