@@ -69,13 +69,13 @@ def observed_cloud_layers(metar):
     return observed, very_low_ceiling, vv_obscured
 
 
-def scan_archived_forecasts():
+def scan_archived_forecasts(start=START,end=END):
     """Read dated issued runs only, avoiding reanalysis and unrelated years."""
     best_model_rows = {}
     checked_files = 0
     seen_rows = 0
-    day = START - timedelta(days=5)
-    while day.date() <= END.date():
+    day = start - timedelta(days=5)
+    while day.date() <= end.date():
         source = mv.FORECAST_DIR / (day.strftime("%Y-%m-%d") + ".jsonl")
         day += timedelta(days=1)
         if not source.is_file():
@@ -91,7 +91,7 @@ def scan_archived_forecasts():
                     continue
                 run = mv.parse_dt(row.get("run_time"))
                 valid = mv.parse_dt(row.get("valid_time"))
-                if not run or not valid or not (START <= valid <= END):
+                if not run or not valid or not (start <= valid <= end):
                     continue
                 lead = (valid - run).total_seconds() / 3600
                 if not 0 < lead < 121 or not mv.lead_bucket(lead):
