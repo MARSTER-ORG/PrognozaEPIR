@@ -141,7 +141,10 @@ def context_from_payload(payload):
     times = h.get("time") or []
     out = {}
     for i, ts in enumerate(times):
-        valid = mv.parse_dt(ts)
+        # Single Runs returns naive hourly stamps even when timezone=UTC.
+        # Interpret these as UTC explicitly; do not use the runner's locale.
+        stamp = ts + "Z" if isinstance(ts, str) and not (ts.endswith("Z") or "+" in ts[10:] or "-" in ts[10:]) else ts
+        valid = mv.parse_dt(stamp)
         if not valid:
             continue
         row = {}
