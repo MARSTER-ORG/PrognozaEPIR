@@ -33,14 +33,10 @@
     request = (async () => {
       try {
         const archive = window.PrognozaEPIRMessageArchive;
-        let recent;
-        if (archive && typeof archive.recent === 'function') {
-          recent = await archive.recent(true);
-        } else {
-          const r = await fetch('data/messages/recent.json?_=' + Date.now(), {cache:'no-store'});
-          if (!r.ok) throw new Error('METAR HTTP ' + r.status);
-          recent = await r.json();
+        if (!archive || typeof archive.recent !== 'function') {
+          throw new Error('Shared MessageArchive client unavailable');
         }
+        const recent = await archive.recent(true);
         const rows = normalize(recent);
         if (rows.length) observations = rows;
         lastFetched = Date.now();
