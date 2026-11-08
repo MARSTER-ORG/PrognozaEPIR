@@ -104,7 +104,11 @@
       };
       if (id === 'visfog') return {
         title:'Widzialność / mgła',
-        rows:[['Widzialność',finiteNum(z.VIS)?n(Number(z.VIS)/1000,1)+' km':'—']]
+        rows:[
+          ['Widzialność',finiteNum(z.VIS)?n(Number(z.VIS)/1000,1)+' km':'—'],
+          ['NWP · widzialność modeli',finiteNum(z.VIS_MODEL)&&Number(z.VIS_MODEL)>0?
+            n(Number(z.VIS_MODEL)/1000,1)+' km':'—']
+        ]
       };
       if (id === 'cloud') return {
         title:'Profil chmur',

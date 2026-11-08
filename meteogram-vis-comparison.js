@@ -8,6 +8,50 @@
   const finite = Number.isFinite, KM_MAX = 15, HOUR = 3600e3;
   const NWP_COLOR = '#2d91d0', OBS_COLOR = '#9c39c8';
   let observations = [], lastFetched = 0, request = null;
+  const MODEL_MATCH_MS = 35 * 60e3;
+  const usableModelVis = value => value !== null && value !== undefined && value !== '' &&
+    finite(Number(value)) && Number(value) > 0;
+  const formatModelVis = value => usableModelVis(value)
+    ? Number(value) >= 1000 ? (Number(value)/1000).toFixed(1)+' km'
+      : Math.round(Number(value))+' m'
+    : '—';
+
+  // The dashed line uses VIS_MODEL, not the orange Fog Engine VIS series.
+  // Read the same plotted snapshot; do not fall back to the fog-adjusted VIS.
+  function modelVisibilityAt(t, fallback = null) {
+    const target = Number(t), plotted = cv?._meta?.data;
+    let nearest = null, distance = Infinity;
+    if (finite(target) && Array.isArray(plotted)) {
+      for (const row of plotted) {
+        const rt = Number(row?.t);
+        if (!finite(rt) || !usableModelVis(row?.VIS_MODEL)) continue;
+        const delta = Math.abs(rt-target);
+        if (delta < distance) { nearest = Number(row.VIS_MODEL); distance = delta; }
+      }
+    }
+    if (nearest !== null && distance <= MODEL_MATCH_MS) return nearest;
+    return usableModelVis(fallback) ? Number(fallback) : null;
+  }
+
+  function addNwpSectionValue(z, panelId) {
+    if (panelId !== 'visfog' || !z) return;
+    const values = document.querySelector('#sectionInfo .section-values');
+    if (!values) return;
+    const value = modelVisibilityAt(z.t, z.VIS_MODEL);
+    let cell = values.querySelector('[data-epir-nwp-vis]');
+    if (!cell) {
+      cell = document.createElement('div');
+      cell.className = 'section-value';
+      cell.setAttribute('data-epir-nwp-vis', '1');
+      const key = document.createElement('small');
+      key.textContent = 'NWP · widzialność modeli (linia niebieska)';
+      const strong = document.createElement('strong');
+      cell.append(key, strong);
+      values.appendChild(cell);
+    }
+    const strong = cell.querySelector('strong');
+    if (strong) strong.textContent = formatModelVis(value);
+  }
 
   function normalize(data) {
     const rows = [...(data?.metar_only || data?.metar || []), ...(data?.speci || [])];
@@ -109,10 +153,23 @@
     const recent=observations.filter(x=>x.t<=Date.now()+10*60000).at(-1);
     const obsText=recent ? (recent.bounded?'≥':'')+(recent.vis/1000).toFixed(recent.vis<10000?1:0)+
       ' km ('+new Date(recent.t).toISOString().slice(11,16)+' UTC, '+recent.kind+')' : 'brak';
-    const text='Niebieska przerywana: VIS konsensusu NWP'+(hasNwp?'':' (brak danych)')+
+    const text='Pomarańczowa ciągła: VIS FOG ENGINE · Niebieska przerywana: surowa VIS konsensusu NWP'+
+      (hasNwp?'':' (brak danych)')+
+      ' · NWP >15 km jest przycinana na wykresie do 15 km, lecz w dymkach ma pełną wartość'+
       ' · Fioletowe punkty: METAR/SPECI (trójkąt = ≥10 km)'+
       ' · Ostatni pomiar: '+obsText;
     if (node.textContent !== text) node.textContent=text;
+  }
+
+  // The module is loaded after the Meteogram section renderers. A single
+  // wrapper adds one NWP cell without changing the Fog Engine VIS cell.
+  if (typeof showSectionInfo === 'function') {
+    const originalInfo = showSectionInfo;
+    showSectionInfo = function(z, panelId) {
+      const result = originalInfo.apply(this, arguments);
+      addNwpSectionValue(z, panelId);
+      return result;
+    };
   }
 
   if (typeof draw==='function') {
@@ -124,7 +181,7 @@
     };
   }
   window.PrognozaEPIRMeteogramVisComparison=Object.freeze({
-    normalize, getObservations:()=>observations.slice(), refresh
+    normalize, modelVisibilityAt, formatModelVis, addNwpSectionValue, getObservations:()=>observations.slice(), refresh
   });
   refresh(true);
   setInterval(()=>{if(document.visibilityState!=='hidden') refresh(true)},5*60e3);
