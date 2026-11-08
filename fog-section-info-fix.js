@@ -70,7 +70,7 @@
     addOrReplace(values,'br','Zamglenie · BR',br,ACTIVE);
     addOrReplace(values,'mifg','Niska mgła <2 m · MIFG',mifg,ACTIVE);
     const help=box.querySelector('.section-help');
-    if(help)help.textContent=`Pomarańczowa linia pokazuje widzialność konsensusu. FOG i MIFG od ${ACTIVE}/100. BR tylko przy VIS 1000–5000 m i wyniku co najmniej ${ACTIVE}/100.`;
+    if(help)help.textContent=`Pomarańczowa linia: widzialność FOG ENGINE. Niebieska przerywana: surowa widzialność konsensusu NWP. Obie serie są niezależne. Skala wykresu kończy się na 15 km; szczegóły pokazują pełną wartość NWP. FOG i MIFG od ${ACTIVE}/100. BR tylko przy VIS 1000–5000 m i wyniku co najmniej ${ACTIVE}/100.`;
   }
 
   function install(){
