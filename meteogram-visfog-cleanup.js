@@ -371,7 +371,8 @@
     symbol('Kierunek wiatru','#ef4444','arrow');
     y+=6;
     title('Widzialność / mgła');
-    sample('Widzialność (km)','#d66c12');
+    sample('VIS FOG ENGINE (km)','#d66c12');
+    sample('NWP VIS (km)','#2d91d0',[5,4]);
     symbol('FOG (słupki ≥60)','#d86c2f','bar');
     symbol('BR (romby ≥60)','#c084fc','diamond');
     dot('MIFG (pkt ≥60)','#d63434');
