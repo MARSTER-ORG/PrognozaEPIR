@@ -1,0 +1,37 @@
+name: Fog physics and synoptic cycle correction checks
+
+on:
+  pull_request:
+    paths:
+      - 'fog-engine-v244.js'
+      - 'scripts/enrich_synoptic_context.py'
+      - 'tests/fog-observed-mifg-visibility.test.js'
+      - 'tests/test_synoptic_verified_cycles.py'
+      - '.github/workflows/fog-synoptic-corrections-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate source syntax
+        run: |
+          node --check fog-engine-v244.js
+          node --check tests/fog-observed-mifg-visibility.test.js
+          python3 -m py_compile scripts/enrich_synoptic_context.py tests/test_synoptic_verified_cycles.py
+      - name: Test meteorological safeguards
+        run: |
+          node tests/fog-observed-mifg-visibility.test.js
+          node tests/br-visibility-gate.test.js
+          node tests/fog-visibility-vnext.test.js
+          node tests/fog-vnext-production.test.js
+      - name: Test genuine Single Runs cycles and UTC
+        run: python3 tests/test_synoptic_verified_cycles.py

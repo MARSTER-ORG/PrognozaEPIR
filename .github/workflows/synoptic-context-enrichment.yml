@@ -29,7 +29,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Enrich archived operational runs
-        run: python3 -u scripts/enrich_synoptic_context.py --max-runs 36 --workers 3 --per-run-seconds 75
+        run: python3 -u scripts/enrich_synoptic_context.py --max-runs 12 --workers 2 --per-run-seconds 75
       - name: Rebuild contextual skill
         run: python3 scripts/build_synoptic_regime_learning.py
       - name: Validate generated JSON
@@ -66,3 +66,15 @@ jobs:
           done
           echo 'Unable to publish synoptic enrichment after retries' >&2
           exit 1
+      - name: Require real pressure-level enrichment when cycles are available
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          report=json.loads(Path('data/learning/synoptic-context-enrichment-state.json').read_text(encoding='utf-8'))
+          selected=int(report.get('attempted_runs') or 0)
+          changed=int(report.get('enriched_runs') or 0)
+          print('verified cycles attempted:',selected,'pressure profiles enriched:',changed)
+          if selected>0 and changed==0:
+              raise SystemExit('No real pressure-level profiles acquired; do not mark this worker successful')
+          PY

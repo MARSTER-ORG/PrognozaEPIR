@@ -30,6 +30,9 @@ API = "https://single-runs-api.open-meteo.com/v1/forecast"
 USER_AGENT = "PrognozaEPIR-SynopticContextEnrichment/1.2"
 STATE = mv.LEARNING / "synoptic-context-enrichment-state.json"
 PREVIOUS_RUNS_SOURCE = "open-meteo-previous-runs"
+VERIFIED_SINGLE_RUNS_SOURCE = "open-meteo-single-runs"
+# These are the only models with an explicit, independently archived model cycle.
+SINGLE_RUN_MODELS = set(mv.MODEL_META) | {"dmi_harmonie_arome_europe", "knmi_harmonie_arome_europe"}
 PROFILE_VARS = tuple(
     f"{name}_{p}hPa"
     for p in sr.LEVELS
@@ -138,7 +141,10 @@ def context_from_payload(payload):
     times = h.get("time") or []
     out = {}
     for i, ts in enumerate(times):
-        valid = mv.parse_dt(ts)
+        # Single Runs returns naive hourly stamps even when timezone=UTC.
+        # Interpret these as UTC explicitly; do not use the runner's locale.
+        stamp = ts + "Z" if isinstance(ts, str) and not (ts.endswith("Z") or "+" in ts[10:] or "-" in ts[10:]) else ts
+        valid = mv.parse_dt(stamp)
         if not valid:
             continue
         row = {}
@@ -174,14 +180,16 @@ def candidate_runs(files, now):
     groups = defaultdict(list)
     for path, rows in files.items():
         for idx, row in enumerate(rows):
-            if row.get("archive_source") == PREVIOUS_RUNS_SOURCE:
+            # A snapshot's run_time is its collection time, NOT the NWP
+            # initialization. Never forge a Single Runs cycle from that value.
+            if row.get("archive_source") != VERIFIED_SINGLE_RUNS_SOURCE:
                 continue
             model = row.get("model")
-            run = mv.parse_dt(row.get("run_time"))
+            run = mv.parse_dt(row.get("model_run_time"))
             valid = mv.parse_dt(row.get("valid_time"))
-            if model not in mv.MODEL_META or not run or not valid or run >= valid or valid > now:
+            if model not in SINGLE_RUN_MODELS or not run or not valid or run >= valid or valid > now:
                 continue
-            groups[(row.get("run_time"), model)].append((path, idx, row))
+            groups[(mv.iso(run), model)].append((path, idx, row))
     pending = []
     for key, refs in groups.items():
         if not all(has_context(r) for _p, _i, r in refs):
@@ -261,7 +269,7 @@ def main():
         "schema": "prognozaepir-synoptic-context-enrichment-v1",
         "generated_at": mv.iso(now),
         "regime_version": sr.VERSION,
-        "source": "Open-Meteo Single Runs operational archive; Previous Runs excluded; all-null pressure profiles rejected; no reanalysis substitution",
+        "source": "Open-Meteo Single Runs with explicit model_run_time only; collection-time snapshots and Previous Runs excluded; all-null pressure profiles rejected; no reanalysis substitution",
         "pending_before": len(pending_all),
         "attempted_runs": len(selected),
         "enriched_runs": success,
@@ -272,6 +280,8 @@ def main():
     }
     STATE.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print("synoptic context enrichment:", json.dumps({k: v for k, v in report.items() if k not in {"failures", "changed_files"}}, ensure_ascii=False))
+    if selected and success == 0:
+        print("WARNING: no pressure-level context acquired from verified model cycles; not a successful enrichment", flush=True)
 
 
 if __name__ == "__main__":
