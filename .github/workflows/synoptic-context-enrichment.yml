@@ -54,4 +54,15 @@ jobs:
             exit 0
           fi
           git commit -m 'weather: enrich historical synoptic context'
-          git push
+          # Archive mirroring updates main frequently while enrichment is running.
+          # Rebase the generated commit onto the latest upstream before publishing.
+          for attempt in 1 2 3 4 5; do
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            if git push origin HEAD:"${GITHUB_REF_NAME}"; then
+              echo 'Synoptic enrichment published'
+              exit 0
+            fi
+            sleep $((attempt * 3))
+          done
+          echo 'Unable to publish synoptic enrichment after retries' >&2
+          exit 1
