@@ -98,7 +98,23 @@
   async function stations(force=false){if(/\/arch\.html$/i.test(location.pathname))return ARCH_STATIONS.map(code=>({code,icao:code,wmo:null,name:code}));try{return (await supabaseRequest({op:'stations'},force)).stations||[]}catch(e){console.warn('MessageArchive stations:',e);return ARCH_STATIONS.map(code=>({code,icao:code,wmo:null,name:code}))}}
   async function fetchJson(name,force=false){const clean=String(name||'').replace(/^\/+/, '');if(clean==='latest.json')return latest(force);if(clean==='recent.json')return recent(force);if(clean==='status.json')return status(force);return fallback(clean,false,force)}
 
-  const api=Object.freeze({root:PRIMARY_ROOT,liveRoot:PRIMARY_ROOT,supabaseRoot:SUPABASE_API,railwayRoot:RAILWAY_ROOT,githubRoot:GITHUB_ROOT,fallbackRoot:STATIC_ROOT,staticFallbackRoot:STATIC_ROOT,latest,recent,status,getLatest,getRecent,getRange,search,stations,fetchText,fetchJson,sourceFor(name){return cache.get(name)?.source||cache.get(`fallback:t:${name}`)?.source||cache.get(`fallback:j:${name}`)?.source||null},clear(){cache.clear()}});
+  async function geminiAnalyze(body){
+    if(!SUPABASE_ENABLED)throw new Error('Archiwum Supabase jest wyłączone');
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),24000);
+    try{
+      const r=await nativeFetch(SUPABASE_API.replace(/\/message-archive$/,'/taf-gemini'),{
+        method:'POST',cache:'no-store',signal:controller.signal,
+        headers:{'Content-Type':'application/json',Accept:'application/json',
+          Authorization:'Bearer '+SUPABASE_ANON,apikey:SUPABASE_ANON},
+        body:JSON.stringify(body)
+      });
+      const x=await r.json().catch(()=>({ok:false,error:'non_json_response'}));
+      if(!r.ok||!x?.ok){const e=new Error(String(x?.error||'gemini_unavailable'));e.status=r.status;throw e;}
+      return x;
+    }finally{clearTimeout(timer)}
+  }
+
+  const api=Object.freeze({root:PRIMARY_ROOT,liveRoot:PRIMARY_ROOT,supabaseRoot:SUPABASE_API,railwayRoot:RAILWAY_ROOT,githubRoot:GITHUB_ROOT,fallbackRoot:STATIC_ROOT,staticFallbackRoot:STATIC_ROOT,geminiAnalyze,latest,recent,status,getLatest,getRecent,getRange,search,stations,fetchText,fetchJson,sourceFor(name){return cache.get(name)?.source||cache.get(`fallback:t:${name}`)?.source||cache.get(`fallback:j:${name}`)?.source||null},clear(){cache.clear()}});
   window.PrognozaEPIRMessageArchive=api;
 
   function installArchStationSelector(){

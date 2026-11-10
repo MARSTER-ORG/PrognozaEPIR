@@ -10,7 +10,7 @@
   const pad=(n,w=2)=>String(Math.max(0,Math.round(n))).padStart(w,'0');
   const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]));
   const Policy=window.PrognozaEPIRTAFFogPolicy;
-  let activeResult=null;
+  let activeResult=null,lastTafMeta=null,lastObservation='';
 
   if(!Policy)throw new Error('TAF Fog Policy nie został załadowany');
 
@@ -101,6 +101,9 @@
   function renderHours(result){const host=$('hours');if(!host)return;host.innerHTML=result.hourly.map(h=>{const d=h.tafDisplay||{},p=h.prob||{},ceil=num(d.ceilingM)?Math.round(+d.ceilingM)+' m':'—',wx=d.weather||'—';return `<tr><td>${fmtUtc(h.t,false)}</td><td>${esc(d.wind||'—')}</td><td>${esc(d.visibility||'—')}</td><td>${esc(wx)}</td><td>${cloudMeters(d)}</td><td>${ceil}</td><td>${Math.round((p.precip||0)*100)}% / TS ${Math.round((p.ts||0)*100)}%</td><td>FG ${Math.round((p.fg||0)*100)}% · BR ${Math.round((p.br||0)*100)}% · VIS&lt;5 km ${Math.round((p.lowVis||0)*100)}%</td></tr>`;}).join('');}
 
   function render(result,data,rows){
+    const geminiButton=$('gemini'),geminiOutput=$('geminiResult');
+    if(geminiButton)geminiButton.disabled=false;
+    if(geminiOutput)geminiOutput.textContent='Możesz uruchomić opcjonalną analizę Gemini; wynik nie jest zatwierdzoną depeszą.';
     activeResult=result;window.PrognozaEPIRTAFCurrentGenerated=result.taf;window.PrognozaEPIRTAFResultV24=result;
     $('taf').textContent=result.taf;$('officialTaf').textContent=rawOf(data.currentTaf)||'Brak aktualnego TAF w archiwum';$('metar').textContent=rawOf(data.observation)||'Brak METAR/SPECI';
     const anchor=data.anchorObservation;$('metarMeta').textContent=data.observation?`Archiwum · ${fmtUtc(itemTime(data.observation))} · kotwica TAF: ${anchor?fmtUtc(itemTime(anchor,data.issueTime)):'brak obserwacji ≤ emisja'}`:'Brak obserwacji do zakotwiczenia';
@@ -120,10 +123,48 @@
     const [data,rows]=await Promise.all([loadArchive(),modelRows(period)]);if(rows.length<8)throw Error(`Niepełny okres modeli: ${rows.length} h`);
     const anchorObservation=newestAtOrBefore([data.observation,...(data.history||[])],period.issue);data.anchorObservation=anchorObservation;data.issueTime=period.issue;
     const api=window.PrognozaEPIRTAFEngine;if(!api?.createEngine||api.ENGINE_VERSION!=='2.4.0'||api.QUALITY_VERSION!==APP_ENGINE_VERSION)throw Error(`TAF Engine ${APP_ENGINE_VERSION} nie został załadowany`);if(api.ready)await api.ready();const engine=api.createEngine({config:{station:'EPIR'}});
-    const result=engine.generate({station:'EPIR',issue:period.issue,start:period.start,end:period.end,rows,observation:anchorObservation,observations:data.history,msaFt:msaFt(),rowsAlreadyAnchored:false});render(result,data,rows);return result;
+    lastTafMeta={issue:period.issue,start:period.start,end:period.end,msaFt:msaFt()};
+    lastObservation=rawOf(anchorObservation);
+    const result=engine.generate({station:'EPIR',issue:period.issue,start:period.start,end:period.end,rows,observation:anchorObservation,observations:data.history,msaFt:msaFt(),rowsAlreadyAnchored:false});
+    render(result,data,rows);return result;
   }
-  async function guardedGenerate(){try{return await generate();}catch(e){console.error(`[TAF Engine ${APP_ENGINE_VERSION}]`,e);$('badge').textContent=`TAF ENGINE ${APP_ENGINE_VERSION} · BŁĄD`;$('badge').className='badge bad';$('st').textContent=e.message;$('taf').textContent='TAF NIE ZOSTAŁ ZAAKCEPTOWANY: '+e.message;renderChecks({checks:e.validation||{ok:false,instructionLocked:true,periodHours:null,noProb40:true,noVV:true,max5:true,warnings:[]}});return null;}}
+  async function guardedGenerate(){try{return await generate();}catch(e){console.error(`[TAF Engine ${APP_ENGINE_VERSION}]`,e);if(e?.draftResult&&lastTafMeta){activeResult=e.draftResult;const b=$('gemini'),o=$('geminiResult');if(b)b.disabled=false;if(o)o.textContent='Projekt nie przeszedł walidacji. Możesz użyć Gemini do diagnostyki, ale jego sugestia wymaga ponownej weryfikacji.';}$('badge').textContent=`TAF ENGINE ${APP_ENGINE_VERSION} · BŁĄD`;$('badge').className='badge bad';$('st').textContent=e.message;$('taf').textContent='TAF NIE ZOSTAŁ ZAAKCEPTOWANY: '+e.message;renderChecks({checks:e.validation||{ok:false,instructionLocked:true,periodHours:null,noProb40:true,noVV:true,max5:true,warnings:[]}});return null;}}
   async function copyTaf(){const text=activeResult?.taf||'';if(!text)return;try{await navigator.clipboard.writeText(text);$('copy').textContent='Skopiowano';setTimeout(()=>$('copy').textContent='Kopiuj TAF',1200);}catch(_){}}
-  function install(){fillCycles();$('gen').addEventListener('click',guardedGenerate);$('copy').addEventListener('click',copyTaf);$('cycle').addEventListener('change',()=>{$('st').textContent='wybrano inny cykl — generuj ponownie';});$('badge').textContent=`TAF ENGINE ${APP_ENGINE_VERSION} · GOTOWY`;$('badge').className='badge';$('st').textContent='kliknij „Odśwież i generuj”';setTimeout(()=>{if(new URLSearchParams(location.search).get('autogen')==='1')guardedGenerate();},500);}
+  async function analyzeWithGemini(){
+    const output=$('geminiResult'),button=$('gemini');
+    if(!output||!button||!activeResult||!lastTafMeta)return;
+    button.disabled=true;output.textContent='Gemini analizuje aktualne dane. Projekt TAF pozostaje niezmieniony.';
+    try{
+      const api=window.PrognozaEPIRMessageArchive;
+      if(typeof api?.geminiAnalyze!=='function')throw Error('Funkcja analizy AI jest niedostępna');
+      const hours=(activeResult.hourly||[]).slice(0,12).map(h=>({
+        utc:fmtUtc(h.t),wind:h.tafDisplay?.wind||'',visibility:h.tafDisplay?.visibility||'',
+        weather:h.tafDisplay?.weather||'',clouds:h.tafDisplay?.clouds||'',
+        fogProbability:Math.round(100*(Number(h.prob?.fg)||0))
+      }));
+      const response=await api.geminiAnalyze({taf:activeResult.taf,hours,
+        observation:lastObservation,fogMode:fogMode()});
+      const a=response.analysis||{},candidate=String(a.candidateTaf||'').replace(/\s+/g,' ').trim();
+      const sections=['Gemini '+String(response.model||'')+' — wynik pomocniczy',
+        'Analiza: '+String(a.summary||'Brak'),
+        'Ryzyko: '+String(a.riskAssessment||'Brak'),
+        'Proponowane grupy: '+(Array.isArray(a.recommendedGroups)?a.recommendedGroups.join('; '):'brak'),
+        'Niepewność: '+String(a.confidenceNote||'Nieokreślona')];
+      if(candidate){
+        const check=window.PrognozaEPIRTAFEngine?.validateTaf?.(candidate,lastTafMeta);
+        sections.push(check?.ok?'Kandydat AI (walidacja formalna PASS, wymaga zatwierdzenia): '+candidate:
+          'Kandydat AI ODRZUCONY przez ścisłą walidację: '+(check?.errors||['Nie przeprowadzono kontroli']).join('; '));
+      }else sections.push('Gemini nie zaproponował innej depeszy.');
+      output.textContent=sections.join('\n\n');
+    }catch(e){
+      const reasons={gemini_not_configured:'Brak klucza GEMINI_API_KEY na serwerze Supabase.',
+        rate_limited:'Limit lokalnych zapytań AI; zwykły generator działa dalej.',
+        gemini_quota_exceeded:'Wyczerpano bezpłatny limit Gemini.',
+        gemini_unavailable:'Gemini chwilowo niedostępny.',analysis_failed:'Analiza Gemini nie powiodła się.'};
+      output.textContent='Gemini: '+(reasons[e?.message]||String(e?.message||e))+'. Projekt TAF pozostaje dostępny.';
+    }finally{button.disabled=false}
+  }
+
+  function install(){fillCycles();$('gemini')?.addEventListener('click',analyzeWithGemini);$('gen').addEventListener('click',guardedGenerate);$('copy').addEventListener('click',copyTaf);$('cycle').addEventListener('change',()=>{$('st').textContent='wybrano inny cykl — generuj ponownie';});$('badge').textContent=`TAF ENGINE ${APP_ENGINE_VERSION} · GOTOWY`;$('badge').className='badge';$('st').textContent='kliknij „Odśwież i generuj”';setTimeout(()=>{if(new URLSearchParams(location.search).get('autogen')==='1')guardedGenerate();},500);}
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',install,{once:true});else install();
 })();
