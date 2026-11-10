@@ -52,8 +52,9 @@
       if(resolvedVis!==null&&resolvedVis<1000&&resolvedFog!=='FG'&&!hasRelevantWx(s)){
         errors.push('Widzialność poniżej 1000 m bez udokumentowanego FG/FZFG lub innego istotnego zjawiska: '+line);
       }
-      if(s.vis!==null&&s.vis>=1000&&s.vis<=5000&&s.fog==='FG')
+      if(s.vis!==null&&s.vis>=1000&&s.fog==='FG')
         errors.push('FG przy widzialności >=1000 m: '+line);
+      if(s.vis!==null&&s.vis>5000&&s.fog==='BR')errors.push('BR przy widzialności >5000 m: '+line);
       if(s.vis!==null&&s.vis<1000&&s.fog==='BR')
         errors.push('BR przy widzialności <1000 m: '+line);
       if(/^PROB30\b/.test(line)&&!worsening(prevailing,{...prevailing,...s,vis:s.vis??prevailing.vis,cloud:s.cloud??prevailing.cloud,wind:s.wind??prevailing.wind,wx:s.wx.length?s.wx:prevailing.wx})){
