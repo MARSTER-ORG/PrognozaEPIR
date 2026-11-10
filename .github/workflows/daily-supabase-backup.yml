@@ -63,13 +63,14 @@ jobs:
 
       - name: Commit validated backup snapshot
         run: |
-          if git diff --quiet -- backups/supabase/daily; then
+          # Stage first: git diff without --cached misses all untracked backup files.
+          git add -A -- backups/supabase/daily
+          if git diff --cached --quiet -- backups/supabase/daily; then
             echo 'Backup unchanged.'
             exit 0
           fi
           git config user.name 'prognozaepir-supabase-backup'
           git config user.email 'supabase-backup@prognozaepir.invalid'
-          git add backups/supabase/daily
           git commit -m 'backup: daily Supabase logical snapshot'
           for n in 1 2 3 4 5; do
             if git pull --rebase origin main && git push origin HEAD:main; then
