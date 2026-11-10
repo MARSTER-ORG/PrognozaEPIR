@@ -88,7 +88,7 @@
     const taf=[all[0],...keep].join(' ')+'=';
     const checks=validate(taf,{issue:+input.issue,start:+input.start,end:+input.end,msaFt:input.msaFt});
     if(!checks.ok){
-      const e=Error('TAF odrzucony: '+checks.errors.join(' | '));e.validation=checks;throw e;
+      const e=Error('TAF odrzucony: '+checks.errors.join(' | '));e.validation=checks;e.draftResult={...result,taf,groups:(result.groups||[]).filter(g=>!removed.includes(compact(g.text))),checks};throw e;
     }
     const groups=(result.groups||[]).filter(g=>!removed.includes(compact(g.text)));
     const reasons=[...(result.diagnostics?.reasons||[])];
