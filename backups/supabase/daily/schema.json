@@ -1,0 +1,1517 @@
+{
+  "extensions": [
+    {
+      "name": "http",
+      "version": "1.6"
+    },
+    {
+      "name": "pg_cron",
+      "version": "1.6.4"
+    },
+    {
+      "name": "pg_stat_statements",
+      "version": "1.11"
+    },
+    {
+      "name": "pg_trgm",
+      "version": "1.6"
+    },
+    {
+      "name": "pgcrypto",
+      "version": "1.3"
+    },
+    {
+      "name": "plpgsql",
+      "version": "1.0"
+    },
+    {
+      "name": "supabase_vault",
+      "version": "0.3.1"
+    },
+    {
+      "name": "uuid-ossp",
+      "version": "1.1"
+    }
+  ],
+  "functions": [
+    {
+      "definition": "CREATE OR REPLACE FUNCTION public.archive_enrich_message()\n RETURNS trigger\n LANGUAGE plpgsql\n SET search_path TO 'pg_catalog', 'public'\nAS $function$\ndeclare\n  rawu text := upper(coalesce(new.normalized_text, new.raw_text, ''));\n  n numeric;\n  m text[];\n  w numeric;\n  g numeric;\n  c integer;\n  min_vis integer := null;\n  min_ceiling integer := null;\n  has_explicit_weather boolean := false;\nbegin\n  n := public.archive_try_numeric(new.payload->>'visibility_m');\n  if n is not null then min_vis := round(n)::integer; end if;\n  if min_vis is null and rawu ~ '(^|[[:space:]])CAVOK([[:space:]=]|$)' then min_vis := 10000; end if;\n  if min_vis is null then\n    for m in select regexp_matches(rawu, '(^|[[:space:]])([0-9]{4})([[:space:]=]|$)', 'g') loop\n      begin\n        c := m[2]::integer;\n        if c between 0 and 9999 and (min_vis is null or c < min_vis) then min_vis := c; end if;\n      exception when others then null;\n      end;\n    end loop;\n  end if;\n  new.visibility_m := min_vis;\n\n  n := public.archive_try_numeric(new.payload->>'wind_direction_deg');\n  if n is not null then new.wind_direction_deg := mod(round(n)::integer,360)::smallint; if round(n)::integer = 360 then new.wind_direction_deg := 360; end if; else new.wind_direction_deg := null; end if;\n\n  n := public.archive_try_numeric(new.payload->>'wind_speed_kt');\n  if n is null then n := public.archive_try_numeric(new.payload->>'wind_speed_ms'); if n is not null then n := n * 1.9438444924406; end if; end if;\n  new.wind_speed_kt := case when n is null then null else round(n,2) end;\n\n  n := public.archive_try_numeric(new.payload->>'wind_gust_kt');\n  if n is null then n := public.archive_try_numeric(new.payload->>'wind_gust_ms'); if n is not null then n := n * 1.9438444924406; end if; end if;\n  new.gust_kt := case when n is null then null else round(n,2) end;\n\n  for m in select regexp_matches(rawu, '([0-9]{3}|VRB)([0-9]{2,3})(G([0-9]{2,3}))?KT', 'g') loop\n    begin\n      w := m[2]::numeric;\n      g := case when m[4] is null then null else m[4]::numeric end;\n      if new.wind_speed_kt is null or w > new.wind_speed_kt then new.wind_speed_kt := w; end if;\n      if g is not null and (new.gust_kt is null or g > new.gust_kt) then new.gust_kt := g; end if;\n      if new.wind_direction_deg is null and m[1] <> 'VRB' then new.wind_direction_deg := m[1]::smallint; end if;\n    exception when others then null;\n    end;\n  end loop;\n\n  n := public.archive_try_numeric(new.payload->>'temperature_c');\n  new.temperature_c := case when n is null then null else round(n,2) end;\n  n := public.archive_try_numeric(new.payload->>'pressure_hpa');\n  if n is null then\n    m := regexp_match(rawu, 'Q([0-9]{4})');\n    if m is not null then n := public.archive_try_numeric(m[1]); end if;\n  end if;\n  new.qnh_hpa := case when n is null then null else round(n,2) end;\n\n  n := public.archive_try_numeric(new.payload->>'ceiling_ft_agl');\n  if n is null then n := public.archive_try_numeric(new.payload->>'ceiling_m_agl'); if n is not null then n := n * 3.2808398950131; end if; end if;\n  if n is not null then min_ceiling := round(n)::integer; end if;\n  for m in select regexp_matches(rawu, '(BKN|OVC)([0-9]{3})', 'g') loop\n    begin c := m[2]::integer * 100; if min_ceiling is null or c < min_ceiling then min_ceiling := c; end if; exception when others then null; end;\n  end loop;\n  for m in select regexp_matches(rawu, 'VV([0-9]{3})', 'g') loop\n    begin c := m[1]::integer * 100; if min_ceiling is null or c < min_ceiling then min_ceiling := c; end if; exception when others then null; end;\n  end loop;\n  new.ceiling_ft := min_ceiling;\n\n  new.has_fg := rawu ~ '(^|[[:space:]])[-+]?(FZ)?FG([[:space:]=]|$)';\n  new.has_br := rawu ~ '(^|[[:space:]])[-+]?BR([[:space:]=]|$)';\n  new.has_mifg := rawu ~ '(^|[[:space:]])[-+]?MIFG([[:space:]=]|$)';\n  new.has_ts := rawu ~ '(^|[[:space:]])[-+]?(VC)?TS[A-Z]*([[:space:]=]|$)';\n  new.has_ra := rawu ~ '(^|[[:space:]])[-+]?[A-Z]*RA[A-Z]*([[:space:]=]|$)';\n  new.has_sn := rawu ~ '(^|[[:space:]])[-+]?[A-Z]*SN[A-Z]*([[:space:]=]|$)';\n  new.has_cb := rawu ~ '(FEW|SCT|BKN|OVC)[0-9]{3}CB([[:space:]=]|$)' or rawu ~ '(^|[[:space:]])CB([[:space:]=]|$)';\n  new.has_tcu := rawu ~ '(FEW|SCT|BKN|OVC)[0-9]{3}TCU([[:space:]=]|$)' or rawu ~ '(^|[[:space:]])TCU([[:space:]=]|$)';\n  new.has_vv := rawu ~ '(^|[[:space:]])VV([0-9]{3}|///)([[:space:]=]|$)';\n\n  has_explicit_weather := rawu ~ '(^|[[:space:]])[-+]?(VC)?(MI|PR|BC|DR|BL|SH|TS|FZ)?(DZ|RA|SN|SG|IC|PL|GR|GS|UP|BR|FG|FU|VA|DU|SA|HZ|PO|SQ|FC|SS|DS)([A-Z]{0,4})?([[:space:]=]|$)';\n  if new.message_type = 'METAR' and new.visibility_m is not null and new.visibility_m < 1000 and not has_explicit_weather then\n    new.has_fg := true;\n  end if;\n\n  new.weather_codes := '{}'::text[];\n  if new.has_fg then new.weather_codes := array_append(new.weather_codes,'FG'); end if;\n  if new.has_br then new.weather_codes := array_append(new.weather_codes,'BR'); end if;\n  if new.has_mifg then new.weather_codes := array_append(new.weather_codes,'MIFG'); end if;\n  if new.has_ts then new.weather_codes := array_append(new.weather_codes,'TS'); end if;\n  if new.has_ra then new.weather_codes := array_append(new.weather_codes,'RA'); end if;\n  if new.has_sn then new.weather_codes := array_append(new.weather_codes,'SN'); end if;\n  if new.has_cb then new.weather_codes := array_append(new.weather_codes,'CB'); end if;\n  if new.has_tcu then new.weather_codes := array_append(new.weather_codes,'TCU'); end if;\n  if new.has_vv then new.weather_codes := array_append(new.weather_codes,'VV'); end if;\n  return new;\nend;\n$function$\n",
+      "identity_args": "",
+      "name": "archive_enrich_message"
+    },
+    {
+      "definition": "CREATE OR REPLACE FUNCTION public.archive_try_numeric(v text)\n RETURNS numeric\n LANGUAGE plpgsql\n IMMUTABLE\n SET search_path TO 'pg_catalog', 'public'\nAS $function$\nbegin\n  if v is null or btrim(v) = '' then return null; end if;\n  return v::numeric;\nexception when others then\n  return null;\nend;\n$function$\n",
+      "identity_args": "v text",
+      "name": "archive_try_numeric"
+    },
+    {
+      "definition": "CREATE OR REPLACE FUNCTION public.import_docx_archive_batch(data text)\n RETURNS integer\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'public', 'extensions'\nAS $function$\ndeclare\n  inserted_count integer := 0;\nbegin\n  with lines as (\n    select string_to_array(line, E'\\t') as a\n    from regexp_split_to_table(data, E'\\n') as line\n    where btrim(line) <> ''\n  ), d as (\n    select\n      a[1]::timestamptz as x,\n      upper(a[2]) as t,\n      upper(a[3]) as s,\n      a[4] as raw,\n      a[5] as src,\n      nullif(a[6],'')::numeric as temp,\n      nullif(a[7],'')::numeric as dew,\n      nullif(a[8],'')::numeric as rh,\n      nullif(a[9],'')::integer as vis,\n      nullif(a[10],'')::smallint as wd,\n      nullif(a[11],'')::numeric as wkt,\n      nullif(a[12],'')::numeric as gkt,\n      nullif(a[13],'')::numeric as qnh,\n      nullif(a[14],'')::integer as ceilft,\n      coalesce(nullif(a[15],''),'0') = '1' as fog,\n      coalesce(nullif(a[16],''),'0') = '1' as mist,\n      coalesce(nullif(a[17],''),'0') = '1' as fzfg,\n      nullif(a[18],'')::timestamptz as vf,\n      nullif(a[19],'')::timestamptz as vt,\n      nullif(a[20],'')::numeric as station_p,\n      nullif(a[21],'')::integer as ww,\n      nullif(a[22],'')::integer as cbm,\n      nullif(a[23],'')::integer as oktas\n    from lines\n  ), ins as (\n    insert into public.messages (\n      message_type, station_code, observed_at, issued_at, valid_from, valid_to,\n      raw_text, normalized_text, source_ref, payload\n    )\n    select\n      t, s,\n      case when t = 'TAF' then null else x end,\n      case when t = 'TAF' then x else null end,\n      vf, vt,\n      raw, raw, src,\n      jsonb_strip_nulls(jsonb_build_object(\n        'schema','prognozaepir-message-v1',\n        'source','DOCX_ARCHIVE_2026',\n        'type',t,\n        'station',s,\n        'message_time',to_char(x at time zone 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),\n        'message_id',encode(extensions.digest('DOCX_ARCHIVE_2026|'||t||'|'||s||'|'||to_char(x at time zone 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')||'|'||raw,'sha256'),'hex'),\n        'raw',raw,\n        'canonical_raw',raw,\n        'archive_source_file',src,\n        'obs_time',case when t <> 'TAF' then to_char(x at time zone 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') end,\n        'issue_time',case when t = 'TAF' then to_char(x at time zone 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') end,\n        'valid_from',case when vf is not null then to_char(vf at time zone 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') end,\n        'valid_to',case when vt is not null then to_char(vt at time zone 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') end,\n        'temperature_c',temp,\n        'dew_point_c',dew,\n        'relative_humidity_pct',rh,\n        'visibility_m',vis,\n        'wind_direction_deg',wd,\n        'wind_speed_kt',wkt,\n        'wind_gust_kt',gkt,\n        'pressure_hpa',qnh,\n        'ceiling_ft_agl',ceilft,\n        'station_pressure_hpa',station_p,\n        'present_weather_code',ww,\n        'cloud_base_m_agl',cbm,\n        'total_cloud_oktas',oktas,\n        'fog',case when fog then true else null end,\n        'mist',case when mist then true else null end,\n        'freezing_fog',case when fzfg then true else null end\n      ))\n    from d\n    where t in ('METAR','SPECI','TAF','SYNOP')\n      and x >= '2026-01-01T00:00:00Z'::timestamptz\n      and x <  '2026-06-01T00:00:00Z'::timestamptz\n      and s <> '' and raw <> ''\n    on conflict (message_type, station_code, archive_time, content_hash) do nothing\n    returning 1\n  )\n  select count(*) into inserted_count from ins;\n  return inserted_count;\nend;\n$function$\n",
+      "identity_args": "data text",
+      "name": "import_docx_archive_batch"
+    },
+    {
+      "definition": "CREATE OR REPLACE FUNCTION public.ingest_message_batch(p_messages jsonb)\n RETURNS jsonb\n LANGUAGE plpgsql\n SET search_path TO ''\nAS $function$\r\ndeclare\r\n  v_expected integer;\r\n  v_touched integer;\r\n  v_inserted integer;\r\nbegin\r\n  if jsonb_typeof(p_messages) <> 'array' then\r\n    raise exception 'p_messages must be a JSON array' using errcode = '22023';\r\n  end if;\r\n\r\n  v_expected := jsonb_array_length(p_messages);\r\n  if v_expected < 1 or v_expected > 500 then\r\n    raise exception 'p_messages batch size must be between 1 and 500' using errcode = '22023';\r\n  end if;\r\n\r\n  if exists (\r\n    select 1\r\n    from jsonb_to_recordset(p_messages) as incoming(\r\n      content_hash text,\r\n      normalized_text text,\r\n      observed_at timestamptz,\r\n      issued_at timestamptz,\r\n      archive_time timestamptz\r\n    )\r\n    where incoming.content_hash is distinct from\r\n          encode(extensions.digest(incoming.normalized_text, 'sha256'), 'hex')\r\n       or incoming.archive_time is distinct from coalesce(incoming.observed_at, incoming.issued_at)\r\n  ) then\r\n    raise exception 'message hash or archive time does not match the canonical identity' using errcode = '23505';\r\n  end if;\r\n\r\n  if exists (\r\n    select 1\r\n    from jsonb_to_recordset(p_messages) as incoming(\r\n      content_hash text,\r\n      message_type text,\r\n      station_code text,\r\n      normalized_text text\r\n    )\r\n    join public.messages existing\r\n      on existing.content_hash = incoming.content_hash\r\n    where existing.message_type <> incoming.message_type\r\n       or existing.station_code <> incoming.station_code\r\n       or existing.normalized_text <> incoming.normalized_text\r\n  ) then\r\n    raise exception 'content hash conflicts with an unrelated message identity' using errcode = '23505';\r\n  end if;\r\n\r\n  with input as (\r\n    select incoming.*, station.id as station_id\r\n    from jsonb_to_recordset(p_messages) as incoming(\r\n      content_hash text,\r\n      message_type text,\r\n      station_code text,\r\n      observed_at timestamptz,\r\n      issued_at timestamptz,\r\n      valid_from timestamptz,\r\n      valid_to timestamptz,\r\n      raw_text text,\r\n      normalized_text text,\r\n      source_ref text,\r\n      payload jsonb,\r\n      archive_time timestamptz,\r\n      visibility_m integer,\r\n      wind_direction_deg integer,\r\n      wind_speed_kt double precision,\r\n      gust_kt double precision,\r\n      temperature_c double precision,\r\n      qnh_hpa double precision,\r\n      ceiling_ft integer,\r\n      weather_codes text[],\r\n      has_fg boolean,\r\n      has_br boolean,\r\n      has_mifg boolean,\r\n      has_ts boolean,\r\n      has_ra boolean,\r\n      has_sn boolean,\r\n      has_cb boolean,\r\n      has_tcu boolean,\r\n      has_vv boolean\r\n    )\r\n    left join lateral (\r\n      select candidate.id\r\n      from public.stations candidate\r\n      where (\r\n        incoming.station_code ~ '^[0-9]{5}$'\r\n        and candidate.wmo = incoming.station_code\r\n      ) or (\r\n        incoming.station_code !~ '^[0-9]{5}$'\r\n        and candidate.icao = incoming.station_code\r\n      )\r\n      limit 1\r\n    ) as station on true\r\n  ), upserted as (\r\n    insert into public.messages as existing (\r\n      message_type, station_id, station_code,\r\n      observed_at, issued_at, valid_from, valid_to,\r\n      raw_text, normalized_text, source_ref, payload,\r\n      visibility_m, wind_direction_deg, wind_speed_kt, gust_kt,\r\n      temperature_c, qnh_hpa, ceiling_ft, weather_codes,\r\n      has_fg, has_br, has_mifg, has_ts, has_ra, has_sn, has_cb, has_tcu, has_vv\r\n    )\r\n    select\r\n      message_type, station_id, station_code,\r\n      observed_at, issued_at, valid_from, valid_to,\r\n      raw_text, normalized_text, source_ref, payload,\r\n      visibility_m, wind_direction_deg, wind_speed_kt, gust_kt,\r\n      temperature_c, qnh_hpa, ceiling_ft, coalesce(weather_codes, '{}'),\r\n      coalesce(has_fg, false), coalesce(has_br, false), coalesce(has_mifg, false),\r\n      coalesce(has_ts, false), coalesce(has_ra, false), coalesce(has_sn, false),\r\n      coalesce(has_cb, false), coalesce(has_tcu, false), coalesce(has_vv, false)\r\n    from input\r\n    on conflict (message_type, station_code, archive_time, content_hash) do update\r\n    set\r\n      station_id = coalesce(existing.station_id, excluded.station_id),\r\n      source_ref = coalesce(existing.source_ref, excluded.source_ref),\r\n      last_seen_at = now(),\r\n      duplicate_count = existing.duplicate_count + 1,\r\n      visibility_m = coalesce(existing.visibility_m, excluded.visibility_m),\r\n      wind_direction_deg = coalesce(existing.wind_direction_deg, excluded.wind_direction_deg),\r\n      wind_speed_kt = coalesce(existing.wind_speed_kt, excluded.wind_speed_kt),\r\n      gust_kt = coalesce(existing.gust_kt, excluded.gust_kt),\r\n      temperature_c = coalesce(existing.temperature_c, excluded.temperature_c),\r\n      qnh_hpa = coalesce(existing.qnh_hpa, excluded.qnh_hpa),\r\n      ceiling_ft = coalesce(existing.ceiling_ft, excluded.ceiling_ft),\r\n      weather_codes = case when cardinality(existing.weather_codes) = 0 then excluded.weather_codes else existing.weather_codes end,\r\n      has_fg = existing.has_fg or excluded.has_fg,\r\n      has_br = existing.has_br or excluded.has_br,\r\n      has_mifg = existing.has_mifg or excluded.has_mifg,\r\n      has_ts = existing.has_ts or excluded.has_ts,\r\n      has_ra = existing.has_ra or excluded.has_ra,\r\n      has_sn = existing.has_sn or excluded.has_sn,\r\n      has_cb = existing.has_cb or excluded.has_cb,\r\n      has_tcu = existing.has_tcu or excluded.has_tcu,\r\n      has_vv = existing.has_vv or excluded.has_vv\r\n    where existing.message_type = excluded.message_type\r\n      and existing.station_code = excluded.station_code\r\n      and existing.normalized_text = excluded.normalized_text\r\n    returning (xmax = 0) as inserted\r\n  )\r\n  select count(*)::integer, (count(*) filter (where inserted))::integer\r\n  into v_touched, v_inserted\r\n  from upserted;\r\n\r\n  if v_touched <> v_expected then\r\n    raise exception 'content hash conflicts with an unrelated message identity' using errcode = '23505';\r\n  end if;\r\n\r\n  return jsonb_build_object(\r\n    'ok', true,\r\n    'inserted', v_inserted,\r\n    'duplicates', v_expected - v_inserted\r\n  );\r\nend;\r\n$function$\n",
+      "identity_args": "p_messages jsonb",
+      "name": "ingest_message_batch"
+    },
+    {
+      "definition": "CREATE OR REPLACE FUNCTION public.run_message_archive_retention()\n RETURNS jsonb\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'public'\nAS $function$\ndeclare\n  v_quota_bytes constant bigint := 524288000; -- 500 MiB\n  v_db_bytes bigint;\n  v_usage numeric(7,3);\n  v_mode text := 'none';\n  v_keep_days integer := null;\n  v_batch integer := null;\n  v_cutoff timestamptz := null;\n  v_eligible integer := 0;\n  v_deleted integer := 0;\n  v_note text;\nbegin\n  -- Prevent overlapping retention runs.\n  perform pg_advisory_xact_lock(640219026, 1);\n\n  v_db_bytes := pg_database_size(current_database());\n  v_usage := round((v_db_bytes::numeric * 100.0) / v_quota_bytes::numeric, 3);\n\n  if v_usage < 75 then\n    v_note := 'Below 75% threshold; no deletion.';\n  else\n    if v_usage >= 85 then\n      v_mode := 'emergency';\n      v_keep_days := 30;\n      v_batch := 5000;\n    else\n      v_mode := 'normal';\n      v_keep_days := 90;\n      v_batch := 1000;\n    end if;\n\n    v_cutoff := now() - make_interval(days => v_keep_days);\n\n    select count(*)::integer\n      into v_eligible\n    from public.messages m\n    join public.message_retention_alt_stations s\n      on s.station_code = m.station_code\n     and s.enabled\n    where m.archive_time < v_cutoff\n      and m.station_code not in ('EPIR', '12342');\n\n    if v_eligible > 0 then\n      with doomed as (\n        select m.id\n        from public.messages m\n        join public.message_retention_alt_stations s\n          on s.station_code = m.station_code\n         and s.enabled\n        where m.archive_time < v_cutoff\n          and m.station_code not in ('EPIR', '12342')\n        order by m.archive_time asc, m.id asc\n        limit v_batch\n      ), deleted as (\n        delete from public.messages m\n        using doomed d\n        where m.id = d.id\n        returning 1\n      )\n      select count(*)::integer into v_deleted from deleted;\n\n      v_note := format(\n        'Deleted oldest alternate-airport rows only. Protected stations EPIR and 12342 are never eligible. Minimum retained history: %s days.',\n        v_keep_days\n      );\n    else\n      v_note := format(\n        'Threshold reached but no alternate-airport rows older than %s days are eligible. Protected stations untouched.',\n        v_keep_days\n      );\n    end if;\n  end if;\n\n  insert into public.message_retention_log (\n    database_bytes_before, quota_bytes, usage_percent, mode,\n    keep_days, batch_limit, eligible_rows, deleted_rows, cutoff, note\n  ) values (\n    v_db_bytes, v_quota_bytes, v_usage, v_mode,\n    v_keep_days, v_batch, v_eligible, v_deleted, v_cutoff, v_note\n  );\n\n  return jsonb_build_object(\n    'ok', true,\n    'database_bytes', v_db_bytes,\n    'quota_bytes', v_quota_bytes,\n    'usage_percent', v_usage,\n    'mode', v_mode,\n    'keep_days', v_keep_days,\n    'batch_limit', v_batch,\n    'eligible_rows', v_eligible,\n    'deleted_rows', v_deleted,\n    'cutoff', v_cutoff,\n    'note', v_note\n  );\nend;\n$function$\n",
+      "identity_args": "",
+      "name": "run_message_archive_retention"
+    },
+    {
+      "definition": "CREATE OR REPLACE FUNCTION public.touch_updated_at()\n RETURNS trigger\n LANGUAGE plpgsql\n SET search_path TO 'public'\nAS $function$\nbegin\n  new.updated_at = now();\n  return new;\nend; $function$\n",
+      "identity_args": "",
+      "name": "touch_updated_at"
+    }
+  ],
+  "generated_at": "2026-11-10T22:09:42.164202+00:00",
+  "schema": "public",
+  "tables": {
+    "forecast_verifications": {
+      "columns": [
+        {
+          "data_type": "bigint",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "YES",
+          "identity_generation": "ALWAYS",
+          "name": "id",
+          "nullable": "NO",
+          "ordinal_position": 1,
+          "udt_name": "int8"
+        },
+        {
+          "data_type": "bigint",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "forecast_id",
+          "nullable": "NO",
+          "ordinal_position": 2,
+          "udt_name": "int8"
+        },
+        {
+          "data_type": "bigint",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "message_id",
+          "nullable": "YES",
+          "ordinal_position": 3,
+          "udt_name": "int8"
+        },
+        {
+          "data_type": "text",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "parameter",
+          "nullable": "NO",
+          "ordinal_position": 4,
+          "udt_name": "text"
+        },
+        {
+          "data_type": "jsonb",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "forecast_value",
+          "nullable": "YES",
+          "ordinal_position": 5,
+          "udt_name": "jsonb"
+        },
+        {
+          "data_type": "jsonb",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "observed_value",
+          "nullable": "YES",
+          "ordinal_position": 6,
+          "udt_name": "jsonb"
+        },
+        {
+          "data_type": "double precision",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "error_value",
+          "nullable": "YES",
+          "ordinal_position": 7,
+          "udt_name": "float8"
+        },
+        {
+          "data_type": "double precision",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "score",
+          "nullable": "YES",
+          "ordinal_position": 8,
+          "udt_name": "float8"
+        },
+        {
+          "data_type": "timestamp with time zone",
+          "default": "now()",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "verified_at",
+          "nullable": "NO",
+          "ordinal_position": 9,
+          "udt_name": "timestamptz"
+        },
+        {
+          "data_type": "jsonb",
+          "default": "'{}'::jsonb",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "metadata",
+          "nullable": "NO",
+          "ordinal_position": 10,
+          "udt_name": "jsonb"
+        }
+      ],
+      "constraints": [
+        {
+          "definition": "FOREIGN KEY (forecast_id) REFERENCES forecasts(id) ON DELETE CASCADE",
+          "name": "forecast_verifications_forecast_id_fkey",
+          "type": "f"
+        },
+        {
+          "definition": "FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE SET NULL",
+          "name": "forecast_verifications_message_id_fkey",
+          "type": "f"
+        },
+        {
+          "definition": "PRIMARY KEY (id)",
+          "name": "forecast_verifications_pkey",
+          "type": "p"
+        }
+      ],
+      "indexes": [
+        {
+          "definition": "CREATE UNIQUE INDEX forecast_verifications_pkey ON public.forecast_verifications USING btree (id)",
+          "name": "forecast_verifications_pkey"
+        },
+        {
+          "definition": "CREATE INDEX idx_verifications_forecast ON public.forecast_verifications USING btree (forecast_id)",
+          "name": "idx_verifications_forecast"
+        },
+        {
+          "definition": "CREATE INDEX idx_verifications_message_id ON public.forecast_verifications USING btree (message_id)",
+          "name": "idx_verifications_message_id"
+        },
+        {
+          "definition": "CREATE INDEX idx_verifications_parameter ON public.forecast_verifications USING btree (parameter, verified_at DESC)",
+          "name": "idx_verifications_parameter"
+        }
+      ],
+      "policies": [
+        {
+          "cmd": "SELECT",
+          "name": "public read verifications",
+          "permissive": "PERMISSIVE",
+          "qual": "true",
+          "roles": [
+            "anon",
+            "authenticated"
+          ],
+          "with_check": null
+        }
+      ],
+      "triggers": []
+    },
+    "forecasts": {
+      "columns": [
+        {
+          "data_type": "bigint",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "YES",
+          "identity_generation": "ALWAYS",
+          "name": "id",
+          "nullable": "NO",
+          "ordinal_position": 1,
+          "udt_name": "int8"
+        },
+        {
+          "data_type": "text",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "station_code",
+          "nullable": "NO",
+          "ordinal_position": 2,
+          "udt_name": "text"
+        },
+        {
+          "data_type": "text",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "engine_name",
+          "nullable": "NO",
+          "ordinal_position": 3,
+          "udt_name": "text"
+        },
+        {
+          "data_type": "text",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "engine_version",
+          "nullable": "NO",
+          "ordinal_position": 4,
+          "udt_name": "text"
+        },
+        {
+          "data_type": "timestamp with time zone",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "generated_at",
+          "nullable": "NO",
+          "ordinal_position": 5,
+          "udt_name": "timestamptz"
+        },
+        {
+          "data_type": "timestamp with time zone",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "valid_from",
+          "nullable": "NO",
+          "ordinal_position": 6,
+          "udt_name": "timestamptz"
+        },
+        {
+          "data_type": "timestamp with time zone",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "valid_to",
+          "nullable": "NO",
+          "ordinal_position": 7,
+          "udt_name": "timestamptz"
+        },
+        {
+          "data_type": "text",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "forecast_type",
+          "nullable": "NO",
+          "ordinal_position": 8,
+          "udt_name": "text"
+        },
+        {
+          "data_type": "jsonb",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "payload",
+          "nullable": "NO",
+          "ordinal_position": 9,
+          "udt_name": "jsonb"
+        },
+        {
+          "data_type": "timestamp with time zone",
+          "default": "now()",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "created_at",
+          "nullable": "NO",
+          "ordinal_position": 10,
+          "udt_name": "timestamptz"
+        }
+      ],
+      "constraints": [
+        {
+          "definition": "PRIMARY KEY (id)",
+          "name": "forecasts_pkey",
+          "type": "p"
+        }
+      ],
+      "indexes": [
+        {
+          "definition": "CREATE UNIQUE INDEX forecasts_pkey ON public.forecasts USING btree (id)",
+          "name": "forecasts_pkey"
+        },
+        {
+          "definition": "CREATE INDEX idx_forecasts_station_generated ON public.forecasts USING btree (station_code, generated_at DESC)",
+          "name": "idx_forecasts_station_generated"
+        },
+        {
+          "definition": "CREATE INDEX idx_forecasts_valid ON public.forecasts USING btree (station_code, valid_from, valid_to)",
+          "name": "idx_forecasts_valid"
+        }
+      ],
+      "policies": [
+        {
+          "cmd": "SELECT",
+          "name": "public read forecasts",
+          "permissive": "PERMISSIVE",
+          "qual": "true",
+          "roles": [
+            "anon",
+            "authenticated"
+          ],
+          "with_check": null
+        }
+      ],
+      "triggers": []
+    },
+    "ingest_runs": {
+      "columns": [
+        {
+          "data_type": "bigint",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "YES",
+          "identity_generation": "ALWAYS",
+          "name": "id",
+          "nullable": "NO",
+          "ordinal_position": 1,
+          "udt_name": "int8"
+        },
+        {
+          "data_type": "uuid",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "source_id",
+          "nullable": "YES",
+          "ordinal_position": 2,
+          "udt_name": "uuid"
+        },
+        {
+          "data_type": "timestamp with time zone",
+          "default": "now()",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "started_at",
+          "nullable": "NO",
+          "ordinal_position": 3,
+          "udt_name": "timestamptz"
+        },
+        {
+          "data_type": "timestamp with time zone",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "finished_at",
+          "nullable": "YES",
+          "ordinal_position": 4,
+          "udt_name": "timestamptz"
+        },
+        {
+          "data_type": "text",
+          "default": "'running'::text",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "status",
+          "nullable": "NO",
+          "ordinal_position": 5,
+          "udt_name": "text"
+        },
+        {
+          "data_type": "integer",
+          "default": "0",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "fetched_count",
+          "nullable": "NO",
+          "ordinal_position": 6,
+          "udt_name": "int4"
+        },
+        {
+          "data_type": "integer",
+          "default": "0",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "inserted_count",
+          "nullable": "NO",
+          "ordinal_position": 7,
+          "udt_name": "int4"
+        },
+        {
+          "data_type": "integer",
+          "default": "0",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "duplicate_count",
+          "nullable": "NO",
+          "ordinal_position": 8,
+          "udt_name": "int4"
+        },
+        {
+          "data_type": "integer",
+          "default": "0",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "error_count",
+          "nullable": "NO",
+          "ordinal_position": 9,
+          "udt_name": "int4"
+        },
+        {
+          "data_type": "jsonb",
+          "default": "'{}'::jsonb",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "details",
+          "nullable": "NO",
+          "ordinal_position": 10,
+          "udt_name": "jsonb"
+        }
+      ],
+      "constraints": [
+        {
+          "definition": "PRIMARY KEY (id)",
+          "name": "ingest_runs_pkey",
+          "type": "p"
+        },
+        {
+          "definition": "FOREIGN KEY (source_id) REFERENCES message_sources(id) ON DELETE SET NULL",
+          "name": "ingest_runs_source_id_fkey",
+          "type": "f"
+        },
+        {
+          "definition": "CHECK (status = ANY (ARRAY['running'::text, 'ok'::text, 'partial'::text, 'error'::text]))",
+          "name": "ingest_runs_status_check",
+          "type": "c"
+        }
+      ],
+      "indexes": [
+        {
+          "definition": "CREATE INDEX idx_ingest_runs_source_id ON public.ingest_runs USING btree (source_id)",
+          "name": "idx_ingest_runs_source_id"
+        },
+        {
+          "definition": "CREATE INDEX idx_ingest_runs_started_at ON public.ingest_runs USING btree (started_at DESC)",
+          "name": "idx_ingest_runs_started_at"
+        },
+        {
+          "definition": "CREATE UNIQUE INDEX ingest_runs_pkey ON public.ingest_runs USING btree (id)",
+          "name": "ingest_runs_pkey"
+        }
+      ],
+      "policies": [],
+      "triggers": []
+    },
+    "message_sources": {
+      "columns": [
+        {
+          "data_type": "uuid",
+          "default": "gen_random_uuid()",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "id",
+          "nullable": "NO",
+          "ordinal_position": 1,
+          "udt_name": "uuid"
+        },
+        {
+          "data_type": "text",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "code",
+          "nullable": "NO",
+          "ordinal_position": 2,
+          "udt_name": "text"
+        },
+        {
+          "data_type": "text",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "name",
+          "nullable": "NO",
+          "ordinal_position": 3,
+          "udt_name": "text"
+        },
+        {
+          "data_type": "integer",
+          "default": "100",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "priority",
+          "nullable": "NO",
+          "ordinal_position": 4,
+          "udt_name": "int4"
+        },
+        {
+          "data_type": "boolean",
+          "default": "true",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "active",
+          "nullable": "NO",
+          "ordinal_position": 5,
+          "udt_name": "bool"
+        },
+        {
+          "data_type": "timestamp with time zone",
+          "default": "now()",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "created_at",
+          "nullable": "NO",
+          "ordinal_position": 6,
+          "udt_name": "timestamptz"
+        },
+        {
+          "data_type": "timestamp with time zone",
+          "default": "now()",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "updated_at",
+          "nullable": "NO",
+          "ordinal_position": 7,
+          "udt_name": "timestamptz"
+        }
+      ],
+      "constraints": [
+        {
+          "definition": "CHECK (code ~ '^[A-Z0-9_]{2,64}$'::text)",
+          "name": "message_sources_code_chk",
+          "type": "c"
+        },
+        {
+          "definition": "UNIQUE (code)",
+          "name": "message_sources_code_key",
+          "type": "u"
+        },
+        {
+          "definition": "CHECK (btrim(name) <> ''::text)",
+          "name": "message_sources_name_chk",
+          "type": "c"
+        },
+        {
+          "definition": "PRIMARY KEY (id)",
+          "name": "message_sources_pkey",
+          "type": "p"
+        }
+      ],
+      "indexes": [
+        {
+          "definition": "CREATE UNIQUE INDEX message_sources_code_key ON public.message_sources USING btree (code)",
+          "name": "message_sources_code_key"
+        },
+        {
+          "definition": "CREATE UNIQUE INDEX message_sources_pkey ON public.message_sources USING btree (id)",
+          "name": "message_sources_pkey"
+        }
+      ],
+      "policies": [],
+      "triggers": [
+        {
+          "definition": "CREATE TRIGGER trg_sources_updated_at BEFORE UPDATE ON message_sources FOR EACH ROW EXECUTE FUNCTION touch_updated_at()",
+          "name": "trg_sources_updated_at"
+        }
+      ]
+    },
+    "messages": {
+      "columns": [
+        {
+          "data_type": "bigint",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "YES",
+          "identity_generation": "ALWAYS",
+          "name": "id",
+          "nullable": "NO",
+          "ordinal_position": 1,
+          "udt_name": "int8"
+        },
+        {
+          "data_type": "text",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "message_type",
+          "nullable": "NO",
+          "ordinal_position": 2,
+          "udt_name": "text"
+        },
+        {
+          "data_type": "uuid",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "station_id",
+          "nullable": "YES",
+          "ordinal_position": 3,
+          "udt_name": "uuid"
+        },
+        {
+          "data_type": "text",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "station_code",
+          "nullable": "NO",
+          "ordinal_position": 4,
+          "udt_name": "text"
+        },
+        {
+          "data_type": "timestamp with time zone",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "observed_at",
+          "nullable": "YES",
+          "ordinal_position": 5,
+          "udt_name": "timestamptz"
+        },
+        {
+          "data_type": "timestamp with time zone",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "issued_at",
+          "nullable": "YES",
+          "ordinal_position": 6,
+          "udt_name": "timestamptz"
+        },
+        {
+          "data_type": "timestamp with time zone",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "valid_from",
+          "nullable": "YES",
+          "ordinal_position": 7,
+          "udt_name": "timestamptz"
+        },
+        {
+          "data_type": "timestamp with time zone",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "valid_to",
+          "nullable": "YES",
+          "ordinal_position": 8,
+          "udt_name": "timestamptz"
+        },
+        {
+          "data_type": "text",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "raw_text",
+          "nullable": "NO",
+          "ordinal_position": 9,
+          "udt_name": "text"
+        },
+        {
+          "data_type": "text",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "normalized_text",
+          "nullable": "NO",
+          "ordinal_position": 10,
+          "udt_name": "text"
+        },
+        {
+          "data_type": "uuid",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "source_id",
+          "nullable": "YES",
+          "ordinal_position": 11,
+          "udt_name": "uuid"
+        },
+        {
+          "data_type": "text",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "source_ref",
+          "nullable": "YES",
+          "ordinal_position": 12,
+          "udt_name": "text"
+        },
+        {
+          "data_type": "timestamp with time zone",
+          "default": "now()",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "ingested_at",
+          "nullable": "NO",
+          "ordinal_position": 13,
+          "udt_name": "timestamptz"
+        },
+        {
+          "data_type": "timestamp with time zone",
+          "default": "now()",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "first_seen_at",
+          "nullable": "NO",
+          "ordinal_position": 14,
+          "udt_name": "timestamptz"
+        },
+        {
+          "data_type": "timestamp with time zone",
+          "default": "now()",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "last_seen_at",
+          "nullable": "NO",
+          "ordinal_position": 15,
+          "udt_name": "timestamptz"
+        },
+        {
+          "data_type": "integer",
+          "default": "0",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "duplicate_count",
+          "nullable": "NO",
+          "ordinal_position": 16,
+          "udt_name": "int4"
+        },
+        {
+          "data_type": "jsonb",
+          "default": "'{}'::jsonb",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "payload",
+          "nullable": "NO",
+          "ordinal_position": 17,
+          "udt_name": "jsonb"
+        },
+        {
+          "data_type": "text",
+          "default": null,
+          "generated": "ALWAYS",
+          "generation_expression": "encode(extensions.digest(normalized_text, 'sha256'::text), 'hex'::text)",
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "content_hash",
+          "nullable": "NO",
+          "ordinal_position": 18,
+          "udt_name": "text"
+        },
+        {
+          "data_type": "timestamp with time zone",
+          "default": null,
+          "generated": "ALWAYS",
+          "generation_expression": "COALESCE(observed_at, issued_at, ingested_at)",
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "archive_time",
+          "nullable": "NO",
+          "ordinal_position": 19,
+          "udt_name": "timestamptz"
+        },
+        {
+          "data_type": "integer",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "visibility_m",
+          "nullable": "YES",
+          "ordinal_position": 20,
+          "udt_name": "int4"
+        },
+        {
+          "data_type": "smallint",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "wind_direction_deg",
+          "nullable": "YES",
+          "ordinal_position": 21,
+          "udt_name": "int2"
+        },
+        {
+          "data_type": "numeric",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "wind_speed_kt",
+          "nullable": "YES",
+          "ordinal_position": 22,
+          "udt_name": "numeric"
+        },
+        {
+          "data_type": "numeric",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "gust_kt",
+          "nullable": "YES",
+          "ordinal_position": 23,
+          "udt_name": "numeric"
+        },
+        {
+          "data_type": "numeric",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "temperature_c",
+          "nullable": "YES",
+          "ordinal_position": 24,
+          "udt_name": "numeric"
+        },
+        {
+          "data_type": "numeric",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "qnh_hpa",
+          "nullable": "YES",
+          "ordinal_position": 25,
+          "udt_name": "numeric"
+        },
+        {
+          "data_type": "integer",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "ceiling_ft",
+          "nullable": "YES",
+          "ordinal_position": 26,
+          "udt_name": "int4"
+        },
+        {
+          "data_type": "ARRAY",
+          "default": "'{}'::text[]",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "weather_codes",
+          "nullable": "NO",
+          "ordinal_position": 27,
+          "udt_name": "_text"
+        },
+        {
+          "data_type": "boolean",
+          "default": "false",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "has_fg",
+          "nullable": "NO",
+          "ordinal_position": 28,
+          "udt_name": "bool"
+        },
+        {
+          "data_type": "boolean",
+          "default": "false",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "has_br",
+          "nullable": "NO",
+          "ordinal_position": 29,
+          "udt_name": "bool"
+        },
+        {
+          "data_type": "boolean",
+          "default": "false",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "has_mifg",
+          "nullable": "NO",
+          "ordinal_position": 30,
+          "udt_name": "bool"
+        },
+        {
+          "data_type": "boolean",
+          "default": "false",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "has_ts",
+          "nullable": "NO",
+          "ordinal_position": 31,
+          "udt_name": "bool"
+        },
+        {
+          "data_type": "boolean",
+          "default": "false",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "has_ra",
+          "nullable": "NO",
+          "ordinal_position": 32,
+          "udt_name": "bool"
+        },
+        {
+          "data_type": "boolean",
+          "default": "false",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "has_sn",
+          "nullable": "NO",
+          "ordinal_position": 33,
+          "udt_name": "bool"
+        },
+        {
+          "data_type": "boolean",
+          "default": "false",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "has_cb",
+          "nullable": "NO",
+          "ordinal_position": 34,
+          "udt_name": "bool"
+        },
+        {
+          "data_type": "boolean",
+          "default": "false",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "has_tcu",
+          "nullable": "NO",
+          "ordinal_position": 35,
+          "udt_name": "bool"
+        },
+        {
+          "data_type": "boolean",
+          "default": "false",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "has_vv",
+          "nullable": "NO",
+          "ordinal_position": 36,
+          "udt_name": "bool"
+        }
+      ],
+      "constraints": [
+        {
+          "definition": "CHECK (ceiling_ft IS NULL OR ceiling_ft >= 0)",
+          "name": "messages_ceiling_chk",
+          "type": "c"
+        },
+        {
+          "definition": "CHECK (content_hash ~ '^[0-9a-f]{64}$'::text)",
+          "name": "messages_content_hash_chk",
+          "type": "c"
+        },
+        {
+          "definition": "CHECK (duplicate_count >= 0)",
+          "name": "messages_duplicate_count_chk",
+          "type": "c"
+        },
+        {
+          "definition": "CHECK (message_type = 'TAF'::text AND issued_at IS NOT NULL OR message_type <> 'TAF'::text AND observed_at IS NOT NULL)",
+          "name": "messages_event_time_chk",
+          "type": "c"
+        },
+        {
+          "definition": "CHECK (gust_kt IS NULL OR gust_kt >= 0::numeric)",
+          "name": "messages_gust_chk",
+          "type": "c"
+        },
+        {
+          "definition": "CHECK (message_type = ANY (ARRAY['METAR'::text, 'SPECI'::text, 'TAF'::text, 'SYNOP'::text]))",
+          "name": "messages_message_type_check",
+          "type": "c"
+        },
+        {
+          "definition": "CHECK (btrim(normalized_text) <> ''::text)",
+          "name": "messages_normalized_text_chk",
+          "type": "c"
+        },
+        {
+          "definition": "CHECK (jsonb_typeof(payload) = 'object'::text)",
+          "name": "messages_payload_object_chk",
+          "type": "c"
+        },
+        {
+          "definition": "PRIMARY KEY (id)",
+          "name": "messages_pkey",
+          "type": "p"
+        },
+        {
+          "definition": "CHECK (btrim(raw_text) <> ''::text)",
+          "name": "messages_raw_text_chk",
+          "type": "c"
+        },
+        {
+          "definition": "FOREIGN KEY (source_id) REFERENCES message_sources(id) ON DELETE SET NULL",
+          "name": "messages_source_id_fkey",
+          "type": "f"
+        },
+        {
+          "definition": "CHECK (station_code ~ '^[A-Z0-9]{4,5}$'::text)",
+          "name": "messages_station_code_chk",
+          "type": "c"
+        },
+        {
+          "definition": "FOREIGN KEY (station_id) REFERENCES stations(id) ON DELETE RESTRICT",
+          "name": "messages_station_id_fkey",
+          "type": "f"
+        },
+        {
+          "definition": "CHECK (message_type = ANY (ARRAY['METAR'::text, 'SPECI'::text, 'TAF'::text, 'SYNOP'::text]))",
+          "name": "messages_type_chk",
+          "type": "c"
+        },
+        {
+          "definition": "UNIQUE (message_type, station_code, archive_time, content_hash)",
+          "name": "messages_type_station_time_hash_key",
+          "type": "u"
+        },
+        {
+          "definition": "CHECK (valid_to IS NULL OR valid_from IS NULL OR valid_to >= valid_from)",
+          "name": "messages_validity_chk",
+          "type": "c"
+        },
+        {
+          "definition": "CHECK (visibility_m IS NULL OR visibility_m >= 0)",
+          "name": "messages_visibility_chk",
+          "type": "c"
+        },
+        {
+          "definition": "CHECK (wind_direction_deg IS NULL OR wind_direction_deg >= 0 AND wind_direction_deg <= 360) NOT VALID",
+          "name": "messages_wind_direction_chk",
+          "type": "c"
+        },
+        {
+          "definition": "CHECK (wind_speed_kt IS NULL OR wind_speed_kt >= 0::numeric)",
+          "name": "messages_wind_speed_chk",
+          "type": "c"
+        }
+      ],
+      "indexes": [
+        {
+          "definition": "CREATE INDEX idx_messages_archive_time ON public.messages USING btree (archive_time DESC)",
+          "name": "idx_messages_archive_time"
+        },
+        {
+          "definition": "CREATE INDEX idx_messages_ceiling ON public.messages USING btree (ceiling_ft) WHERE (ceiling_ft IS NOT NULL)",
+          "name": "idx_messages_ceiling"
+        },
+        {
+          "definition": "CREATE INDEX idx_messages_gust ON public.messages USING btree (gust_kt) WHERE (gust_kt IS NOT NULL)",
+          "name": "idx_messages_gust"
+        },
+        {
+          "definition": "CREATE INDEX idx_messages_ingested_at ON public.messages USING btree (ingested_at DESC)",
+          "name": "idx_messages_ingested_at"
+        },
+        {
+          "definition": "CREATE INDEX idx_messages_normalized_trgm ON public.messages USING gin (normalized_text extensions.gin_trgm_ops)",
+          "name": "idx_messages_normalized_trgm"
+        },
+        {
+          "definition": "CREATE INDEX idx_messages_payload_gin ON public.messages USING gin (payload)",
+          "name": "idx_messages_payload_gin"
+        },
+        {
+          "definition": "CREATE INDEX idx_messages_qnh ON public.messages USING btree (qnh_hpa) WHERE (qnh_hpa IS NOT NULL)",
+          "name": "idx_messages_qnh"
+        },
+        {
+          "definition": "CREATE INDEX idx_messages_source_id ON public.messages USING btree (source_id)",
+          "name": "idx_messages_source_id"
+        },
+        {
+          "definition": "CREATE INDEX idx_messages_station_archive_time ON public.messages USING btree (station_code, archive_time DESC)",
+          "name": "idx_messages_station_archive_time"
+        },
+        {
+          "definition": "CREATE INDEX idx_messages_station_id ON public.messages USING btree (station_id)",
+          "name": "idx_messages_station_id"
+        },
+        {
+          "definition": "CREATE INDEX idx_messages_station_type_time ON public.messages USING btree (station_code, message_type, COALESCE(observed_at, issued_at, ingested_at) DESC)",
+          "name": "idx_messages_station_type_time"
+        },
+        {
+          "definition": "CREATE INDEX idx_messages_temperature ON public.messages USING btree (temperature_c) WHERE (temperature_c IS NOT NULL)",
+          "name": "idx_messages_temperature"
+        },
+        {
+          "definition": "CREATE INDEX idx_messages_type_archive_time ON public.messages USING btree (message_type, archive_time DESC)",
+          "name": "idx_messages_type_archive_time"
+        },
+        {
+          "definition": "CREATE INDEX idx_messages_type_time ON public.messages USING btree (message_type, COALESCE(observed_at, issued_at, ingested_at) DESC)",
+          "name": "idx_messages_type_time"
+        },
+        {
+          "definition": "CREATE INDEX idx_messages_visibility ON public.messages USING btree (visibility_m) WHERE (visibility_m IS NOT NULL)",
+          "name": "idx_messages_visibility"
+        },
+        {
+          "definition": "CREATE INDEX idx_messages_wind_speed ON public.messages USING btree (wind_speed_kt) WHERE (wind_speed_kt IS NOT NULL)",
+          "name": "idx_messages_wind_speed"
+        },
+        {
+          "definition": "CREATE INDEX messages_archive_idx ON public.messages USING btree (archive_time DESC, id DESC)",
+          "name": "messages_archive_idx"
+        },
+        {
+          "definition": "CREATE UNIQUE INDEX messages_pkey ON public.messages USING btree (id)",
+          "name": "messages_pkey"
+        },
+        {
+          "definition": "CREATE INDEX messages_source_id_idx ON public.messages USING btree (source_id) WHERE (source_id IS NOT NULL)",
+          "name": "messages_source_id_idx"
+        },
+        {
+          "definition": "CREATE INDEX messages_station_archive_idx ON public.messages USING btree (station_code, archive_time DESC, id DESC)",
+          "name": "messages_station_archive_idx"
+        },
+        {
+          "definition": "CREATE INDEX messages_station_id_idx ON public.messages USING btree (station_id) WHERE (station_id IS NOT NULL)",
+          "name": "messages_station_id_idx"
+        },
+        {
+          "definition": "CREATE INDEX messages_type_archive_idx ON public.messages USING btree (message_type, archive_time DESC, id DESC)",
+          "name": "messages_type_archive_idx"
+        },
+        {
+          "definition": "CREATE INDEX messages_type_station_archive_idx ON public.messages USING btree (message_type, station_code, archive_time DESC, id DESC)",
+          "name": "messages_type_station_archive_idx"
+        },
+        {
+          "definition": "CREATE UNIQUE INDEX messages_type_station_time_hash_key ON public.messages USING btree (message_type, station_code, archive_time, content_hash)",
+          "name": "messages_type_station_time_hash_key"
+        }
+      ],
+      "policies": [],
+      "triggers": [
+        {
+          "definition": "CREATE TRIGGER trg_archive_enrich_message BEFORE INSERT OR UPDATE OF payload, normalized_text, raw_text ON messages FOR EACH ROW EXECUTE FUNCTION archive_enrich_message()",
+          "name": "trg_archive_enrich_message"
+        }
+      ]
+    },
+    "stations": {
+      "columns": [
+        {
+          "data_type": "uuid",
+          "default": "gen_random_uuid()",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "id",
+          "nullable": "NO",
+          "ordinal_position": 1,
+          "udt_name": "uuid"
+        },
+        {
+          "data_type": "text",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "icao",
+          "nullable": "YES",
+          "ordinal_position": 2,
+          "udt_name": "text"
+        },
+        {
+          "data_type": "text",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "name",
+          "nullable": "NO",
+          "ordinal_position": 3,
+          "udt_name": "text"
+        },
+        {
+          "data_type": "text",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "wmo",
+          "nullable": "YES",
+          "ordinal_position": 4,
+          "udt_name": "text"
+        },
+        {
+          "data_type": "double precision",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "latitude",
+          "nullable": "YES",
+          "ordinal_position": 5,
+          "udt_name": "float8"
+        },
+        {
+          "data_type": "double precision",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "longitude",
+          "nullable": "YES",
+          "ordinal_position": 6,
+          "udt_name": "float8"
+        },
+        {
+          "data_type": "integer",
+          "default": null,
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "elevation_m",
+          "nullable": "YES",
+          "ordinal_position": 7,
+          "udt_name": "int4"
+        },
+        {
+          "data_type": "boolean",
+          "default": "true",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "active",
+          "nullable": "NO",
+          "ordinal_position": 8,
+          "udt_name": "bool"
+        },
+        {
+          "data_type": "timestamp with time zone",
+          "default": "now()",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "created_at",
+          "nullable": "NO",
+          "ordinal_position": 9,
+          "udt_name": "timestamptz"
+        },
+        {
+          "data_type": "timestamp with time zone",
+          "default": "now()",
+          "generated": "NEVER",
+          "generation_expression": null,
+          "identity": "NO",
+          "identity_generation": null,
+          "name": "updated_at",
+          "nullable": "NO",
+          "ordinal_position": 10,
+          "udt_name": "timestamptz"
+        }
+      ],
+      "constraints": [
+        {
+          "definition": "CHECK (icao IS NOT NULL OR wmo IS NOT NULL)",
+          "name": "stations_code_present_chk",
+          "type": "c"
+        },
+        {
+          "definition": "CHECK (icao IS NULL OR icao ~ '^[A-Z0-9]{4,5}$'::text)",
+          "name": "stations_icao_chk",
+          "type": "c"
+        },
+        {
+          "definition": "UNIQUE (icao)",
+          "name": "stations_icao_key",
+          "type": "u"
+        },
+        {
+          "definition": "CHECK (latitude IS NULL OR latitude >= '-90'::integer::double precision AND latitude <= 90::double precision)",
+          "name": "stations_latitude_chk",
+          "type": "c"
+        },
+        {
+          "definition": "CHECK (longitude IS NULL OR longitude >= '-180'::integer::double precision AND longitude <= 180::double precision)",
+          "name": "stations_longitude_chk",
+          "type": "c"
+        },
+        {
+          "definition": "CHECK (btrim(name) <> ''::text)",
+          "name": "stations_name_chk",
+          "type": "c"
+        },
+        {
+          "definition": "PRIMARY KEY (id)",
+          "name": "stations_pkey",
+          "type": "p"
+        },
+        {
+          "definition": "CHECK (wmo IS NULL OR wmo ~ '^[0-9]{5}$'::text)",
+          "name": "stations_wmo_chk",
+          "type": "c"
+        }
+      ],
+      "indexes": [
+        {
+          "definition": "CREATE UNIQUE INDEX stations_icao_key ON public.stations USING btree (icao)",
+          "name": "stations_icao_key"
+        },
+        {
+          "definition": "CREATE UNIQUE INDEX stations_icao_uidx ON public.stations USING btree (icao) WHERE (icao IS NOT NULL)",
+          "name": "stations_icao_uidx"
+        },
+        {
+          "definition": "CREATE UNIQUE INDEX stations_pkey ON public.stations USING btree (id)",
+          "name": "stations_pkey"
+        },
+        {
+          "definition": "CREATE UNIQUE INDEX stations_wmo_uidx ON public.stations USING btree (wmo) WHERE (wmo IS NOT NULL)",
+          "name": "stations_wmo_uidx"
+        }
+      ],
+      "policies": [],
+      "triggers": [
+        {
+          "definition": "CREATE TRIGGER trg_stations_updated_at BEFORE UPDATE ON stations FOR EACH ROW EXECUTE FUNCTION touch_updated_at()",
+          "name": "trg_stations_updated_at"
+        }
+      ]
+    }
+  }
+}
