@@ -70,6 +70,7 @@
   function validate(taf,meta){
     const checks=base.validateTaf?base.validateTaf(compact(taf).replace(/=$/,'')+'=',meta):base.createEngine().validate(taf,meta);
     const errors=[...(checks.errors||[]),...semanticErrors(taf)];
+    if((String(taf).match(/=/g)||[]).length!==1||!String(taf).trim().endsWith('='))errors.push('TAF wymaga dokładnie jednego znaku = na końcu.');
     return {...checks,ok:errors.length===0,errors};
   }
   function generate(inner,input){
