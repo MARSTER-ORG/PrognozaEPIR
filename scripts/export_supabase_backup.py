@@ -94,29 +94,46 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def export_table(table: str, expected: int) -> dict[str, object]:
+def export_table(table: str, expected: int, max_id: str | None) -> dict[str, object]:
+    """Export the fixed PK range using keyset pages, even during live ingestion."""
     path = TMP / f"{table}.jsonl"
     count = 0
-    offset = 0
+    last_id: str | None = None
+    if (max_id is None) != (expected == 0):
+        raise RuntimeError(f"{table}: inconsistent manifest boundary: count={expected}, max_id={max_id}")
     with path.open("w", encoding="utf-8", newline="\n") as out:
-        while True:
-            payload = get_json({"op": "table", "table": table, "offset": offset, "limit": PAGE_SIZE})
-            remote_count = payload.get("count")
-            if remote_count is not None and int(remote_count) != expected:
-                raise RuntimeError(f"{table}: count changed during export: manifest={expected}, page={remote_count}")
-            rows = payload.get("rows") or []
-            if not isinstance(rows, list):
-                raise RuntimeError(f"{table}: invalid rows payload")
-            for row in rows:
-                out.write(json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n")
-            count += len(rows)
-            offset += len(rows)
-            if len(rows) < PAGE_SIZE:
-                break
+        while max_id is not None:
+            params: dict[str, object] = {
+                "op": "table", "table": table, "limit": PAGE_SIZE, "max_id": max_id,
+            }
+            if last_id is not None:
+                params["after"] = last_id
+            payload = get_json(params)
+            rows = payload.get("rows")
+            if not isinstance(rows, list) or len(rows) > PAGE_SIZE:
+                raise RuntimeError(f"{table}: invalid page payload")
             if not rows:
                 break
+            for row in rows:
+                if not isinstance(row, dict) or row.get("id") is None:
+                    raise RuntimeError(f"{table}: missing primary key in backup row")
+                row_id = str(row["id"])
+                if last_id is not None:
+                    # Bigint IDs require numeric comparison; UUIDs use the
+                    # canonical text order used by PostgreSQL.
+                    previous = int(last_id) if last_id.isdecimal() else last_id
+                    current = int(row_id) if row_id.isdecimal() else row_id
+                    if current <= previous:
+                        raise RuntimeError(f"{table}: non-increasing or duplicate primary key {row_id}")
+                out.write(json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n")
+                last_id = row_id
+                count += 1
+                if count > expected:
+                    raise RuntimeError(f"{table}: exported more rows than manifest ({expected})")
+            if len(rows) < PAGE_SIZE:
+                break
     if count != expected:
-        raise RuntimeError(f"{table}: incomplete export: expected={expected}, exported={count}")
+        raise RuntimeError(f"{table}: incomplete bounded export: expected={expected}, exported={count}")
     return {
         "rows": count,
         "bytes": path.stat().st_size,
@@ -148,6 +165,9 @@ def main() -> int:
 
     remote_manifest = get_json({"op": "manifest"})
     expected_raw = remote_manifest.get("tables") or {}
+    max_ids_raw = remote_manifest.get("max_ids")
+    if not isinstance(max_ids_raw, dict) or any(table not in max_ids_raw for table in TABLES):
+        raise RuntimeError("backup-export must provide max_ids for bounded, consistent pagination")
     expected = {table: int(expected_raw.get(table) or 0) for table in TABLES}
 
     schema_payload = get_json({"op": "schema"})
@@ -165,7 +185,8 @@ def main() -> int:
     }
     table_meta: dict[str, object] = {}
     for table in TABLES:
-        meta = export_table(table, expected[table])
+        max_id = max_ids_raw[table]
+        meta = export_table(table, expected[table], None if max_id is None else str(max_id))
         table_meta[table] = meta
         files[str(meta["file"])] = {
             "bytes": meta["bytes"],
@@ -179,6 +200,7 @@ def main() -> int:
         "timezone": "UTC",
         "format": "JSONL per table + schema.json",
         "tables": table_meta,
+        "max_ids": max_ids_raw,
         "files": files,
         "restore_note": "Schema metadata plus complete logical rows for the whitelisted public application tables. Git history stores each daily revision.",
     }
