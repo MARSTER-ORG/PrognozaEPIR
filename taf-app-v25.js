@@ -123,12 +123,12 @@
     const [data,rows]=await Promise.all([loadArchive(),modelRows(period)]);if(rows.length<8)throw Error(`Niepełny okres modeli: ${rows.length} h`);
     const anchorObservation=newestAtOrBefore([data.observation,...(data.history||[])],period.issue);data.anchorObservation=anchorObservation;data.issueTime=period.issue;
     const api=window.PrognozaEPIRTAFEngine;if(!api?.createEngine||api.ENGINE_VERSION!=='2.4.0'||api.QUALITY_VERSION!==APP_ENGINE_VERSION)throw Error(`TAF Engine ${APP_ENGINE_VERSION} nie został załadowany`);if(api.ready)await api.ready();const engine=api.createEngine({config:{station:'EPIR'}});
-    const result=engine.generate({station:'EPIR',issue:period.issue,start:period.start,end:period.end,rows,observation:anchorObservation,observations:data.history,msaFt:msaFt(),rowsAlreadyAnchored:false});
     lastTafMeta={issue:period.issue,start:period.start,end:period.end,msaFt:msaFt()};
     lastObservation=rawOf(anchorObservation);
+    const result=engine.generate({station:'EPIR',issue:period.issue,start:period.start,end:period.end,rows,observation:anchorObservation,observations:data.history,msaFt:msaFt(),rowsAlreadyAnchored:false});
     render(result,data,rows);return result;
   }
-  async function guardedGenerate(){try{return await generate();}catch(e){console.error(`[TAF Engine ${APP_ENGINE_VERSION}]`,e);$('badge').textContent=`TAF ENGINE ${APP_ENGINE_VERSION} · BŁĄD`;$('badge').className='badge bad';$('st').textContent=e.message;$('taf').textContent='TAF NIE ZOSTAŁ ZAAKCEPTOWANY: '+e.message;renderChecks({checks:e.validation||{ok:false,instructionLocked:true,periodHours:null,noProb40:true,noVV:true,max5:true,warnings:[]}});return null;}}
+  async function guardedGenerate(){try{return await generate();}catch(e){console.error(`[TAF Engine ${APP_ENGINE_VERSION}]`,e);if(e?.draftResult&&lastTafMeta){activeResult=e.draftResult;const b=$('gemini'),o=$('geminiResult');if(b)b.disabled=false;if(o)o.textContent='Projekt nie przeszedł walidacji. Możesz użyć Gemini do diagnostyki, ale jego sugestia wymaga ponownej weryfikacji.';}$('badge').textContent=`TAF ENGINE ${APP_ENGINE_VERSION} · BŁĄD`;$('badge').className='badge bad';$('st').textContent=e.message;$('taf').textContent='TAF NIE ZOSTAŁ ZAAKCEPTOWANY: '+e.message;renderChecks({checks:e.validation||{ok:false,instructionLocked:true,periodHours:null,noProb40:true,noVV:true,max5:true,warnings:[]}});return null;}}
   async function copyTaf(){const text=activeResult?.taf||'';if(!text)return;try{await navigator.clipboard.writeText(text);$('copy').textContent='Skopiowano';setTimeout(()=>$('copy').textContent='Kopiuj TAF',1200);}catch(_){}}
   async function analyzeWithGemini(){
     const output=$('geminiResult'),button=$('gemini');
