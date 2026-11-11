@@ -2,7 +2,7 @@
 const PROJECT_ORIGIN='https://marster-org.github.io';
 const LIMIT_WINDOW_MS=30*60*1000, MAX_CALLS=3;
 const rates=new Map<string,{count:number,at:number}>();
-const MODEL='gemini-2.5-flash-lite';
+const MODEL='gemini-3.5-flash-lite';
 const schema={
   type:'OBJECT',
   properties:{
@@ -64,10 +64,17 @@ Deno.serve(async(req:Request)=>{
         headers:{'content-type':'application/json','x-goog-api-key':key},
         body:JSON.stringify({
           contents:[{parts:[{text:prompt}]}],
-          generationConfig:{temperature:0.1,maxOutputTokens:800,responseMimeType:'application/json',responseSchema:schema}
+          generationConfig:{temperature:0.1,maxOutputTokens:1800,responseMimeType:'application/json',responseSchema:schema}
         })
       });
-      if(!response.ok)return reply(req,{ok:false,error:response.status===429?'gemini_quota_exceeded':'gemini_unavailable'},response.status===429?429:502);
+      if(!response.ok){
+        // Provider status/reason are safe diagnostic enums; never return API keys or raw provider messages.
+        const payload=await response.json().catch(()=>({}));
+        const rawReason=String(payload?.error?.status||'UNKNOWN').slice(0,50);
+        const providerReason=/^[A-Z_]+$/.test(rawReason)?rawReason:'UNKNOWN';
+        const error=response.status===429?'gemini_quota_exceeded':'gemini_unavailable';
+        return reply(req,{ok:false,error,providerHttpStatus:response.status,providerReason},response.status===429?429:502);
+      }
       const json=await response.json(),raw=json?.candidates?.[0]?.content?.parts?.map((p:{text?:string})=>p.text||'').join('')||'';
       const ai=JSON.parse(raw);
       if(typeof ai.summary!=='string'||!Array.isArray(ai.recommendedGroups)||typeof ai.candidateTaf!=='string')
