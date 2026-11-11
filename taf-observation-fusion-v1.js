@@ -128,8 +128,8 @@
       const weight=clamp(strength,0,.78);
       let corrected=rawVis*(1-weight)+anchorVis*weight;
       // Regional corroboration only delays an unsupported jump to 9999 for
-      // the first two hours; it never overwrites EPIR with neighbor values.
-      if(latest.vis<5000&&persistent&&!ctx.improving&&lowNeighbors>=2&&lead<=2.25)
+      // the first three forecast hours; it never overwrites EPIR with neighbor values.
+      if(latest.vis<5000&&persistent&&!ctx.improving&&lowNeighbors>=2&&lead<=3.25)
         corrected=Math.min(corrected,4900);
       corrected=clamp(corrected,0,10000);
       z.VIS=Math.round(corrected);
