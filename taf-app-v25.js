@@ -142,7 +142,18 @@
     const ai=$('aiMiniStatus');if(ai)ai.textContent='AI: analiza...';
     activeResult=result;window.PrognozaEPIRTAFCurrentGenerated=result.taf;window.PrognozaEPIRTAFResultV24=result;
     $('taf').textContent=result.taf;renderArchive(data);
-    $('reasons').innerHTML=result.diagnostics.reasons.length?'<ul>'+result.diagnostics.reasons.map(x=>`<li>${esc(x)}</li>`).join('')+'</ul>':'Brak progów wymagających grup zmian.';
+    const visNowcast=result.hourly?.[0]?.sourceRow?.tafVisNowcast||null;
+    const regionalHour=result.hourly?.[0]?.sourceRow?.tafNeighborEvidence||null;
+    const why=[...(result.diagnostics?.reasons||[])];
+    if(visNowcast)why.push('Uzgodnienie widzialności EPIR: METAR/SPECI '+Math.round(visNowcast.observationVisM)+
+      ' m, wyjście modeli '+Math.round(visNowcast.modelVisM)+' m, prognoza po krótkoterminowej korekcie '+
+      Math.round(visNowcast.correctedVisM)+' m (waga obserwacji '+Math.round(visNowcast.weight*100)+
+      '%). Źródło: lokalny trend; EPPW/EPKS/EPBY pełnią funkcję potwierdzającą, nie zastępują EPIR.');
+    if(regionalHour)why.push('Analiza sąsiadów: '+regionalHour.lowStations+
+      '/3 lotniska z regionalnym sygnałem ograniczonej widzialności; uwzględniono wyłącznie TAF ważne '+
+      'w prognozowanej godzinie i wydane do chwili opracowania EPIR.');
+    $('reasons').innerHTML=why.length?'<ul>'+why.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>':
+      'Brak progów wymagających grup zmian.';
     renderChecks(result);renderHours(result);renderNeighbors(data);
     const modelCount=Math.max(0,...result.hourly.map(h=>h.sourceRow?.mv?.length||0)),fogOk=rows.some(r=>num(r.fogOperationalScore)||num(r.fgOperationalScore)),neighborStations=[...new Set(rows.map(r=>r.neighborObsStation).filter(Boolean))],learningOk=!!result.learning?.active;
     const firstNowcast=result.hourly[0]?.sourceRow?.tafVisNowcast||null;
