@@ -170,11 +170,11 @@
     const api=window.PrognozaEPIRTAFEngine;if(!api?.createEngine||api.ENGINE_VERSION!=='2.4.0'||api.QUALITY_VERSION!==APP_ENGINE_VERSION)throw Error(`TAF Engine ${APP_ENGINE_VERSION} nie został załadowany`);if(api.ready)await api.ready();const engine=api.createEngine({config:{station:'EPIR'}});
     lastTafMeta={issue:period.issue,start:period.start,end:period.end,msaFt:msaFt()};
     lastObservation=rawOf(anchorObservation);
+    lastNeighborContext={issue:period.issue,start:period.start,end:period.end,asOf,
+      observations:safeHistory,evidence:data.neighborEvidence};
     const result=engine.generate({station:'EPIR',issue:period.issue,start:period.start,end:period.end,
       rows,observation:anchorObservation,observations:safeHistory,neighborEvidence:data.neighborEvidence,
       msaFt:msaFt(),rowsAlreadyAnchored:false});
-    lastNeighborContext={issue:period.issue,start:period.start,end:period.end,asOf,
-      evidence:data.neighborEvidence};
     render(result,data,rows);return result;
   }
   async function guardedGenerate(){
@@ -234,8 +234,39 @@
           nwpMemberCount:Array.isArray(src.mv)?src.mv.length:0
         };
       });
+      // Only currently applicable station TAFs issued before the selected EPIR
+      // cycle can be shared. A neighbor forecast is corroborating context, not
+      // an instruction to copy its weather into EPIR.
+      const ctx=lastNeighborContext||{},asOf=ctx.asOf;
+      const adapter=window.PrognozaEPIRTAFObservationFusion;
+      const neighborTafs=[],neighborObservations=[];
+      for(const id of NEIGHBORS){
+        const sources=ctx.evidence?.[id]||{},tafs=[];
+        for(const candidate of sources.tafs||[]){
+          const info=Validity.validity(candidate,asOf);
+          if(info&&info.station===id&&info.issue<=asOf&&info.start<=ctx.start&&info.end>ctx.start)
+            tafs.push(info);
+        }
+        tafs.sort((a,b)=>b.issue-a.issue);
+        if(tafs[0])neighborTafs.push({station:id,issuedAt:new Date(tafs[0].issue).toISOString(),
+          validFrom:new Date(tafs[0].start).toISOString(),validTo:new Date(tafs[0].end).toISOString(),
+          taf:tafs[0].raw.slice(0,1000)});
+        const observations=(sources.observations||[]).map(x=>adapter?.parseMetar?.(x))
+          .filter(x=>x&&x.station===id&&x.t<=asOf&&asOf-x.t<=3*HOUR)
+          .sort((a,b)=>b.t-a.t);
+        if(observations[0])neighborObservations.push({station:id,
+          time:new Date(observations[0].t).toISOString(),visibilityM:observations[0].vis,
+          weather:observations[0].fg?'FG':observations[0].br?'BR':observations[0].auto?'AUTO_UNKNOWN':'NONE'});
+      }
+      const epirRecent=(ctx.observations||[]).map(x=>adapter?.parseMetar?.(x))
+        .filter(x=>x&&x.station==='EPIR'&&x.t<=asOf&&asOf-x.t<=3*HOUR)
+        .sort((a,b)=>b.t-a.t).slice(0,9)
+        .map(x=>({time:new Date(x.t).toISOString(),visibilityM:x.vis,
+          weather:x.fg?'FG':x.br?'BR':x.auto?'AUTO_UNKNOWN':'NONE',
+          temperatureC:x.T,dewPointC:x.Td}));
       const response=await api.geminiAnalyze({
         taf:activeResult.taf,hours,observation:lastObservation,
+        epirRecent,neighborTafs,neighborObservations,
         fogMode:fogMode(),draftRejected:!activeResult.checks?.ok
       });
       const analysis=response.analysis||{};
