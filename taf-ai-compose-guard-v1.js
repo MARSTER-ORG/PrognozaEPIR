@@ -63,7 +63,7 @@
     const vis=v?(v[1]==='9999'?10000:+v[1]):/\bCAVOK\b/.test(payload)?10000:null;
     const cloud=(payload.match(/\b(BKN|OVC)(\d{3})\b/)||[]);
     return {vis,cloud:cloud.length?{kind:cloud[1],ft:+cloud[2]*100}:null,
-      fog:/\bFZ?FG\b/.test(payload)?'FG':/\bBR\b/.test(payload)?'BR':'',
+      fog:/\b(?:FG|FZFG)\b/.test(payload)?'FG':/\bBR\b/.test(payload)?'BR':'',
       frozen:/\bFZFG\b/.test(payload),wind:(payload.match(/\b(?:VRB|\d{3})(?:\d{2}|P99)(?:G(?:\d{2}|P99))?KT\b/)||[])[0]||null
     };
   }
@@ -96,6 +96,10 @@
         if(group.kind==='PROB30'&&!(risk>=.30&&risk<.50))return false;
         if(group.kind==='BECMG'&&risk<.50)return false;
         if(info.frozen)return false; // no independent freezing-fog evidence is supplied in 12h package
+      }
+      if(/\b(?:RA|DZ|SN|SHRA|SHSN|TS|TSRA|FZRA|FZDZ)\b/.test(group.payload)){
+        const wx=String(h?.tafDisplay?.weather||'');
+        if(!/\b(?:RA|DZ|SN|SHRA|SHSN|TS|TSRA|FZRA|FZDZ)\b/.test(wx))return false;
       }
       if(info.wind){
         if(String(h?.tafDisplay?.wind||'')!==info.wind)return false;
