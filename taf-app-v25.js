@@ -263,7 +263,7 @@
           visibilityCapM:num(src.tafVisNowcast?.visibilityCapM)?+src.tafVisNowcast.visibilityCapM:null,
           unsupportedClearing:src.tafVisNowcast?.unsupportedClearing===true,
           brProbabilityPct:Math.round(100*(Number(h.prob?.br)||0)),
-          nwpMembers:(Array.isArray(src.mv)?src.mv:[]).slice(0,15).map(m=>({
+          nwpMembers:(Array.isArray(src.mv)?src.mv:[]).slice(0,8).map(m=>({
             id:String(m.id||m.model||'').slice(0,35),visibilityM:num(m.vis)?+m.vis:null,
             windDirectionDeg:num(m.wd)?+m.wd:null,windSpeed:num(m.ws)?+m.ws:null,
             weight:num(m.w)?+m.w:null}))
