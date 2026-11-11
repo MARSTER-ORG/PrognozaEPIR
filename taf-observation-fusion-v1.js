@@ -124,7 +124,7 @@
       const anchorVis=clamp(.8*latest.vis+.2*(ctx?.median??latest.vis),0,10000);
       const persistent=Boolean(ctx?.persistent);
       // Lead-time decay; never freeze a past METAR as a 12-hour forecast.
-      const strength=(persistent?.88:.66)*Math.exp(-lead/4);
+      const strength=(persistent?0.88:0.66)*Math.exp(-lead/4);
       const weight=clamp(strength,0,.78);
       let corrected=rawVis*(1-weight)+anchorVis*weight;
       // Regional corroboration only delays an unsupported jump to 9999 for
