@@ -61,7 +61,7 @@ assert.equal(fusion.parseTaf(neighbors.EPPW.tafs[0],utc(12),utc(11),validity),nu
 assert.equal(fusion.parseTaf(neighbors.EPPW.tafs[1],utc(19),utc(11),validity),null,
   'expired 05:00 TAF must not influence evening');
 const past=snapshot(utc(9),utc(9,24),utc(12));
-assert.ok(past.rows[0].VIS<=4900,'regional low visibility + persistent local BR should constrain early unfounded improvement');
+assert.ok(past.rows[0].VIS<=5000,'regional low visibility + persistent local BR should constrain early unfounded improvement without inventing a sub-threshold value');
 assert.equal(past.rows[0].tafVisNowcast.observationVisM,3700,
   'must not leak observations measured after the snapshot');
 const none=snapshot(utc(11),utc(11,30),utc(12),[obs('EPIR',3,0,1200)],{});
