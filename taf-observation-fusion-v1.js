@@ -131,10 +131,13 @@
       // No permanent 12h anchoring: this constraint lasts at most 3.5h.
       const currentLow=cutoff-latest.t<=2*H&&latest.vis<5000&&
         (latest.br||latest.fg||latest.saturated||persistent);
-      const unsupportedClearing=currentLow&&!ctx.improving&&lead<=3.5&&
+      const unsupportedClearing=currentLow&&!ctx.improving&&lead<=5.5&&
         rawVis-latest.vis>=1800;
+      // The anchor transitions toward NWP gradually instead of jumping
+      // from 4900 to 8000 m in a single hourly forecast interval.
+      const initialCap=Math.min(4900,latest.vis+Math.max(0,lead)*240);
       const visCap=unsupportedClearing?
-        clamp(latest.vis+Math.max(0,lead)*240,latest.vis,4900):null;
+        clamp(initialCap+Math.max(0,lead-3.5)*1500,latest.vis,10000):null;
       if(visCap!==null)corrected=Math.min(corrected,visCap);
       if(latest.vis<5000&&persistent&&!ctx.improving&&lowNeighbors>=2&&lead<=3.25)
         corrected=Math.min(corrected,4900);
