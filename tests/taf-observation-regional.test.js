@@ -12,6 +12,7 @@ const obs=(id,h,m,vis,wx='BR',temperature='02/02')=>({
   visibility_m:vis
 });
 const local=[
+  obs('EPIR',8,0,4500),obs('EPIR',8,30,3700),
   obs('EPIR',9,0,3700),
   obs('EPIR',10,0,1200),
   obs('EPIR',10,30,1800),
