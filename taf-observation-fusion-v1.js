@@ -56,7 +56,7 @@
     const low=recent.filter(o=>o.vis<5000),mist=low.filter(o=>o.br||o.fg||o.saturated);
     return {n:recent.length,low:low.length,persistent:low.length>=2&&low.length/recent.length>=.6,
       wet:mist.length>=2,median:median(recent.map(o=>o.vis)),
-      improving:recent.length>=2&&local[0].vis-recent.at(-1).vis>=3000};
+      improving:recent.length>=2&&local[0].vis-recent.at(-1).vis>=1500};
   }
   function parseTaf(item,forecast,cutoff,validity){
     if(!item||!validity?.validity)return null;
@@ -124,33 +124,46 @@
       const anchorVis=clamp(.8*latest.vis+.2*(ctx?.median??latest.vis),0,10000);
       const persistent=Boolean(ctx?.persistent);
       // Lead-time decay; never freeze a past METAR as a 12-hour forecast.
-      const strength=(persistent?0.88:0.66)*Math.exp(-lead/4);
-      const weight=clamp(strength,0,.78);
+      const strength=(persistent ? .88 : ((latest.br||latest.fg) ? .78 : .64))*Math.exp(-lead/5);
+      const weight=clamp(strength,0,.84);
       let corrected=rawVis*(1-weight)+anchorVis*weight;
-      // Regional corroboration only delays an unsupported jump to 9999 for
-      // the first three forecast hours; it never overwrites EPIR with neighbor values.
+      // Recent EPIR observations constrain an unsupported jump to 9-10 km.
+      // No permanent 12h anchoring: this constraint lasts at most 3.5h.
+      const currentLow=cutoff-latest.t<=2*H&&latest.vis<5000&&
+        (latest.br||latest.fg||latest.saturated||persistent);
+      const unsupportedClearing=currentLow&&!ctx.improving&&lead<=5.5&&
+        rawVis-latest.vis>=1800;
+      // The anchor transitions toward NWP gradually instead of jumping
+      // from 4900 to 8000 m in a single hourly forecast interval.
+      const initialCap=Math.min(4900,latest.vis+Math.max(0,lead)*240);
+      const visCap=unsupportedClearing?
+        clamp(initialCap+Math.max(0,lead-3.5)*1500,latest.vis,10000):null;
+      if(visCap!==null)corrected=Math.min(corrected,visCap);
       if(latest.vis<5000&&persistent&&!ctx.improving&&lowNeighbors>=2&&lead<=3.25)
-        corrected=Math.min(corrected,5000);
+        corrected=Math.min(corrected,4900);
       corrected=clamp(corrected,0,10000);
-      z.VIS=Math.round(corrected);
+            z.VIS=Math.round(corrected);
       // Observed BR/FG can support near-term nowcasting but not invent a new
       // 12-hour event. AUTO without reported WX is unknown, not negative.
       const wet=latest.saturated||ctx?.wet;
-      if(wet&&lead<=2.5){
-        const support=Math.max(0,.72*Math.exp(-lead/4));
-        if(z.VIS>=1000&&z.VIS<=5000&&(latest.br||(!latest.fg&&latest.auto&&latest.vis<5000&&persistent))){
+      if(wet&&lead<=3.5&&cutoff-latest.t<=2*H){
+        const support=Math.max(0,(persistent ? .78 : .68)*Math.exp(-lead/10));
+        if(z.VIS>=1000&&z.VIS<5000&&(latest.br||(!latest.fg&&latest.auto&&latest.vis<5000&&persistent))){
           z.brRisk=Math.max(number(z.brRisk)??0,support);
-          if(number(z.brOperationalScore)!==null)
-            z.brOperationalScore=Math.max(+z.brOperationalScore,Math.round(support*100));
+          // TAF consumes operational scores when available, even if they are 0.
+          if(latest.br&&support>=.5){
+            z.brOperationalScore=Math.max(number(z.brOperationalScore)??0,80);
+            z.brAltVisM=Math.max(1000,Math.min(4900,z.VIS));
+          }
         }
-        if(z.VIS<1000&&latest.fg&&persistent){
+        if(z.VIS<1000&&latest.fg&&persistent)
           z.fgRisk=Math.max(number(z.fgRisk)??0,support);
-        }
       }
-      z.tafVisNowcast={localStation:'EPIR',observationTime:latest.t,observationVisM:latest.vis,
+            z.tafVisNowcast={localStation:'EPIR',observationTime:latest.t,observationVisM:latest.vis,
         modelVisM:rawVis,correctedVisM:z.VIS,weight:Number(weight.toFixed(3)),
         persistentLowVisibility:persistent,regionalLowVisibilityStations:lowNeighbors,
         observationCount:ctx?.n??0,leadHours:Number(lead.toFixed(2)),
+        unsupportedClearing,visibilityCapM:visCap,observedClearing:!!ctx?.improving,
         forecastBased:true,derivedWeather:latest.br?'BR':latest.fg?'FG':'UNREPORTED'};
       return z;
     });
