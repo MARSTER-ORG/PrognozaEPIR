@@ -202,7 +202,11 @@
           relativeHumidityPct:num(h.RH)?+h.RH:null,
           fogEngineScore:num(src.fgOperationalScore)?+src.fgOperationalScore:null,
           nwpLowVisibilityShare:num(lowShare)?+lowShare:null,
-          precipitationProbability:Math.round(100*(Number(h.prob?.precip)||0))
+          precipitationProbability:Math.round(100*(Number(h.prob?.precip)||0)),
+          lowVisibilityProbabilityPct:Math.round(100*(Number(h.prob?.lowVis)||0)),
+          fogAlternativeVisibilityM:num(h.prob?.alt?.fgM)?+h.prob.alt.fgM:
+            num(src.fogAltVisM)?+src.fogAltVisM:null,
+          nwpMemberCount:Array.isArray(src.mv)?src.mv.length:0
         };
       });
       const response=await api.geminiAnalyze({
@@ -211,18 +215,44 @@
       });
       const analysis=response.analysis||{};
       const candidate=String(analysis.candidateTaf||'').replace(/\s+/g,' ').trim();
-      const check=candidate?window.PrognozaEPIRTAFEngine?.validateTaf?.(candidate,lastTafMeta):null;
-      // Advisory only: never silently replace the factual TAF with generated prose.
-      // Saving the review allows future QA without filling the mobile screen with a card.
+      const validator=window.PrognozaEPIRTAFEngine?.validateTaf?.bind(window.PrognozaEPIRTAFEngine);
+      const check=candidate&&validator?validator(candidate,lastTafMeta):null;
+      const gate=window.PrognozaEPIRTAFCoauthorGate;
+      const baseline=activeResult.taf;
+      const verdict=candidate&&activeResult?.checks?.ok===true&&gate?.evaluate?
+        gate.evaluate({baseTaf:baseline,candidateTaf:candidate,
+          hourly:activeResult.hourly,meta:lastTafMeta,validate:validator}):
+        {accepted:false,reason:activeResult?.checks?.ok?'no_candidate':'baseline_rejected'};
+      const adopted=verdict?.accepted===true;
+      if(adopted){
+        const evidence='Gemini współułożył grupy zmian. Zmiana przyjęta dopiero po kontroli instrukcji TAF i zgodności z prognozą godzinową.';
+        activeResult={...activeResult,taf:verdict.taf,groups:verdict.groups,
+          checks:{...activeResult.checks,...verdict.checks,instructionLocked:true},
+          diagnostics:{...activeResult.diagnostics,
+            reasons:[...(activeResult.diagnostics?.reasons||[]),evidence]},
+          composition:{source:'gemini-assisted',baselineTaf:baseline,
+            model:String(response.model||''),gate:'meteorology+instruction'}};
+        window.PrognozaEPIRTAFCurrentGenerated=verdict.taf;
+        window.PrognozaEPIRTAFResultV24=activeResult;
+        $('taf').textContent=verdict.taf;
+        renderChecks(activeResult);
+        $('reasons').innerHTML='<ul>'+activeResult.diagnostics.reasons
+          .map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>';
+        $('badge').textContent='TAF ENGINE '+APP_ENGINE_VERSION+' + GEMINI · ZGODNY';
+        $('badge').className='badge ok';
+      }
       window.PrognozaEPIRTAFLastAIReview=Object.freeze({
-        model:String(response.model||''),reviewedTaf:activeResult.taf,
+        model:String(response.model||''),reviewedTaf:baseline,
         summary:String(analysis.summary||''),riskAssessment:String(analysis.riskAssessment||''),
         recommendedGroups:Array.isArray(analysis.recommendedGroups)?analysis.recommendedGroups.slice(0,5):[],
         candidateTaf:candidate,candidateFormallyValid:check?.ok===true,
-        candidateErrors:check?.errors||[],advisoryOnly:true
+        candidateErrors:check?.errors||[],
+        acceptedIntoDraft:adopted,groundingReason:String(verdict?.reason||'not_evaluated'),
+        outputTaf:activeResult.taf,coauthorInstruction:'Instrukcja TAF ed. A 11.2023'
       });
-      if(status)status.textContent=candidate&&check?.ok?'AI: alternatywa do oceny':
-        candidate?'AI: propozycja odrzucona':'AI: sprawdzono';
+      if(status)status.textContent=adopted?'AI: współułożył grupy TAF':
+        candidate?(check?.ok?'AI: propozycja bez potwierdzenia w danych':'AI: propozycja odrzucona'):
+        'AI: zweryfikowano, bez zmian';
     }catch(e){
       window.PrognozaEPIRTAFLastAIReview=null;
       const noQuota=['rate_limited','gemini_quota_exceeded'].includes(e?.message);
