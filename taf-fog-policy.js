@@ -8,6 +8,11 @@
   function installTaf244Ui(win,policy){
     try{
       if(!/\/taf\.html$/i.test(win.location?.pathname||''))return;
+      // Do not start the unrelated NEXT 2.4.4 diagnostic table or its
+      // "waiting for fog" loop when TAF uses the selected LEGACY engine.
+      let selected='legacy';
+      try{selected=win.localStorage.getItem('prognozaepir-fog-engine-mode')==='vnext'?'vnext':'legacy';}catch(_){}
+      if(selected!=='vnext')return;
       const H=3600000,ACTIVE=60,finite=Number.isFinite;
       const num=v=>v!==null&&v!==undefined&&v!==''&&finite(Number(v))?Number(v):null;
       const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

@@ -9,8 +9,9 @@
   const num=v=>v!==null&&v!==undefined&&v!==''&&finite(Number(v));
   const pad=(n,w=2)=>String(Math.max(0,Math.round(n))).padStart(w,'0');
   const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]));
-  const Policy=window.PrognozaEPIRTAFFogPolicy;
+  const Policy=window.PrognozaEPIRTAFFogPolicy,Validity=window.PrognozaEPIRTAFValidity;
   let activeResult=null,lastTafMeta=null,lastObservation='',generating=false;
+  if(!Validity?.current)throw Error('TAF validity filter nie został załadowany');
 
   if(!Policy)throw new Error('TAF Fog Policy nie został załadowany');
 
@@ -40,8 +41,15 @@
     const A=window.PrognozaEPIRMessageArchive;if(!A)throw Error('MessageArchive niedostępne');
     const [latest,recent,aviation,...neighbor]=await Promise.all([settle(A.latest(true)),settle(A.recent(true)),settle(A.getLatest?.('AVIATION','EPIR',true)),...NEIGHBORS.map(id=>settle(A.getLatest?.('TAF',id,true)))]);
     const history=observationRows(recent),observation=newest([aviation,latest?.aviation,latest?.metar,...history]),neighborTafs={};
-    NEIGHBORS.forEach((id,i)=>{neighborTafs[id]=neighbor[i]||latest?.taf_by_station?.[id]||null;});
-    return {latest:latest||{},recent,history,observation,currentTaf:latest?.taf_by_station?.EPIR||latest?.taf||null,neighborTafs};
+    const now=Date.now();
+    const epirCandidates=[latest?.taf_by_station?.EPIR,latest?.taf].filter(Boolean);
+    const currentTaf=epirCandidates.find(item=>Validity.current(item,now,'EPIR'))||null;
+    NEIGHBORS.forEach((id,i)=>{
+      neighborTafs[id]=[neighbor[i],latest?.taf_by_station?.[id]]
+        .find(item=>Validity.current(item,now,id))||null;
+    });
+    return {latest:latest||{},recent,history,observation,currentTaf,neighborTafs,
+      expiredTafPresent:!currentTaf&&epirCandidates.some(item=>rawOf(item))};
   }
 
   async function waitForConsensus(){const frame=$('engine'),w=frame?.contentWindow;if(!w)throw Error('Brak silnika modeli');const deadline=Date.now()+30000;while(Date.now()<deadline){try{const n=w.eval('typeof consensus!=="undefined"?consensus.length:0');if(n>10)return w;}catch(_){}await new Promise(r=>setTimeout(r,300));}throw Error('Silnik modeli nie udostępnił konsensusu w czasie 30 s');}
@@ -101,7 +109,8 @@
   function renderHours(result){const host=$('hours');if(!host)return;host.innerHTML=result.hourly.map(h=>{const d=h.tafDisplay||{},p=h.prob||{},ceil=num(d.ceilingM)?Math.round(+d.ceilingM)+' m':'—',wx=d.weather||'—';return `<tr><td>${fmtUtc(h.t,false)}</td><td>${esc(d.wind||'—')}</td><td>${esc(d.visibility||'—')}</td><td>${esc(wx)}</td><td>${cloudMeters(d)}</td><td>${ceil}</td><td>${Math.round((p.precip||0)*100)}% / TS ${Math.round((p.ts||0)*100)}%</td><td>FG ${Math.round((p.fg||0)*100)}% · BR ${Math.round((p.br||0)*100)}% · VIS&lt;5 km ${Math.round((p.lowVis||0)*100)}%</td></tr>`;}).join('');}
 
   function renderArchive(data){
-    $('officialTaf').textContent=rawOf(data?.currentTaf)||'Brak aktualnego TAF w archiwum';
+    $('officialTaf').textContent=rawOf(data?.currentTaf)||
+      (data?.expiredTafPresent?'Brak aktualnego TAF — ostatni archiwalny utracił ważność.':'Brak aktualnego TAF w archiwum');
     $('metar').textContent=rawOf(data?.observation)||'Brak METAR/SPECI';
     const anchor=data?.anchorObservation,observation=data?.observation;
     $('metarMeta').textContent=observation?
@@ -112,10 +121,8 @@
   }
 
   function render(result,data,rows){
-    const geminiState=$('geminiState'),geminiOutput=$('geminiResult');
     const copyButton=$('copy');if(copyButton)copyButton.disabled=true;
-    if(geminiState)geminiState.textContent='Gemini: automatyczne sprawdzanie prognozy przed ostatecznym udostępnieniem...';
-    if(geminiOutput)geminiOutput.textContent='Oczekiwanie na analizę Gemini 3.5 Flash-Lite.';
+    const ai=$('aiMiniStatus');if(ai)ai.textContent='AI: analiza...';
     activeResult=result;window.PrognozaEPIRTAFCurrentGenerated=result.taf;window.PrognozaEPIRTAFResultV24=result;
     $('taf').textContent=result.taf;renderArchive(data);
     $('reasons').innerHTML=result.diagnostics.reasons.length?'<ul>'+result.diagnostics.reasons.map(x=>`<li>${esc(x)}</li>`).join('')+'</ul>':'Brak progów wymagających grup zmian.';
@@ -133,7 +140,7 @@
     activeResult=null;lastTafMeta=null;
     $('copy').disabled=true;
     $('badge').textContent=`TAF ENGINE ${APP_ENGINE_VERSION} · LICZENIE`;$('badge').className='badge';$('st').textContent=`archiwum + modele + FOG ${fogLabel} + profil chmur`;$('taf').textContent=`Pobieranie danych i generowanie TAF · aktywny Fog Engine: ${fogLabel}…`;
-    const ai=$('geminiState');if(ai)ai.textContent='Gemini: oczekiwanie na wynik głównego silnika';
+    const ai=$('aiMiniStatus');if(ai)ai.textContent='AI: oczekiwanie na projekt';
     const [data,rows]=await Promise.all([loadArchive(),modelRows(period)]);
     const anchorObservation=newestAtOrBefore([data.observation,...(data.history||[])],period.issue);
     data.anchorObservation=anchorObservation;data.issueTime=period.issue;
@@ -157,10 +164,9 @@
         activeResult={...e.draftResult,checks:{...(e.draftResult.checks||{}),ok:false,
           errors:[...(e?.validation?.errors||[])]}};
         renderHours(activeResult);
-        const ai=$('geminiState');if(ai)ai.textContent='Gemini: automatyczna diagnostyka projektu odrzuconego przez instrukcję';
-        const out=$('geminiResult');if(out)out.textContent='Trwa automatyczne sprawdzanie przyczyny niespójności.';
+        const ai=$('aiMiniStatus');if(ai)ai.textContent='AI: sprawdza odrzucony projekt';
       }else{
-        const ai=$('geminiState');if(ai)ai.textContent='Gemini: brak pełnego projektu do oceny — generator nie uzyskał wymaganych danych';
+        const ai=$('aiMiniStatus');if(ai)ai.textContent='AI: brak projektu';
       }
       $('badge').textContent='TAF ENGINE '+APP_ENGINE_VERSION+' · BŁĄD';
       $('badge').className='badge bad';
@@ -180,17 +186,14 @@
   }
   async function copyTaf(){if(!activeResult?.checks?.ok){$('st').textContent='Nie można kopiować odrzuconego TAF.';return;}const text=activeResult?.taf||'';if(!text)return;try{await navigator.clipboard.writeText(text);$('copy').textContent='Skopiowano';setTimeout(()=>$('copy').textContent='Kopiuj TAF',1200);}catch(_){}}
   async function analyzeWithGemini(){
-    const output=$('geminiResult'),state=$('geminiState');
-    if(!output||!activeResult||!lastTafMeta)return;
-    if(state)state.textContent='Gemini: automatyczna analiza meteorologiczna w toku...';
-    output.textContent='Analizowanie 12 godzin prognozy i kontroli Instrukcji 11.2023. Wynik TAF nie będzie zmieniony bez walidacji.';
+    if(!activeResult||!lastTafMeta)return;
+    const status=$('aiMiniStatus');if(status)status.textContent='AI: analizuje...';
     try{
       const api=window.PrognozaEPIRMessageArchive;
       if(typeof api?.geminiAnalyze!=='function')throw Error('Funkcja analizy AI jest niedostępna');
       const share=window.PrognozaEPIRTAFEngine?.helpers?.modelLowVisibilityShare;
       const hours=(activeResult.hourly||[]).slice(0,12).map(h=>{
-        const src=h.sourceRow||{};
-        const lowShare=typeof share==='function'?share(src):null;
+        const src=h.sourceRow||{},lowShare=typeof share==='function'?share(src):null;
         return {
           utc:fmtUtc(h.t),wind:h.tafDisplay?.wind||'',visibility:h.tafDisplay?.visibility||'',
           weather:h.tafDisplay?.weather||'',clouds:h.tafDisplay?.clouds||'',
@@ -206,35 +209,25 @@
         taf:activeResult.taf,hours,observation:lastObservation,
         fogMode:fogMode(),draftRejected:!activeResult.checks?.ok
       });
-      const a=response.analysis||{},candidate=String(a.candidateTaf||'').replace(/\s+/g,' ').trim();
-      const sections=['Gemini '+String(response.model||'')+' — analiza automatyczna',
-        'Ocena: '+String(a.summary||'Brak oceny'),
-        'Ryzyko: '+String(a.riskAssessment||'Brak'),
-        'Proponowane grupy: '+(Array.isArray(a.recommendedGroups)?a.recommendedGroups.join('; '):'brak'),
-        'Niepewność: '+String(a.confidenceNote||'Nieokreślona')];
-      if(candidate){
-        const check=window.PrognozaEPIRTAFEngine?.validateTaf?.(candidate,lastTafMeta);
-        sections.push(check?.ok?
-          'Alternatywny projekt AI — kontrola składni i semantyki PASS, wymaga oceny meteorologa: '+candidate:
-          'Alternatywny projekt AI ODRZUCONY przez kontrolę TAF: '+
-            (check?.errors||['Nie przeprowadzono kontroli']).join('; '));
-      }else sections.push('Gemini nie zaproponował innej depeszy.');
-      output.textContent=sections.join('\n\n');
-      if(state)state.textContent=activeResult.checks?.ok?
-        'Gemini: analiza zakończona; główny TAF zgodny z walidacją':
-        'Gemini: analiza zakończona; TAF nadal odrzucony przez walidację';
+      const analysis=response.analysis||{};
+      const candidate=String(analysis.candidateTaf||'').replace(/\s+/g,' ').trim();
+      const check=candidate?window.PrognozaEPIRTAFEngine?.validateTaf?.(candidate,lastTafMeta):null;
+      // Advisory only: never silently replace the factual TAF with generated prose.
+      // Saving the review allows future QA without filling the mobile screen with a card.
+      window.PrognozaEPIRTAFLastAIReview=Object.freeze({
+        model:String(response.model||''),reviewedTaf:activeResult.taf,
+        summary:String(analysis.summary||''),riskAssessment:String(analysis.riskAssessment||''),
+        recommendedGroups:Array.isArray(analysis.recommendedGroups)?analysis.recommendedGroups.slice(0,5):[],
+        candidateTaf:candidate,candidateFormallyValid:check?.ok===true,
+        candidateErrors:check?.errors||[],advisoryOnly:true
+      });
+      if(status)status.textContent=candidate&&check?.ok?'AI: alternatywa do oceny':
+        candidate?'AI: propozycja odrzucona':'AI: sprawdzono';
     }catch(e){
-      const reasons={gemini_not_configured:'Brak klucza GEMINI_API_KEY w Supabase.',
-        rate_limited:'Osiągnięto limit zapytań z aplikacji.',
-        gemini_quota_exceeded:'Wyczerpano bezpłatny limit zapytań Google Gemini.',
-        gemini_unavailable:'Google Gemini jest obecnie niedostępny.',
-        analysis_failed:'Błąd analizy Gemini.',
-        invalid_taf_data:'Brak pełnego materiału meteorologicznego do analizy.'};
-      const msg=reasons[e?.message]||String(e?.message||e);
-      output.textContent='Gemini: '+msg+' Wynik generatora pozostaje bez zmian.';
-      if(state)state.textContent=activeResult.checks?.ok?
-        'Gemini: tryb awaryjny — dostępny TAF zweryfikowany przez instrukcję':
-        'Gemini: niedostępny — odrzucony TAF nie może zostać zatwierdzony';
+      window.PrognozaEPIRTAFLastAIReview=null;
+      const noQuota=['rate_limited','gemini_quota_exceeded'].includes(e?.message);
+      if(status)status.textContent=noQuota?'AI: limit API':'AI: niedostępny';
+      console.warn('[TAF Gemini advisory]',String(e?.message||e));
     }
   }
 
