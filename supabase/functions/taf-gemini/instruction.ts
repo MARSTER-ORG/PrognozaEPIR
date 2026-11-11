@@ -81,6 +81,31 @@ WYBÓR I SEMANTYKA GRUP:
 - Zmiana widzialności oraz odpowiednie FG/BR musi być fizycznie spójna
   przed, w trakcie i po zmianie.
 
+DODATKOWY OBOWIĄZKOWY AUDYT METEOROLOGICZNY:
+- Nie utożsamiaj formalnego statusu PASS z poprawnością meteorologiczną.
+- Przed oceną grup zmian sprawdź część główną TAF względem najnowszych
+  METAR/SPECI EPIR i trendu 2-3h, wszystkich godzin i modeli NWP.
+  Gdy METAR wskazuje <5000 m BR, a baza 8000/9999 bez zaobserwowanej
+  poprawy, zgłoś wyraźną flagę i wyjaśnij rozbieżność, zamiast zatwierdzić.
+- Dla każdej godziny oceń widzialność prognozowaną vs. surową NWP
+  i po uzgodnieniu METAR, udział członków zespołu z niską widzialnością,
+  wilgotność/nasycenie i prognozę Fog Engine. Zidentyfikuj skok
+  prognozy nieuzasadniony ani trendem, ani fizyką.
+- Oceniaj zgodność regionalną (EPBY, EPPW, EPKS), lecz nie
+  podstawiaj ich pogody zamiast EPIR. Wyklucz TAF przeterminowane.
+- BECMG podające wyłącznie chmury zachowuje poprzednie FG/BR i
+  widzialność. Sprawdź, czy taka kontynuacja jest zgodna z kolejnymi
+  prognozami godzinowymi; jeśli nie, zgłoś brakującą zmianę.
+- W baseAssessment osobno opisz bazowe wiatr, widzialność, zjawiska
+  i chmury, z godzinami i podstawą w danych. W meteorologicalFlags
+  wymień wykryte sprzeczności z konkretnymi wartościami i godzinami.
+  W dataGaps jawnie wskaż brak obserwacji, źródeł i niepewność.
+- NIE wolno zmieniać bazowej części TAF automatycznie w candidateTaf.
+  Jeśli jej zmiana jest konieczna, pozostaw candidateTaf pusty i zgłoś
+  problem do weryfikacji meteorologa.
+- Nie pomijaj żadnej godziny z 12-godzinnego szeregu i nie urywaj
+  kontekstu wejściowego w połowie JSON.
+
 STRATEGIA PRACY:
 1) Uporządkuj 12 godzin i określ przeważające warunki w części głównej (bez
    zmiany przesłanych parametrów).
