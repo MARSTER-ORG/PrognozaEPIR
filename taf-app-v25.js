@@ -10,7 +10,7 @@
   const pad=(n,w=2)=>String(Math.max(0,Math.round(n))).padStart(w,'0');
   const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]));
   const Policy=window.PrognozaEPIRTAFFogPolicy,Validity=window.PrognozaEPIRTAFValidity;
-  let activeResult=null,lastTafMeta=null,lastObservation='',generating=false;
+  let activeResult=null,lastTafMeta=null,lastObservation='',lastNeighborContext=null,generating=false;
   if(!Validity?.current)throw Error('TAF validity filter nie został załadowany');
 
   if(!Policy)throw new Error('TAF Fog Policy nie został załadowany');
@@ -39,7 +39,21 @@
   async function settle(p){try{return await p}catch(_){return null}}
   async function loadArchive(){
     const A=window.PrognozaEPIRMessageArchive;if(!A)throw Error('MessageArchive niedostępne');
-    const [latest,recent,aviation,...neighbor]=await Promise.all([settle(A.latest(true)),settle(A.recent(true)),settle(A.getLatest?.('AVIATION','EPIR',true)),...NEIGHBORS.map(id=>settle(A.getLatest?.('TAF',id,true)))]);
+    const [basic,regional]=await Promise.all([
+      Promise.all([settle(A.latest(true)),settle(A.recent(true)),settle(A.getLatest?.('AVIATION','EPIR',true)),
+        ...NEIGHBORS.map(id=>settle(A.getLatest?.('TAF',id,true)))]),
+      Promise.all(NEIGHBORS.map(async id=>{
+        const [metar,speci,tafs]=await Promise.all([
+          settle(A.getRecent?.('METAR',id,32,true)),
+          settle(A.getRecent?.('SPECI',id,12,true)),
+          settle(A.getRecent?.('TAF',id,12,true))
+        ]);
+        return {station:id,observations:[...(Array.isArray(metar)?metar:[]),
+          ...(Array.isArray(speci)?speci:[])],tafs:Array.isArray(tafs)?tafs:[]};
+      }))
+    ]);
+    const [latest,recent,aviation,...neighbor]=basic;
+    const neighborEvidence=Object.fromEntries(regional.map(x=>[x.station,x]));
     const history=observationRows(recent),observation=newest([aviation,latest?.aviation,latest?.metar,...history]),neighborTafs={};
     const now=Date.now();
     const epirCandidates=[latest?.taf_by_station?.EPIR,latest?.taf].filter(Boolean);
@@ -48,7 +62,10 @@
       neighborTafs[id]=[neighbor[i],latest?.taf_by_station?.[id]]
         .find(item=>Validity.current(item,now,id))||null;
     });
-    return {latest:latest||{},recent,history,observation,currentTaf,neighborTafs,
+    for(const id of NEIGHBORS){
+      neighborEvidence[id].tafs=[...(neighborEvidence[id].tafs||[]),neighborTafs[id]].filter(Boolean);
+    }
+    return {latest:latest||{},recent,history,observation,currentTaf,neighborTafs,neighborEvidence,
       expiredTafPresent:!currentTaf&&epirCandidates.some(item=>rawOf(item))};
   }
 
@@ -125,31 +142,50 @@
     const ai=$('aiMiniStatus');if(ai)ai.textContent='AI: analiza...';
     activeResult=result;window.PrognozaEPIRTAFCurrentGenerated=result.taf;window.PrognozaEPIRTAFResultV24=result;
     $('taf').textContent=result.taf;renderArchive(data);
-    $('reasons').innerHTML=result.diagnostics.reasons.length?'<ul>'+result.diagnostics.reasons.map(x=>`<li>${esc(x)}</li>`).join('')+'</ul>':'Brak progów wymagających grup zmian.';
+    const visNowcast=result.hourly?.[0]?.sourceRow?.tafVisNowcast||null;
+    const regionalHour=result.hourly?.[0]?.sourceRow?.tafNeighborEvidence||null;
+    const why=[...(result.diagnostics?.reasons||[])];
+    if(visNowcast)why.push('Uzgodnienie widzialności EPIR: METAR/SPECI '+Math.round(visNowcast.observationVisM)+
+      ' m, wyjście modeli '+Math.round(visNowcast.modelVisM)+' m, prognoza po krótkoterminowej korekcie '+
+      Math.round(visNowcast.correctedVisM)+' m (waga obserwacji '+Math.round(visNowcast.weight*100)+
+      '%). Źródło: lokalny trend; EPPW/EPKS/EPBY pełnią funkcję potwierdzającą, nie zastępują EPIR.');
+    if(regionalHour)why.push('Analiza sąsiadów: '+regionalHour.lowStations+
+      '/3 lotniska z regionalnym sygnałem ograniczonej widzialności; uwzględniono wyłącznie TAF ważne '+
+      'w prognozowanej godzinie i wydane do chwili opracowania EPIR.');
+    $('reasons').innerHTML=why.length?'<ul>'+why.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>':
+      'Brak progów wymagających grup zmian.';
     renderChecks(result);renderHours(result);renderNeighbors(data);
     const modelCount=Math.max(0,...result.hourly.map(h=>h.sourceRow?.mv?.length||0)),fogOk=rows.some(r=>num(r.fogOperationalScore)||num(r.fgOperationalScore)),neighborStations=[...new Set(rows.map(r=>r.neighborObsStation).filter(Boolean))],learningOk=!!result.learning?.active;
+    const firstNowcast=result.hourly[0]?.sourceRow?.tafVisNowcast||null;
+    const regionalCount=result.hourly[0]?.sourceRow?.tafNeighborEvidence?.lowStations||0;
     const mode=fogMode(rows?.fogEngineMode||Policy.TAF_FOG_MODE),fogLabel=fogLabelForMode(mode),fogUsage=mode==='vnext'?'TAF używa score, progów VIS i prognozy VIS z NEXT 2.4.4':'TAF używa score i widzialności z LEGACY';
     $('sources').innerHTML=`<span class="pill ${data.anchorObservation?'ok':'warn'}">METAR/SPECI ${data.anchorObservation?'✓':'—'} · kotwica ${data.anchorObservation?esc(fmtUtc(itemTime(data.anchorObservation,data.issueTime),false)):'brak ≤ emisja'}</span><span class="pill ${neighborStations.length?'ok':'warn'}">OBS sąsiednie ${neighborStations.length?esc(neighborStations.join('/')):'—'}</span><span class="pill ok">${esc(result.name)} v${esc(result.version)}</span><span class="pill ok">Instrukcja 11.2023 — HARD GATE</span><span class="pill ${learningOk?'ok':'warn'}">kalibracja EPIR ${learningOk?'✓':'fallback'}</span><span class="pill ok">multimodel ${modelCount}</span><span class="pill ok">profil chmur → warstwy/pułap ✓</span><span class="pill ${fogOk?'ok':'warn'}">FG ${fogLabel} ${fogOk?'✓':'—'}</span><span class="pill warn">SYNOP wyłączony</span>`;
-    $('conf').textContent=`Pewność ${result.confidence}%. Fog source: ${fogLabel}. ${fogUsage}; NWP VIS pozostaje diagnostyczna po stronie silnika mgieł. Instrukcja 11.2023 pozostaje nadrzędnym hard gate. MSA: ${result.diagnostics.msaMode==='explicit'?Math.round(result.diagnostics.msaFt)+' ft':'fallback 5000 ft'}.`;
+    $('conf').textContent=`Pewność modelowa ${result.confidence}% (nie jest to skalibrowana pewność TAF). Fog source: ${fogLabel}. ${fogUsage}; NWP VIS pozostaje diagnostyczna po stronie silnika mgieł. ${firstNowcast?'Nowcasting EPIR: ostatni METAR '+Math.round(firstNowcast.observationVisM)+' m, model '+Math.round(firstNowcast.modelVisM)+' m, po uzgodnieniu '+Math.round(firstNowcast.correctedVisM)+' m. Wsparcie regionalne: '+regionalCount+'/3 lotniska. ':''}Instrukcja 11.2023 pozostaje nadrzędnym hard gate. MSA: ${result.diagnostics.msaMode==='explicit'?Math.round(result.diagnostics.msaFt)+' ft':'fallback 5000 ft'}.`;
     $('badge').textContent=`TAF ENGINE ${APP_ENGINE_VERSION} · ZGODNY`;$('badge').className='badge ok';$('st').textContent=`${fmtUtc(Date.now(),false)} · ${rows.length} h danych · FOG ${fogLabel}`;
   }
 
   async function generate(){
     const period=selectedCycle();if(!period)throw Error('Nie wybrano cyklu TAF');
     const frame=$('engine'),w=frame?.contentWindow,fogLabel=fogLabelForMode(Policy.TAF_FOG_MODE);
-    activeResult=null;lastTafMeta=null;
+    activeResult=null;lastTafMeta=null;lastNeighborContext=null;
     $('copy').disabled=true;
     $('badge').textContent=`TAF ENGINE ${APP_ENGINE_VERSION} · LICZENIE`;$('badge').className='badge';$('st').textContent=`archiwum + modele + FOG ${fogLabel} + profil chmur`;$('taf').textContent=`Pobieranie danych i generowanie TAF · aktywny Fog Engine: ${fogLabel}…`;
     const ai=$('aiMiniStatus');if(ai)ai.textContent='AI: oczekiwanie na projekt';
     const [data,rows]=await Promise.all([loadArchive(),modelRows(period)]);
-    const anchorObservation=newestAtOrBefore([data.observation,...(data.history||[])],period.issue);
-    data.anchorObservation=anchorObservation;data.issueTime=period.issue;
+    const asOf=Math.min(period.issue,Date.now());
+    const safeHistory=(data.history||[]).filter(x=>{const t=itemTime(x,asOf);return finite(t)&&t<=asOf;});
+    const anchorObservation=newestAtOrBefore([data.observation,...safeHistory],asOf);
+    data.anchorObservation=anchorObservation;data.issueTime=period.issue;data.asOf=asOf;
     renderArchive(data);
     if(rows.length<8)throw Error(`Niepełny okres modeli: ${rows.length} h`);
     const api=window.PrognozaEPIRTAFEngine;if(!api?.createEngine||api.ENGINE_VERSION!=='2.4.0'||api.QUALITY_VERSION!==APP_ENGINE_VERSION)throw Error(`TAF Engine ${APP_ENGINE_VERSION} nie został załadowany`);if(api.ready)await api.ready();const engine=api.createEngine({config:{station:'EPIR'}});
     lastTafMeta={issue:period.issue,start:period.start,end:period.end,msaFt:msaFt()};
     lastObservation=rawOf(anchorObservation);
-    const result=engine.generate({station:'EPIR',issue:period.issue,start:period.start,end:period.end,rows,observation:anchorObservation,observations:data.history,msaFt:msaFt(),rowsAlreadyAnchored:false});
+    lastNeighborContext={issue:period.issue,start:period.start,end:period.end,asOf,
+      observations:safeHistory,evidence:data.neighborEvidence};
+    const result=engine.generate({station:'EPIR',issue:period.issue,start:period.start,end:period.end,
+      rows,observation:anchorObservation,observations:safeHistory,neighborEvidence:data.neighborEvidence,
+      msaFt:msaFt(),rowsAlreadyAnchored:false});
     render(result,data,rows);return result;
   }
   async function guardedGenerate(){
@@ -209,8 +245,39 @@
           nwpMemberCount:Array.isArray(src.mv)?src.mv.length:0
         };
       });
+      // Only currently applicable station TAFs issued before the selected EPIR
+      // cycle can be shared. A neighbor forecast is corroborating context, not
+      // an instruction to copy its weather into EPIR.
+      const ctx=lastNeighborContext||{},asOf=ctx.asOf;
+      const adapter=window.PrognozaEPIRTAFObservationFusion;
+      const neighborTafs=[],neighborObservations=[];
+      for(const id of NEIGHBORS){
+        const sources=ctx.evidence?.[id]||{},tafs=[];
+        for(const candidate of sources.tafs||[]){
+          const info=Validity.validity(candidate,asOf);
+          if(info&&info.station===id&&info.issue<=asOf&&info.start<=ctx.start&&info.end>ctx.start)
+            tafs.push(info);
+        }
+        tafs.sort((a,b)=>b.issue-a.issue);
+        if(tafs[0])neighborTafs.push({station:id,issuedAt:new Date(tafs[0].issue).toISOString(),
+          validFrom:new Date(tafs[0].start).toISOString(),validTo:new Date(tafs[0].end).toISOString(),
+          taf:tafs[0].raw.slice(0,1000)});
+        const observations=(sources.observations||[]).map(x=>adapter?.parseMetar?.(x))
+          .filter(x=>x&&x.station===id&&x.t<=asOf&&asOf-x.t<=3*HOUR)
+          .sort((a,b)=>b.t-a.t);
+        if(observations[0])neighborObservations.push({station:id,
+          time:new Date(observations[0].t).toISOString(),visibilityM:observations[0].vis,
+          weather:observations[0].fg?'FG':observations[0].br?'BR':observations[0].auto?'AUTO_UNKNOWN':'NONE'});
+      }
+      const epirRecent=(ctx.observations||[]).map(x=>adapter?.parseMetar?.(x))
+        .filter(x=>x&&x.station==='EPIR'&&x.t<=asOf&&asOf-x.t<=3*HOUR)
+        .sort((a,b)=>b.t-a.t).slice(0,9)
+        .map(x=>({time:new Date(x.t).toISOString(),visibilityM:x.vis,
+          weather:x.fg?'FG':x.br?'BR':x.auto?'AUTO_UNKNOWN':'NONE',
+          temperatureC:x.T,dewPointC:x.Td}));
       const response=await api.geminiAnalyze({
         taf:activeResult.taf,hours,observation:lastObservation,
+        epirRecent,neighborTafs,neighborObservations,
         fogMode:fogMode(),draftRejected:!activeResult.checks?.ok
       });
       const analysis=response.analysis||{};

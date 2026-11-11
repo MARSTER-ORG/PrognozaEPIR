@@ -778,7 +778,14 @@
         const station=String(input.station||config.station||'EPIR').toUpperCase(),issue=+input.issue,start=+input.start,end=+input.end;
         if(!finite(issue)||!finite(start)||!finite(end)||Math.abs((end-start)/HOUR-12)>1e-6)throw Error('Instrukcja TAF: okres ważności musi wynosić 12 h');
         const raw=(input.rows||[]).filter(r=>num(r?.t)&&+r.t>=start&&+r.t<end).sort((a,b)=>+a.t-+b.t);if(raw.length<8)throw Error(`Za mało danych godzinowych: ${raw.length}`);
-        const anchored=input.rowsAlreadyAnchored?raw.map(r=>({...r})):anchorRows(raw,input.observation,start,issue);
+        const basicAnchored=input.rowsAlreadyAnchored?raw.map(r=>({...r})):anchorRows(raw,input.observation,start,issue);
+        // Keep the original cloud, T/Td and wind anchor. Correct only short-range
+        // visibility using trend and regional corroboration if the new source is available.
+        const fusion=globalThis?.PrognozaEPIRTAFObservationFusion;
+        const anchored=!input.rowsAlreadyAnchored&&fusion?.adjust?
+          fusion.adjust(basicAnchored,{rawRows:raw,observations:input.observations||[],
+            observation:input.observation,neighbors:input.neighborEvidence||{},
+            issue,start,tafValidity:globalThis?.PrognozaEPIRTAFValidity||null}):basicAnchored;
         const msa=num(input.msaFt)&&+input.msaFt>0?+input.msaFt:null;
         let states=anchored.map(stateFromRow);states=applyWindPolicy(states);
         const base=baseState(states),cg=buildChangeGroups(states,base,start,end,msa);

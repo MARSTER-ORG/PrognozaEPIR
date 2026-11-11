@@ -108,7 +108,7 @@ def patch_global_theme() -> None:
 def validate_v243() -> None:
     required = [
         "index.html", "radar.html", "taf.html", "sat-fog.html", "arch.html",
-        "taf-engine-v2.js", "taf-engine-v24.js", "taf-engine-v241.js", "taf-engine-v242.js", "taf-engine-v243.js", "taf-fog-visibility-coherence-v1.js", "taf-validity-v1.js", "taf-ai-compose-guard-v1.js",
+        "taf-engine-v2.js", "taf-engine-v24.js", "taf-engine-v241.js", "taf-engine-v242.js", "taf-engine-v243.js", "taf-fog-visibility-coherence-v1.js", "taf-validity-v1.js", "taf-observation-fusion-v1.js", "taf-ai-compose-guard-v1.js",
         "taf-fog-policy.js", "taf-fog-mode-sync.js", "taf-app-v25.js", "taf-runtime-bootstrap.js", "message-archive-client.js",
         "fog-engine.js", "observation-engine.js", "mifg-engine.js",
         "meteogram-tap-details.js", "theme.js", "app.css",
