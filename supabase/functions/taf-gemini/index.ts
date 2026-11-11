@@ -2,7 +2,7 @@
 const PROJECT_ORIGIN='https://marster-org.github.io';
 const LIMIT_WINDOW_MS=30*60*1000, MAX_CALLS=3;
 const rates=new Map<string,{count:number,at:number}>();
-const MODEL='gemini-2.5-flash-lite';
+const MODEL='gemini-3.5-flash-lite';
 const schema={
   type:'OBJECT',
   properties:{
@@ -64,7 +64,7 @@ Deno.serve(async(req:Request)=>{
         headers:{'content-type':'application/json','x-goog-api-key':key},
         body:JSON.stringify({
           contents:[{parts:[{text:prompt}]}],
-          generationConfig:{temperature:0.1,maxOutputTokens:800,responseMimeType:'application/json',responseSchema:schema}
+          generationConfig:{temperature:0.1,maxOutputTokens:1800,responseMimeType:'application/json',responseSchema:schema}
         })
       });
       if(!response.ok){
