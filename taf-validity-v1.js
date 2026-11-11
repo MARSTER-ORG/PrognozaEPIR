@@ -25,7 +25,7 @@
     if(!Number.isFinite(now))return null;
     const d=new Date(now),year=d.getUTCFullYear(),month=d.getUTCMonth();
     const candidate=(dd,hh,mm=0)=>[-2,-1,0,1,2].map(delta=>Date.UTC(year,month+delta,+dd,+hh,+mm))
-      .filter(t=>{const x=new Date(t);return (hh===24?x.getUTCHours()===0:x.getUTCHours()===+hh);});
+      .filter(t=>{const x=new Date(t);return (+hh===24?x.getUTCHours()===0:x.getUTCHours()===+hh);});
     const metadataIssue=parseDate(input);
     const issue=metadataIssue??candidate(issueDay,issueHour,issueMinute).sort((a,b)=>Math.abs(a-now)-Math.abs(b-now))[0];
     const start=candidate(startDay,startHour).filter(t=>t>=issue-6*H&&t<=issue+48*H)
