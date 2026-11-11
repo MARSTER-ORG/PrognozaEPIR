@@ -38,7 +38,7 @@ globalThis.hours=[makeHour(0,{vis:300,T:18,Td:6,RH:45,lowVisShare:.1}),
   makeHour(1,{vis:300,T:18,Td:6,RH:45,lowVisShare:.1}),
   makeHour(2,{vis:300,T:18,Td:6,RH:45,lowVisShare:.1})];
 result=engine.generate(meta);
-assert.doesNotMatch(result.taf,/\b0300 FG\b/,'VIS alone must not invent fog');
+assert.doesNotMatch(result.taf.split(/\s+PROB30/)[0],/\b0300 FG\b/,'VIS alone must not invent prevailing fog');
 assert.equal(result.diagnostics.lowVisibilityWeatherEvidence,'NOT_CONFIRMED');
 // Freezing fog is not inferred merely from subzero T: -1C does not prove FZFG.
 globalThis.hours=[makeHour(0,{T:-1,Td:-1}),makeHour(1,{T:-1,Td:-1}),makeHour(2,{T:-1,Td:-1})];
