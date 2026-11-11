@@ -11,6 +11,7 @@
   const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]));
   const Policy=window.PrognozaEPIRTAFFogPolicy,Validity=window.PrognozaEPIRTAFValidity;
   let activeResult=null,lastTafMeta=null,lastObservation='',lastNeighborContext=null,generating=false;
+  let lastRenderContext=null;
   if(!Validity?.current)throw Error('TAF validity filter nie został załadowany');
 
   if(!Policy)throw new Error('TAF Fog Policy nie został załadowany');
@@ -140,11 +141,18 @@
   function render(result,data,rows){
     const copyButton=$('copy');if(copyButton)copyButton.disabled=true;
     const ai=$('aiMiniStatus');if(ai)ai.textContent='AI: analiza...';
-    activeResult=result;window.PrognozaEPIRTAFCurrentGenerated=result.taf;window.PrognozaEPIRTAFResultV24=result;
+    const adapter=window.PrognozaEPIRTAFObservationFusion, auditApi=window.PrognozaEPIRTAFOperationalAudit;
+    const audit=auditApi?.evaluate({taf:result.taf,hourly:result.hourly||[],
+      observation:adapter?.parseMetar?.(data.anchorObservation),
+      history:(data.history||[]).map(x=>adapter?.parseMetar?.(x)).filter(Boolean),
+      asOf:data.asOf,meta:lastTafMeta})||{level:'REVIEW',warnings:['Audyt meteorologiczny niedostępny.'],errors:[],information:[]};
+    result={...result,audit};activeResult=result;lastRenderContext={data,rows};
+    window.PrognozaEPIRTAFCurrentGenerated=result.taf;window.PrognozaEPIRTAFResultV24=result;
+    window.PrognozaEPIRTAFLastOperationalAudit=audit;
     $('taf').textContent=result.taf;renderArchive(data);
     const visNowcast=result.hourly?.[0]?.sourceRow?.tafVisNowcast||null;
     const regionalHour=result.hourly?.[0]?.sourceRow?.tafNeighborEvidence||null;
-    const why=[...(result.diagnostics?.reasons||[])];
+    const why=[...(result.diagnostics?.reasons||[]),...(result.audit?.errors||[]).map(x=>'BŁĄD METEO: '+x),...(result.audit?.warnings||[]).map(x=>'WERYFIKACJA METEO: '+x),...(result.audit?.information||[])];
     if(visNowcast)why.push('Uzgodnienie widzialności EPIR: METAR/SPECI '+Math.round(visNowcast.observationVisM)+
       ' m, wyjście modeli '+Math.round(visNowcast.modelVisM)+' m, prognoza po krótkoterminowej korekcie '+
       Math.round(visNowcast.correctedVisM)+' m (waga obserwacji '+Math.round(visNowcast.weight*100)+
@@ -160,14 +168,17 @@
     const regionalCount=result.hourly[0]?.sourceRow?.tafNeighborEvidence?.lowStations||0;
     const mode=fogMode(rows?.fogEngineMode||Policy.TAF_FOG_MODE),fogLabel=fogLabelForMode(mode),fogUsage=mode==='vnext'?'TAF używa score, progów VIS i prognozy VIS z NEXT 2.4.4':'TAF używa score i widzialności z LEGACY';
     $('sources').innerHTML=`<span class="pill ${data.anchorObservation?'ok':'warn'}">METAR/SPECI ${data.anchorObservation?'✓':'—'} · kotwica ${data.anchorObservation?esc(fmtUtc(itemTime(data.anchorObservation,data.issueTime),false)):'brak ≤ emisja'}</span><span class="pill ${neighborStations.length?'ok':'warn'}">OBS sąsiednie ${neighborStations.length?esc(neighborStations.join('/')):'—'}</span><span class="pill ok">${esc(result.name)} v${esc(result.version)}</span><span class="pill ok">Instrukcja 11.2023 — HARD GATE</span><span class="pill ${learningOk?'ok':'warn'}">kalibracja EPIR ${learningOk?'✓':'fallback'}</span><span class="pill ok">multimodel ${modelCount}</span><span class="pill ok">profil chmur → warstwy/pułap ✓</span><span class="pill ${fogOk?'ok':'warn'}">FG ${fogLabel} ${fogOk?'✓':'—'}</span><span class="pill warn">SYNOP wyłączony</span>`;
-    $('conf').textContent=`Pewność modelowa ${result.confidence}% (nie jest to skalibrowana pewność TAF). Fog source: ${fogLabel}. ${fogUsage}; NWP VIS pozostaje diagnostyczna po stronie silnika mgieł. ${firstNowcast?'Nowcasting EPIR: ostatni METAR '+Math.round(firstNowcast.observationVisM)+' m, model '+Math.round(firstNowcast.modelVisM)+' m, po uzgodnieniu '+Math.round(firstNowcast.correctedVisM)+' m. Wsparcie regionalne: '+regionalCount+'/3 lotniska. ':''}Instrukcja 11.2023 pozostaje nadrzędnym hard gate. MSA: ${result.diagnostics.msaMode==='explicit'?Math.round(result.diagnostics.msaFt)+' ft':'fallback 5000 ft'}.`;
-    $('badge').textContent=`TAF ENGINE ${APP_ENGINE_VERSION} · ZGODNY`;$('badge').className='badge ok';$('st').textContent=`${fmtUtc(Date.now(),false)} · ${rows.length} h danych · FOG ${fogLabel}`;
+    $('conf').textContent=`Wskaźnik dostępności modeli ${result.confidence}% (nie stanowi prawdopodobieństwa poprawności TAF). Fog source: ${fogLabel}. ${fogUsage}; NWP VIS pozostaje diagnostyczna po stronie silnika mgieł. ${firstNowcast?'Nowcasting EPIR: ostatni METAR '+Math.round(firstNowcast.observationVisM)+' m, model '+Math.round(firstNowcast.modelVisM)+' m, po uzgodnieniu '+Math.round(firstNowcast.correctedVisM)+' m. Wsparcie regionalne: '+regionalCount+'/3 lotniska. ':''}Instrukcja 11.2023 pozostaje nadrzędnym hard gate. MSA: ${result.diagnostics.msaMode==='explicit'?Math.round(result.diagnostics.msaFt)+' ft':'fallback 5000 ft'}.`;
+    const auditLevel=result.audit?.level||'REVIEW';
+    $('badge').textContent='TAF ENGINE '+APP_ENGINE_VERSION+(auditLevel==='BLOCK'?' · NIESPÓJNY':auditLevel==='REVIEW'?' · DO KONTROLI':' · PROJEKT DO OCENY');
+    $('badge').className=auditLevel==='BLOCK'?'badge bad':'badge warn';
+    $('st').textContent=`${fmtUtc(Date.now(),false)} · ${rows.length} h danych · FOG ${fogLabel}`;
   }
 
   async function generate(){
     const period=selectedCycle();if(!period)throw Error('Nie wybrano cyklu TAF');
     const frame=$('engine'),w=frame?.contentWindow,fogLabel=fogLabelForMode(Policy.TAF_FOG_MODE);
-    activeResult=null;lastTafMeta=null;lastNeighborContext=null;
+    activeResult=null;lastTafMeta=null;lastNeighborContext=null;lastRenderContext=null;
     $('copy').disabled=true;
     $('badge').textContent=`TAF ENGINE ${APP_ENGINE_VERSION} · LICZENIE`;$('badge').className='badge';$('st').textContent=`archiwum + modele + FOG ${fogLabel} + profil chmur`;$('taf').textContent=`Pobieranie danych i generowanie TAF · aktywny Fog Engine: ${fogLabel}…`;
     const ai=$('aiMiniStatus');if(ai)ai.textContent='AI: oczekiwanie na projekt';
@@ -214,13 +225,13 @@
     try{
       if(activeResult&&lastTafMeta)await analyzeWithGemini();
     }finally{
-      const copy=$('copy');if(copy)copy.disabled=!activeResult?.checks?.ok;
+      const copy=$('copy');if(copy)copy.disabled=!activeResult?.checks?.ok||activeResult?.audit?.level==='BLOCK';
       if(genButton)genButton.disabled=false;if(cycle)cycle.disabled=false;
       generating=false;
     }
     return result;
   }
-  async function copyTaf(){if(!activeResult?.checks?.ok){$('st').textContent='Nie można kopiować odrzuconego TAF.';return;}const text=activeResult?.taf||'';if(!text)return;try{await navigator.clipboard.writeText(text);$('copy').textContent='Skopiowano';setTimeout(()=>$('copy').textContent='Kopiuj TAF',1200);}catch(_){}}
+  async function copyTaf(){if(!activeResult?.checks?.ok||activeResult?.audit?.level==='BLOCK'){$('st').textContent='Nie można kopiować niespójnego projektu TAF.';return;}const text=activeResult?.taf||'';if(!text)return;try{await navigator.clipboard.writeText(text);$('copy').textContent='Skopiowano';setTimeout(()=>$('copy').textContent='Kopiuj TAF',1200);}catch(_){}}
   async function analyzeWithGemini(){
     if(!activeResult||!lastTafMeta)return;
     const status=$('aiMiniStatus');if(status)status.textContent='AI: analizuje...';
@@ -242,7 +253,17 @@
           lowVisibilityProbabilityPct:Math.round(100*(Number(h.prob?.lowVis)||0)),
           fogAlternativeVisibilityM:num(h.prob?.alt?.fgM)?+h.prob.alt.fgM:
             num(src.fogAltVisM)?+src.fogAltVisM:null,
-          nwpMemberCount:Array.isArray(src.mv)?src.mv.length:0
+          nwpMemberCount:Array.isArray(src.mv)?src.mv.length:0,
+          originalNwpVisibilityM:num(src.tafVisNowcast?.modelVisM)?+src.tafVisNowcast.modelVisM:null,
+          assimilatedVisibilityM:num(src.tafVisNowcast?.correctedVisM)?+src.tafVisNowcast.correctedVisM:null,
+          observedVisibilityM:num(src.tafVisNowcast?.observationVisM)?+src.tafVisNowcast.observationVisM:null,
+          visibilityCapM:num(src.tafVisNowcast?.visibilityCapM)?+src.tafVisNowcast.visibilityCapM:null,
+          unsupportedClearing:src.tafVisNowcast?.unsupportedClearing===true,
+          brProbabilityPct:Math.round(100*(Number(h.prob?.br)||0)),
+          nwpMembers:(Array.isArray(src.mv)?src.mv:[]).slice(0,15).map(m=>({
+            id:String(m.id||m.model||'').slice(0,35),visibilityM:num(m.vis)?+m.vis:null,
+            windDirectionDeg:num(m.wd)?+m.wd:null,windSpeed:num(m.ws)?+m.ws:null,
+            weight:num(m.w)?+m.w:null}))
         };
       });
       // Only currently applicable station TAFs issued before the selected EPIR
@@ -278,7 +299,8 @@
       const response=await api.geminiAnalyze({
         taf:activeResult.taf,hours,observation:lastObservation,
         epirRecent,neighborTafs,neighborObservations,
-        fogMode:fogMode(),draftRejected:!activeResult.checks?.ok
+        fogMode:fogMode(),draftRejected:!activeResult.checks?.ok,
+        deterministicAudit:activeResult.audit||null
       });
       const analysis=response.analysis||{};
       const candidate=String(analysis.candidateTaf||'').replace(/\s+/g,' ').trim();
@@ -305,8 +327,7 @@
         renderChecks(activeResult);
         $('reasons').innerHTML='<ul>'+activeResult.diagnostics.reasons
           .map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>';
-        $('badge').textContent='TAF ENGINE '+APP_ENGINE_VERSION+' + GEMINI · ZGODNY';
-        $('badge').className='badge ok';
+        if(lastRenderContext)render(activeResult,lastRenderContext.data,lastRenderContext.rows);
       }
       window.PrognozaEPIRTAFLastAIReview=Object.freeze({
         model:String(response.model||''),reviewedTaf:baseline,
@@ -315,11 +336,18 @@
         candidateTaf:candidate,candidateFormallyValid:check?.ok===true,
         candidateErrors:check?.errors||[],
         acceptedIntoDraft:adopted,groundingReason:String(verdict?.reason||'not_evaluated'),
-        outputTaf:activeResult.taf,coauthorInstruction:'Instrukcja TAF ed. A 11.2023'
+        outputTaf:activeResult.taf,coauthorInstruction:'Instrukcja TAF ed. A 11.2023',
+        meteorologicalFlags:Array.isArray(analysis.meteorologicalFlags)?analysis.meteorologicalFlags.slice(0,6):[],
+        baseAssessment:String(analysis.baseAssessment||''),dataGaps:Array.isArray(analysis.dataGaps)?analysis.dataGaps.slice(0,5):[],
+        confidenceNote:String(analysis.confidenceNote||'')
       });
-      if(status)status.textContent=adopted?'AI: współułożył grupy TAF':
-        candidate?(check?.ok?'AI: propozycja bez potwierdzenia w danych':'AI: propozycja odrzucona'):
-        'AI: zweryfikowano, bez zmian';
+      const flags=Array.isArray(analysis.meteorologicalFlags)?analysis.meteorologicalFlags.slice(0,6):[];
+      const report=[analysis.baseAssessment,analysis.riskAssessment,...flags].filter(Boolean).map(x=>'Gemini (opinia pomocnicza): '+String(x).slice(0,340));
+      if(report.length){const reasons=$('reasons');if(reasons)reasons.innerHTML+=report.map(x=>'<p>'+esc(x)+'</p>').join('');}
+      if(status)status.textContent=flags.length?'AI: '+flags.length+' uwag do oceny':
+        adopted?'AI: współułożył grupy TAF':
+        candidate?(check?.ok?'AI: propozycja niepotwierdzona':'AI: propozycja odrzucona'):
+        'AI: analiza zakończona, bez zmiany grup';
     }catch(e){
       window.PrognozaEPIRTAFLastAIReview=null;
       const noQuota=['rate_limited','gemini_quota_exceeded'].includes(e?.message);
