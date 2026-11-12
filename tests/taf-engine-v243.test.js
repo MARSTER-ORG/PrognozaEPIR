@@ -41,6 +41,7 @@ assert.equal(E.RULES.prob30ModerateRainMayOmitVisibility,true);
 assert.equal(E.RULES.freezingThunderstormPrecipChangeIndependentOfVisibility,true);
 assert.equal(E.RULES.convectiveShowerWithCbTcuMayOmitVisibility,true);
 assert.equal(E.RULES.cloudPriorityBknOvcOverFewSct,true);
+assert.equal(E.RULES.ordinaryFewSuppressedInTaf,true);
 
 // Instruction 3.7.9 / 3.7.11a: the full/main path must not delete high-VIS
 // ordinary precipitation.
@@ -83,11 +84,15 @@ assert.equal(E.RULES.cloudPriorityBknOvcOverFewSct,true);
   assert.ok(s.rows[0].wet>0);
 }
 
-// Helper-level cloud hierarchy: FEW/SCT are removed only when ordinary BKN/OVC
-// exists in the same state; CB/TCU are independent.
+// Ordinary FEW is never proposed; do not invent SCT from 1-2 oktas.
+// Preserve significant CB/TCU, even when their actual amount is FEW.
 assert.equal(E.helpers.simplifyCloudTokens('9999 FEW025 SCT028 BKN030'),'9999 BKN030');
+assert.equal(E.helpers.simplifyCloudTokens('9999 FEW025 SCT028'),'9999 SCT028');
+assert.equal(E.helpers.simplifyCloudTokens('9999 FEW025'),'9999 NSC');
 assert.equal(E.helpers.simplifyCloudTokens('9999 SCT025'),'9999 SCT025');
 assert.equal(E.helpers.simplifyCloudTokens('9999 FEW020CB SCT025 BKN030'),'9999 FEW020CB BKN030');
+assert.equal(E.helpers.simplifyCloudTokens('BECMG 1914/1916 FEW025'),'BECMG 1914/1916 NSC');
+assert.deepEqual(E.helpers.simplifyCloudLayers([{cover:'FEW',ft:800},{cover:'SCT',ft:1200}]).map(c=>c.cover),['SCT']);
 
 // 19.09.2026-type case: only the first two hours are gusty. No instruction-significant
 // wind regime change exists, so the base wind must represent the full 12 h period.
@@ -227,12 +232,24 @@ assert.equal(E.helpers.simplifyCloudTokens('9999 FEW020CB SCT025 BKN030'),'9999 
   assert.equal(q.checks.ok,true);
 }
 
-// FEW/SCT is still valid when there is no BKN/OVC — e.g. SCT around 750 m.
+// SCT remains valid when there is no BKN/OVC — e.g. SCT around 750 m.
 {
   const rows=Array.from({length:12},(_,i)=>row(i,{vis:9999,profile:[],lowH:750,oktaL:4}));
   const q=gen(rows);
   assert.match(q.base.text,/\bSCT\d{3}\b/,q.base.text);
   assert.ok(!/\b(?:BKN|OVC)\d{3}\b/.test(q.base.text),q.base.text);
+  assert.equal(q.checks.ok,true);
+}
+
+// FEW-only forecasts are represented as NSC, never as a fabricated SCT.
+// Original model layers remain available as input evidence.
+{
+  const rows=Array.from({length:12},(_,i)=>row(i,{vis:8000,profile:[],lowH:750,oktaL:2}));
+  const q=gen(rows);
+  assert.ok(!/\bFEW\d{3}(?!CB|TCU)\b/.test(q.taf),q.taf);
+  assert.match(q.base.text,/\bNSC\b/,q.base.text);
+  assert.ok(!/\bSCT\d{3}\b/.test(q.base.text),q.base.text);
+  assert.equal(q.hourly[0].tafDisplay.cloudLayers.some(c=>c.cover==='FEW'&&!c.type),false);
   assert.equal(q.checks.ok,true);
 }
 
