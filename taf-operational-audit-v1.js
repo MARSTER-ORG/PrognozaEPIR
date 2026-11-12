@@ -79,6 +79,53 @@
           warnings.push('Po BECMG '+m[1]+'/'+m[2]+' TAF nadal utrzymuje FG i '+inheritedVis+' m, lecz prognoza godzinowa wskazuje poprawę; sprawdź brakujące NSW/widzialność.');
       }
     }
+
+    // Compare every forecast hour with effective prevailing TAF conditions.
+    // PROB/TEMPO do not replace the base; BECMG applies after its end time.
+    const transitions=lines.slice(1).map(line=>{
+      const b=line.match(/^BECMG\s+(\d{4})\/(\d{4})\s+(.+)$/);
+      if(b)return {at:codeTime(b[2],meta.start||asOf),part:b[3],fm:false};
+      const fm=line.match(/^FM(\d{4})(\d{2})\s+(.+)$/);
+      if(fm)return {at:codeTime(fm[1],meta.start||asOf)+Number(fm[2])*60000,part:fm[3],fm:true};
+      return null;
+    }).filter(x=>x&&finite(x.at)).sort((a,b)=>a.at-b.at);
+    function prevailingAt(t){
+      let vis=visibility(first),wx=/\b(?:FG|FZFG)\b/.test(first)?'FG':/\bBR\b/.test(first)?'BR':'NONE';
+      for(const g of transitions){
+        if(g.at>t)break;
+        const next=visibility(g.part);
+        if(g.fm){vis=next;wx='NONE';}
+        else if(next!==null)vis=next;
+        if(/\b(?:FG|FZFG)\b/.test(g.part))wx='FG';
+        else if(/\bBR\b/.test(g.part))wx='BR';
+        else if(/\b(?:NSW|CAVOK)\b/.test(g.part))wx='NONE';
+      }
+      return {vis,wx};
+    }
+    const inconsistency={clearing:[],inheritedFog:[],fogEngine:[],lightRain:[]};
+    for(const h of source){
+      if(!finite(+h?.t))continue;
+      const v=forecastVis(h),p=prevailingAt(+h.t),src=h.sourceRow||{};
+      if(v!==null&&v>=8000&&p.vis!==null&&p.vis<3000)inconsistency.clearing.push(+h.t);
+      if(p.vis!==null&&p.vis>=5000&&p.wx==='FG')inconsistency.inheritedFog.push(+h.t);
+      const e=src.fogEngineVisM===null||src.fogEngineVisM===undefined?null:+src.fogEngineVisM;
+      const br=src.brOperationalScore===null||src.brOperationalScore===undefined?null:+src.brOperationalScore;
+      const fg=src.fgOperationalScore===null||src.fgOperationalScore===undefined?null:+src.fgOperationalScore;
+      if(v!==null&&v>=8000&&e!==null&&finite(e)&&e<5000&&
+         ((br!==null&&br>=60)||(fg!==null&&fg>=60)))inconsistency.fogEngine.push(+h.t);
+      if(v!==null&&v<1000&&/^(?:-RA|-DZ)$/.test(String(h.tafDisplay?.weather||'')))inconsistency.lightRain.push(+h.t);
+    }
+    const utc=t=>new Date(t).toISOString().slice(11,16)+' UTC';
+    if(inconsistency.inheritedFog.length>=2)
+      errors.push('Po poprawie widzialności do >=5000 m TAF nadal dziedziczy FG od '+utc(inconsistency.inheritedFog[0])+'. Brak NSW lub prawidłowej grupy zmiany pogody.');
+    else if(inconsistency.inheritedFog.length)
+      warnings.push('TAF dziedziczy FG pomimo poprawy widzialności: '+utc(inconsistency.inheritedFog[0])+'. Sprawdź NSW.');
+    if(inconsistency.clearing.length>=2)
+      warnings.push('TAF pomija utrzymującą się poprawę widzialności godzinowej od '+utc(inconsistency.clearing[0])+'. Zweryfikuj BECMG, Fog Engine i obserwacje.');
+    if(inconsistency.fogEngine.length)
+      warnings.push('Konflikt Fog Engine z widzialnością godzinową od '+utc(inconsistency.fogEngine[0])+': prognoza >=8000 m, Fog Engine <5000 m z aktywnym FG/BR. Nie zakładaj automatycznie 9999.');
+    if(inconsistency.lightRain.length)
+      warnings.push('Widzialność <1000 m przy samym -RA/-DZ bez FG od '+utc(inconsistency.lightRain[0])+'. Sprawdź pogodę, wilgotność i dane źródłowe.');
     if(meta.issue>asOf+5*60000)information.push('Cykl TAF jeszcze nie został wydany; wyświetlany jest projekt na przyszłą godzinę.');
     if(parsed&&recent&&trend!==null)information.push('Trend EPIR 2 h: '+Math.round(trend)+' m; dodatni oznacza poprawę.');
     const level=errors.length?'BLOCK':warnings.length?'REVIEW':'PRELIMINARY';
