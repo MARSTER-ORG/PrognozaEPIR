@@ -1,7 +1,7 @@
 // Isolated pilot. Authorized API acquisition only; no scraping, schedules, DB writes, Consensus or TAF changes.
 import {imageMetadata,normalize} from './core.mjs';
 import {downloadAuthorizedImage} from './authorized-source.mjs';
-const MODEL='gemini-2.5-flash-lite';
+const MODEL='gemini-3.5-flash-lite';
 const origins=['https://marster-org.github.io','http://localhost:8000','http://127.0.0.1:8000'];
 const windows=new Map<string,{start:number,count:number}>();
 const values={axisLabel:{type:'STRING'},timestampUtc:{type:'STRING',nullable:true},temperatureC:{type:'NUMBER',nullable:true},dewPointC:{type:'NUMBER',nullable:true},humidityPct:{type:'NUMBER',nullable:true},cloudCoverPct:{type:'NUMBER',nullable:true},cloudBaseM:{type:'NUMBER',nullable:true},windSpeedMs:{type:'NUMBER',nullable:true},windDirectionDeg:{type:'NUMBER',nullable:true},precipitationMmH:{type:'NUMBER',nullable:true},visibilityM:{type:'NUMBER',nullable:true},confidence:{type:'STRING'},evidence:{type:'STRING'}};
