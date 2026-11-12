@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto';
 import {extname} from 'node:path';
 import {imageMetadata,normalize} from './core.mjs';
 const args=process.argv.slice(2),param=x=>{const i=args.indexOf(x);return i<0?null:args[i+1]};
-const image=param('--image'),mock=param('--mock'),output=param('--output'),model=param('--model')||'gemini-2.5-flash-lite';
+const image=param('--image'),mock=param('--mock'),output=param('--output'),model=param('--model')||'gemini-3.5-flash-lite';
 if(!image){console.error('node probe.mjs --image meteogram.png [--mock fixture.json] [--output wynik.json]');process.exit(2)}
 if(!/^gemini-[a-z\d.-]+$/.test(model))throw Error('invalid_model');
 const mime={'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp'}[extname(image).toLowerCase()];
