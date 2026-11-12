@@ -112,6 +112,9 @@
     const fail=(reason)=>({accepted:false,reason,taf:baseTaf});
     const original=parts(baseTaf),proposed=parts(candidateTaf);
     if(!original||!proposed)return fail('syntax');
+    // Gemini must not restore ordinary FEW. FEW CB/TCU is an essential
+    // convective-cloud exception and remains valid at its observed amount.
+    if(/\bFEW\d{3}\b/.test(candidateTaf))return fail('ordinary_few_not_proposed');
     if(original.base!==proposed.base)return fail('base_or_header_changed');
     if(normalize(baseTaf)===normalize(candidateTaf))return fail('unchanged');
     if(proposed.groups.length>5||proposed.groups.length>original.groups.length+1)return fail('too_many_changes');

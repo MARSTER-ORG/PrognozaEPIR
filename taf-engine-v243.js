@@ -139,19 +139,28 @@
     return m?{cover:m[1],height:+m[2],type:m[3]||''}:null;
   }
 
+  // Local TAF presentation policy: ordinary cloud groups start at SCT (3/8).
+  // Never turn an unsupported FEW forecast into SCT. Preserve FEW CB/TCU:
+  // significant convective clouds must not be hidden or replaced by CAVOK.
   function simplifyCloudTokens(text){
     const tokens=String(text||'').trim().split(/\s+/).filter(Boolean);
     const parsed=tokens.map(t=>({token:t,cloud:parseCloudToken(t)}));
     const hasOrdinaryCeiling=parsed.some(x=>x.cloud&&!x.cloud.type&&(x.cloud.cover==='BKN'||x.cloud.cover==='OVC'));
-    if(!hasOrdinaryCeiling)return String(text||'').trim();
-    return parsed.filter(x=>!(x.cloud&&!x.cloud.type&&(x.cloud.cover==='FEW'||x.cloud.cover==='SCT'))).map(x=>x.token).join(' ');
+    const kept=parsed.filter(x=>!x.cloud||x.cloud.type||
+      (x.cloud.cover!=='FEW'&&!(hasOrdinaryCeiling&&x.cloud.cover==='SCT')));
+    if(kept.length!==parsed.length&&!kept.some(x=>x.cloud||x.token==='NSC'||x.token==='CAVOK')){
+      // Keep an explicit cloud-state indicator when FEW was the only layer,
+      // including complete base/FM states and cloud-only change groups.
+      kept.push({token:'NSC'});
+    }
+    return kept.map(x=>x.token).join(' ');
   }
 
   function simplifyCloudLayers(layers){
     const a=Array.isArray(layers)?layers.map(x=>({...x})):[];
     const hasOrdinaryCeiling=a.some(c=>!String(c?.type||'')&&(c?.cover==='BKN'||c?.cover==='OVC'));
-    if(!hasOrdinaryCeiling)return a;
-    return a.filter(c=>String(c?.type||'')||!(c?.cover==='FEW'||c?.cover==='SCT'));
+    return a.filter(c=>String(c?.type||'')||
+      (c?.cover!=='FEW'&&!(hasOrdinaryCeiling&&c?.cover==='SCT')));
   }
 
   function rebuildTaf(first,groups){
@@ -207,6 +216,11 @@
         d.cloudLayers=simplifyCloudLayers(old);
         if(d.cloudLayers.length!==old.length)simplified=true;
       }
+      if(d&&typeof d.clouds==='string'){
+        const old=d.clouds;
+        d.clouds=simplifyCloudTokens(old);
+        if(d.clouds!==old)simplified=true;
+      }
       return d?{...h,tafDisplay:d}:{...h};
     });
 
@@ -219,12 +233,12 @@
       const e=Error('TAF 2.4.3 odrzucony po priorytetyzacji zachmurzenia: '+checks.errors.join(' | '));
       e.validation=checks;throw e;
     }
-    if(simplified)reasons.push('Zachmurzenie: przy obecnej warstwie BKN/OVC pominięto słabsze zwykłe FEW/SCT; FEW/SCT pozostają dozwolone, gdy brak BKN/OVC. CB/TCU pozostają niezależne.');
+    if(simplified)reasons.push('Zachmurzenie: zwykłe FEW (1–2/8) pominięto, bez sztucznego podwyższania do SCT. Przy BKN/OVC pominięto też zwykłe SCT. Istotne chmury CB/TCU zachowano, również jeśli wymagają kodu FEW...CB/TCU.');
     return {
       ...result,taf,groups,hourly,
       base:{...(result.base||{}),text:baseText},
       checks:{...result.checks,...checks},
-      diagnostics:{...result.diagnostics,reasons,cloudPriorityPolicy:'ordinary BKN/OVC suppresses ordinary FEW/SCT in the same state; FEW/SCT remains when no BKN/OVC; CB/TCU always retained'}
+      diagnostics:{...result.diagnostics,reasons,cloudPriorityPolicy:'ordinary FEW omitted (minimum reported ordinary cloud SCT); BKN/OVC suppress ordinary SCT; significant CB/TCU retained regardless of amount'}
     };
   }
 
@@ -356,7 +370,8 @@
       prob30ModerateRainMayOmitVisibility:true,
       freezingThunderstormPrecipChangeIndependentOfVisibility:true,
       convectiveShowerWithCbTcuMayOmitVisibility:true,
-      cloudPriorityBknOvcOverFewSct:true
+      cloudPriorityBknOvcOverFewSct:true,
+      ordinaryFewSuppressedInTaf:true
     };
   }
 

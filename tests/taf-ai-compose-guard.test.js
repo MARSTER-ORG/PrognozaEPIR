@@ -26,6 +26,8 @@ assert.equal(r.accepted,true,'Grounded BECMG window adjustment should be adopted
 assert.equal(r.groups[0].kind,'BECMG');
 assert.equal(r.checks.ok,true);
 assert.equal(evaluate(base).reason,'unchanged');
+assert.equal(evaluate(expected.replace('2000 BR BKN006','2000 BR FEW006')).reason,'ordinary_few_not_proposed');
+assert.notEqual(evaluate(expected.replace('2000 BR BKN006','2000 BR FEW006CB')).reason,'ordinary_few_not_proposed');
 assert.equal(evaluate(expected.replace('9999 SCT020','0300 FG SCT020')).reason,'base_or_header_changed');
 assert.equal(evaluate(expected.replace('2000 BR BKN006','0200 FG BKN001')).reason,'unsubstantiated_forecast');
 assert.equal(evaluate(expected.replace('BECMG 1109/1111','BECMG 1109/1115')).reason,'becmg_exceeds_preferred_window');
