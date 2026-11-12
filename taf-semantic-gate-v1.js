@@ -48,7 +48,7 @@
       const line=lines[i],s=state(line,i);
       const baseOrFm=i===0||/^FM\d{6}\b/.test(line);
       const resolvedVis=s.vis!==null?s.vis:prevailing.vis;
-      const resolvedFog=s.fog!=='NONE'?s.fog:baseOrFm?'NONE':prevailing.fog;
+      const resolvedFog=s.fog!=='NONE'?s.fog:(baseOrFm||s.wx.includes('NSW'))?'NONE':prevailing.fog;
       if(resolvedVis!==null&&resolvedVis<1000&&resolvedFog!=='FG'&&!hasRelevantWx(s)){
         errors.push('Widzialność poniżej 1000 m bez udokumentowanego FG/FZFG lub innego istotnego zjawiska: '+line);
       }
@@ -62,7 +62,7 @@
       }
       if(baseOrFm)prevailing=s;
       else if(/^BECMG\b/.test(line)){
-        prevailing={...prevailing,vis:s.vis??prevailing.vis,cloud:s.cloud??prevailing.cloud,wind:s.wind??prevailing.wind,fog:s.fog==='NONE'?prevailing.fog:s.fog,wx:s.wx.length?s.wx:prevailing.wx};
+        prevailing={...prevailing,vis:s.vis??prevailing.vis,cloud:s.cloud??prevailing.cloud,wind:s.wind??prevailing.wind,fog:s.wx.includes('NSW')?'NONE':(s.fog==='NONE'?prevailing.fog:s.fog),wx:s.wx.length?s.wx:prevailing.wx};
       }
     }
     return errors;

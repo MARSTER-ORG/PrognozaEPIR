@@ -19,6 +19,13 @@ TAF z przeszłości/nieaktualne nie mogą wpływać na prognozę.
 METAR AUTO: pominięcie grupy zjawisk NIE oznacza, że zjawisko nie występuje.
 VV002 w METAR to widzialność pionowa, NIE należy jej kodować w TAF jako VV.
 Nie używaj niewybranego silnika mgieł jako źródła decyzji TAF.
+Każdą z 12 godzin porównuj z warunkami przeważającymi po zakończeniu kolejnych BECMG i FM.
+Sprawdzaj osobno godzinową widzialność, Fog Engine VIS, wyniki FG i BR oraz surowy NWP.
+Jeśli NWP przewiduje >=8000 m, a Fog Engine 1700 m z BR 86/100, oznacz istotną
+niezgodność źródeł; nie uznawaj automatycznie 9999 za wiarygodne.
+Jeżeli BECMG po FG poprawia widzialność, musi jednoznacznie zakończyć poprzednie
+zjawisko (np. NSW, gdy właściwe). Sprawdzaj także utrzymującą się poprawę >=2 h
+bez odpowiedniej BECMG i okresy niskiej widzialności z samym -RA/-DZ.
 
 FORMAT:
 - Jedna depesza TAF EPIR DDHHMMZ DDHH/DDHH z obowiązującą 12h ważnością.
