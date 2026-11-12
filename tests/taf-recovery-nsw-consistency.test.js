@@ -31,7 +31,9 @@ assert.ok(noChange.warnings.some(x=>x.includes('pomija utrzymującą się popraw
 const conflictHours=q.hourly.map((h,i)=>i<7?h:{...h,sourceRow:{...h.sourceRow,fogEngineVisM:1700,brOperationalScore:86}});
 const mismatch=audit.evaluate({taf:q.taf,hourly:conflictHours,meta:m,asOf:issue});
 assert.ok(mismatch.warnings.some(x=>x.includes('Konflikt Fog Engine')),JSON.stringify(mismatch));
-assert.ok(good.warnings.some(x=>x.includes('-RA/-DZ')),JSON.stringify(good));
+const lowRainHours=q.hourly.map((h,i)=>i===4?{...h,visM:200,tafDisplay:{...h.tafDisplay,weather:'-RA'}}:h);
+const rainAudit=audit.evaluate({taf:bad.replace('9999 BKN002','9999 NSW BKN002'),hourly:lowRainHours,meta:m,asOf:issue});
+assert.ok(rainAudit.warnings.some(x=>x.includes('-RA/-DZ')),JSON.stringify(rainAudit));
 const app=fs.readFileSync(path.join(__dirname,'../taf-app-v25.js'),'utf8');
 const server=fs.readFileSync(path.join(__dirname,'../supabase/functions/taf-gemini/index.ts'),'utf8');
 const instr=fs.readFileSync(path.join(__dirname,'../supabase/functions/taf-gemini/instruction.ts'),'utf8');
