@@ -48,6 +48,13 @@ WAŻNE PROGI:
   nie jest wartością progową: z 9999 do 1900 przekraczane są progi.
 - Podstawa BKN/OVC: progi 200/300/500/1000/1500 ft (plus właściwe lokalne MSA).
   Oceń wielkość i podstawę chmur, nie traktuj FEW/SCT jako pułapu BKN/OVC.
+  Lokalna polityka generatora EPIR: NIE PROPONUJ zwykłego FEW (1–2/8) w TAF,
+  ani w części głównej, ani w BECMG/TEMPO/PROB30/FM. Najmniejsza proponowana
+  zwykła warstwa to SCT (3–4/8), lecz tylko gdy dane naprawdę dają >=3/8.
+  Nie zwiększaj sztucznie FEW do SCT. Gdy nie ma warstwy do zakodowania,
+  stosuj NSC lub CAVOK wyłącznie zgodnie z warunkami meteorologicznymi.
+  Wyjątek bezpieczeństwa: FEW...CB i FEW...TCU należy zachować, jeżeli są
+  uzasadnione danymi; chmur konwekcyjnych nie wolno ukryć pod CAVOK/NSC.
   Przy niskich chmurach nie wymuszaj CAVOK; brak chmur istotnych z MSA pozwala
   rozważyć CAVOK tylko przy właściwej widzialności i braku pogody istotnej.
 - Kierunek wiatru: istotna zmiana >=60 stopni z prędkością >=10 KT przed/po;
