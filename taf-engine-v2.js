@@ -522,7 +522,10 @@
     if(fields.includes('weather')||kind.startsWith('PROB30')){
       if(newWx.length)out.push(...newWx);
       else if(fields.includes('weather')&&oldWx.length)out.push('NSW');
-    } else if(fields.includes('visibility')&&newWx.length)out.push(...newWx);
+    } else if(fields.includes('visibility')){
+      if(newWx.length)out.push(...newWx);
+      else if(oldWx.length)out.push('NSW'); // Explicitly cancel inherited FG/BR or precipitation.
+    }
     if(fields.includes('clouds')){
       const cs=selectClouds(target,msaFt);if(cs.length)out.push(...cs.map(cloudToken));else if(!cavokEligible(target,msaFt))out.push('NSC');
     } else if(fields.includes('weather')&&!selectClouds(target,msaFt).length&&!cavokEligible(target,msaFt))out.push('NSC');
