@@ -25,11 +25,11 @@ export function normalize(raw){
   if(row.dewPointC!==null&&row.temperatureC!==null&&row.dewPointC>row.temperatureC+2)flags.push('dewpoint_inconsistent:'+i);
   // UM4 meteograms display total cloud cover in octas, NOT percentage.
   // A fraction read from the fog panel (0..1) must never become cloudCoverPct.
-  if(/\\bUM4\\b/i.test(String(raw.modelLabel??''))&&row.cloudCoverPct!==null){
+  if(/\bUM4\b/i.test(String(raw.modelLabel??''))&&row.cloudCoverPct!==null){
     row.cloudCoverPct=null;flags.push('cloud_cover_unit_not_pct:'+i);
   }
   // "Reading from n-th column" does not identify curve/color/unit or gust vs mean.
-  if(/^Reading from (?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|\\d+)/i.test(row.evidence)){
+  if(/^Reading from (?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|\d+)/i.test(row.evidence)){
     row.confidence='low';flags.push('generic_evidence:'+i);
     if(row.windSpeedMs!==null){row.windSpeedMs=null;flags.push('wind_series_not_identified:'+i);}
   }
@@ -38,7 +38,7 @@ export function normalize(raw){
  for(let i=1;i<rows.length;i++)if(rows[i].timestampUtc&&rows[i-1].timestampUtc&&rows[i].timestampUtc<=rows[i-1].timestampUtc)flags.push('time_not_ascending');
  // The full-ICM axis can label every 3h. Model output of every tick is not hourly.
  // Detect unsafe spacing even when UTC timestamps are unavailable.
- const asClock=label=>{const m=String(label).trim().match(/^(\\d{1,2})(?::00)?$/);const h=m?Number(m[1]):NaN;return h>=0&&h<24?h:null;};
+ const asClock=label=>{const m=String(label).trim().match(/^(\d{1,2})(?::00)?$/);const h=m?Number(m[1]):NaN;return h>=0&&h<24?h:null;};
  for(let i=1;i<rows.length;i++){
    const a=asClock(rows[i-1].axisLabel),b=asClock(rows[i].axisLabel);
    if(a!==null&&b!==null&&(b-a+24)%24!==1){flags.push('non_hourly_axis_step:'+i);}
