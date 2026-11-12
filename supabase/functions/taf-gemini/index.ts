@@ -57,6 +57,10 @@ Deno.serve(async(req:Request)=>{
       dewPointC:Number.isFinite(Number(h.dewPointC))&&h.dewPointC!==null?Number(h.dewPointC):null,
       relativeHumidityPct:Number.isFinite(Number(h.relativeHumidityPct))&&h.relativeHumidityPct!==null?Number(h.relativeHumidityPct):null,
       fogEngineScore:Number.isFinite(Number(h.fogEngineScore))&&h.fogEngineScore!==null?Number(h.fogEngineScore):null,
+      fogEngineVisibilityM:h.fogEngineVisibilityM===null?null:Number.isFinite(Number(h.fogEngineVisibilityM))?Number(h.fogEngineVisibilityM):null,
+      fogEngineBrScore:h.fogEngineBrScore===null?null:Number.isFinite(Number(h.fogEngineBrScore))?Number(h.fogEngineBrScore):null,
+      fogEngineFgScore:h.fogEngineFgScore===null?null:Number.isFinite(Number(h.fogEngineFgScore))?Number(h.fogEngineFgScore):null,
+      fogEngineSource:String(h.fogEngineSource||'').slice(0,50),
       nwpLowVisibilityShare:Number.isFinite(Number(h.nwpLowVisibilityShare))&&h.nwpLowVisibilityShare!==null?Number(h.nwpLowVisibilityShare):null,
       precipitationProbability:Number(h.precipitationProbability)||0,
       lowVisibilityProbabilityPct:Number(h.lowVisibilityProbabilityPct)||0,
@@ -118,6 +122,10 @@ Deno.serve(async(req:Request)=>{
       +'METAR/SPECI EPIR i trend, ważne TAF i obserwacje sąsiednie oraz luki danych. '
       +'Oddzielnie oceń bazowy wiatr, widzialność, pogodę i chmury. '
       +'Ustal czy poprawa do 8000/9999 jest wiarygodna, gdy METAR <5000 m. '
+      +'Porównaj wszystkie 12 godzin z przeważającymi warunkami po zmianach BECMG/FM. '
+      +'Wykryj brak NSW po ustąpieniu FG/BR i trwałe poprawy do 9999 bez BECMG. '
+      +'Konfrontuj osobno fogEngineVisibilityM i fogEngineBrScore/fogEngineFgScore z NWP; '
+      +'sprzeczność zgłaszaj, nie zakładaj automatycznie przewagi NWP. '
       +'Sprawdź odziedziczone FG/BR: BECMG zawierające tylko chmury NIE '
       +'anuluje ograniczeń widzialności ani zjawiska. '
       +'Wyjaśnij fizyczne lub źródłowe niespójności w meteorologicalFlags, '
