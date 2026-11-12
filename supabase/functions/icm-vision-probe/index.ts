@@ -56,7 +56,7 @@ Deno.serve(async(req:Request)=>{
   let response:Response;
   try{response=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+MODEL+':generateContent',{method:'POST',headers:{'content-type':'application/json','x-goog-api-key':key},body:JSON.stringify(body),signal:controller.signal});}
   finally{clearTimeout(timeout);}
-  if(!response.ok)return reply(req,response.status===429?429:502,{ok:false,error:response.status===429?'gemini_quota':'gemini_upstream',upstreamStatus:response.status});
+  if(!response.ok){const details=await response.json().catch(()=>({}));return reply(req,response.status===429?429:502,{ok:false,error:response.status===429?'gemini_quota':'gemini_upstream',upstreamStatus:response.status,providerCode:String(details?.error?.status||'').slice(0,80),providerMessage:String(details?.error?.message||'').slice(0,500)});}
   const api=await response.json(),raw=(api.candidates?.[0]?.content?.parts||[]).map((p:{text?:string})=>p.text||'').join('');
   const result=normalize(JSON.parse(raw));
   return reply(req,200,{ok:true,model:MODEL,mode,stored:false,imageBytes:info.byteLength,result});
