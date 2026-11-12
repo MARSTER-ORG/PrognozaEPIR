@@ -20,3 +20,18 @@ Odpowiada: `ok`, `mode: manual_image_only`, `stored: false`, `result.rows`, `res
 
 ## Ograniczenia
 Testujemy tylko obraz użyty w sposób dozwolony. ICM wymaga uzgodnienia automatycznego pobierania i dalszego publikowania danych; patrz https://faq.meteo.pl/. Funkcja nie uczy Gemini na danych. Wynik należy porównać ręcznie co najmniej dla 6 godzin. Ten eksperyment nie jest zatwierdzonym źródłem prognoz lotniczych. Status ACTIVE potwierdza wdrożenie, ale nie zastępuje testu rzeczywistego odczytu.
+
+## Tryb automatycznego pobierania (wersja 2, zablokowany bez autoryzacji)
+Przed uzyskaniem pisemnej zgody ICM nie wolno automatycznie pobierać obrazów z ich strony. Dokumentacja: https://www.meteo.pl/regulamin-aplikacji-meteo-icm . Nie ma scrapingu ani wywołań do strony app.meteo.pl.
+
+Funkcja `icm-vision-probe` wspiera `{"source":"auto","station":"EPIR"}` i sama pobiera binarny obraz z **autoryzowanego** endpointu ICM API, a następnie przekazuje go do Gemini i normalizuje parametry.
+
+Niezbędne sekrety serwera Supabase po uzgodnieniu dostępu:
+- `ICM_IMAGE_AUTO_APPROVED=true` — ustawiane dopiero po zatwierdzeniu warunków.
+- `ICM_AUTHORIZED_IMAGE_URL` — pełny, autoryzowany URL obrazu HTTPS pod domeną `api.meteo.pl`.
+- `ICM_API_TOKEN` — token dostępu otrzymany od operatora; autoryzacja Bearer (do dostosowania do rzeczywistego API).
+- `GEMINI_API_KEY` — istniejący klucz, przechowywany w Supabase.
+
+Jeżeli ICM udostępni obrazy poprzez inny autoryzowany host, należy zmienić listę dozwolonych domen po weryfikacji dokumentacji i zgody. Funkcja **nie** podąża za przekierowaniami i odrzuca HTML. Zwraca jawny błąd, gdy źródło nie jest skonfigurowane. Nie zbiera danych przez publiczne endpointy lub emulator przeglądarki.
+
+Przyszła cykliczność: po uzgodnieniu źródła i parametrów dostępności można dodać wyzwalanie zgodne z cyklami UM (oraz deduplikację w bazie testowej), nadal bez wpływu na Consensus. Obecnie nie jest uruchomiony harmonogram. Test adaptera bez sieci: `node tests/icm-authorized-source.test.mjs`.
