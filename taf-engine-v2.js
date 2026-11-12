@@ -465,15 +465,43 @@
   }
 
   function changeConfidence(target,fields){
-    const p=target.prob||{};
-    let c=.65;
-    if(fields.includes('visibility'))c=Math.max(p.lowVis||0,p.fg||0,p.br||0);
-    if(fields.includes('weather'))c=Math.max(c,p.ts||0,p.moderateHeavyPrecip||0,p.frozen||0,p.fg||0,p.br||0);
-    if(fields.includes('clouds'))c=Math.max(c,p.lowCeiling||0,(convectiveSignature(target)?p.ts||0:0));
-    if(fields.includes('wind')){
-      const x=weightedShare(target.sourceRow,m=>num(m.ws)&&Math.abs(+m.ws*KT-(target.windKt||0))<5);if(finite(x))c=Math.max(c,x);
+    if(!fields.length)return null;
+    const p=target.prob||{},source=target.sourceRow||{},evidence=[];
+    const modelHas=field=>Array.isArray(source.mv)&&source.mv.some(m=>num(m?.[field]));
+    if(fields.includes('visibility')){
+      const category=band(target.visM,VIS_THRESH);
+      const share=modelHas('vis')?weightedShare(source,m=>num(m.vis)&&band(+m.vis,VIS_THRESH)===category):NaN;
+      const currentFog=fogFamily(target,.5);
+      const fogSupport=currentFog==='FG'?p.fg:currentFog==='BR'?p.br:0;
+      const lowVisibilitySupport=target.visM<5000?p.lowVis||0:0;
+      if(finite(share)||fogSupport>0||lowVisibilitySupport>0)
+        evidence.push(Math.max(finite(share)?share:0,fogSupport||0,lowVisibilitySupport));
     }
-    return clamp(c,0,1);
+    if(fields.includes('weather')){
+      const family=wxFamily(weatherToken(target,.5));
+      let support=null;
+      if(family==='TS')support=p.ts;
+      else if(family==='FZPRECIP')support=p.frozen;
+      else if(family==='MODHEAVYPRECIP')support=p.moderateHeavyPrecip;
+      else if(family==='WEAKPRECIP')support=p.precip;
+      else if(family==='NONE'&&modelHas('code'))
+        support=1-Math.max(p.ts||0,p.frozen||0,p.precip||0);
+      if(num(support))evidence.push(clamp(+support,0,1));
+    }
+    if(fields.includes('clouds')){
+      const cb=cloudCategory(target);
+      const share=modelHas('ceil')?weightedShare(source,m=>num(m.ceil)&&band(+m.ceil*FT,CEIL_THRESH,true)===cb):NaN;
+      if(finite(share))evidence.push(share);
+      else if(lowOperationalBkn(target)&&num(p.lowCeiling)&&p.lowCeiling>0)evidence.push(p.lowCeiling);
+    }
+    if(fields.includes('wind')){
+      const share=modelHas('ws')?weightedShare(source,m=>num(m.ws)&&Math.abs(+m.ws*KT-(target.windKt||0))<5&&
+        (!num(m.wd)||!finite(target.windDir)||circ(+m.wd,target.windDir)<35)):NaN;
+      if(finite(share))evidence.push(share);
+    }
+    // No invented 65% fallback. Missing confidence stays unknown; group
+    // persistence or return-to-prevailing evidence decides BECMG vs TEMPO.
+    return evidence.length?Math.min(...evidence):null;
   }
 
   function mergePrevailing(prev,target,fields){
@@ -608,22 +636,70 @@
 
   function buildChangeGroups(states,base,start,end,msaFt){
     const groups=[],reasons=[],skipped=[];let prevailing=base,prob30Used=false,prob30TempoUsed=false;
-    for(let i=1;i<states.length&&groups.length<MAX_GROUPS;i++){
-      let target=states[i],sig=significantFields(prevailing,target),fields=sig.fields;
+    // Classify the prevailing forecast first. A 30-49% alternative may not
+    // absorb unrelated changes of wind, visibility, or cloud.
+    function emitMain(target,fields,i){
+      if(!fields.length||groups.length>=MAX_GROUPS)return;
       const prevFog=fogFamily(prevailing,.5),targetFog=fogFamily(target,.5);
-      const fogAltProb=Math.max(target.prob?.fg||0,target.prob?.br||0);
-      const altFogFamily=(target.prob?.fg||0)>=.30&&(target.prob?.fg||0)>=(target.prob?.br||0)?'FG':(target.prob?.br||0)>=.30?'BR':'NONE';
       const newFog=targetFog!=='NONE'&&targetFog!==prevFog;
-      const newFogAlternative=altFogFamily!=='NONE'&&altFogFamily!==prevFog;
+
+      const confidence=changeConfidence(target,fields),persist=persistenceFrom(states,i,target),returnH=returnsTo(states,i,prevailing);
+      if(confidence!==null&&confidence<.30){skipped.push(`${code(target.t)} UTC: zmiana <30% (${Math.round(confidence*100)}%).`);return;}
+      let kind=null,s=null,e=null;
+      const precise=target.sourceRow?.preciseTiming===true||target.sourceRow?.preciseFm===true;
+
+      if(confidence===null){
+        if(returnH&&tempoAllowed(prevailing,target,fields)){
+          kind='TEMPO';s=target.t;e=Math.min(end,target.t+Math.max(2*HOUR,returnH*HOUR));
+        }else if(persist>=2){
+          kind=precise?'FM':'BECMG';
+          if(kind==='FM'){s=target.t;e=target.t;}else{s=Math.max(start,target.t-HOUR);e=Math.min(end,s+2*HOUR);}
+        }else{skipped.push(`${code(target.t)} UTC: brak skalibrowanej pewności i dowodów trwałości; pominięto zmianę.`);return;}
+      }else if(confidence<.50){
+        const temporary=!!returnH&&tempoAllowed(prevailing,target,fields);
+        kind=temporary?'PROB30 TEMPO':'PROB30';
+        if((temporary&&prob30TempoUsed)||(!temporary&&prob30Used)){skipped.push(`${code(target.t)} UTC: pominięto kolejne ${kind} — polityka EPIR zachowuje pierwszą grupę danego rodzaju.`);return;}
+        target=alternativeProbabilityState(prevailing,target);const w=twoHourWindow(target.t,start,end);s=w.s;e=w.e;
+      }else if(newFog){
+        // Ordinary FG/BR onset/cessation must not be introduced by TEMPO.
+        if(precise){kind='FM';s=target.t;e=target.t;}
+        else if(persist>=2){kind='BECMG';s=Math.max(start,target.t-HOUR);e=Math.min(end,s+2*HOUR);}
+        else {skipped.push(`${code(target.t)} UTC: krótkie nowe ${targetFog} >=50% pominięto — TEMPO nie może prognozować jego wystąpienia, a brak podstaw do BECMG/FM.`);return;}
+      }else if(returnH){
+        if(!tempoAllowed(prevailing,target,fields)){skipped.push(`${code(target.t)} UTC: zmiana chwilowa odrzucona przez ograniczenia TEMPO z instrukcji.`);return;}
+        kind='TEMPO';s=target.t;e=Math.min(end,target.t+Math.max(2*HOUR,returnH*HOUR));
+      }else if(persist>=2){
+        kind=precise?'FM':'BECMG';
+        if(kind==='FM'){s=target.t;e=target.t;}else{s=Math.max(start,target.t-HOUR);e=Math.min(end,s+2*HOUR);}
+      }else{
+        // No persistence evidence: do not invent a lasting BECMG from the last isolated hour.
+        skipped.push(`${code(target.t)} UTC: brak potwierdzenia trwałości zmiany — nie utworzono BECMG.`);return;
+      }
+
+      const g={kind,s,e,fields,payload:payload(prevailing,target,fields,kind,msaFt),probability:confidence};
+      if(!g.payload)return;
+      if(kind==='FM')g.text=`FM${code(s,true)} ${g.payload}`;else g.text=`${kind} ${period(s,e)} ${g.payload}`;
+      if(conflicts(groups,g)){skipped.push(`${code(target.t)} UTC: pominięto nakładającą się grupę dla tego samego parametru.`);return;}
+      groups.push(g);reasons.push(`${g.text}: ${fields.join(', ')}; pewność ${confidence===null?'nieokreślona (potwierdzony charakter zmiany)':Math.round(confidence*100)+'%'}.`);
+      if(kind==='PROB30')prob30Used=true;else if(kind==='PROB30 TEMPO')prob30TempoUsed=true;
+      if(kind==='BECMG'||kind==='FM')prevailing=mergePrevailing(prevailing,target,fields);
+    }
+    for(let i=1;i<states.length&&groups.length<MAX_GROUPS;i++){
+      const target=states[i],sig=significantFields(prevailing,target);
+      const preliminary=probabilityAlternative(prevailing,target);
+      // Keep the 30-49% scenario separate from confident deterministic fields.
+      const prevailingFields=preliminary?sig.fields.filter(f=>!preliminary.fields.includes(f)):sig.fields;
+      emitMain(target,prevailingFields,i);
+      // BECMG/FM can alter the baseline; reassess the alternative afterwards.
       const alt=probabilityAlternative(prevailing,target);
-      if(alt){
+      if(alt&&groups.length<MAX_GROUPS){
         const kind=alt.temporary?'PROB30 TEMPO':'PROB30';
         const used=alt.temporary?prob30TempoUsed:prob30Used;
         if(used){skipped.push(`${code(target.t)} UTC: pominięto kolejne ${kind} — polityka EPIR zachowuje pierwszą grupę danego rodzaju.`);continue;}
-        target=alternativeProbabilityState(prevailing,target);fields=[...new Set([...fields,...alt.fields])];
-        const family=target.prob?.fg>=.30&&target.prob.fg>=target.prob.br?'FG':'BR';
+        const altTarget=alternativeProbabilityState(prevailing,target),altFields=alt.fields;
+        const family=altTarget.prob?.fg>=.30&&altTarget.prob.fg>=altTarget.prob.br?'FG':'BR';
         const w=alt.newFog?fogEpisodeWindow(states,i,family,start,end):
-          (alt.temporary?intermittentProbabilityWindow(states,i,start,end):twoHourWindow(target.t,start,end));
+          (alt.temporary?intermittentProbabilityWindow(states,i,start,end):twoHourWindow(altTarget.t,start,end));
         // VVVV describes the alternative inside the onset window, not a
         // possible stronger deterioration many hours after that window.
         let eventVisibility=null;
@@ -637,10 +713,10 @@
           if(eventValues.length){
             const low=family==='FG'?0:1000,high=family==='FG'?900:5000;
             eventVisibility=clamp(quantile(eventValues,.35),low,high);
-            target.visM=eventVisibility;
+            altTarget.visM=eventVisibility;
           }
         }
-        const g={kind,s:w.s,e:w.e,fields,payload:payload(prevailing,target,fields,kind,msaFt),probability:alt.probability};
+        const g={kind,s:w.s,e:w.e,fields:altFields,payload:payload(prevailing,altTarget,altFields,kind,msaFt),probability:alt.probability};
         if(eventVisibility!==null)g.visibilityEvidence={source:'onset-window-p35',meters:Math.round(eventVisibility)};
         if(alt.newFog)g.scenario={
           type:'uncertain-fog-onset',family,onsetStart:w.s,onsetEnd:w.e,
@@ -655,40 +731,6 @@
         continue;
       }
 
-      if(!fields.length)continue;
-      let confidence=changeConfidence(target,fields),persist=persistenceFrom(states,i,target),returnH=returnsTo(states,i,prevailing);
-      if(confidence<.30){skipped.push(`${code(target.t)} UTC: zmiana <30% (${Math.round(confidence*100)}%).`);continue;}
-      let kind=null,s=null,e=null;
-      const precise=target.sourceRow?.preciseTiming===true||target.sourceRow?.preciseFm===true;
-
-      if(confidence<.50){
-        const temporary=!!returnH&&tempoAllowed(prevailing,target,fields);
-        kind=temporary?'PROB30 TEMPO':'PROB30';
-        if((temporary&&prob30TempoUsed)||(!temporary&&prob30Used)){skipped.push(`${code(target.t)} UTC: pominięto kolejne ${kind} — polityka EPIR zachowuje pierwszą grupę danego rodzaju.`);continue;}
-        target=alternativeProbabilityState(prevailing,target);const w=twoHourWindow(target.t,start,end);s=w.s;e=w.e;
-      }else if(newFog){
-        // Ordinary FG/BR onset/cessation must not be introduced by TEMPO.
-        if(precise){kind='FM';s=target.t;e=target.t;}
-        else if(persist>=2){kind='BECMG';s=Math.max(start,target.t-HOUR);e=Math.min(end,s+2*HOUR);}
-        else {skipped.push(`${code(target.t)} UTC: krótkie nowe ${targetFog} >=50% pominięto — TEMPO nie może prognozować jego wystąpienia, a brak podstaw do BECMG/FM.`);continue;}
-      }else if(returnH){
-        if(!tempoAllowed(prevailing,target,fields)){skipped.push(`${code(target.t)} UTC: zmiana chwilowa odrzucona przez ograniczenia TEMPO z instrukcji.`);continue;}
-        kind='TEMPO';s=target.t;e=Math.min(end,target.t+Math.max(2*HOUR,returnH*HOUR));
-      }else if(persist>=2){
-        kind=precise?'FM':'BECMG';
-        if(kind==='FM'){s=target.t;e=target.t;}else{s=Math.max(start,target.t-HOUR);e=Math.min(end,s+2*HOUR);}
-      }else{
-        // No persistence evidence: do not invent a lasting BECMG from the last isolated hour.
-        skipped.push(`${code(target.t)} UTC: brak potwierdzenia trwałości zmiany — nie utworzono BECMG.`);continue;
-      }
-
-      const g={kind,s,e,fields,payload:payload(prevailing,target,fields,kind,msaFt),probability:confidence};
-      if(!g.payload)continue;
-      if(kind==='FM')g.text=`FM${code(s,true)} ${g.payload}`;else g.text=`${kind} ${period(s,e)} ${g.payload}`;
-      if(conflicts(groups,g)){skipped.push(`${code(target.t)} UTC: pominięto nakładającą się grupę dla tego samego parametru.`);continue;}
-      groups.push(g);reasons.push(`${g.text}: ${fields.join(', ')}; pewność ${Math.round(confidence*100)}%.`);
-      if(kind==='PROB30')prob30Used=true;else if(kind==='PROB30 TEMPO')prob30TempoUsed=true;
-      if(kind==='BECMG'||kind==='FM')prevailing=mergePrevailing(prevailing,target,fields);
     }
 
     // PROB30 fog onset is separate from possible later risk; TEMPO groups
