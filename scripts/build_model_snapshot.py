@@ -9,7 +9,9 @@ when a model is absent from the snapshot.
 from __future__ import annotations
 
 import json
+import os
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -51,7 +53,15 @@ def iso_now():
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def request_json(model_id: str, variables: list[str], retries: int = 3, timeout: int = 35):
+class ModelAPIError(RuntimeError):
+    """Preserve the upstream reason and HTTP status for triage and safe retries."""
+
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
+
+
+def request_json(model_id: str, variables: list[str], retries: int = 2, timeout: int = 18):
     params = {
         "latitude": LAT,
         "longitude": LON,
@@ -65,14 +75,45 @@ def request_json(model_id: str, variables: list[str], retries: int = 3, timeout:
     last = None
     for attempt in range(retries):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                return json.load(r)
-        except Exception as exc:
+            req = urllib.request.Request(
+                url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                payload = json.load(response)
+            if not isinstance(payload, dict):
+                raise ModelAPIError("Open-Meteo response is not a JSON object")
+            if payload.get("error"):
+                raise ModelAPIError(str(payload.get("reason") or "Open-Meteo error"))
+            if not isinstance((payload.get("hourly") or {}).get("time"), list):
+                raise ModelAPIError("Open-Meteo response has no hourly.time")
+            return payload
+        except urllib.error.HTTPError as exc:
+            body = exc.read(2048).decode("utf-8", errors="replace")
+            try:
+                reason = json.loads(body).get("reason") or body
+            except (ValueError, AttributeError):
+                reason = body
+            last = ModelAPIError(
+                f"HTTP {exc.code}: {str(reason).strip()[:300]}", status=exc.code
+            )
+            # 400 may indicate an unsupported hourly field; the caller handles it.
+            # 403/429 indicate blocking or quota limits: never split into more calls.
+            if exc.code not in (408, 500, 502, 503, 504):
+                break
+        except ModelAPIError as exc:
             last = exc
-            if attempt + 1 < retries:
-                time.sleep(1.2 * (attempt + 1))
+            break
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            last = ModelAPIError(f"{type(exc).__name__}: {exc}")
+        if attempt + 1 < retries:
+            time.sleep(1.5 * (attempt + 1))
     raise last
+
+
+def _unsupported_hourly(exc: ModelAPIError) -> bool:
+    """Only field-validation errors justify splitting; never split 429/5xx."""
+    message = str(exc).lower()
+    return exc.status == 400 and ("hourly" in message or "variable" in message)
 
 
 def merge_payload(base: dict | None, extra: dict | None):
@@ -88,38 +129,52 @@ def merge_payload(base: dict | None, extra: dict | None):
             "hourly": {},
         }
     bh, eh = base.setdefault("hourly", {}), extra.get("hourly") or {}
-    if not bh.get("time") and eh.get("time"):
-        bh["time"] = eh["time"]
-    for k, v in eh.items():
-        if k != "time" and isinstance(v, list):
-            bh[k] = v
+    bt, et = bh.get("time") or [], eh.get("time") or []
+    if not bt and et:
+        bh["time"] = et
+        bt = et
+    positions = {stamp: index for index, stamp in enumerate(et)}
+    for key, values in eh.items():
+        if key == "time" or not isinstance(values, list):
+            continue
+        if bt == et:
+            bh[key] = values
+        else:
+            # Never concatenate arrays from different forecast cycles by index.
+            bh[key] = [
+                values[positions[stamp]] if stamp in positions and positions[stamp] < len(values) else None
+                for stamp in bt
+            ]
     base.setdefault("hourly_units", {}).update(extra.get("hourly_units") or {})
     if base.get("elevation") is None and extra.get("elevation") is not None:
         base["elevation"] = extra.get("elevation")
     return base
 
 
-def fetch_resilient(model_id: str, variables: list[str], min_chunk: int = 3):
-    """Salvage supported variables instead of failing an entire model on one 400."""
+def fetch_resilient(model_id: str, variables: list[str], budget: int = 24):
+    """Isolate unsupported variables with a strict request budget per model."""
     failures = []
+    calls = 0
 
     def rec(chunk: list[str]):
+        nonlocal calls
         if not chunk:
             return None
+        if calls >= budget:
+            failures.append((", ".join(chunk[:3]), "request budget exceeded"))
+            return None
+        calls += 1
         try:
             return request_json(model_id, chunk)
-        except Exception:
-            if len(chunk) <= min_chunk:
-                merged = None
-                for v in chunk:
-                    try:
-                        merged = merge_payload(merged, request_json(model_id, [v], retries=2))
-                    except Exception as one:
-                        failures.append((v, str(one)))
-                return merged
-            mid = len(chunk) // 2
-            left = rec(chunk[:mid])
-            right = rec(chunk[mid:])
+        except ModelAPIError as exc:
+            if not _unsupported_hourly(exc):
+                raise
+            if len(chunk) == 1:
+                failures.append((chunk[0], str(exc)))
+                return None
+            middle = len(chunk) // 2
+            left = rec(chunk[:middle])
+            right = rec(chunk[middle:])
             return merge_payload(left, right)
 
     return rec(variables), failures
@@ -142,25 +197,34 @@ def profile_variables(model_id: str):
 
 
 def fetch_model(model_id: str, name: str, base_weight: float):
-    core, core_fail = fetch_resilient(model_id, CORE)
+    core, core_fail = fetch_resilient(model_id, CORE, budget=20)
     if not core or not (core.get("hourly") or {}).get("time"):
-        raise RuntimeError("no core hourly.time")
+        raise ModelAPIError(
+            "no core hourly.time; " + str(core_fail[:3])
+        )
 
-    prof, prof_fail = fetch_resilient(model_id, profile_variables(model_id))
-    merged = merge_payload(core, prof)
+    try:
+        profile, profile_fail = fetch_resilient(
+            model_id, profile_variables(model_id), budget=24
+        )
+    except ModelAPIError as exc:
+        if exc.status in (403, 429):
+            raise
+        profile, profile_fail = None, [("profile", str(exc))]
+    merged = merge_payload(core, profile)
     hourly = merged.get("hourly") or {}
     times = hourly.get("time") or []
-    if not times:
-        raise RuntimeError("merged snapshot has no hourly.time")
+    if len(times) < 24:
+        raise ModelAPIError(f"insufficient hourly times: {len(times)}")
 
     n = len(times)
-    for k, arr in list(hourly.items()):
-        if k == "time" or not isinstance(arr, list):
+    for key, values in list(hourly.items()):
+        if key == "time" or not isinstance(values, list):
             continue
-        if len(arr) < n:
-            hourly[k] = arr + [None] * (n - len(arr))
-        elif len(arr) > n:
-            hourly[k] = arr[:n]
+        if len(values) < n:
+            hourly[key] = values + [None] * (n - len(values))
+        elif len(values) > n:
+            hourly[key] = values[:n]
 
     return {
         "name": name,
@@ -169,15 +233,47 @@ def fetch_model(model_id: str, name: str, base_weight: float):
         "elevation": merged.get("elevation"),
         "hourly_units": merged.get("hourly_units") or {},
         "hourly": hourly,
-        "available_variables": sorted(k for k in hourly if k != "time"),
+        "available_variables": sorted(key for key in hourly if key != "time"),
         "variable_failures": {
             "core": core_fail[:30],
-            "profile": prof_fail[:60],
+            "profile": profile_fail[:60],
         },
     }
 
 
+def cached_snapshot():
+    if not OUT.exists():
+        return None, None
+    try:
+        cached = json.loads(OUT.read_text(encoding="utf-8"))
+        if cached.get("schema") != "prognozaepir-model-snapshot-v1":
+            return None, None
+        models = cached.get("models") or {}
+        if sum(len((v.get("hourly") or {}).get("time") or []) >= 24 for v in models.values()) < 3:
+            return None, None
+        generated = datetime.fromisoformat(cached["generated_at"].replace("Z", "+00:00"))
+        age_hours = (datetime.now(timezone.utc) - generated).total_seconds() / 3600
+        if age_hours < -0.25:
+            return None, None
+        return cached, age_hours
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None, None
+
+
+def _summary(message: str):
+    print(message, flush=True)
+    if os.getenv("GITHUB_STEP_SUMMARY"):
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:
+            stream.write(message + "\n")
+
+
 def main():
+    cached, age_hours = cached_snapshot()
+    min_refresh_hours = float(os.getenv("EPIR_SNAPSHOT_MIN_REFRESH_HOURS", "0"))
+    if cached is not None and age_hours is not None and age_hours < min_refresh_hours:
+        _summary(f"Model snapshot: cache still fresh ({age_hours:.1f}h); no Open-Meteo calls.")
+        return
+
     result = {
         "schema": "prognozaepir-model-snapshot-v1",
         "generated_at": iso_now(),
@@ -192,18 +288,37 @@ def main():
         try:
             row = fetch_model(model_id, name, weight)
             result["models"][model_id] = row
-            print(model_id, "ok", len((row.get("hourly") or {}).get("time") or []), "hours", len(row.get("available_variables") or []), "vars")
-        except Exception as exc:
+            print(
+                model_id, "ok", len((row.get("hourly") or {}).get("time") or []),
+                "hours", len(row.get("available_variables") or []), "vars",
+                flush=True,
+            )
+        except ModelAPIError as exc:
             result["failures"][model_id] = str(exc)
-            print(model_id, "FAILED", exc)
+            print(model_id, "FAILED", exc, flush=True)
+            if exc.status in (403, 429):
+                _summary(f"::warning::Open-Meteo access limited ({exc}); stop requests for this run.")
+                break
+        except Exception as exc:
+            result["failures"][model_id] = f"{type(exc).__name__}: {exc}"
+            print(model_id, "FAILED", result["failures"][model_id], flush=True)
 
     ok = len(result["models"])
     if ok < 3:
-        raise SystemExit(f"snapshot rejected: only {ok}/{len(MODELS)} models available")
+        if cached is not None and age_hours is not None and age_hours <= 12:
+            _summary(
+                f"::warning::Only {ok}/10 new models; preserving valid cached snapshot "
+                f"({age_hours:.1f}h old)."
+            )
+            return
+        _summary(f"::error::Snapshot rejected: only {ok}/10 models; no usable cache <=12h.")
+        raise SystemExit(1)
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps(result, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
-    print(f"snapshot written: {OUT.relative_to(ROOT)}; models={ok}/{len(MODELS)}")
+    temporary = OUT.with_name(OUT.name + ".tmp")
+    temporary.write_text(json.dumps(result, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
+    temporary.replace(OUT)
+    _summary(f"Model snapshot updated: {ok}/10 models.")
 
 
 if __name__ == "__main__":

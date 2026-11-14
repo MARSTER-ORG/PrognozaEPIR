@@ -31,12 +31,12 @@ jobs:
       PROGNOZAEPIR_TAF_REQUIRE_NEW_CYCLE: '1'
     steps:
       - name: Checkout canonical source and archive
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: main
           fetch-depth: 0
           persist-credentials: true
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - name: Validate collector modules
@@ -159,7 +159,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git add -- data/taf/neighbors.json data/taf/latest.json data/taf/epir data/messages/taf data/messages/taf-neighbors.json data/messages/latest.json data/messages/recent.json data/messages/status.json
+          # Shared latest/recent/status files belong to the canonical mirror.
+          # Staging them here conflicts with frequent METAR/SYNOP publication.
+          git add -- data/taf/neighbors.json data/taf/latest.json data/taf/epir data/messages/taf data/messages/taf-neighbors.json
           if git diff --cached --quiet; then
             echo 'No new canonical TAF content.'
             exit 0
@@ -168,7 +170,9 @@ jobs:
           git config user.email 'taf-recovery@prognozaepir.invalid'
           git commit -m 'archive(taf): restore verified current TAFs from independent runner'
           for attempt in 1 2 3; do
-            if git -c rebase.autoStash=true pull --rebase origin main && git push origin HEAD:main; then
+            # Prefer the freshly published canonical main for overlapping hunks;
+            # uncontested TAF history is still carried forward in the rebase.
+            if git -c rebase.autoStash=true pull --rebase -X ours origin main && git push origin HEAD:main; then
               exit 0
             fi
             git rebase --abort >/dev/null 2>&1 || true
