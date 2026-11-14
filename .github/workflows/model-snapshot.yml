@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: '17 * * * *'
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'scripts/build_model_snapshot.py'
+      - 'tests/test_model_snapshot_resilience.py'
+      - '.github/workflows/model-snapshot.yml'
+      - '.github/workflows/taf-heartbeat.yml'
   push:
     branches: [main]
     paths:
@@ -22,7 +28,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  preflight:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Compile and run offline regression tests
+        run: |
+          python3 -m py_compile scripts/build_model_snapshot.py
+          python3 -m unittest discover -s tests -p 'test_model_snapshot_resilience.py'
+
   refresh:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout main
