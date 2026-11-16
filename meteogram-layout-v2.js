@@ -62,7 +62,8 @@
     let y=top+14,sx=x+9;
     legendTitle(sx,y,'Temperatury');y+=14;
     legendSample(sx,y,'#d43d31','Temp. powietrza');y+=13;
-    legendSample(sx,y,'#25278f','Punkt rosy',[2,2]);y+=18;
+    legendSample(sx,y,'#25278f','Punkt rosy',[2,2]);y+=13;
+    legendSample(sx,y,'#475569','0°C — granica');y+=18;
     legendTitle(sx,y,'Opady / wilgotność');y+=14;
     legendSample(sx,y,'#039c29','Opad');y+=13;
     legendSample(sx,y,'#bd4723','Wilgotność');y+=18;
