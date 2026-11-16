@@ -211,12 +211,14 @@
     ctx.textBaseline='middle';
     for(const value of windTicks) {
       const yy=y(value),label=String(value);
-      if(yy<p.y+4 || yy>p.y+p.h-4) continue;
+      // Keep the endpoint labels inside the panel without altering the exact
+      // threshold grid positions (0 bottom, scale maximum at the top).
+      const textY=Math.max(p.y+7,Math.min(p.y+p.h-7,yy));
       ctx.textAlign='right';
       ctx.fillStyle=[5,10,15,25].includes(value)?cp.text:cp.muted;
-      ctx.fillText(label,x0-8,yy);
+      ctx.fillText(label,x0-8,textY);
       ctx.textAlign='left';
-      ctx.fillText(String(Math.round(value*3.6)),x1+7,yy);
+      ctx.fillText(String(Math.round(value*3.6)),x1+7,textY);
     }
     ctx.restore();
 
