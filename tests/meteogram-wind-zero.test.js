@@ -100,3 +100,20 @@ assert.ok(dashes.some(d=>d.length===2 && d[0]===6 && d[1]===4),
   'gust line should remain dashed');
 
 console.log('Visible threshold lines, coloured Canvas fills and km/h axis OK');
+
+
+// The normal 0–15 m/s reference view must show BOTH axis endpoints.
+labels.length=0;
+vm.runInNewContext(cleaned.slice(begin,end)+'\nredrawWindPanelForeground();',{
+  ctx,cv:{_meta:{x0:100,x1:700,t0:0,t1:h,panelYs:[{id:'wind',y:0,h:112}],data:[
+    {t:0,WS:3,G:7,WD:0},{t:h,WS:6,G:10,WD:30}
+  ]}},
+  window:{PrognozaEPIRWindVisual:wind},
+  canvasPalette:()=>({panel:'#222',grid:'#666',grid2:'#777',border:'#999',bg:'#101010',muted:'#aaa',text:'#eee'}),
+  finite:Number.isFinite,clamp:(v,a,b)=>Math.max(a,Math.min(b,v)),
+  activeTheme:()=> 'dark',WIND_ARROW:'#ef4444',HOUR:h,RIGHT_W:48
+});
+for(const tick of ['0','5','10','15'])
+  assert.ok(labels.some(item=>item.label===tick && item.x===92),
+    '0–15 m/s chart must show axis tick '+tick);
+console.log('Both wind-axis endpoint labels remain visible');
