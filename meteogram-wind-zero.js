@@ -29,7 +29,21 @@
       return {start,end,from,to,band:band((from+to)/2)};
     });
   }
-  const api = Object.freeze({levels:LEVELS,band,segments,thresholds:THRESHOLDS});
+  function axisMax(rows) {
+    let maximum=15;
+    for(const row of rows||[]) {
+      for(const speed of [row?.WS,row?.G]) {
+        if(finite(speed)&&speed>=0) maximum=Math.max(maximum,speed);
+      }
+    }
+    return Math.ceil(maximum/5)*5;
+  }
+  function axisTicks(maximum) {
+    if(!finite(maximum)||maximum<=0) return [0,5,10,15];
+    const values=[0,...THRESHOLDS.filter(t=>t<=maximum),maximum];
+    return [...new Set(values)].sort((a,b)=>a-b);
+  }
+  const api = Object.freeze({levels:LEVELS,band,segments,axisMax,axisTicks,thresholds:THRESHOLDS});
   if (typeof module !== 'undefined' && module.exports) module.exports=api;
   if (!root || !root.document) return;
   root.PrognozaEPIRWindVisual=api;
@@ -73,50 +87,11 @@
     ctx.fillText('0°C',m.x0-8,yy);
     ctx.restore();
   }
-  function drawWind(m) {
-    const p=m.panelYs.find(p=>p.id==='wind');
-    if (!p) return;
-    const speeds=m.data.flatMap(z=>[z.WS,z.G]).filter(v=>finite(v)&&v>=0);
-    if (!speeds.length) return;
-    const maxW=Math.ceil(Math.max(10,...speeds)/5)*5;
-    const zero=plotY(0,0,maxW,p);
-    const dark=typeof activeTheme==='function'&&activeTheme()==='dark';
-    const alpha=dark?.43:.28;
-    ctx.save();ctx.beginPath();ctx.rect(m.x0,p.y,m.x1-m.x0,p.h);ctx.clip();
-    ctx.lineJoin='round';ctx.lineCap='round';ctx.setLineDash([]);
-    for (let i=1;i<m.data.length;i++) {
-      const prev=m.data[i-1],next=m.data[i],a=prev.WS,b=next.WS;
-      if (!finite(prev.t)||!finite(next.t)||!finite(a)||!finite(b)||a<0||b<0) continue;
-      const x0=xFor(prev.t,m),x1=xFor(next.t,m);
-      if (!(x1>x0) || x0>=m.x1 || x1<=m.x0) continue;
-      for (const seg of segments(a,b)) {
-        const xx0=x0+(x1-x0)*seg.start, xx1=x0+(x1-x0)*seg.end;
-        const yy0=plotY(seg.from,0,maxW,p),yy1=plotY(seg.to,0,maxW,p);
-        ctx.save();ctx.globalAlpha=alpha;ctx.fillStyle=seg.band.color;
-        ctx.beginPath();ctx.moveTo(xx0,zero);ctx.lineTo(xx0,yy0);ctx.lineTo(xx1,yy1);
-        ctx.lineTo(xx1,zero);ctx.closePath();ctx.fill();ctx.restore();
-        ctx.strokeStyle=seg.band.color;ctx.lineWidth=2.5;
-        ctx.beginPath();ctx.moveTo(xx0,yy0);ctx.lineTo(xx1,yy1);ctx.stroke();
-      }
-    }
-    // Preserve the separate, dashed gust forecast above the coloured mean wind.
-    ctx.strokeStyle=dark?'#ff7770':'#bd3730';
-    ctx.lineWidth=1.9;ctx.setLineDash([5,4]);ctx.beginPath();
-    let started=false;
-    for(const z of m.data) {
-      if (!finite(z.G) || z.G<0 || !finite(z.t)) { started=false;continue; }
-      const px=xFor(z.t,m),py=plotY(z.G,0,maxW,p);
-      if (!started){ctx.moveTo(px,py);started=true;} else ctx.lineTo(px,py);
-    }
-    ctx.stroke();ctx.restore();
-  }
-
   const previousDraw=draw;
   draw=function() {
     const result=previousDraw.apply(this,arguments),m=canvas._meta;
     if(m&&Array.isArray(m.data)&&Array.isArray(m.panelYs)&&m.data.length>1){
       drawZero(m);
-      drawWind(m);
     }
     return result;
   };
