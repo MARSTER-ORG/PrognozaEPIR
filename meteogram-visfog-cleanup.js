@@ -428,9 +428,9 @@
     dot('Zachmurzenie',activeTheme()==='dark'?'#fff':'#555');
     y+=6;
     title('Podstawy chmur AGL');
-    sample('BKN/OVC (≥5/8)','#e65d5d');
-    sample('SCT (3–4/8)','#f29d38',[4,3]);
-    sample('FEW (1–2/8)','#e5bf35',[5,3]);
+    dot('BKN/OVC (≥5/8)','#e65d5d');
+    dot('SCT (3–4/8)','#f29d38');
+    dot('FEW (1–2/8)','#e5bf35');
     y+=6;
     title('Warstwy chmur');
     sample('B. niskie 0–450 m','#b678f0');
