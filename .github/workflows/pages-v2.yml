@@ -58,6 +58,7 @@ jobs:
           node tests/br-engine.test.js
           node tests/br-visibility-gate.test.js
           node tests/meteogram-cloud-bands.test.js
+          node tests/meteogram-cloudbase-hourly-dots.test.js
           node tests/cloud-consensus-calibration.test.js
           node tests/cloud-consensus-archive.test.js
           python3 tests/test_consensus_cloud_calibration.py
@@ -92,6 +93,8 @@ jobs:
           index = (site / 'index.html').read_text(encoding='utf-8')
           theme = (site / 'theme.js').read_text(encoding='utf-8')
           fog = (site / 'fog.html').read_text(encoding='utf-8')
+          cloudbase = (site / 'meteogram-visfog-split.js').read_text(encoding='utf-8')
+          cloudbase_legend = (site / 'meteogram-visfog-cleanup.js').read_text(encoding='utf-8')
           fog_engine = (site / 'fog-engine.js').read_text(encoding='utf-8')
           fog244 = (site / 'fog-engine-v244.js').read_text(encoding='utf-8')
           bridge = (site / 'fog-index-bridge.js').read_text(encoding='utf-8')
@@ -113,6 +116,10 @@ jobs:
           for token in ['windVisual.segments(a.WS,b.WS)', 'windTicks', 'sample(\'>25\',\'#d93a3a\')']:
               if token not in wind_renderer:
                   raise SystemExit(f'visible wind speed thresholds missing in canonical renderer: {token}')
+          if 'drawHourlyBaseDots(d,p,x)' not in cloudbase:
+              raise SystemExit('cloudbase must draw hourly dots in production')
+          if "dot('BKN/OVC (≥5/8)'" not in cloudbase_legend:
+              raise SystemExit('cloudbase hourly dots missing in active legend')
           if '["taf.html","TAF GENERATOR","taf"]' not in theme:
               raise SystemExit('shared navigation is missing TAF Generator')
           if re.search(r'<a[^>]+class="control-link"[^>]+href="taf\.html', index, re.I):

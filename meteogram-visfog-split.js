@@ -125,6 +125,36 @@
     ctx.stroke();ctx.setLineDash([]);
   }
 
+  // FEW/SCT/BKN-OVC are hourly estimates: show one dot per valid forecast
+  // hour, not a line suggesting supported values between forecasts.
+  function drawHourlyBaseDots(rows,p,xFor) {
+    const series=[
+      ['few','#e5bf35',3.2],
+      ['sct','#f29d38',3.4],
+      ['bkn','#e65d5d',3.7]
+    ];
+    for(const [key,color,radius] of series) {
+      ctx.save();
+      ctx.fillStyle=color;
+      ctx.strokeStyle=activeTheme()==='dark'?'#20252b':'#ffffff';
+      ctx.lineWidth=1;
+      ctx.setLineDash([]);
+      for(const z of rows) {
+        if(!finite(z?.t))continue;
+        const info=bands(z),base=info?.bases?.[key];
+        if(!finite(base))continue;
+        const height=key==='bkn'&&finite(z.ceiling)?z.ceiling:base;
+        const yy=cloudBaseY(height,p),xx=xFor(z.t);
+        if(!finite(yy)||!finite(xx))continue;
+        ctx.beginPath();
+        ctx.arc(xx,yy,radius,0,Math.PI*2);
+        ctx.fill();
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
   const CLOUD_BANDS_CACHE=new WeakMap();
   function bands(z) {
     const profile=z?.profile;
@@ -291,14 +321,7 @@
         ctx.beginPath();ctx.moveTo(x0,yy);ctx.lineTo(x1,yy);ctx.stroke();
         ctx.setLineDash([]);
       }
-      const baseLines=[
-        ['few','#e5bf35',[5,3]],['sct','#f29d38',[4,3]],['bkn','#e65d5d',[]]
-      ];
-      for(const [key,color,dash] of baseLines) {
-        drawSeries(d.map(z=>({x:x(z.t),
-          y:finite(bands(z)?.bases?.[key])?cloudBaseY(key==='bkn'&&finite(z.ceiling)?z.ceiling:bands(z).bases[key],p):NaN
-        })),color,key==='bkn'?2.8:2.1,dash);
-      }
+      drawHourlyBaseDots(d,p,x);
     });
     ctx.save();ctx.font='8px Arial';ctx.textAlign='right';ctx.textBaseline='middle';
     ctx.fillStyle=cp.muted;
