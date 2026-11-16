@@ -38,15 +38,23 @@ assert.match(page,/meteogram-wind-zero\.js/,'Pages must include the final accent
 console.log('Meteogram wind bands and 0°C: 21 boundary and wiring checks OK');
 
 
-assert.equal(wind.axisMax([{WS:3,G:7}]),15,'normal wind must use reference 0–15 scale');
+assert.equal(wind.axisMax([{WS:3,G:7}]),10,'7 m/s gusts should scale to 10 m/s');
+assert.equal(wind.axisMax([{WS:1.2,G:3.6}]),5,'weak wind should scale to 5 m/s');
+assert.equal(wind.axisMax([{WS:12.4,G:14.9}]),15,'14.9 m/s should scale to 15 m/s');
+assert.equal(wind.axisMax([{WS:18.2,G:17}]),20,'18.2 m/s should scale to 20 m/s');
+assert.equal(wind.axisMax([{WS:25,G:25.1}]),30,'a 25.1 m/s gust should scale to 30 m/s');
+assert.equal(wind.axisMax([{WS:NaN,G:-2}]),5,'invalid readings do not raise the scale');
 assert.equal(wind.axisMax([{WS:24,G:30}]),30,'strong wind extends the scale');
+assert.deepEqual(wind.axisTicks(5),[0,5]);
+assert.deepEqual(wind.axisTicks(10),[0,5,10]);
 assert.deepEqual(wind.axisTicks(15),[0,5,10,15]);
+assert.deepEqual(wind.axisTicks(20),[0,5,10,15,20]);
 assert.deepEqual(wind.axisTicks(30),[0,5,10,15,25,30]);
 
 const cleaned=fs.readFileSync(path.join(__dirname,'..','meteogram-visfog-cleanup.js'),'utf8');
 assert.match(cleaned,/windVisual\.segments\(a\.WS,b\.WS\)/,'the last wind painter must use the colour bands');
 assert.match(cleaned,/const windTicks = windVisual\?\.axisTicks/,'actual thresholds must drive the wind-axis ticks');
-assert.match(cleaned,/value\*3\.6/,'right axis should show km/h');
+assert.doesNotMatch(cleaned,/value\*3\.6/,'wind panel must not render a km/h axis');
 assert.match(cleaned,/sample\('>25','#d93a3a'\)/,'last legend must show red threshold');
 assert.match(cleaned,/sample\('Granica 0°C'/,'last legend must include 0°C');
 assert.doesNotMatch(cleaned,/drawSeries\('WS','#152f9a'/,'obsolete blue stroke must not cover the colour line');
@@ -94,19 +102,19 @@ for(const [,color] of expected.filter((_,i)=>[0,2,4,6,8].includes(i)))
 for(const threshold of ['5','10','15','25'])
   assert.ok(labels.some(item=>item.label===threshold && item.x===92),
     'missing m/s axis threshold '+threshold);
-assert.ok(labels.some(item=>item.label==='90' && item.x===707),
-  '25m/s must also be marked 90km/h on right axis');
+assert.ok(labels.every(item=>item.x!==707),
+  'wind renderer must never paint a right-hand km/h tick');
 assert.ok(dashes.some(d=>d.length===2 && d[0]===6 && d[1]===4),
   'gust line should remain dashed');
 
-console.log('Visible threshold lines, coloured Canvas fills and km/h axis OK');
+console.log('Visible threshold lines and coloured Canvas fills, without km/h labels, OK');
 
 
-// The normal 0–15 m/s reference view must show BOTH axis endpoints.
+// A 14.9 m/s maximum must display the 0–15 m/s axis and BOTH endpoints.
 labels.length=0;
 vm.runInNewContext(cleaned.slice(begin,end)+'\nredrawWindPanelForeground();',{
   ctx,cv:{_meta:{x0:100,x1:700,t0:0,t1:h,panelYs:[{id:'wind',y:0,h:112}],data:[
-    {t:0,WS:3,G:7,WD:0},{t:h,WS:6,G:10,WD:30}
+    {t:0,WS:3,G:7,WD:0},{t:h,WS:6,G:14.9,WD:30}
   ]}},
   window:{PrognozaEPIRWindVisual:wind},
   canvasPalette:()=>({panel:'#222',grid:'#666',grid2:'#777',border:'#999',bg:'#101010',muted:'#aaa',text:'#eee'}),
@@ -117,3 +125,23 @@ for(const tick of ['0','5','10','15'])
   assert.ok(labels.some(item=>item.label===tick && item.x===92),
     '0–15 m/s chart must show axis tick '+tick);
 console.log('Both wind-axis endpoint labels remain visible');
+
+// Dynamic 0–10 m/s scale; 15/25 m/s must not appear on the axis.
+labels.length=0;
+vm.runInNewContext(cleaned.slice(begin,end)+'\nredrawWindPanelForeground();',{
+  ctx,cv:{_meta:{x0:100,x1:700,t0:0,t1:h,panelYs:[{id:'wind',y:0,h:112}],data:[
+    {t:0,WS:2,G:5,WD:0},{t:h,WS:4,G:6.8,WD:30}
+  ]}},
+  window:{PrognozaEPIRWindVisual:wind},
+  canvasPalette:()=>({panel:'#222',grid:'#666',grid2:'#777',border:'#999',bg:'#101010',muted:'#aaa',text:'#eee'}),
+  finite:Number.isFinite,clamp:(v,a,b)=>Math.max(a,Math.min(b,v)),
+  activeTheme:()=> 'dark',WIND_ARROW:'#ef4444',HOUR:h,RIGHT_W:48
+});
+for(const tick of ['0','5','10'])
+  assert.ok(labels.some(item=>item.label===tick && item.x===92),
+    'dynamic 0–10 m/s chart must show tick '+tick);
+for(const tick of ['15','25'])
+  assert.ok(!labels.some(item=>item.label===tick && item.x===92),
+    'dynamic 0–10 m/s chart must hide out-of-range tick '+tick);
+assert.ok(labels.every(item=>item.x!==707),'right axis values must stay hidden');
+console.log('Dynamic wind scale and left-only axis verified');
