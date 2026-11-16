@@ -142,7 +142,8 @@ function fakeStorage(mode) {
   assert(!cloudDetails.includes("infoValue('Widzialność'"));
   assert(cleanup.includes("infoValue('Wysokie 6–13 km',asOkta(cover.high))"));
   assert(canvas.includes("const bknHeight=finite(base?.bkn)&&finite(z.ceiling)?z.ceiling:base?.bkn"));
-  assert(canvas.includes("key==='bkn'&&finite(z.ceiling)?z.ceiling:bands(z).bases[key]"));
+  assert(canvas.includes("const height=key==='bkn'&&finite(z.ceiling)?z.ceiling:base;"));
+  assert(canvas.includes("drawHourlyBaseDots(d,p,x)"), 'cloud-base hourly points must be enabled');
   assert(canvas.includes("if(altitude<lower||altitude>upper)continue"));
 })();
 
