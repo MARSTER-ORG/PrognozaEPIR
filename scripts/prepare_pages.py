@@ -122,6 +122,7 @@ def patch_index() -> None:
         f'<script src="meteogram-cloud-bands.js?v={ASSET_V}"></script>',
         f'<script src="meteogram-visfog-split.js?v={ASSET_V}"></script>',
         f'<script src="rh-axis-fix.js?v={ASSET_V}"></script>',
+        f'<script src="meteogram-wind-zero.js?v={ASSET_V}"></script>',
         f'<script src="meteogram-visfog-cleanup.js?v={ASSET_V}"></script>',
         f'<script src="day-night-fix.js?v={ASSET_V}"></script>',
         f'<script src="observation-engine.js?v={ASSET_V}"></script>',
@@ -129,7 +130,6 @@ def patch_index() -> None:
         f'<script src="fog-meteogram-overlay.js?v={ASSET_V}"></script>',
         f'<script src="shortcut-mode.js?v={ASSET_V}"></script>',
         f'<script src="meteogram-tap-details.js?v={ASSET_V}"></script>',
-        f'<script src="meteogram-wind-zero.js?v={ASSET_V}"></script>',
     ]
     s = s.replace("</body>", "\n".join(addons) + "\n</body>", 1)
     wr(p, s)
