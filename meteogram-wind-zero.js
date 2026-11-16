@@ -30,7 +30,7 @@
     });
   }
   function axisMax(rows) {
-    let maximum=15;
+    let maximum=5;
     for(const row of rows||[]) {
       for(const speed of [row?.WS,row?.G]) {
         if(finite(speed)&&speed>=0) maximum=Math.max(maximum,speed);
@@ -39,7 +39,7 @@
     return Math.ceil(maximum/5)*5;
   }
   function axisTicks(maximum) {
-    if(!finite(maximum)||maximum<=0) return [0,5,10,15];
+    if(!finite(maximum)||maximum<=0) return [0,5];
     const values=[0,...THRESHOLDS.filter(t=>t<=maximum),maximum];
     return [...new Set(values)].sort((a,b)=>a-b);
   }

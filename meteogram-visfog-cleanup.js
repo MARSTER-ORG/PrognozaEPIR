@@ -79,11 +79,11 @@
     const x = t => clamp(x0 + (t - m.t0) / (m.t1 - m.t0) * plotW, x0, x1);
     const cp = canvasPalette();
     const windVisual = window.PrognozaEPIRWindVisual;
-    // Minimum 15 m/s reproduces the reference chart's 0/5/10/15 scale.
-    // The axis grows naturally if wind or gusts exceed it.
-    const maxW = Math.max(15,...m.data.flatMap(z=>[Number(z.WS)||0,Number(z.G)||0]));
-    const windMax = windVisual?.axisMax?.(m.data) || Math.ceil(maxW/5)*5;
-    const windTicks = windVisual?.axisTicks?.(windMax) || [0,5,10,15].filter(v=>v<=windMax);
+    // Axis covers the largest forecast sustained speed or gust, rounded up
+    // to a 5 m/s increment. Its minimum is 0–5 m/s, not a fixed 0–15 range.
+    const validSpeeds = m.data.flatMap(z=>[z?.WS,z?.G]).filter(v=>finite(v)&&v>=0);
+    const windMax = windVisual?.axisMax?.(m.data) || Math.ceil(Math.max(5,...validSpeeds)/5)*5;
+    const windTicks = windVisual?.axisTicks?.(windMax) || [0,5,10,15,25,windMax].filter((v,i,all)=>v<=windMax&&all.indexOf(v)===i);
     const y = value => p.y + p.h - clamp(Number(value)||0,0,windMax) / windMax * p.h;
     const darkMode = () => typeof activeTheme==='function' && activeTheme()==='dark';
 
@@ -201,8 +201,8 @@
 
     ctx.restore();
 
-    // Repaint only wind axes, with threshold labels in m/s at left and km/h
-    // on the right, as in the reference screenshot.
+    // Repaint the wind axis in m/s only. The right gutter is explicitly
+    // cleared so no legacy km/h values survive from an earlier renderer.
     ctx.save();
     ctx.fillStyle=cp.bg;
     ctx.fillRect(x0-48,p.y-2,47,p.h+4);
@@ -217,8 +217,7 @@
       ctx.textAlign='right';
       ctx.fillStyle=[5,10,15,25].includes(value)?cp.text:cp.muted;
       ctx.fillText(label,x0-8,textY);
-      ctx.textAlign='left';
-      ctx.fillText(String(Math.round(value*3.6)),x1+7,textY);
+
     }
     ctx.restore();
 
