@@ -12,7 +12,7 @@
     if (typeof PANELS === 'undefined' || !Array.isArray(PANELS)) return;
     const wind = PANELS.find(p => p && p.id === 'wind');
     const dir = PANELS.find(p => p && p.id === 'dir');
-    if (wind) wind.h = 84;
+    if (wind) wind.h = 112;
     if (dir) dir.h = 0;
   }
 
@@ -78,9 +78,14 @@
     const plotW = x1 - x0;
     const x = t => clamp(x0 + (t - m.t0) / (m.t1 - m.t0) * plotW, x0, x1);
     const cp = canvasPalette();
-    const maxW = Math.max(10,...m.data.flatMap(z=>[Number(z.WS)||0,Number(z.G)||0]));
-    const windMax = Math.ceil(maxW/5)*5;
+    const windVisual = window.PrognozaEPIRWindVisual;
+    // Minimum 15 m/s reproduces the reference chart's 0/5/10/15 scale.
+    // The axis grows naturally if wind or gusts exceed it.
+    const maxW = Math.max(15,...m.data.flatMap(z=>[Number(z.WS)||0,Number(z.G)||0]));
+    const windMax = windVisual?.axisMax?.(m.data) || Math.ceil(maxW/5)*5;
+    const windTicks = windVisual?.axisTicks?.(windMax) || [0,5,10,15].filter(v=>v<=windMax);
     const y = value => p.y + p.h - clamp(Number(value)||0,0,windMax) / windMax * p.h;
+    const darkMode = () => typeof activeTheme==='function' && activeTheme()==='dark';
 
     ctx.save();
     ctx.beginPath();
@@ -104,18 +109,8 @@
       ctx.restore();
     }
 
-    // Skala wiatru bez marginesu wewnętrznego: 0 jest dokładnie dolną
-    // krawędzią sekcji, a maksimum dokładnie górną krawędzią.
-    for (let i=0;i<=4;i++) {
-      const value=windMax*i/4;
-      const yy=y(value);
-      ctx.save();
-      ctx.strokeStyle=cp.grid2;
-      ctx.globalAlpha=(i===0||i===4)?.58:.36;
-      ctx.lineWidth=.8;
-      ctx.beginPath();ctx.moveTo(x0,yy);ctx.lineTo(x1,yy);ctx.stroke();
-      ctx.restore();
-    }
+    // Threshold markers are drawn ABOVE the coloured fill below.
+    // Unlike the generic four-step grid, these are exact wind-speed limits.
 
     function drawSeries(key,color,width,dash=[]) {
       ctx.strokeStyle=color;
@@ -135,8 +130,51 @@
       ctx.setLineDash([]);
     }
 
-    drawSeries('WS','#152f9a',1.8);
-    drawSeries('G','#c33b2b',1.9,[5,4]);
+    // Reference styling: wind-speed area filled with discrete blue/green/
+    // yellow/orange/red bands. Do not repaint over it with an old blue line.
+    if (windVisual?.segments) {
+      const baseline = y(0);
+      for (let i=1;i<m.data.length;i++) {
+        const a=m.data[i-1],b=m.data[i];
+        if (!finite(a?.t) || !finite(b?.t) ||
+            !finite(a?.WS) || !finite(b?.WS) || a.WS<0 || b.WS<0) continue;
+        const left=x(a.t),right=x(b.t);
+        if (!(right>left)) continue;
+        for(const part of windVisual.segments(a.WS,b.WS)) {
+          const xA=left+(right-left)*part.start,xB=left+(right-left)*part.end;
+          const yA=y(part.from),yB=y(part.to);
+          ctx.save();
+          ctx.fillStyle=part.band.color;
+          ctx.globalAlpha=darkMode()?0.56:0.38;
+          ctx.beginPath();
+          ctx.moveTo(xA,baseline);ctx.lineTo(xA,yA);
+          ctx.lineTo(xB,yB);ctx.lineTo(xB,baseline);
+          ctx.closePath();ctx.fill();
+          ctx.restore();
+          ctx.strokeStyle=part.band.color;
+          ctx.lineWidth=2.8;
+          ctx.setLineDash([]);
+          ctx.beginPath();ctx.moveTo(xA,yA);ctx.lineTo(xB,yB);ctx.stroke();
+        }
+      }
+    } else {
+      drawSeries('WS','#2689d6',2.5);
+    }
+
+    // Exact thresholds remain readable regardless of the wind curve colour.
+    for(const value of windTicks) {
+      const yy=y(value),isThreshold=[5,10,15,25].includes(value);
+      ctx.save();
+      ctx.setLineDash(isThreshold?[5,4]:[]);
+      ctx.strokeStyle=isThreshold
+        ? (darkMode()?'rgba(226,234,240,.64)':'rgba(48,60,72,.58)')
+        : cp.grid2;
+      ctx.lineWidth=isThreshold?1.1:0.75;
+      ctx.beginPath();ctx.moveTo(x0,yy);ctx.lineTo(x1,yy);ctx.stroke();
+      ctx.restore();
+    }
+    // Gusts never determine the fill colour and stay a red dashed trace.
+    drawSeries('G',darkMode()?'#ff7670':'#c33b2b',2.0,[6,4]);
 
     // Jeden zestaw strzałek, dokładnie w połowie wysokości sekcji Wiatr,
     // rysowany na końcu na pierwszym planie.
@@ -163,20 +201,22 @@
 
     ctx.restore();
 
-    // Usuń stare liczby skali z wersji z wewnętrznym paddingiem i narysuj
-    // je ponownie dokładnie na tych samych wysokościach co nowe linie.
+    // Repaint only wind axes, with threshold labels in m/s at left and km/h
+    // on the right, as in the reference screenshot.
     ctx.save();
     ctx.fillStyle=cp.bg;
-    ctx.fillRect(x0-44,p.y-2,43,p.h+4);
-    ctx.fillStyle=cp.muted;
-    ctx.font='9px Arial';
-    ctx.textAlign='right';
+    ctx.fillRect(x0-48,p.y-2,47,p.h+4);
+    ctx.fillRect(x1+1,p.y-2,RIGHT_W-2,p.h+4);
+    ctx.font='bold 9px Arial';
     ctx.textBaseline='middle';
-    for (let i=0;i<=4;i++) {
-      const value=windMax*i/4;
-      const yy=y(value);
-      const label=Math.abs(value-Math.round(value))<.05?String(Math.round(value)):value.toFixed(1);
+    for(const value of windTicks) {
+      const yy=y(value),label=String(value);
+      if(yy<p.y+4 || yy>p.y+p.h-4) continue;
+      ctx.textAlign='right';
+      ctx.fillStyle=[5,10,15,25].includes(value)?cp.text:cp.muted;
       ctx.fillText(label,x0-8,yy);
+      ctx.textAlign='left';
+      ctx.fillText(String(Math.round(value*3.6)),x1+7,yy);
     }
     ctx.restore();
 
@@ -353,6 +393,7 @@
     title('Temperatura');
     sample('Temp. powietrza','#d43d31');
     sample('Punkt rosy',activeTheme()==='dark'?'#627dff':'#25278f',[2,2]);
+    sample('Granica 0°C','#94a3b8');
     y+=6;
     title('Opad / wilgotność');
     sample('Opad (mm/h)','#039c29');
@@ -365,9 +406,13 @@
     title('Ciśnienie');
     sample('MSLP / QNH (hPa)',activeTheme()==='dark'?'#e7e9ed':'#222');
     y+=6;
-    title('Wiatr');
-    sample('Wiatr 10 m',activeTheme()==='dark'?'#4f7cff':'#152f9a');
-    sample('Porywy','#c33b2b',[5,4]);
+    title('Wiatr 10 m (m/s)');
+    sample('0–5','#2689d6');
+    sample('>5–10','#29a65a');
+    sample('>10–15','#dfbc24');
+    sample('>15–25','#ec8526');
+    sample('>25','#d93a3a');
+    sample('Porywy (przerywane)','#c33b2b',[5,4]);
     symbol('Kierunek wiatru','#ef4444','arrow');
     y+=6;
     title('Widzialność / mgła');
