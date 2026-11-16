@@ -148,8 +148,13 @@
     ctx.save();ctx.beginPath();ctx.rect(x0,p.y,x1-x0,p.h);ctx.clip();fn();ctx.restore();
   }
 
+  function tempRange(d) {
+    const [min,max]=niceRange(d.flatMap(z=>[z.T,z.Td]),1,5);
+    return [Math.min(min,0),Math.max(max,0)];
+  }
+
   function rangeForPanel(id,d,maxRR,windMax) {
-    if(id==='temp') return niceRange(d.flatMap(z=>[z.T,z.Td]),1,5);
+    if(id==='temp') return tempRange(d);
     if(id==='prec') return [0,maxRR];
     if(id==='probstorm') return [0,100];
     if(id==='press') return niceRange(d.map(z=>z.P),1,8);
@@ -231,7 +236,7 @@
 
     const byId=id=>panelMeta.find(p=>p.id===id);
     let p=byId('temp');
-    let r=niceRange(d.flatMap(z=>[z.T,z.Td]),1,5);
+    let r=tempRange(d);
     withClip(x0,x1,p,()=>{
       drawSeries(d.map(z=>({x:x(z.t),y:panelScale(z.T,r[0],r[1],p.y,p.h)})),'#d43d31',2.1);
       drawSeries(d.map(z=>({x:x(z.t),y:panelScale(z.Td,r[0],r[1],p.y,p.h)})),'#25278f',1.5,[3,3]);
