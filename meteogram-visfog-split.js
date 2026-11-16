@@ -129,9 +129,9 @@
   // hour, not a line suggesting supported values between forecasts.
   function drawHourlyBaseDots(rows,p,xFor) {
     const series=[
-      ['few','#e5bf35',3.2],
-      ['sct','#f29d38',3.4],
-      ['bkn','#e65d5d',3.7]
+      ['few','#22c55e',3.2],
+      ['sct','#facc15',3.4],
+      ['bkn','#ef4444',3.7]
     ];
     for(const [key,color,radius] of series) {
       ctx.save();

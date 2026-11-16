@@ -17,7 +17,7 @@ const panel = source.slice(cloudbaseStart,cloudbaseEnd);
 assert.ok(panel.includes('drawHourlyBaseDots(d,p,x)'), 'cloudbase panel must use point-only renderer');
 assert.ok(!panel.includes('drawSeries('), 'no connecting FEW/SCT/BKN lines should survive');
 assert.ok(panel.includes('h===450'), '450 m reference line must remain');
-for(const [name,color] of [['BKN/OVC (≥5/8)','#e65d5d'],['SCT (3–4/8)','#f29d38'],['FEW (1–2/8)','#e5bf35']])
+for(const [name,color] of [['BKN/OVC (≥5/8)','#ef4444'],['SCT (3–4/8)','#facc15'],['FEW (1–2/8)','#22c55e']])
   assert.ok(legend.includes("dot('"+name+"','"+color+"')"), name+' must be a dot in the active legend');
 
 const circles = [],strokes = [],lines = [];
@@ -41,11 +41,11 @@ vm.runInNewContext(source.slice(start,end) + '\ndrawHourlyBaseDots(rows,{y:10,h:
 });
 assert.equal(circles.length,7,'only valid hourly bases must receive a point');
 assert.deepEqual(circles.map(c=>c.color),[
-  '#e5bf35','#e5bf35',
-  '#f29d38','#f29d38','#f29d38',
-  '#e65d5d','#e65d5d'
+  '#22c55e','#22c55e',
+  '#facc15','#facc15','#facc15',
+  '#ef4444','#ef4444'
 ]);
-assert.deepEqual(circles.filter(c=>c.color==='#e65d5d').map(c=>Math.round(c.y*10)/10),
+assert.deepEqual(circles.filter(c=>c.color==='#ef4444').map(c=>Math.round(c.y*10)/10),
   [Math.round((110-1150/1500*100)*10)/10,10]);
 assert.deepEqual(circles.map(c=>c.x),[0,40,0,10,20,0,40],
   'each point must stay at the source hour without interpolation');
