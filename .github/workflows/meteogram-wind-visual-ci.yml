@@ -1,0 +1,40 @@
+name: Meteogram temperature and wind visual regression
+
+on:
+  pull_request:
+    paths:
+      - 'index.html'
+      - 'meteogram-wind-zero.js'
+      - 'meteogram-layout-v2.js'
+      - 'meteogram-visfog-split.js'
+      - 'scripts/prepare_pages.py'
+      - 'tests/meteogram-wind-zero.test.js'
+      - '.github/workflows/meteogram-wind-visual-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'meteogram-wind-zero.js'
+      - 'meteogram-layout-v2.js'
+      - 'meteogram-visfog-split.js'
+      - 'tests/meteogram-wind-zero.test.js'
+      - '.github/workflows/meteogram-wind-visual-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  visual-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate module syntax and speed thresholds
+        run: |
+          node --check meteogram-wind-zero.js
+          node --check meteogram-layout-v2.js
+          node --check meteogram-visfog-split.js
+          node tests/meteogram-wind-zero.test.js
