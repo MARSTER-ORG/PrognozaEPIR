@@ -14,10 +14,13 @@ Typical use:
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import re
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections import Counter
@@ -107,8 +110,21 @@ def fetch_type(kind: str, start: datetime, end: datetime, station: str | None = 
                 "User-Agent": "PrognozaEPIR-Message-Mirror/1",
             },
         )
-        with urllib.request.urlopen(req, timeout=45) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        # Retry this page, not the entire archive. Never advance the offset or
+        # retain bytes from an incomplete response.
+        for attempt in range(4):
+            try:
+                with urllib.request.urlopen(req, timeout=45) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                break
+            except (OSError, http.client.HTTPException, ValueError) as exc:
+                if isinstance(exc, urllib.error.HTTPError) and exc.code not in {408, 429, 500, 502, 503, 504}:
+                    raise
+                if attempt == 3:
+                    raise
+                print(f"{kind}/{station or cfg['station']} offset={offset}: "
+                      f"{type(exc).__name__}; retry {attempt + 1}/3", file=sys.stderr)
+                time.sleep(2 ** attempt)
         page = payload.get("rows") if isinstance(payload, dict) else None
         if not isinstance(payload, dict) or not payload.get("ok") or not isinstance(page, list):
             raise RuntimeError(f"{kind}: invalid MessageArchive response")

@@ -178,6 +178,8 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
@@ -257,45 +259,11 @@ jobs:
           done
 
       - name: Browser smoke test TAF cycles and hourly data
+        timeout-minutes: 6
         env:
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
         run: |
           set -euo pipefail
-          base="${PAGE_URL%/}"
-          browser="$(command -v google-chrome || command -v chromium || command -v chromium-browser || true)"
-          if [ -z "$browser" ]; then
-            echo "ERROR: no Chromium/Chrome binary on runner" >&2
-            exit 1
-          fi
-
-          "$browser" --headless --no-sandbox --disable-gpu --disable-dev-shm-usage \
-            --virtual-time-budget=8000 --dump-dom \
-            "${base}/taf.html?v=${GITHUB_SHA}" > /tmp/taf-ui.html 2>/tmp/taf-ui.err || true
-
-          if ! grep -Eq '<option value="[0-9]+">' /tmp/taf-ui.html; then
-            echo "ERROR: TAF cycle selector has no generated UTC cycles." >&2
-            grep -o '<span id="st"[^>]*>[^<]*' /tmp/taf-ui.html || true
-            grep -o '<pre id="taf"[^>]*>[^<]*' /tmp/taf-ui.html || true
-            cat /tmp/taf-ui.err || true
-            exit 1
-          fi
-          if ! grep -Fq 'AKTYWNY: LEGACY' /tmp/taf-ui.html; then
-            echo "ERROR: fresh browser session does not default TAF Fog source to LEGACY." >&2
-            grep -o '<div class="fog-mode-state"[^>]*>[^<]*' /tmp/taf-ui.html || true
-            exit 1
-          fi
-
-          "$browser" --headless --no-sandbox --disable-gpu --disable-dev-shm-usage \
-            --virtual-time-budget=45000 --dump-dom \
-            "${base}/taf.html?autogen=1&v=${GITHUB_SHA}" > /tmp/taf-autogen.html 2>/tmp/taf-autogen.err || true
-
-          if ! grep -Eq '<tbody id="hours">[[:space:]]*<tr>' /tmp/taf-autogen.html && ! grep -Fq ' h danych · FOG ' /tmp/taf-autogen.html; then
-            echo "ERROR: TAF autogeneration produced no hourly rows." >&2
-            grep -o '<span id="st"[^>]*>[^<]*' /tmp/taf-autogen.html || true
-            grep -o '<pre id="taf"[^>]*>[^<]*' /tmp/taf-autogen.html || true
-            grep -o '<span id="badge"[^>]*>[^<]*' /tmp/taf-autogen.html || true
-            cat /tmp/taf-autogen.err || true
-            exit 1
-          fi
-
-          echo "TAF browser smoke test: UTC cycles, Legacy-default Fog mode and hourly data are present."
+          export CHROME_BIN="$(command -v google-chrome || command -v chromium || command -v chromium-browser)"
+          npm install --prefix "$RUNNER_TEMP/taf-smoke" --no-audit --no-fund playwright@1.62.1
+          NODE_PATH="$RUNNER_TEMP/taf-smoke/node_modules" node scripts/taf_browser_smoke.cjs

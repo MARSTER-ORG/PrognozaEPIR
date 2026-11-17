@@ -129,6 +129,38 @@ class MirrorTests(unittest.TestCase):
         self.assertEqual(msg["station"], "12342")
         self.assertEqual(msg["supabase_message_id"], "archive-id")
 
+    def test_retry_keeps_offset_and_does_not_duplicate_rows(self):
+        def response(value):
+            obj = mock.MagicMock()
+            obj.__enter__.return_value = obj
+            if isinstance(value, Exception):
+                obj.read.side_effect = value
+            else:
+                obj.read.return_value = json.dumps(value).encode()
+            return obj
+
+        replies = [response({"ok": True, "rows": [{"id": 1}], "count": 2}),
+                   response(mirror.http.client.IncompleteRead(b'partial')),
+                   response({"ok": True, "rows": [{"id": 2}], "count": 2})]
+        with mock.patch.object(mirror, "PAGE_SIZE", 1), mock.patch.object(mirror, "public_anon_key", return_value="test"), mock.patch.object(mirror.time, "sleep"), mock.patch.object(mirror.urllib.request, "urlopen", side_effect=replies) as fetch:
+            rows = mirror.fetch_type("METAR", datetime(2025, 1, 1, tzinfo=timezone.utc), datetime(2025, 1, 2, tzinfo=timezone.utc))
+        self.assertEqual(rows, [{"id": 1}, {"id": 2}])
+        offsets = [urllib.parse.parse_qs(urllib.parse.urlparse(c.args[0].full_url).query)["offset"] for c in fetch.call_args_list]
+        self.assertEqual(offsets, [["0"], ["1"], ["1"]])
+
+    def test_permanent_http_error_is_not_retried(self):
+        error = mirror.urllib.error.HTTPError("https://example.invalid", 401, "Unauthorized", {}, None)
+        with mock.patch.object(mirror, "public_anon_key", return_value="test"), mock.patch.object(mirror.urllib.request, "urlopen", side_effect=error) as fetch:
+            with self.assertRaises(mirror.urllib.error.HTTPError):
+                mirror.fetch_type("METAR", datetime(2025, 1, 1, tzinfo=timezone.utc), datetime(2025, 1, 2, tzinfo=timezone.utc))
+        self.assertEqual(fetch.call_count, 1)
+
+    def test_repeated_transport_failure_is_not_silenced(self):
+        with mock.patch.object(mirror, "public_anon_key", return_value="test"), mock.patch.object(mirror.time, "sleep"), mock.patch.object(mirror.urllib.request, "urlopen", side_effect=TimeoutError) as fetch:
+            with self.assertRaises(TimeoutError):
+                mirror.fetch_type("METAR", datetime(2025, 1, 1, tzinfo=timezone.utc), datetime(2025, 1, 2, tzinfo=timezone.utc))
+        self.assertEqual(fetch.call_count, 4)
+
     def test_fetch_type_uses_message_archive_edge_api(self):
         payload = {
             "ok": True,
