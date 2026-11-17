@@ -110,6 +110,22 @@
             n(Number(z.VIS_MODEL)/1000,1)+' km':'—']
         ]
       };
+      if (id === 'cloudbase') {
+        // Use the same profile adapter and BKN ceiling selection as the
+        // hourly cloud-base dots and the click/tap details panel.
+        const cloud = window.PrognozaEPIRCloudBands?.fromProfile(z.profile);
+        const bases = cloud?.bases;
+        const bknHeight = finiteNum(bases?.bkn) && finiteNum(z.ceiling) ? z.ceiling : bases?.bkn;
+        const agl = value => finiteNum(value) ? Math.round(Number(value)) + ' m AGL' : '—';
+        return {
+          title:'Podstawy chmur ≤1500 m',
+          rows:[
+            ['BKN/OVC (≥5/8)',agl(bknHeight)],
+            ['SCT (3–4/8)',agl(bases?.sct)],
+            ['FEW (1–2/8)',agl(bases?.few)]
+          ]
+        };
+      }
       if (id === 'cloud') return {
         title:'Profil chmur',
         rows:[

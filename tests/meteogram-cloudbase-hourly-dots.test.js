@@ -51,4 +51,31 @@ assert.deepEqual(circles.map(c=>c.x),[0,40,0,10,20,0,40],
   'each point must stay at the source hour without interpolation');
 assert.equal(lines.length,0,'hourly base renderer must not connect different hours');
 assert.ok(circles.every(c=>c.r>=3 && c.r<=4),'point markers remain readable');
+// The existing cursor-following desktop tooltip must also support this panel.
+// Check the same BKN/OVC selection rule as the drawn hourly dots and missing data.
+const style = fs.readFileSync(path.join(root,'visual-style-fix.js'),'utf8');
+const hoverStart = style.indexOf('    const tooltipData = (z,id) => {');
+const hoverEnd = style.indexOf('    const showTooltip =',hoverStart);
+assert.ok(hoverStart>=0 && hoverEnd>hoverStart, 'desktop cursor tooltip renderer must exist');
+const tooltipData = vm.runInNewContext(style.slice(hoverStart,hoverEnd)+'\ntooltipData', {
+  window:{PrognozaEPIRCloudBands:{fromProfile:profile=>profile?.diagnostics||{bases:{few:null,sct:null,bkn:null}}}},
+  finiteNum:x=>x!==null&&x!==undefined&&x!==''&&Number.isFinite(Number(x)),
+  h:x=>Math.round(Number(x))+' m',
+  Math,Number
+});
+const cloudHover = tooltipData({t:0,profile:{diagnostics:{bases:{few:200,sct:475,bkn:900}}},ceiling:950},'cloudbase');
+assert.equal(cloudHover.title,'Podstawy chmur ≤1500 m');
+assert.deepEqual(Array.from(cloudHover.rows, ([label,value])=>[label,value]),[
+  ['BKN/OVC (≥5/8)','950 m AGL'],
+  ['SCT (3–4/8)','475 m AGL'],
+  ['FEW (1–2/8)','200 m AGL']
+]);
+const missingHover = tooltipData({t:0,profile:null,ceiling:700},'cloudbase');
+assert.deepEqual(Array.from(missingHover.rows, row=>row[1]),['—','—','—'],
+  'missing profile must not be converted to clear sky or an invented cloud base');
+assert.ok(style.includes("const t = m.t0 + (sx-m.x0)/(m.x1-m.x0)*(m.t1-m.t0);"),
+  'desktop cursor must select the nearest forecast hour');
+assert.ok(style.includes("showTooltip(e,best,panel.id)"),
+  'desktop cursor must use the same panel-aware moving tooltip');
+
 console.log('Cloud-base FEW/SCT/BKN hourly dots: 7 valid dots, 0 connecting segments, 450 m line retained');
