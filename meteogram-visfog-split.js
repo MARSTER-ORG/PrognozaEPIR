@@ -228,6 +228,7 @@
     for(const p of PANELS){
       panelMeta.push({id:p.id,y,h:p.h});
       ctx.fillStyle=cp.panel;ctx.fillRect(x0,y,plotW,p.h);
+      window.PrognozaEPIRShadePanel?.({t0,t1,x0,x1,y,h:p.h});
       ctx.strokeStyle=cp.border;ctx.globalAlpha=.95;ctx.lineWidth=1;ctx.strokeRect(x0,y,plotW,p.h);
       y+=p.h;
     }

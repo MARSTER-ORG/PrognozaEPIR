@@ -138,38 +138,12 @@
     }
   }
 
-  const baseDraw = draw;
-  draw = function() {
-    const d = typeof dataVisible === 'function' ? dataVisible() : [];
-    if (!d || d.length < 2) return baseDraw();
-
-    const size = typeof sizeCanvas === 'function' ? sizeCanvas() : {W:cv.width,H:cv.height};
-    const x0 = LEGEND_W + AXIS_W;
-    const x1 = size.W - RIGHT_W;
-    const plotW = x1 - x0;
-    const t0 = d[0].t, t1 = d[d.length - 1].t;
-    const xFor = t => x0 + (t - t0) / (t1 - t0) * plotW;
-
-    const rects = [];
-    let py = HEADER_H;
-    for (const p of PANELS) {
-      rects.push({y:py,h:p.h});
-      py += p.h;
-    }
-
-    const originalFillRect = ctx.fillRect;
-    const nativeFillRect = originalFillRect.bind(ctx);
-    ctx.fillRect = function(x, y, w, h) {
-      nativeFillRect(x, y, w, h);
-      const isPanel = Math.abs(x - x0) < 0.01 && Math.abs(w - plotW) < 0.01 &&
-        rects.some(r => Math.abs(r.y - y) < 0.01 && Math.abs(r.h - h) < 0.01);
-      if (isPanel && h > 0) shadePanel(nativeFillRect, t0, t1, xFor, y, h);
-    };
-
-    try {
-      return baseDraw();
-    } finally {
-      ctx.fillRect = originalFillRect;
-    }
+  // Each renderer paints solar shading immediately after its own background.
+  // Do not snapshot PANELS here: later wrappers resize the wind panel, shifting
+  // every panel below it, and may repaint wind after draw() has returned.
+  window.PrognozaEPIRShadePanel = function({t0, t1, x0, x1, y, h}) {
+    if (![t0,t1,x0,x1,y,h].every(Number.isFinite) || t1 <= t0 || x1 <= x0 || h <= 0) return;
+    const xFor = t => x0 + (t - t0) / (t1 - t0) * (x1 - x0);
+    shadePanel(ctx.fillRect.bind(ctx), t0, t1, xFor, y, h);
   };
 })();

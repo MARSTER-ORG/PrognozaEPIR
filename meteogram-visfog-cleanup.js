@@ -96,6 +96,7 @@
     // ani pomocniczy techniczny panel kierunku nie mogą pozostać na wykresie.
     ctx.fillStyle = cp.panel;
     ctx.fillRect(x0,p.y,plotW,p.h);
+    window.PrognozaEPIRShadePanel?.({t0:m.t0,t1:m.t1,x0,x1,y:p.y,h:p.h});
 
     // Pionowa siatka godzinowa jak w pozostałych sekcjach.
     const firstHour = Math.ceil(m.t0/HOUR)*HOUR;
