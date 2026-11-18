@@ -76,7 +76,16 @@
     if(group.kind==='BECMG'&&after.length<2)return false;
     if(!all.length)return false;
     const enough=group.kind==='BECMG'?Math.max(2,Math.ceil(all.length*.6)):1;
+    const cb=/\b(?:FEW|SCT|BKN|OVC)\d{3}CB\b/.test(group.payload);
+    const tcu=/\b(?:FEW|SCT|BKN|OVC)\d{3}TCU\b/.test(group.payload);
+    const shower=/\b(?:SHRA|SHSN)\b/.test(group.payload);
+    const thunder=/\b(?:TS|TSRA|TSGR)\b/.test(group.payload);
     const matches=h=>{
+      const e=h?.sourceRow?.tafConvectiveEvidence||{};
+      const nwpConfirmed=+e.nwpModels>=2&&+e.modelAgreement>=55;
+      if(cb&&!(nwpConfirmed&&+e.cbProbability>=65&&(e.modelTsEvidence||e.radarCorroborated)))return false;
+      if(tcu&&!(nwpConfirmed&&+e.tcuProbability>=65))return false;
+      if(thunder&&!(e.modelTsEvidence&&+e.tsProbability>=35))return false;
       if(info.vis!==null){
         const fv=rowVis(h);
         const alt=Number(h?.prob?.alt?.fgM??h?.sourceRow?.fogAltVisM);
@@ -99,7 +108,9 @@
       }
       if(/\b(?:RA|DZ|SN|SHRA|SHSN|TS|TSRA|FZRA|FZDZ)\b/.test(group.payload)){
         const wx=String(h?.tafDisplay?.weather||'');
-        if(!/\b(?:RA|DZ|SN|SHRA|SHSN|TS|TSRA|FZRA|FZDZ)\b/.test(wx))return false;
+        const radarShower=shower&&e.radarCorroborated===true&&nwpConfirmed&&+e.rainMmH>=0.1;
+        if(!/\b(?:RA|DZ|SN|SHRA|SHSN|TS|TSRA|FZRA|FZDZ)\b/.test(wx)&&!radarShower)return false;
+        if(shower&&!/\b(?:SHRA|SHSN)\b/.test(wx)&&!radarShower)return false;
       }
       if(info.wind){
         if(String(h?.tafDisplay?.wind||'')!==info.wind)return false;
@@ -117,7 +128,7 @@
     if(/\bFEW\d{3}\b/.test(candidateTaf))return fail('ordinary_few_not_proposed');
     if(original.base!==proposed.base)return fail('base_or_header_changed');
     if(normalize(baseTaf)===normalize(candidateTaf))return fail('unchanged');
-    if(proposed.groups.length>5||proposed.groups.length>original.groups.length+1)return fail('too_many_changes');
+    if(proposed.groups.length>5)return fail('too_many_changes');
     if(typeof validate!=='function')return fail('validator_missing');
     const checks=validate(candidateTaf,meta);
     if(checks?.ok!==true)return fail('instruction_rejected');
@@ -133,8 +144,12 @@
       if(g.kind==='PROB30'&&duration>3&&/\b(?:FG|BR)\b/.test(g.payload))
         return fail('prob30_fog_onset_window_too_long');
       // For hourly input, there is no sub-hourly evidence for newly invented TEMPO.
-      if((g.kind==='TEMPO'||g.kind==='PROB30 TEMPO')&&!baseGroups.some(b=>b.text===g.text))
-        return fail('tempo_without_subhourly_evidence');
+      if((g.kind==='TEMPO'||g.kind==='PROB30 TEMPO')&&!baseGroups.some(b=>b.text===g.text)){
+        const convective=/\b(?:SHRA|SHSN|TS|TSRA|FEW\d{3}(?:CB|TCU)|SCT\d{3}(?:CB|TCU)|BKN\d{3}(?:CB|TCU))\b/.test(g.payload);
+        const radarSupport=convective&&(hourly||[]).some(h=>h?.t>=g.start&&h?.t<g.end&&
+          h?.sourceRow?.tafConvectiveEvidence?.radarCorroborated===true);
+        if(!radarSupport)return fail('tempo_without_subhourly_evidence');
+      }
       if(!g.fields.length)return fail('empty_group');
       const unchanged=baseGroups.some(b=>b.text===g.text);
       if(!unchanged&&!hasSupportedForecast(g,hourly||[],meta))
