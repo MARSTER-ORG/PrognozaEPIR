@@ -11,7 +11,7 @@
   const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]));
   const Policy=window.PrognozaEPIRTAFFogPolicy,Validity=window.PrognozaEPIRTAFValidity;
   let activeResult=null,lastTafMeta=null,lastObservation='',lastNeighborContext=null,generating=false;
-  let lastRenderContext=null;
+  let lastRenderContext=null,lastConvectionDiagnostics=null;
   if(!Validity?.current)throw Error('TAF validity filter nie został załadowany');
 
   if(!Policy)throw new Error('TAF Fog Policy nie został załadowany');
@@ -94,7 +94,7 @@
     let mifg=[];
     try{if(w.PrognozaEPIRMIFG?.refresh)await w.PrognozaEPIRMIFG.refresh();const until=Date.now()+4000;do{mifg=w.PrognozaEPIRMIFG?.getSeries?.()||[];if(mifg.length)break;await new Promise(r=>setTimeout(r,200));}while(Date.now()<until);}catch(_){}
 
-    const rows=(Array.isArray(data)?data:[]).filter(z=>finite(+z.t)&&+z.t>=period.start&&+z.t<period.end).map(z=>{
+    let rows=(Array.isArray(data)?data:[]).filter(z=>finite(+z.t)&&+z.t>=period.start&&+z.t<period.end).map(z=>{
       const f=nearest(fog,z.t),m=nearest(mifg,z.t),fp=Policy.normalizeFogHour(f,mode);
       return {...z,
         fogEngineMode:mode,
@@ -115,6 +115,18 @@
         fogEngineType:fp?.type??null
       };
     });
+    const convNwp=window.PrognozaEPIRConvection12hEngine;
+    // Model data can finish slightly later than the iframe consensus.
+    // Bounded read-only wait avoids repeated downloads and never blocks TAF indefinitely.
+    if(convNwp&&!convNwp.get?.()){
+      const until=Date.now()+5000;
+      while(Date.now()<until&&!convNwp.get?.())await new Promise(r=>setTimeout(r,200));
+    }
+    const convApi=window.PrognozaEPIRTAFConvectionEvidence;
+    if(convApi?.fusion){
+      const fused=convApi.fusion({rows,issue:period.issue,start:period.start,end:period.end,now:Date.now(),live:window});
+      rows=fused.rows;lastConvectionDiagnostics=fused.diagnostics;
+    }else lastConvectionDiagnostics={forecastAvailable:false,radarAvailable:false};
     rows.fogEngineMode=mode;
     return rows;
   }
@@ -124,7 +136,7 @@
   function renderChecks(result){const host=$('checks');if(!host)return;const c=result.checks,items=[['Instrukcja nadrzędna',c.instructionLocked],['Okres 12 h',c.periodHours===12],['PROB40 zabronione',c.noProb40],['VV zabronione',c.noVV],['Maks. 5 grup zmian',c.max5],['Walidacja końcowa',c.ok]];host.innerHTML=items.map(([n,ok])=>`<li class="${ok?'ok':'bad'}"><b>${esc(n)}</b>: ${ok?'OK':'BŁĄD'}</li>`).join('')+(c.warnings?.length?c.warnings.map(x=>`<li class="warn">${esc(x)}</li>`).join(''):'');}
 
   function cloudMeters(d){if(d?.cavok)return'CAVOK';const a=Array.isArray(d?.cloudLayers)?d.cloudLayers:[];if(!a.length)return'NSC';return a.map(c=>`${esc(c.cover)}${c.type?esc(c.type):''} ${num(c.m)?Math.max(0,Math.round(+c.m))+' m':'—'}`).join(' · ');}
-  function renderHours(result){const host=$('hours');if(!host)return;host.innerHTML=result.hourly.map(h=>{const d=h.tafDisplay||{},p=h.prob||{},ceil=num(d.ceilingM)?Math.round(+d.ceilingM)+' m':'—',wx=d.weather||'—';return `<tr><td>${fmtUtc(h.t,false)}</td><td>${esc(d.wind||'—')}</td><td>${esc(d.visibility||'—')}</td><td>${esc(wx)}</td><td>${cloudMeters(d)}</td><td>${ceil}</td><td>${Math.round((p.precip||0)*100)}% / TS ${Math.round((p.ts||0)*100)}%</td><td>FG ${Math.round((p.fg||0)*100)}% · BR ${Math.round((p.br||0)*100)}% · VIS&lt;5 km ${Math.round((p.lowVis||0)*100)}%</td></tr>`;}).join('');}
+  function renderHours(result){const host=$('hours');if(!host)return;host.innerHTML=result.hourly.map(h=>{const d=h.tafDisplay||{},p=h.prob||{},ceil=num(d.ceilingM)?Math.round(+d.ceilingM)+' m':'—',wx=d.weather||'—';return `<tr><td>${fmtUtc(h.t,false)}</td><td>${esc(d.wind||'—')}</td><td>${esc(d.visibility||'—')}</td><td>${esc(wx)}</td><td>${cloudMeters(d)}</td><td>${ceil}</td><td>${Math.round((p.precip||0)*100)}% / TS ${Math.round((p.ts||0)*100)}%</td><td>FG ${Math.round((p.fg||0)*100)}% · BR ${Math.round((p.br||0)*100)}% · VIS&lt;5 km ${Math.round((p.lowVis||0)*100)}%</td><td>${h.sourceRow?.tafConvectiveEvidence?('TCU '+esc(h.sourceRow.tafConvectiveEvidence.tcuProbability??'—')+'% · CB '+esc(h.sourceRow.tafConvectiveEvidence.cbProbability??'—')+'% · '+(h.sourceRow.tafConvectiveEvidence.radarCorroborated?'RADAR ✓':'NWP')):'brak konwekcji 12h'}</td></tr>`;}).join('');}
 
   function renderArchive(data){
     $('officialTaf').textContent=rawOf(data?.currentTaf)||
@@ -170,8 +182,8 @@
     const firstNowcast=result.hourly[0]?.sourceRow?.tafVisNowcast||null;
     const regionalCount=result.hourly[0]?.sourceRow?.tafNeighborEvidence?.lowStations||0;
     const mode=fogMode(rows?.fogEngineMode||Policy.TAF_FOG_MODE),fogLabel=fogLabelForMode(mode),fogUsage=mode==='vnext'?'TAF używa score, progów VIS i prognozy VIS z NEXT 2.4.4':'TAF używa score i widzialności z LEGACY';
-    $('sources').innerHTML=`<span class="pill ${data.anchorObservation?'ok':'warn'}">METAR/SPECI ${data.anchorObservation?'✓':'—'} · kotwica ${data.anchorObservation?esc(fmtUtc(itemTime(data.anchorObservation,data.issueTime),false)):'brak ≤ emisja'}</span><span class="pill ${neighborStations.length?'ok':'warn'}">OBS sąsiednie ${neighborStations.length?esc(neighborStations.join('/')):'—'}</span><span class="pill ok">${esc(result.name)} v${esc(result.version)}</span><span class="pill ok">Instrukcja 11.2023 — HARD GATE</span><span class="pill ${learningOk?'ok':'warn'}">kalibracja EPIR ${learningOk?'✓':'fallback'}</span><span class="pill ok">multimodel ${modelCount}</span><span class="pill ok">profil chmur → warstwy/pułap ✓</span><span class="pill ${fogOk?'ok':'warn'}">FG ${fogLabel} ${fogOk?'✓':'—'}</span><span class="pill warn">SYNOP wyłączony</span>`;
-    $('conf').textContent=`Wskaźnik dostępności modeli ${result.confidence}% (nie stanowi prawdopodobieństwa poprawności TAF). Fog source: ${fogLabel}. ${fogUsage}; NWP VIS pozostaje diagnostyczna po stronie silnika mgieł. ${firstNowcast?'Nowcasting EPIR: ostatni METAR '+Math.round(firstNowcast.observationVisM)+' m, model '+Math.round(firstNowcast.modelVisM)+' m, po uzgodnieniu '+Math.round(firstNowcast.correctedVisM)+' m. Sygnał ograniczonej widzialności w regionie: '+regionalCount+'/3 stacji. ':''}Instrukcja 11.2023 pozostaje nadrzędnym hard gate. MSA: ${result.diagnostics.msaMode==='explicit'?Math.round(result.diagnostics.msaFt)+' ft':'fallback 5000 ft'}.`;
+    $('sources').innerHTML=`<span class="pill ${data.anchorObservation?'ok':'warn'}">METAR/SPECI ${data.anchorObservation?'✓':'—'} · kotwica ${data.anchorObservation?esc(fmtUtc(itemTime(data.anchorObservation,data.issueTime),false)):'brak ≤ emisja'}</span><span class="pill ${neighborStations.length?'ok':'warn'}">OBS sąsiednie ${neighborStations.length?esc(neighborStations.join('/')):'—'}</span><span class="pill ok">${esc(result.name)} v${esc(result.version)}</span><span class="pill ok">Instrukcja 11.2023 — HARD GATE</span><span class="pill ${learningOk?'ok':'warn'}">kalibracja EPIR ${learningOk?'✓':'fallback'}</span><span class="pill ok">multimodel ${modelCount}</span><span class="pill ok">profil chmur → warstwy/pułap ✓</span><span class="pill ${fogOk?'ok':'warn'}">FG ${fogLabel} ${fogOk?'✓':'—'}</span><span class="pill ${lastConvectionDiagnostics?.forecastAvailable?'ok':'warn'}">Konwekcja 12 h ${lastConvectionDiagnostics?.forecastAvailable?'✓':'brak'}</span><span class="pill ${lastConvectionDiagnostics?.radarAvailable?'ok':'warn'}">POLRAD 0–3 h ${lastConvectionDiagnostics?.radarAvailable?'✓':'brak świeżych danych'}</span><span class="pill warn">SYNOP wyłączony</span>`;
+    $('conf').textContent=`Wskaźnik dostępności modeli ${result.confidence}% (nie stanowi prawdopodobieństwa poprawności TAF). Fog source: ${fogLabel}. ${fogUsage}; NWP VIS pozostaje diagnostyczna po stronie silnika mgieł. ${firstNowcast?'Nowcasting EPIR: ostatni METAR '+Math.round(firstNowcast.observationVisM)+' m, model '+Math.round(firstNowcast.modelVisM)+' m, po uzgodnieniu '+Math.round(firstNowcast.correctedVisM)+' m. Sygnał ograniczonej widzialności w regionie: '+regionalCount+'/3 stacji. ':''}${lastConvectionDiagnostics?.radarAvailable?'Radar: ostatnia klatka '+lastConvectionDiagnostics.radarFrameEnd+', potwierdzonych godzin '+lastConvectionDiagnostics.radarCorroboratedHours+'. ':'Radar: brak aktualnego, zweryfikowanego nowcastu EPIR; analiza konwekcji wyłącznie modelowa. '}Instrukcja 11.2023 pozostaje nadrzędnym hard gate. MSA: ${result.diagnostics.msaMode==='explicit'?Math.round(result.diagnostics.msaFt)+' ft':'fallback 5000 ft'}.`;
     const auditLevel=result.audit?.level||'REVIEW';
     $('badge').textContent='TAF ENGINE '+APP_ENGINE_VERSION+(auditLevel==='BLOCK'?' · NIESPÓJNY':auditLevel==='REVIEW'?' · DO KONTROLI':' · PROJEKT DO OCENY');
     $('badge').className=auditLevel==='BLOCK'?'badge bad':'badge warn';
@@ -181,7 +193,7 @@
   async function generate(){
     const period=selectedCycle();if(!period)throw Error('Nie wybrano cyklu TAF');
     const frame=$('engine'),w=frame?.contentWindow,fogLabel=fogLabelForMode(Policy.TAF_FOG_MODE);
-    activeResult=null;lastTafMeta=null;lastNeighborContext=null;lastRenderContext=null;
+    activeResult=null;lastTafMeta=null;lastNeighborContext=null;lastRenderContext=null;lastConvectionDiagnostics=null;
     $('copy').disabled=true;
     $('badge').textContent=`TAF ENGINE ${APP_ENGINE_VERSION} · LICZENIE`;$('badge').className='badge';$('st').textContent=`archiwum + modele + FOG ${fogLabel} + profil chmur`;$('taf').textContent=`Pobieranie danych i generowanie TAF · aktywny Fog Engine: ${fogLabel}…`;
     const ai=$('aiMiniStatus');if(ai)ai.textContent='AI: oczekiwanie na projekt';
@@ -267,6 +279,8 @@
           visibilityCapM:num(src.tafVisNowcast?.visibilityCapM)?+src.tafVisNowcast.visibilityCapM:null,
           unsupportedClearing:src.tafVisNowcast?.unsupportedClearing===true,
           brProbabilityPct:Math.round(100*(Number(h.prob?.br)||0)),
+          convectiveEvidence:src.tafConvectiveEvidence||null,
+          showerNwpShare:Array.isArray(src.mv)&&src.mv.length?Math.round(100*src.mv.filter(m=>[80,81,82,85,86].includes(Math.round(+m.code))).length/src.mv.length):null,
           nwpMembers:(Array.isArray(src.mv)?src.mv:[]).slice(0,8).map(m=>({
             id:String(m.id||m.model||'').slice(0,35),visibilityM:num(m.vis)?+m.vis:null,
             windDirectionDeg:num(m.wd)?+m.wd:null,windSpeed:num(m.ws)?+m.ws:null,
@@ -307,7 +321,8 @@
         taf:activeResult.taf,hours,observation:lastObservation,
         epirRecent,neighborTafs,neighborObservations,
         fogMode:fogMode(),draftRejected:!activeResult.checks?.ok,
-        deterministicAudit:activeResult.audit||null
+        deterministicAudit:activeResult.audit||null,
+        convectionAvailability:lastConvectionDiagnostics||null
       });
       const analysis=response.analysis||{};
       const candidate=String(analysis.candidateTaf||'').replace(/\s+/g,' ').trim();

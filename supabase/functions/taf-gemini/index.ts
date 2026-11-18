@@ -63,6 +63,24 @@ Deno.serve(async(req:Request)=>{
       fogEngineSource:String(h.fogEngineSource||'').slice(0,50),
       nwpLowVisibilityShare:Number.isFinite(Number(h.nwpLowVisibilityShare))&&h.nwpLowVisibilityShare!==null?Number(h.nwpLowVisibilityShare):null,
       precipitationProbability:Number(h.precipitationProbability)||0,
+      showerNwpShare:h.showerNwpShare===null?null:Number(h.showerNwpShare)||0,
+      convectiveEvidence:h.convectiveEvidence&&typeof h.convectiveEvidence==='object'?{
+        tcuProbability:Number(h.convectiveEvidence.tcuProbability)||0,
+        cbProbability:Number(h.convectiveEvidence.cbProbability)||0,
+        tsProbability:Number(h.convectiveEvidence.tsProbability)||0,
+        cape:h.convectiveEvidence.cape===null?null:Number(h.convectiveEvidence.cape)||0,
+        thunderstormProbability:Number(h.convectiveEvidence.thunderstormProbability)||0,
+        rainMmH:h.convectiveEvidence.rainMmH===null?null:Number(h.convectiveEvidence.rainMmH)||0,
+        nwpModels:Number(h.convectiveEvidence.nwpModels)||0,
+        modelAgreement:Number(h.convectiveEvidence.modelAgreement)||0,
+        modelTsEvidence:h.convectiveEvidence.modelTsEvidence===true,
+        radarAvailable:h.convectiveEvidence.radarAvailable===true,
+        radarCorroborated:h.convectiveEvidence.radarCorroborated===true,
+        radarFrameEnd:h.convectiveEvidence.radarFrameEnd||null,
+        radarNowcastAgeMin:h.convectiveEvidence.radarNowcastAgeMin??null,
+        radarConfidence:h.convectiveEvidence.radarConfidence??null,
+        nowcastApplied:h.convectiveEvidence.nowcastApplied===true
+      }:null,
       lowVisibilityProbabilityPct:Number(h.lowVisibilityProbabilityPct)||0,
       fogAlternativeVisibilityM:h.fogAlternativeVisibilityM===null?null:Number.isFinite(Number(h.fogAlternativeVisibilityM))?Number(h.fogAlternativeVisibilityM):null,
       nwpMemberCount:Number(h.nwpMemberCount)||0,
@@ -106,10 +124,18 @@ Deno.serve(async(req:Request)=>{
       errors:(Array.isArray(audit.errors)?audit.errors:[]).slice(0,6).map((x:unknown)=>String(x).slice(0,250)),
       warnings:(Array.isArray(audit.warnings)?audit.warnings:[]).slice(0,6).map((x:unknown)=>String(x).slice(0,250))
     };
+    const convection=body?.convectionAvailability||{};
+    const convectionAvailability={
+      forecastAvailable:convection.forecastAvailable===true,
+      radarAvailable:convection.radarAvailable===true,
+      radarCorroboratedHours:Math.max(0,Math.min(12,Number(convection.radarCorroboratedHours)||0)),
+      radarFrameEnd:convection.radarFrameEnd||null,
+      issueCutoff:convection.issueCutoff||null
+    };
     const evidence={
       baselineTaf:taf,hours:hourData,observation:obs,
       epirRecent:regional.epirRecent,neighborObservations:regional.neighborObservations,
-      neighborTafs:regional.neighborTafs,deterministicAudit,
+      neighborTafs:regional.neighborTafs,deterministicAudit,convectionAvailability,
       draftRejected:body?.draftRejected===true,
       fogMode:body.fogMode==='vnext'?'NEXT':'LEGACY'
     };
@@ -119,6 +145,11 @@ Deno.serve(async(req:Request)=>{
     if(context.length>30000)return reply(req,{ok:false,error:'forecast_context_too_large'},413);
     const prompt='Oceń krytycznie wszystkie godziny projektu EPIR. '
       +'Uwzględnij pełny 12h przebieg, zespoły NWP, wybrany Fog Engine, '
+      +'oraz 12-godzinny model konwekcji i aktualny nowcast POLRAD, o ile dostępne. '
+      +'Odseparuj konwekcję (SHRA, TCU, CB, TS) od zwykłego opadu RA. '
+      +'Konfrontuj CAPE, indeks burzowy, opad, radarową trajektorię oraz czas i pewność obserwacji. '
+      +'Radar bez potwierdzenia w NWP nie uprawnia samodzielnie do kodu CB/TCU/TS. '
+      +'Przy braku świeżych danych radarowych zaznacz ograniczenia, nie wymyślaj echa. '
       +'METAR/SPECI EPIR i trend, ważne TAF i obserwacje sąsiednie oraz luki danych. '
       +'Oddzielnie oceń bazowy wiatr, widzialność, pogodę i chmury. '
       +'Ustal czy poprawa do 8000/9999 jest wiarygodna, gdy METAR <5000 m. '

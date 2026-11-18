@@ -126,6 +126,15 @@ STRATEGIA PRACY:
 2) Wyznacz zmiany progowe, kierunek i trwałość, okna początku i pewność.
 3) Zaproponuj tylko poparte danymi korekty wyboru wskaźnika/okna/payloadu.
 4) Porównaj z gotowym TAF; jeśli nie ma poprawy, candidateTaf = "".
+   KONWEKCJA / RADAR: rozdzielaj 0–3 h POLRAD (czas klatki, ETA, pewność,
+   potwierdzenie przez modele) od 3–12 h NWP (CAPE, indeks burzowy, opad,
+   TCU/CB). Bez świeżego radarowego potwierdzenia nie twierdź, że radar
+   wykrył konwekcję. dBZ świadczy o echu opadowym, NIE potwierdza samo
+   TCU, CB ani wyładowań. Dla SHRA wymagaj charakteru przelotnego,
+   dla CB/TCU wieloźródłowej przesłanki, a dla TS wsparcia burzowego.
+   Osobno oceń utrzymanie/ustąpienie opadu, porywy i zmiany podstaw chmur.
+   Radar nie jest źródłem dla całego 12h TAF. Brak danych opisz w dataGaps.
+   Nie używaj obserwacji wykonanych później niż czas emisji TAF.
 5) Każdą proponowaną grupę wyjaśnij w recommendedGroups, podając
    godziny UTC, grupę, źródłowe godziny danych i argument o trwałości/
    niepewności. Nie twórz nazw ani wyników źródeł, których nie otrzymałeś.
