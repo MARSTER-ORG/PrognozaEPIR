@@ -62,7 +62,7 @@
       now-milliseconds(radar.frameEnd)<=45*60000&&
       +radar.confidence>=55;
     const nowcastOk=validAge(nowcast,cutoff,now,20*60000);
-    const combinedRadar=radarOk&&nowcastOk&&
+    const combinedRadar=radarOk&&
       (finite(radar.models?.support)&&+radar.models.support>=1);
     const enriched=rows.map(original=>{
       const row={...original},t=+row.t;
@@ -78,8 +78,7 @@
       const ts=pct(c.tsProbability),tcu=pct(c.tcuProbability),cb=pct(c.cbProbability);
       const modelTsEvidence=modelCount>=2&&agreement>=55&&
         (pct(c.thunderstormProbability)||0)>=30;
-      const radarWindow=combinedRadar&&lead>=-0.75&&lead<=3.5&&
-        (c.nowcastApplied===true||nowcastOk);
+      const radarWindow=combinedRadar&&lead>=-0.75&&lead<=3.5;
       const prediction=radarWindow&&Object.entries(radar.predictions||{}).some(([minutes,v])=>{
         const h=Number(minutes)/60;
         return Number.isFinite(h)&&Math.abs(h-Math.max(0,lead))<=1.2&&finite(v)&&
@@ -102,6 +101,7 @@
         radarNowcastAgeMin:radarOk?Math.round((now-milliseconds(radar.frameEnd))/60000):null,
         radarSource:radarOk?radar.sourceProduct:null,
         radarConfidence:radarOk?+radar.confidence:null,
+        radarAuxNowcastAvailable:nowcastOk,
         nowcastApplied:radarCorroborated,
         evidenceOnly:true
       };
