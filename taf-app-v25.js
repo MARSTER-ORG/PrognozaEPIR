@@ -115,6 +115,13 @@
         fogEngineType:fp?.type??null
       };
     });
+    const convNwp=window.PrognozaEPIRConvection12hEngine;
+    // Model data can finish slightly later than the iframe consensus.
+    // Bounded read-only wait avoids repeated downloads and never blocks TAF indefinitely.
+    if(convNwp&&!convNwp.get?.()){
+      const until=Date.now()+5000;
+      while(Date.now()<until&&!convNwp.get?.())await new Promise(r=>setTimeout(r,200));
+    }
     const convApi=window.PrognozaEPIRTAFConvectionEvidence;
     if(convApi?.fusion){
       const fused=convApi.fusion({rows,issue:period.issue,start:period.start,end:period.end,now:Date.now(),live:window});
@@ -129,7 +136,7 @@
   function renderChecks(result){const host=$('checks');if(!host)return;const c=result.checks,items=[['Instrukcja nadrzędna',c.instructionLocked],['Okres 12 h',c.periodHours===12],['PROB40 zabronione',c.noProb40],['VV zabronione',c.noVV],['Maks. 5 grup zmian',c.max5],['Walidacja końcowa',c.ok]];host.innerHTML=items.map(([n,ok])=>`<li class="${ok?'ok':'bad'}"><b>${esc(n)}</b>: ${ok?'OK':'BŁĄD'}</li>`).join('')+(c.warnings?.length?c.warnings.map(x=>`<li class="warn">${esc(x)}</li>`).join(''):'');}
 
   function cloudMeters(d){if(d?.cavok)return'CAVOK';const a=Array.isArray(d?.cloudLayers)?d.cloudLayers:[];if(!a.length)return'NSC';return a.map(c=>`${esc(c.cover)}${c.type?esc(c.type):''} ${num(c.m)?Math.max(0,Math.round(+c.m))+' m':'—'}`).join(' · ');}
-  function renderHours(result){const host=$('hours');if(!host)return;host.innerHTML=result.hourly.map(h=>{const d=h.tafDisplay||{},p=h.prob||{},ceil=num(d.ceilingM)?Math.round(+d.ceilingM)+' m':'—',wx=d.weather||'—';return `<tr><td>${fmtUtc(h.t,false)}</td><td>${esc(d.wind||'—')}</td><td>${esc(d.visibility||'—')}</td><td>${esc(wx)}</td><td>${cloudMeters(d)}</td><td>${ceil}</td><td>${Math.round((p.precip||0)*100)}% / TS ${Math.round((p.ts||0)*100)}%</td><td>FG ${Math.round((p.fg||0)*100)}% · BR ${Math.round((p.br||0)*100)}% · VIS&lt;5 km ${Math.round((p.lowVis||0)*100)}%</td></tr>`;}).join('');}
+  function renderHours(result){const host=$('hours');if(!host)return;host.innerHTML=result.hourly.map(h=>{const d=h.tafDisplay||{},p=h.prob||{},ceil=num(d.ceilingM)?Math.round(+d.ceilingM)+' m':'—',wx=d.weather||'—';return `<tr><td>${fmtUtc(h.t,false)}</td><td>${esc(d.wind||'—')}</td><td>${esc(d.visibility||'—')}</td><td>${esc(wx)}</td><td>${cloudMeters(d)}</td><td>${ceil}</td><td>${Math.round((p.precip||0)*100)}% / TS ${Math.round((p.ts||0)*100)}%</td><td>FG ${Math.round((p.fg||0)*100)}% · BR ${Math.round((p.br||0)*100)}% · VIS&lt;5 km ${Math.round((p.lowVis||0)*100)}%</td><td>${h.sourceRow?.tafConvectiveEvidence?('TCU '+esc(h.sourceRow.tafConvectiveEvidence.tcuProbability??'—')+'% · CB '+esc(h.sourceRow.tafConvectiveEvidence.cbProbability??'—')+'% · '+(h.sourceRow.tafConvectiveEvidence.radarCorroborated?'RADAR ✓':'NWP')):'brak konwekcji 12h'}</td></tr>`;}).join('');}
 
   function renderArchive(data){
     $('officialTaf').textContent=rawOf(data?.currentTaf)||
