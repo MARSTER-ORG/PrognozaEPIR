@@ -231,7 +231,7 @@ jobs:
               && ! contains "$fog" '<iframe' \
               && ! contains "$fog" 'index.html?fogpanel=' \
               && ! contains "$fog" 'fogRuntime' \
-              && printf '%s' "$fog244" | grep -Fq "ACTIVE=60" \
+              && contains "$fog244" "ACTIVE=60" \
               && contains "$fogguard" 'return localStorage.getItem(KEY)===VNEXT?VNEXT:LEGACY' \
               && contains "$fogguard" 'PrognozaEPIRFogMode=Object.freeze' \
               && contains "$overlay" 'MIFG_DRAW_THRESHOLD=60' \
@@ -252,7 +252,7 @@ jobs:
               && contains "$tafmodesync" 'seriesForTaf:seriesForSelected' \
               && ! contains "$taf" 'data-taf-fog-mode' \
               && contains "$tafbootstrap" 'taf-engine-v243.js?v=${BUILD}' \
-              && printf '%s' "$taf243" | grep -Fq 'prevailingWindFullPeriodWhenNoSignificantChange' \
+              && contains "$taf243" 'prevailingWindFullPeriodWhenNoSignificantChange' \
               && contains "$tafapp" 'const mode=Policy.TAF_FOG_MODE' \
               && contains "$tafapp" 'Policy.seriesForTaf(w)'; then
               echo "GitHub Pages serves commit $GITHUB_SHA with Legacy-default Fog selection, FOG/BR/MIFG threshold 60 and TAF 2.4.3 integration."
