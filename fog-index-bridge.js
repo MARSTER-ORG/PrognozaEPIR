@@ -7,6 +7,7 @@
   const ACTIVE=60,HOUR=3600e3;
   const finite=Number.isFinite;
   let frame=null,lastSync=0,lastCounts={legacy:0,vnext:0,br:0,mifg:0},fgMarkerWrapped=false;
+  let lastConsensusBridgeSignature='';
 
   function selectedMode(){
     try{return localStorage.getItem(MODE_KEY)==='vnext'?'vnext':'legacy';}
@@ -96,9 +97,35 @@
       }).filter(r=>r&&finite(Number(r.t))&&finite(Number(r.score))));
     }catch(_){return [];}
   }
+  function publishRealConsensus(cw){
+    // index.html already fetched and combined these real forecast models.
+    // Reuse their UTC hourly rows when the canonical Fog page cannot reach
+    // its specialist DMI/KNMI providers. Never synthesize missing fields.
+    if(typeof consensus==='undefined'||!Array.isArray(consensus)||consensus.length<12)return;
+    const ingestion=cw?.PrognozaEPIRFogLegacyFallback?.ingest;
+    if(typeof ingestion!=='function')return;
+    const first=consensus[0]?.t,last=consensus.at(-1)?.t;
+    const signature=[consensus.length,first,last,
+      typeof lastLoadedAt!=='undefined'?lastLoadedAt:0].join(':');
+    if(signature===lastConsensusBridgeSignature)return;
+    const numeric=v=>v===null||v===undefined||v===''||!finite(Number(v))?null:Number(v);
+    const rows=consensus.map(r=>({
+      t:numeric(r?.t),modelCount:numeric(r?.modelCount),
+      T:numeric(r?.T),Td:numeric(r?.Td),RH:numeric(r?.RH),
+      WS:numeric(r?.WS),WD:numeric(r?.WD),G:numeric(r?.G),
+      RR:numeric(r?.RR),VIS:numeric(r?.VIS),P:numeric(r?.P),
+      low:numeric(r?.low),mid:numeric(r?.mid),high:numeric(r?.high),
+      ceiling:numeric(r?.ceiling)
+    }));
+    try{
+      if(ingestion(rows))lastConsensusBridgeSignature=signature;
+    }catch(err){console.warn('[FOG consensus bridge]',String(err?.message||err));}
+  }
+
   function sync(){
     const cw=canonicalWindow();
     if(!cw)return false;
+    publishRealConsensus(cw);
     let legacy=[],vnext=[],mifg=[];
     try{
       legacy=copyRows(cw.PrognozaEPIRFogLegacySeries);
