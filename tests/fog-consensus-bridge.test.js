@@ -26,7 +26,7 @@ const script = `
   const HOUR=3600e3,finite=Number.isFinite;
   const CONSENSUS_FALLBACK_MODEL='prognozaepir_consensus_actual_nwp';
   const DMI_MODEL='dmi_harmonie_arome_europe',KNMI_MODEL='knmi_harmonie_arome_europe';
-  const MODELS=[];
+  const MODELS=[],datasets=new Map();
   let dmiRows=[],knmiRows=[],consensusFallbackRows=[],fogSeries=[];
   let engineError='',recoveryTimer=null,recoveryAttempt=0;
   const window={};
