@@ -12,6 +12,7 @@
   const MAX_OBS = 60;
   const AUTO_OBS_MAX_AGE = 3*HOUR;
   const OBS_SNAPSHOT_URL = 'data/messages/latest.json';
+  const CONSENSUS_FALLBACK_MODEL = 'prognozaepir_consensus_actual_nwp';
   const DMI_MODEL = 'dmi_harmonie_arome_europe';
   const KNMI_MODEL = 'knmi_harmonie_arome_europe';
   const ADAPTIVE_WEIGHTS_URL = 'data/learning/adaptive-weights.json';
@@ -41,6 +42,9 @@
   ];
 
   let dmiRows = [];
+  // Only actual, time-stamped CONSENSUS model forecasts from index.html.
+  // Never synthesize meteorological input when all providers are unavailable.
+  let consensusFallbackRows = [];
   let knmiRows = [];
   let adaptiveWeights = null;
   let fogEventSkill = null;
@@ -481,7 +485,10 @@
       const ready=Array.isArray(window.PrognozaEPIRFogLegacySeries)&&window.PrognozaEPIRFogLegacySeries.length>10;
       window.PrognozaEPIRFogLegacySourceStatus={
         ready,dmiRows:dmiRows.length,knmiRows:knmiRows.length,
-        errors:warnings.slice(),engineError,attempt:recoveryAttempt,updatedAt:Date.now()
+        errors:warnings.slice(),engineError,attempt:recoveryAttempt,
+        fallbackSource:(!dmiRows.length&&!knmiRows.length&&consensusFallbackRows.length>10)
+          ?'PrognozaEPIR CONSENSUS actual NWP':null,
+        consensusRows:consensusFallbackRows.length,updatedAt:Date.now()
       };
       if(ready){
         recoveryAttempt=0;
@@ -547,9 +554,44 @@
       T850:null,U850:null,directFog:null
     };
   }
+
+  function normalizeConsensusForecast(rows) {
+    if(!Array.isArray(rows))return [];
+    const now=Date.now();
+    const normalized=new Map();
+    for(const row of rows.slice(0,240)){
+      if(!row || typeof row!=='object')continue;
+      const t=n(row.t),count=n(row.modelCount);
+      if(!finite(t)||!finite(count)||count<1||t<now-6*HOUR||t>now+121*HOUR)continue;
+      const T=n(row.T),Td=n(row.Td),RH=n(row.RH),WS=n(row.WS);
+      if(!finite(T)||!finite(Td)||!finite(RH)||!finite(WS)||RH<0||RH>100||WS<0)continue;
+      if(!finite(n(row.VIS)) && !finite(n(row.RR)) && !finite(n(row.low)))continue;
+      normalized.set(t,{
+        t,modelCount:count,T,Td,RH,WS,
+        WD:n(row.WD),G:n(row.G),RR:n(row.RR),VIS:n(row.VIS),
+        P:n(row.P),LOW:n(row.low),MID:n(row.mid),HIGH:n(row.high),
+        CBH:n(row.ceiling)
+      });
+    }
+    return [...normalized.values()].sort((a,b)=>a.t-b.t);
+  }
+
+  function consensusFallbackSurface(t){
+    const row=nearest(consensusFallbackRows,t,40*60e3);
+    if(!row)return null;
+    return {
+      id:CONSENSUS_FALLBACK_MODEL,name:'PrognozaEPIR CONSENSUS (verified NWP)',t:row.t,
+      T:row.T,Td:row.Td,RH:row.RH,WS:row.WS,WD:row.WD,G:row.G,
+      RR:row.RR,VIS:row.VIS,P:row.P,LOW:row.LOW,MID:row.MID,HIGH:row.HIGH,
+      CBH:row.CBH,TCC:null,Tskin:null,T100:null,T200:null,T300:null,
+      RH100:null,RH200:null,RH300:null,T850:null,U850:null,directFog:null
+    };
+  }
+
   function modelInput(model,t){
     if(model.id===DMI_MODEL)return dmiSurface(t);
     if(model.id===KNMI_MODEL)return knmiSurface(t);
+    if(model.id===CONSENSUS_FALLBACK_MODEL)return consensusFallbackSurface(t);
     return rawSurface(model,t);
   }
 
@@ -683,7 +725,9 @@
 
   function modelDefinitions(){
     const base=(typeof MODELS!=='undefined'?MODELS:[]).map(m=>({id:m.id,name:m.name}));
-    return [{id:DMI_MODEL,name:'DMI HARMONIE-AROME 2 km'},{id:KNMI_MODEL,name:'KNMI HARMONIE-AROME Europe 5.5 km'},...base];
+    const extra=(!dmiRows.length&&!knmiRows.length&&consensusFallbackRows.length>10)
+      ?[{id:CONSENSUS_FALLBACK_MODEL,name:'PrognozaEPIR CONSENSUS (verified NWP)'}]:[];
+    return [{id:DMI_MODEL,name:'DMI HARMONIE-AROME 2 km'},{id:KNMI_MODEL,name:'KNMI HARMONIE-AROME Europe 5.5 km'},...base,...extra];
   }
   function leadBucketName(h){
     if(!finite(h)||h<0)return null;
@@ -693,6 +737,7 @@
   function fogModelWeight(modelId,lead){
     if(modelId===DMI_MODEL)return lead<=12?.16:.10;
     if(modelId===KNMI_MODEL)return lead<=12?.11:.07;
+    if(modelId===CONSENSUS_FALLBACK_MODEL)return .10;
     const bucket=leadBucketName(lead),m=adaptiveWeights?.models?.[modelId],row=bucket?m?.lead_buckets?.[bucket]:null;
     let base=n(m?.base_weight);
     if(!finite(base)){
@@ -799,8 +844,46 @@
     for(let h=0;h<=48;h++){
       const z=ensembleAt(start+h*HOUR);if(z)out.push(z);
     }
-    fogSeries=out;window.PrognozaEPIRFogLegacySeries=fogSeries.map(h=>({...h,models:Array.isArray(h?.models)?h.models.map(m=>({...m,components:m?.components?{...m.components}:m?.components})):h?.models,fogEngineMode:'legacy',fogEngineSource:'legacy'}));window.PrognozaEPIRFogSeries=fogSeries;renderFog();window.dispatchEvent(new CustomEvent('prognozaepir:fog-series-updated'));
+    fogSeries=out;
+    const fallback=(!dmiRows.length&&!knmiRows.length&&consensusFallbackRows.length>10);
+    window.PrognozaEPIRFogLegacySeries=fogSeries.map(h=>({
+      ...h,models:Array.isArray(h?.models)?h.models.map(m=>({...m,components:m?.components?{...m.components}:m?.components})):h?.models,
+      fogEngineMode:'legacy',
+      fogEngineSource:fallback?'legacy-consensus-nwp-fallback':'legacy',
+      fogEngineFallback:fallback
+    }));
+    window.PrognozaEPIRFogSeries=fogSeries;
+    renderFog();
+    window.dispatchEvent(new CustomEvent('prognozaepir:fog-series-updated'));
   }
+
+  window.PrognozaEPIRFogLegacyFallback=Object.freeze({
+    ingest(rows){
+      const candidate=normalizeConsensusForecast(rows);
+      // Require a sustained genuine hourly series. Do not replace a good
+      // forecast with an empty, partial or unvalidated bridge payload.
+      if(candidate.length<12)return false;
+      consensusFallbackRows=candidate;
+      if(!dmiRows.length&&!knmiRows.length){
+        rebuildEngine();
+        const ready=window.PrognozaEPIRFogLegacySeries?.length>10;
+        if(ready){
+          engineError='';
+          if(recoveryTimer!==null){clearTimeout(recoveryTimer);recoveryTimer=null;}
+          recoveryAttempt=0;
+          window.PrognozaEPIRFogLegacySourceStatus={
+            ...(window.PrognozaEPIRFogLegacySourceStatus||{}),
+            ready:true,fallbackSource:'PrognozaEPIR CONSENSUS actual NWP',
+            consensusRows:candidate.length,updatedAt:Date.now()
+          };
+        }
+        return Boolean(ready);
+      }
+      return true;
+    },
+    getStatus:()=>({consensusRows:consensusFallbackRows.length,
+      fallbackActive:!dmiRows.length&&!knmiRows.length&&fogSeries.length>10})
+  });
 
   function onsetAndDissipation(series){
     const idx=series.findIndex(x=>finite(x?.score)&&x.score>=50);
