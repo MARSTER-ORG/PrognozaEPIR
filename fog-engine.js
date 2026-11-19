@@ -49,6 +49,9 @@
   let engineError = '';
   let lastCoreSize = -1;
   let fetchBusy = false;
+  let recoveryAttempt = 0;
+  let recoveryTimer = null;
+  const RECOVERY_DELAYS_MS = [10000, 30000, 60000];
   let archiveObservation = null;
   let archiveObsStatus = {ready:false,fresh:false,source:null,ageHours:null,synopFresh:false,synopAgeHours:null,synopStale:false,error:null};
 
@@ -372,15 +375,24 @@
     return p[p.length-1][key];
   }
 
+  async function fetchForecastHourly(url, provider){
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 18000);
+    try{
+      const response = await fetch(url, {cache:'no-store',signal:controller.signal});
+      const payload = await response.json().catch(() => null);
+      if(!response.ok || !payload?.hourly?.time)
+        throw new Error(payload?.reason || payload?.message || `${provider} HTTP ${response.status}`);
+      return payload.hourly;
+    }finally{clearTimeout(timer);}
+  }
+
   async function fetchDmi(){
     const q=new URLSearchParams({
       latitude:String(PLACE.lat),longitude:String(PLACE.lon),hourly:DMI_VARS.join(','),
       models:DMI_MODEL,timezone:'UTC',forecast_hours:'60',past_hours:'6',wind_speed_unit:'ms'
     });
-    const r=await fetch('https://api.open-meteo.com/v1/forecast?'+q,{cache:'no-store'});
-    const j=await r.json().catch(()=>null);
-    if(!r.ok||!j?.hourly?.time)throw new Error(j?.reason||j?.message||('DMI HTTP '+r.status));
-    const h=j.hourly;
+    const h=await fetchForecastHourly('https://api.open-meteo.com/v1/forecast?'+q, 'DMI');
     dmiRows=(h.time||[]).map((s,i)=>({
       t:parseUtc(s),T:n(h.temperature_2m?.[i]),Td:n(h.dew_point_2m?.[i]),RH:n(h.relative_humidity_2m?.[i]),VIS:n(h.visibility?.[i]),
       fog2m:n(h.cloud_cover_2m?.[i]),TCC:n(h.cloud_cover?.[i]),LOW:n(h.cloud_cover_low?.[i]),MID:n(h.cloud_cover_mid?.[i]),HIGH:n(h.cloud_cover_high?.[i]),
@@ -396,10 +408,7 @@
       latitude:String(PLACE.lat),longitude:String(PLACE.lon),hourly:KNMI_VARS.join(','),
       models:KNMI_MODEL,timezone:'UTC',forecast_hours:'60',past_hours:'6',wind_speed_unit:'ms'
     });
-    const r=await fetch('https://api.open-meteo.com/v1/forecast?'+q,{cache:'no-store'});
-    const j=await r.json().catch(()=>null);
-    if(!r.ok||!j?.hourly?.time)throw new Error(j?.reason||j?.message||('KNMI HTTP '+r.status));
-    const h=j.hourly;
+    const h=await fetchForecastHourly('https://api.open-meteo.com/v1/forecast?'+q, 'KNMI');
     knmiRows=(h.time||[]).map((z,i)=>({
       t:parseUtc(z),T:n(h.temperature_2m?.[i]),Td:n(h.dew_point_2m?.[i]),RH:n(h.relative_humidity_2m?.[i]),VIS:n(h.visibility?.[i]),
       TCC:n(h.cloud_cover?.[i]),LOW:n(h.cloud_cover_low?.[i]),MID:n(h.cloud_cover_mid?.[i]),HIGH:n(h.cloud_cover_high?.[i]),
@@ -444,19 +453,45 @@
   }
 
   async function refreshExternal(){
-    if(fetchBusy)return;fetchBusy=true;engineError='';
+    if(fetchBusy)return;
+    fetchBusy=true;
+    engineError='';
+    let warnings=[];
     try{
-      await fetchDmi();
+      // Each provider must be attempted independently. Previously a DMI
+      // network error skipped KNMI entirely, leaving standalone fog.html
+      // (and therefore the TAF LEGACY source) without any model series.
+      const [dmi,knmi]=await Promise.allSettled([fetchDmi(),fetchKnmi()]);
+      if(dmi.status==='rejected')warnings.push('DMI: '+(dmi.reason?.message||dmi.reason));
+      if(knmi.status==='rejected')warnings.push('KNMI: '+(knmi.reason?.message||knmi.reason));
       const ids=(typeof MODELS!=='undefined'?MODELS:[]).map(m=>m.id).filter(id=>CORE_SUPPLEMENT_MODELS.has(id));
       await Promise.all([
         ...ids.map(fetchSupplement),
-        fetchKnmi().catch(e=>{knmiRows=[];console.warn('KNMI fog supplement:',e)}),
         fetchAdaptiveWeights().catch(e=>{adaptiveWeights=null;console.warn('fog adaptive weights:',e)}),
         fetchFogEventSkill().catch(e=>{fogEventSkill=null;console.warn('fog event skill:',e)}),
         fetchArchiveObservation()
       ]);
+      if(!dmiRows.length&&!knmiRows.length)
+        engineError='Brak danych DMI i KNMI'+(warnings.length?': '+warnings.join(' | '):'');
+      if(warnings.length)console.warn('[FOG providers]',warnings.join(' | '));
     }catch(e){engineError=e?.message||String(e);}
-    finally{fetchBusy=false;rebuildEngine();}
+    finally{
+      fetchBusy=false;
+      rebuildEngine();
+      const ready=Array.isArray(window.PrognozaEPIRFogLegacySeries)&&window.PrognozaEPIRFogLegacySeries.length>10;
+      window.PrognozaEPIRFogLegacySourceStatus={
+        ready,dmiRows:dmiRows.length,knmiRows:knmiRows.length,
+        errors:warnings.slice(),engineError,attempt:recoveryAttempt,updatedAt:Date.now()
+      };
+      if(ready){
+        recoveryAttempt=0;
+        if(recoveryTimer!==null){clearTimeout(recoveryTimer);recoveryTimer=null;}
+      }else if(recoveryTimer===null&&recoveryAttempt<RECOVERY_DELAYS_MS.length){
+        const delay=RECOVERY_DELAYS_MS[recoveryAttempt++];
+        console.warn('[FOG providers] No LEGACY series; retrying in '+delay/1000+' s');
+        recoveryTimer=setTimeout(()=>{recoveryTimer=null;refreshExternal();},delay);
+      }
+    }
   }
 
   function rawSurface(model,t){

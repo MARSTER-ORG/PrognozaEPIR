@@ -184,6 +184,13 @@
     window.addEventListener('storage',ev=>{if(ev.key===MODE_KEY){updateModeBadge();reloadCanonical();}});
     window.addEventListener('prognozaepir:fog-engine-mode-changed',updateModeBadge);
     document.addEventListener('visibilitychange',()=>{if(!document.hidden)setTimeout(sync,0);});
+    // Canonical Fog data may arrive after the iframe load event. Keep a short
+    // bootstrap reconciliation window so TAF does not wait a full minute.
+    let bootstrapChecks=0;
+    const bootstrapTimer=setInterval(()=>{
+      bootstrapChecks++;
+      if((sync()&&lastCounts.legacy>10)||bootstrapChecks>=45)clearInterval(bootstrapTimer);
+    },2000);
     setInterval(sync,60000);
   }
 

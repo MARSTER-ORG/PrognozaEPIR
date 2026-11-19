@@ -12,6 +12,15 @@ async function main() {
   });
   const page = await browser.newPage();
   const errors = [];
+  const networkFailures = [];
+  page.on('requestfailed', request => {
+    if (networkFailures.length < 16)
+      networkFailures.push({host:new URL(request.url()).host,reason:request.failure()?.errorText});
+  });
+  page.on('response', response => {
+    if (response.status() >= 400 && networkFailures.length < 16)
+      networkFailures.push({host:new URL(response.url()).host,status:response.status()});
+  });
   page.on('pageerror', error => errors.push(error.message));
   try {
     const url = new URL('taf.html', base.replace(/\/?$/, '/'));
@@ -40,6 +49,19 @@ async function main() {
     console.error(await page.evaluate(() => Object.fromEntries(
       ['st', 'taf', 'badge'].map(id => [id, document.getElementById(id)?.textContent]))).catch(() => ({})));
     console.error('Page errors:', errors);
+    console.error('Network failures:', networkFailures);
+    console.error('Fog provider diagnostics:', await page.evaluate(() => {
+      const frame=document.getElementById('engine')?.contentWindow;
+      const canonical=frame?.document.getElementById('epirFogCanonicalRuntime')?.contentWindow;
+      let consensusRows=0;
+      try { consensusRows=frame?.eval('typeof consensus!=="undefined"?consensus.length:0')||0; } catch (_) {}
+      return {
+        consensusRows,
+        legacyRows:frame?.PrognozaEPIRFogLegacySeries?.length||0,
+        bridge:frame?.PrognozaEPIRFogIndexBridge?.status?.()||null,
+        canonical:canonical?.PrognozaEPIRFogLegacySourceStatus||null
+      };
+    }).catch(e=>({error:e.message})));
     throw error;
   } finally {
     await browser.close();
