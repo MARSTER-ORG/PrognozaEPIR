@@ -43,7 +43,7 @@ async function scenario({ dmiFails, knmiFails }) {
   };
   await vm.runInNewContext(
     'var fetchBusy=false, engineError="", recoveryAttempt=0, recoveryTimer=null;\n' +
-    'var dmiRows=[], knmiRows=[];\n' +
+    'var dmiRows=[], knmiRows=[], consensusFallbackRows=[];\n' +
     'const RECOVERY_DELAYS_MS=[10000,30000,60000];\n' +
     loader + '\nrefreshExternal();',
     sandbox, { timeout: 5000 }
