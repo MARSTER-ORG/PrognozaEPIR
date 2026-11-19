@@ -194,6 +194,11 @@ jobs:
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
         run: |
           set -euo pipefail
+          # Avoid printf | grep -q: grep closes early on a match and triggers
+          # SIGPIPE under pipefail for large deployed JavaScript assets.
+          contains() {
+            [[ "$1" == *"$2"* ]]
+          }
           base="${PAGE_URL%/}"
           for attempt in $(seq 1 18); do
             marker="$(curl -fsSL --max-time 15 "${base}/pages-build.json?v=${GITHUB_SHA}" 2>/dev/null || true)"
@@ -211,44 +216,44 @@ jobs:
             tafbootstrap="$(curl -fsSL --max-time 15 "${base}/taf-runtime-bootstrap.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
             taf243="$(curl -fsSL --max-time 15 "${base}/taf-engine-v243.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
             tafapp="$(curl -fsSL --max-time 15 "${base}/taf-app-v25.js?v=${GITHUB_SHA}" 2>/dev/null || true)"
-            if printf '%s' "$marker" | grep -Fq "$GITHUB_SHA" \
-              && printf '%s' "$index" | grep -Fq 'fog-index-bridge.js?v=' \
-              && printf '%s' "$index" | grep -Fq 'fog-index-mode-guard.js?v=' \
-              && printf '%s' "$index" | grep -Fq 'fog-meteogram-overlay.js?v=' \
-              && printf '%s' "$fog" | grep -Fq 'id="epirGlobalNav"' \
-              && printf '%s' "$fog" | grep -Fq 'id="fogStandaloneMount"' \
-              && printf '%s' "$fog" | grep -Fq 'theme.js?v=' \
-              && printf '%s' "$fog" | grep -Fq 'app.css?v=' \
-              && printf '%s' "$fog" | grep -Fq 'fog-engine-v244.js?v=' \
-              && printf '%s' "$fog" | grep -Fq 'fog-engine.js?v=' \
-              && ! printf '%s' "$fog" | grep -Fq 'theme-control.js' \
-              && ! printf '%s' "$fog" | grep -Fq '<iframe' \
-              && ! printf '%s' "$fog" | grep -Fq 'index.html?fogpanel=' \
-              && ! printf '%s' "$fog" | grep -Fq 'fogRuntime' \
+            if contains "$marker" "$GITHUB_SHA" \
+              && contains "$index" 'fog-index-bridge.js?v=' \
+              && contains "$index" 'fog-index-mode-guard.js?v=' \
+              && contains "$index" 'fog-meteogram-overlay.js?v=' \
+              && contains "$fog" 'id="epirGlobalNav"' \
+              && contains "$fog" 'id="fogStandaloneMount"' \
+              && contains "$fog" 'theme.js?v=' \
+              && contains "$fog" 'app.css?v=' \
+              && contains "$fog" 'fog-engine-v244.js?v=' \
+              && contains "$fog" 'fog-engine.js?v=' \
+              && ! contains "$fog" 'theme-control.js' \
+              && ! contains "$fog" '<iframe' \
+              && ! contains "$fog" 'index.html?fogpanel=' \
+              && ! contains "$fog" 'fogRuntime' \
               && printf '%s' "$fog244" | grep -Fq "ACTIVE=60" \
-              && printf '%s' "$fogguard" | grep -Fq 'return localStorage.getItem(KEY)===VNEXT?VNEXT:LEGACY' \
-              && printf '%s' "$fogguard" | grep -Fq 'PrognozaEPIRFogMode=Object.freeze' \
-              && printf '%s' "$overlay" | grep -Fq 'MIFG_DRAW_THRESHOLD=60' \
-              && printf '%s' "$overlay" | grep -Fq 'BR_DRAW_THRESHOLD=60' \
-              && printf '%s' "$hover" | grep -Fq 'FOG_TOOLTIP_THRESHOLD = 60' \
-              && printf '%s' "$hover" | grep -Fq 'Zamglenie · BR' \
-              && printf '%s' "$theme" | grep -Fq 'prognozaepir.theme.preference' \
-              && printf '%s' "$theme" | grep -Fq '["taf.html","TAF GENERATOR","taf"]' \
-              && ! printf '%s' "$index" | grep -Fq '>GENERATOR TAF</a>' \
-              && printf '%s' "$css" | grep -Fq 'EPIR-SHARED-START' \
-              && printf '%s' "$fogengine" | grep -Fq 'PrognozaEPIRFogLegacySeries' \
-              && printf '%s' "$taf" | grep -Fq 'TAF ENGINE 2.4.3 ·' \
-              && printf '%s' "$taf" | grep -Fq 'taf-engine-v242.js?v=2.4.2-cloud-fog' \
-              && printf '%s' "$taf" | grep -Fq 'taf-fog-mode-sync.js?v=20260924-legacy-sync1' \
-              && printf '%s' "$taf" | grep -Fq 'id="tafFogSource"' \
-              && printf '%s' "$taf" | grep -Fq 'Fog source: LEGACY' \
-              && printf '%s' "$tafmodesync" | grep -Fq 'return localStorage.getItem(KEY)===VNEXT?VNEXT:LEGACY' \
-              && printf '%s' "$tafmodesync" | grep -Fq 'seriesForTaf:seriesForSelected' \
-              && ! printf '%s' "$taf" | grep -Fq 'data-taf-fog-mode' \
-              && printf '%s' "$tafbootstrap" | grep -Fq 'taf-engine-v243.js?v=${BUILD}' \
+              && contains "$fogguard" 'return localStorage.getItem(KEY)===VNEXT?VNEXT:LEGACY' \
+              && contains "$fogguard" 'PrognozaEPIRFogMode=Object.freeze' \
+              && contains "$overlay" 'MIFG_DRAW_THRESHOLD=60' \
+              && contains "$overlay" 'BR_DRAW_THRESHOLD=60' \
+              && contains "$hover" 'FOG_TOOLTIP_THRESHOLD = 60' \
+              && contains "$hover" 'Zamglenie · BR' \
+              && contains "$theme" 'prognozaepir.theme.preference' \
+              && contains "$theme" '["taf.html","TAF GENERATOR","taf"]' \
+              && ! contains "$index" '>GENERATOR TAF</a>' \
+              && contains "$css" 'EPIR-SHARED-START' \
+              && contains "$fogengine" 'PrognozaEPIRFogLegacySeries' \
+              && contains "$taf" 'TAF ENGINE 2.4.3 ·' \
+              && contains "$taf" 'taf-engine-v242.js?v=2.4.2-cloud-fog' \
+              && contains "$taf" 'taf-fog-mode-sync.js?v=20260924-legacy-sync1' \
+              && contains "$taf" 'id="tafFogSource"' \
+              && contains "$taf" 'Fog source: LEGACY' \
+              && contains "$tafmodesync" 'return localStorage.getItem(KEY)===VNEXT?VNEXT:LEGACY' \
+              && contains "$tafmodesync" 'seriesForTaf:seriesForSelected' \
+              && ! contains "$taf" 'data-taf-fog-mode' \
+              && contains "$tafbootstrap" 'taf-engine-v243.js?v=${BUILD}' \
               && printf '%s' "$taf243" | grep -Fq 'prevailingWindFullPeriodWhenNoSignificantChange' \
-              && printf '%s' "$tafapp" | grep -Fq 'const mode=Policy.TAF_FOG_MODE' \
-              && printf '%s' "$tafapp" | grep -Fq 'Policy.seriesForTaf(w)'; then
+              && contains "$tafapp" 'const mode=Policy.TAF_FOG_MODE' \
+              && contains "$tafapp" 'Policy.seriesForTaf(w)'; then
               echo "GitHub Pages serves commit $GITHUB_SHA with Legacy-default Fog selection, FOG/BR/MIFG threshold 60 and TAF 2.4.3 integration."
               break
             fi
