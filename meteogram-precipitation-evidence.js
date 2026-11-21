@@ -12,7 +12,9 @@
   dataVisible=function(){
     const rows=previousData.apply(this,arguments);
     if(!Array.isArray(rows))return rows;
-    const now=Date.now(),evidence=api.read(root.localStorage,now);
+    const now=Date.now();
+    let store=null;try{store=root.localStorage;}catch(_){}
+    const evidence=api.read(store,now);
     for(const z of rows)if(z&&Number.isFinite(z.t))z.precipEvidence=api.evaluate(z,evidence,now);
     return rows;
   };
