@@ -398,7 +398,16 @@
     sample('Granica 0°C','#94a3b8');
     y+=6;
     title('Opad / wilgotność');
-    sample('Opad (mm/h)','#039c29');
+    sample('Opad: kolor = rodzaj','#039c29');
+    sample('RA / DZ — ciekły','#16a34a');
+    sample('SN — śnieg','#3b82f6');
+    sample('RASN — mieszany','#a78bfa');
+    sample('SH — przelotny','#f59e0b');
+    sample('TS / GR — konwekcja','#ef4444');
+    sample('FZ — marznący','#9333ea');
+    sample('Nieznany / rozbieżny','#64748b');
+    dot('Radar + konwekcja','#0891b2');
+    dot('Konwekcja modelowa','#ea580c');
     sample('Wilgotność RH (%)','#bd4723');
     y+=6;
     title('Udział modeli (%)');
