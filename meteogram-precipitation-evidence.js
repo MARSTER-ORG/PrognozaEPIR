@@ -82,7 +82,11 @@
   }
   function prediction(r,t,now){
     if(!r||t<now-15*MINUTE||t>now+3*HOUR)return null;
-    const lead=Math.max(0,(t-now)/MINUTE);
+    // Advection leads in the POLRAD snapshot are relative to the LAST RADAR FRAME,
+    // not to the clock time when a user opens the meteogram.
+    const frameTime=ms(r.frameEnd);
+    if(!Number.isFinite(frameTime)||t>frameTime+3*HOUR)return null;
+    const lead=Math.max(0,(t-frameTime)/MINUTE);
     let best=null,dist=Infinity;
     for(const [key,v] of Object.entries(r.predictions||{})){
       const n=num(v),at=Number(key),d=Math.abs(at-lead);
