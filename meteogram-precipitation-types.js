@@ -12,6 +12,7 @@ const api=(function createPrecipApi(){
     RASN:{code:'RASN',label:'Deszcz ze śniegiem',color:'#a78bfa',kind:'mixed'},
     PL:{code:'PL',label:'Ziarna lodowe',color:'#a855f7',kind:'pellets'},
     SHRA:{code:'SHRA',label:'Przelotny deszcz',color:'#f59e0b',kind:'showerRain'},
+    SHRASN:{code:'SHRASN',label:'Przelotny deszcz ze śniegiem',color:'#c084fc',kind:'mixed'},
     SHSN:{code:'SHSN',label:'Przelotny śnieg',color:'#06b6d4',kind:'showerSnow'},
     SHGS:{code:'SHGS',label:'Przelotne krupy śnieżne lub drobny grad',color:'#e879f9',kind:'hail'},
     SHGR:{code:'SHGR',label:'Przelotny grad',color:'#dc2626',kind:'hail'},
@@ -45,7 +46,9 @@ const api=(function createPrecipApi(){
     if(code===79)return make('PL','WMO 79');
     if(code===68||code===69)return make('RASN','WMO '+code);
     if(code===77)return make('SG','WMO 77');
-    if(both&&([61,63,65,71,73,75,80,81,82,85,86].includes(code)||code===null))
+    if(both&&([80,81,82,85,86].includes(code)||convective))
+      return make('SHRASN','rain + snowfall + showers');
+    if(both&&([61,63,65,71,73,75].includes(code)||code===null))
       return make('RASN','rain + snowfall');
     if([51,53,55].includes(code))return make('DZ','WMO '+code);
     if([61,63,65].includes(code))return make('RA','WMO '+code);
@@ -115,9 +118,7 @@ if(root)(function installPrecipApi(root,api){
     if(!valid)return null;
     const adaptive=root.PrognozaEPIRAdaptiveWeights;
     const f=Number(adaptive?.factor?.(model.id,t))||1;
-    const relative=Number(adaptive?.relativeFactor?.(model.id,t,'precipitation',
-      adaptive?.contextForItems?.([{model,row:r,w:model.w,t}],t)))||1;
-    return{...r,w:model.w*f*relative};
+    return{...r,w:model.w*f,model,row:r};
   }
   const originalDataVisible=dataVisible;
   dataVisible=function(){
@@ -127,6 +128,12 @@ if(root)(function installPrecipApi(root,api){
       if(!z||!Number.isFinite(z.t))continue;
       if(selected==='consensus'){
         const votes=MODELS.map(m=>vote(m,z.t)).filter(Boolean);
+        const adaptive=root.PrognozaEPIRAdaptiveWeights;
+        const context=adaptive?.contextForItems?.(votes.map(v=>({model:v.model,row:v.row,w:v.w,t:z.t})),z.t);
+        for(const v of votes){
+          const f=Number(adaptive?.relativeFactor?.(v.model.id,z.t,'precipitation',context));
+          if(Number.isFinite(f)&&f>0)v.w*=f;
+        }
         z.precipType=api.aggregate(votes);
       }else{
         const model=MODELS.find(m=>m.id===selected);
@@ -169,6 +176,7 @@ if(root)(function installPrecipApi(root,api){
       ctx.fillRect(x-w/2,p.y+3,w,5);
       if(spacing<20)continue;
       const label=wx.code;
+      ctx.font='bold 9px Arial';
       const width=ctx.measureText(label).width+8;
       if(x-width/2<=lastLabelRight+3||x+width/2>=m.x1)continue;
       if(label===lastCode&&Math.round((z.t-m.t0)/3600000)%3!==0)continue;
