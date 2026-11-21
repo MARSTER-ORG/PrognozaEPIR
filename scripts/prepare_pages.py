@@ -113,6 +113,7 @@ def patch_index() -> None:
         "meteogram-tap-details.js",
         "meteogram-precipitation-types.js",
         "meteogram-precipitation-evidence.js",
+        "convection-horizon-12h.js",
     ]
     for name in names:
         s = strip_script(s, name)
@@ -134,6 +135,7 @@ def patch_index() -> None:
         f'<script src="meteogram-tap-details.js?v={ASSET_V}"></script>',
         f'<script src="meteogram-precipitation-types.js?v={ASSET_V}"></script>',
         f'<script src="meteogram-precipitation-evidence.js?v={ASSET_V}"></script>',
+        f'<script src="convection-horizon-12h.js?v={ASSET_V}"></script>',
     ]
     s = s.replace("</body>", "\n".join(addons) + "\n</body>", 1)
     wr(p, s)
