@@ -278,7 +278,7 @@
       const barW=Math.max(2,plotW/(d.length-1)*.62);
       for(const z of d)if(finite(z.RR)&&z.RR>0){
         const by=panelScale(z.RR,0,maxRR,p.y,p.h),base=panelScale(0,0,maxRR,p.y,p.h);
-        ctx.fillStyle='#039c29';ctx.fillRect(x(z.t)-barW/2,by,barW,Math.max(1,base-by));
+        ctx.fillStyle=window.PrognozaEPIRPrecipitation?.colorFor?.(z)||'#039c29';ctx.fillRect(x(z.t)-barW/2,by,barW,Math.max(1,base-by));
       }
       drawSeries(d.map(z=>({x:x(z.t),y:panelScale(z.RH,0,100,p.y,p.h)})),'#bd4723',2);
     });

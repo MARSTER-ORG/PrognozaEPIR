@@ -77,11 +77,11 @@
       };
       if (id === 'prec') return {
         title:'Opad / wilgotność',
-        rows:[['Opad',n(z.RR,2)+' mm/h'],['RH',n(z.RH,0)+'%']]
+        rows:[['Opad',n(z.RR,2)+' mm/h'],...(window.PrognozaEPIRPrecipitation?.tooltipRows(z)||[]),['RH',n(z.RH,0)+'%']]
       };
       if (id === 'probstorm' || id === 'prob' || id === 'storm') return {
         title:'Prawdopodobieństwo',
-        rows:[['Opad',n(z.wet,0)+'%'],['Burza',n(z.storm,0)+'%']]
+        rows:[['Opad',n(z.wet,0)+'%'],['Burza',n(z.storm,0)+'%'],...(window.PrognozaEPIRPrecipitation?.tooltipRows(z)||[])]
       };
       if (id === 'press') return {
         title:'Ciśnienie',
