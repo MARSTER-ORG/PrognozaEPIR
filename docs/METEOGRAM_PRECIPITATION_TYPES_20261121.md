@@ -22,6 +22,14 @@ W konsensusie wykorzystywane są aktualne wagi modeli i adaptacyjny mnożnik dla
 
 Nie wprowadzamy sztucznego gradu na podstawie samego CAPE ani nie rozpoznajemy śniegu wyłącznie z temperatury przy powierzchni. Występowanie gradu z radaru wymaga osobnej walidacji obserwacyjnej i nie jest automatycznie przenoszone do godzin odległej prognozy. Typ prezentowany jest jako prognoza modelowa, **nie obserwacja** ani zatwierdzony kod TAF.
 
+## Rozszerzenie radarowo-konwekcyjne
+- `meteogram-precipitation-evidence.js` odczytuje tylko świeże, lokalne snapshoty `prognozaepir.taf.radar-evidence.v1` (POLRAD, maks. 45 min od klatki) i `prognozaepir.convection12h.v1` (prognoza NWP, maks. 2 h od zapisu).
+- Punkt musi odpowiadać EPIR. Dla POLRAD wymagana jest pewność wektora ≥55/100 oraz wspierający model, a prognoza ruchu echa jest używana tylko w horyzoncie 0–3 h.
+- TCu/Cb/TS z konwekcji służą jako sygnał wspomagający. Nie zamieniają automatycznie RA w SHRA ani nie potwierdzają TS, CB czy gradu.
+- Turkusowy romb oznacza zgodny sygnał modelowy i prognozowaną adwekcję echa. Pomarańczowy romb oznacza wyłącznie modelowy sygnał konwekcji.
+- Dymki i karta szczegółów podają źródła oraz świeżość danych. Po przekroczeniu maksymalnego wieku snapshotów sygnał nie jest wykorzystywany; bez danych radarowych działa klasyfikacja modelowa.
+- Moduł nie pobiera radarów ani nie zmienia prognozy TAF: obsługuje istniejącą wymianę danych między kartami przeglądarki i nie wymaga nowego źródła zewnętrznego.
+
 ## Pliki i QA
 - `meteogram-precipitation-types.js`: kody, ważenie konsensusu, dane do dymków i oznaczenia godzin.
 - `index.html`: dodatkowe pola źródłowe i bezpieczne próbkowanie kodów WMO.
