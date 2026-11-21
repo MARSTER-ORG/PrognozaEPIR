@@ -28,7 +28,7 @@ Nie wprowadzamy sztucznego gradu na podstawie samego CAPE ani nie rozpoznajemy �
 - TCu/Cb/TS z konwekcji służą jako sygnał wspomagający. Nie zamieniają automatycznie RA w SHRA ani nie potwierdzają TS, CB czy gradu.
 - Turkusowy romb oznacza zgodny sygnał modelowy i prognozowaną adwekcję echa. Pomarańczowy romb oznacza wyłącznie modelowy sygnał konwekcji.
 - Dymki i karta szczegółów podają źródła oraz świeżość danych. Po przekroczeniu maksymalnego wieku snapshotów sygnał nie jest wykorzystywany; bez danych radarowych działa klasyfikacja modelowa.
-- Moduł nie pobiera radarów ani nie zmienia prognozy TAF: obsługuje istniejącą wymianę danych między kartami przeglądarki i nie wymaga nowego źródła zewnętrznego.
+- Moduł nie pobiera radarów ani nie zmienia prognozy TAF: obsługuje istniejącą wymianę danych między kartami przeglądarki. `convection-horizon-12h.js` uruchamia się również na meteogramie i pobiera z istniejących źródeł NWP prognozę konwekcji; radarowe dowody są dostępne dopiero po ich aktualizacji na stronie RADAR.
 
 ## Pliki i QA
 - `meteogram-precipitation-types.js`: kody, ważenie konsensusu, dane do dymków i oznaczenia godzin.
