@@ -78,7 +78,7 @@ const api=(function createPrecipApi(){
     const fraction=winningWeight/wetWeight;
     const rainWeight=wetVotes.filter(m=>['RA','DZ','SHRA'].includes(m.wx.code)).reduce((s,m)=>s+m.w,0);
     const snowWeight=wetVotes.filter(m=>['SN','SG','SHSN'].includes(m.wx.code)).reduce((s,m)=>s+m.w,0);
-    const mixedDisagreement=rainWeight/wetWeight>=0.25&&snowWeight/wetWeight>=0.25;
+    const mixedDisagreement=rainWeight/wetWeight>=0.30&&snowWeight/wetWeight>=0.30;
     const unresolved=mixedDisagreement||fraction<0.5;
     const result=unresolved?make('VAR','konsensus modeli'):{...winning,source:'konsensus modeli'};
     if(mixedDisagreement)result.label='Deszcz lub śnieg — modele niezgodne (nie RASN)';
