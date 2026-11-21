@@ -120,6 +120,9 @@ async function req(model,prof=false){
       vars=vars.filter(v=>v!==bad);
     }
   }
+  // Optional phase fields may be unsupported by some models: preserve the full baseline WMO code.
+  const baseline=SURFACE.filter(v=>!['rain','showers','snowfall'].includes(v)&&!(model.surfaceExclude||[]).includes(v));
+  try{return await reqVars(model,baseline,12000)}catch(e){last=e}
   const safe=['temperature_2m','relative_humidity_2m','precipitation','wind_speed_10m','wind_direction_10m'].filter(v=>!(model.surfaceExclude||[]).includes(v));
   try{return await reqVars(model,safe,12000)}catch(e){throw last||e}
 }
