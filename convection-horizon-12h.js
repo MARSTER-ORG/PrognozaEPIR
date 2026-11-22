@@ -4,7 +4,7 @@
   window.__EPIR_CONVECTION_12H__ = true;
 
   const HOUR = 3600000;
-  const VERSION = '20260920-conv12h5';
+  const VERSION = '20261122-conv12h6-shower-source';
   const STORAGE_KEY = 'prognozaepir.convection12h.v1';
   const NOWCAST_KEY = 'prognozaepir.convection-nowcast.shared.v1';
   const NOWCAST_MAX_AGE = 20 * 60 * 1000;
