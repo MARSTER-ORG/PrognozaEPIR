@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -25,7 +26,7 @@ URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 INGEST_TOKEN = os.environ.get("MESSAGE_INGEST_TOKEN") or os.environ.get("SUPABASE_INGEST_TOKEN", "")
 ENABLED = os.environ.get("SUPABASE_INGEST_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
 TIMEOUT = max(10, int(os.environ.get("SUPABASE_INGEST_TIMEOUT_SECONDS", "30")))
-BATCH_SIZE = max(1, min(500, int(os.environ.get("SUPABASE_INGEST_BATCH_SIZE", "200"))))
+BATCH_SIZE = max(1, min(500, int(os.environ.get("SUPABASE_INGEST_BATCH_SIZE", "50"))))
 TYPES = ("metar", "speci", "taf", "synop")
 NEIGHBOR_STATIONS = ("epby", "epks", "eppw")
 
@@ -164,14 +165,15 @@ def read_messages(lookback_days: int, all_history: bool = False) -> tuple[list[d
     return rows, snapshot_added
 
 
-def post_batch(messages: list[dict]) -> dict:
+def _post_batch_once(messages: list[dict]) -> dict:
+    """One atomic request. A failed request never changes the local checkpoint."""
     endpoint = f"{URL}/functions/v1/message-ingest"
     outbound = [prepare_for_ingest(message) for message in messages]
     body = json.dumps({"messages": outbound}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     request = Request(endpoint, data=body, method="POST", headers={
         "content-type": "application/json",
         "x-ingest-token": INGEST_TOKEN,
-        "user-agent": "PrognozaEPIR-Railway-Supabase-Mirror/1.4",
+        "user-agent": "PrognozaEPIR-Railway-Supabase-Mirror/1.5",
     })
     try:
         with urlopen(request, timeout=TIMEOUT) as response:
@@ -182,9 +184,49 @@ def post_batch(messages: list[dict]) -> dict:
             return parsed
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Supabase ingest HTTP {exc.code}: {detail[:500]}") from exc
-    except URLError as exc:
-        raise RuntimeError(f"Supabase ingest network error: {exc.reason}") from exc
+        error = RuntimeError(f"Supabase ingest HTTP {exc.code}: {detail[:500]}")
+        # 401/403/409/422 etc. require correction, not a retry storm.
+        error.retryable = exc.code in (408, 429, 500, 502, 503, 504)
+        raise error from exc
+    except (URLError, TimeoutError, OSError) as exc:
+        error = RuntimeError(f"Supabase ingest network error: {exc}")
+        error.retryable = True
+        raise error from exc
+
+
+def post_batch(messages: list[dict], *, _split_depth: int = 0) -> dict:
+    """Retry transient 5xx/SQL timeouts; split overloaded RPC batches safely.
+
+    Supabase's ingest contract deduplicates canonical message identity. This
+    allows safe retries following an ambiguous gateway timeout. Checkpoints
+    are advanced by run() only after the whole returned batch succeeds.
+    """
+    if not messages:
+        return {"ok": True, "inserted": 0, "duplicates": 0}
+    last_error: RuntimeError | None = None
+    for attempt in range(2):
+        try:
+            return _post_batch_once(messages)
+        except RuntimeError as exc:
+            if not getattr(exc, "retryable", False):
+                raise
+            last_error = exc
+            if attempt == 0:
+                time.sleep(1.0)
+    # A larger batch may exceed PostgreSQL's statement timeout (SQLSTATE
+    # 57014). Reduce the per-transaction work instead of repeatedly sending
+    # the same large request. At most two split levels bound network usage.
+    if len(messages) > 1 and _split_depth < 2:
+        midpoint = len(messages) // 2
+        left = post_batch(messages[:midpoint], _split_depth=_split_depth + 1)
+        right = post_batch(messages[midpoint:], _split_depth=_split_depth + 1)
+        return {
+            "ok": True,
+            "inserted": int(left.get("inserted") or 0) + int(right.get("inserted") or 0),
+            "duplicates": int(left.get("duplicates") or 0) + int(right.get("duplicates") or 0),
+        }
+    assert last_error is not None
+    raise last_error
 
 
 def run(lookback_days: int, force: bool = False, all_history: bool = False) -> dict:
