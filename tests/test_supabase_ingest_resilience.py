@@ -47,7 +47,7 @@ def fail(req, code):
 def main():
     calls = []
 
-    def congested(req, _timeout):
+    def congested(req, timeout):
         n = len(json.loads(req.data)["messages"])
         calls.append(n)
         if n > 1:
@@ -61,7 +61,7 @@ def main():
 
     calls.clear()
 
-    def unauthorized(req, _timeout):
+    def unauthorized(req, timeout):
         calls.append(1)
         fail(req, 401)
 
@@ -76,7 +76,7 @@ def main():
 
     calls.clear()
 
-    def one_transient_network_failure(req, _timeout):
+    def one_transient_network_failure(req, timeout):
         calls.append(1)
         if len(calls) == 1:
             raise URLError("temporary network outage")
