@@ -145,8 +145,11 @@ const api=(function createPrecipApi(){
     const wx=row?.precipType;
     if(!wx)return [['Rodzaj opadu','Nie stwierdzono / brak danych o rodzaju']];
     const vals=[['Rodzaj',wx.label],['Kod orientacyjny',wx.code]];
-    if(wx.modelCount)vals.push(['Zgodność rodzaju',wx.agreementPct+'% modeli wskazujących opad'],
-      ['Udział modeli ze zjawiskiem',wx.supportPct+'% ('+wx.wetModelCount+'/'+wx.modelCount+' modeli)']);
+    if(wx.modelCount)vals.push(
+      ['Zgodność fazy opadu',wx.phaseAgreementPct+'% wag modeli wskazujących opad'],
+      ['Zgodność charakteru',wx.characterAgreementPct+'% ('+wx.character+')'],
+      ['Zgodność kodu szczegółowego',wx.agreementPct+'%'],
+      ['Modele z opadem',wx.supportPct+'% wag ('+wx.wetModelCount+'/'+wx.modelCount+')']);
     if(wx.alternatives)vals.push(['Inne warianty',wx.alternatives]);
     if(wx.hailSupportPct>0&&wx.kind!=='hail')vals.push(['Sygnał gradu w modelach',wx.hailSupportPct+'%']);
     vals.push(['Podstawa klasyfikacji',wx.source]);
@@ -185,6 +188,13 @@ if(root)(function installPrecipApi(root,api){
         for(const v of votes){
           const f=Number(adaptive?.relativeFactor?.(v.model.id,z.t,'precipitation',context));
           if(Number.isFinite(f)&&f>0)v.w*=f;
+          // Independent phase/character factors are applied only after a
+          // separate, explicitly approved production activation. Shadow
+          // candidates must NEVER change operational forecasts.
+          const phaseVote=api.classify(v);
+          const learned=Number(root.PrognozaEPIRPrecipitationLearning?.factor?.(
+            v.model.id,z.t,phaseVote));
+          if(Number.isFinite(learned)&&learned>0)v.w*=Math.max(.8,Math.min(1.2,learned));
         }
         z.precipType=api.aggregate(votes);
       }else{
