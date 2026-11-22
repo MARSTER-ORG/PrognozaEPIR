@@ -238,6 +238,47 @@ def phase_audit(rows):
     return {"phase_confusion":{k:dict(v) for k,v in by.items()},
             "character_confusion":{k:dict(v) for k,v in character.items()}}
 
+def type_learning(train_rows, holdout_rows, axis):
+    """One-vs-rest skill by phase/character; abstentions count as missed positives."""
+    labels=PHASES if axis==0 else ("showery","non_showery","thunder")
+    out={}
+    for label in labels:
+        model_results={}
+        for model in mv.MODEL_META:
+            def pairs(rows):
+                return [(forecast_phase(models[model])[axis]==label, lab[axis+1]==label)
+                        for _,_,lab,models in rows if lab[0] and lab[axis+1] in labels and model in models]
+            a,b=counts(pairs(train_rows)),counts(pairs(holdout_rows))
+            model_results[model]={"training":a,"holdout":b}
+        eligible={k:v["training"]["balanced_accuracy"] for k,v in model_results.items()
+                  if v["training"]["hits"]+v["training"]["misses"]>=30 and v["training"]["false_alarms"]+v["training"]["correct_negatives"]>=30}
+        mid=median(eligible.values()) if len(eligible)>=3 else None
+        weights={}
+        if mid is not None:
+            for model,skill in eligible.items():
+                n=model_results[model]["training"]["hits"]+model_results[model]["training"]["misses"]
+                weights[model]=round(max(.8,min(1.2,1+(skill-mid)*min(1,n/100))),4)
+        def votes(rows,factors):
+            result=[]
+            for _,_,lab,models in rows:
+                if lab[0] is not True or lab[axis+1] not in labels:continue
+                known=[(m,f) for m,f in models.items() if forecast_phase(f)[axis] in labels]
+                if len(known)<3:continue
+                total=sum(mv.MODEL_META[m][1]*factors.get(m,1) for m,_ in known)
+                v=sum(mv.MODEL_META[m][1]*factors.get(m,1) for m,f in known if forecast_phase(f)[axis]==label)
+                result.append((v/total>=.5,lab[axis+1]==label))
+            return counts(result)
+        base=votes(holdout_rows,{})
+        candidate=votes(holdout_rows,weights)
+        ok=bool(len(weights)>=3 and candidate["hits"]+candidate["misses"]>=20
+                and candidate["false_alarms"]+candidate["correct_negatives"]>=20
+                and None not in (base["csi"],candidate["csi"],base["pod"],candidate["pod"],base["far"],candidate["far"])
+                and candidate["csi"]>=base["csi"]+.02 and candidate["pod"]>=base["pod"]-.03
+                and candidate["far"]<=base["far"])
+        out[label]={"active":False,"shadow_qualified":ok,"candidate_factors":weights,
+                    "baseline":base,"candidate":candidate,"model_metrics":model_results}
+    return out
+
 def train(rows):
     all_hours=sorted({t for t,_,_,_ in rows})
     if len(all_hours)<2:return {"active":False,"reason":"insufficient_cases","cases":len(rows)}
@@ -262,7 +303,7 @@ def train(rows):
     return {"active":False,"shadow_qualified":qualifies,"reason":"manual_review_required" if qualifies else "holdout_gate_not_met",
             "cutoff":mv.iso(cut),"train_cases":len(tr),"holdout_cases":len(va),"candidate_threshold":threshold,
             "candidate_factors":weights,"train_model_metrics":stats,"baseline_amount":base,"baseline_vote":vote,"candidate":candidate,
-            "holdout_types":phase_audit(va)}
+            "holdout_types":phase_audit(va),"phase_learning":type_learning(tr,va,0),"character_learning":type_learning(tr,va,1)}
 
 def main():
     now=mv.utcnow()
