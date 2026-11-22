@@ -65,6 +65,7 @@
   const MODEL_SNAPSHOT_RAW = RAW_ROOT + 'data/runtime/models-latest.json';
   const ADAPTIVE_WEIGHTS_RAW = RAW_ROOT + 'data/learning/adaptive-weights.json';
   const SYNOPTIC_SKILL_RAW = RAW_ROOT + 'data/learning/synoptic-regime-skill.json';
+  const PRECIP_LEARNING_RAW = RAW_ROOT + 'data/learning/precipitation-learning.json';
   const HOUR = 3600000;
   let snapshot = null;
   let adaptive = null;
@@ -72,6 +73,8 @@
   let snapshotPromise = null;
   let adaptivePromise = null;
   let synopticPromise = null;
+  let precipitationLearning = null;
+  let precipitationPromise = null;
 
   async function jsonWithTimeout(url, timeoutMs=5000) {
     const ctl = new AbortController();
@@ -133,6 +136,69 @@
       });
     return synopticPromise;
   }
+
+  function loadPrecipitationLearning() {
+    if (!precipitationPromise) precipitationPromise = jsonWithTimeout(PRECIP_LEARNING_RAW, 5500)
+      .then(j => {
+        if (j?.schema !== 'prognozaepir-precipitation-learning-v1' || j?.station !== 'EPIR')
+          throw new Error('invalid historical precipitation learning');
+        precipitationLearning = j;
+        return j;
+      }).catch(() => {
+        precipitationLearning = null;
+        return null; // Optional shadow report; normal operation has no dependency.
+      });
+    return precipitationPromise;
+  }
+
+  function precipitationPhase(wx) {
+    const code = wx?.code;
+    if (['RA','DZ','SHRA','TSRA'].includes(code)) return 'rain';
+    if (['SN','SG','SHSN','TSSN'].includes(code)) return 'snow';
+    if (['RASN','SHRASN'].includes(code)) return 'mixed';
+    if (['FZDZ','FZRA'].includes(code)) return 'freezing';
+    if (code==='PL') return 'ice';
+    if (code==='SHGS') return 'hail_or_pellets';
+    if (['SHGR','TSGR'].includes(code)) return 'hail';
+    return null;
+  }
+
+  function precipitationCharacter(wx) {
+    const code=wx?.code;
+    if (['TS','TSRA','TSSN','TSGR'].includes(code)) return 'thunder';
+    if (['SHRA','SHSN','SHRASN','SHGS','SHGR'].includes(code)) return 'showery';
+    if (['RA','DZ','SN','SG','RASN','FZDZ','FZRA','PL'].includes(code)) return 'non_showery';
+    return null;
+  }
+
+  function historicalPrecipFactor(modelId, targetMs, wx) {
+    const j=precipitationLearning;
+    // Production requires both an explicit top-level activation and validation
+    // of the exact lead bucket AND event axis. The reporting job NEVER sets it.
+    if (!j || j.mode!=='production' || j.active!==true) return 1;
+    const bucket=bucketForLead((Number(targetMs)-Date.now())/HOUR);
+    const row=j.learned_buckets?.[bucket];
+    if (!row || row.active!==true || row.shadow_qualified!==true) return 1;
+    const items=[
+      [row.phase_learning,precipitationPhase(wx)],
+      [row.character_learning,precipitationCharacter(wx)]
+    ];
+    let result=1;
+    for(const [axis,key] of items){
+      const cls=axis?.[key];
+      if (!cls || cls.active!==true || cls.shadow_qualified!==true) continue;
+      const f=Number(cls.candidate_factors?.[modelId]);
+      if(Number.isFinite(f)&&f>=.8&&f<=1.2)result*=f;
+    }
+    return Math.max(.8,Math.min(1.2,result));
+  }
+
+  window.PrognozaEPIRPrecipitationLearning={
+    load:loadPrecipitationLearning,
+    factor:historicalPrecipFactor,
+    get data(){return precipitationLearning;},
+    get active(){return precipitationLearning?.mode==='production'&&precipitationLearning?.active===true;}
+  };
 
   function bucketForLead(h) {
     if (!Number.isFinite(h) || h < 0) return null;
@@ -338,6 +404,8 @@
   loadSnapshot().catch(()=>{});
   loadAdaptive().catch(()=>{});
   loadSynopticSkill().catch(()=>{});
+  if (document.documentElement?.dataset?.epirPage==='index')
+    loadPrecipitationLearning().catch(()=>{});
 
   // Cloud Learning already has its own cloud-specific factor. Multiply it by
   // the historical all-parameter cloud factor relative to the overall weight,

@@ -61,6 +61,17 @@ const api=(function createPrecipApi(){
     if(total!==null&&total>=0.1)return make('PCP','precipitation');
     return null;
   }
+  const PHASE_FAMILY=Object.freeze({
+    DZ:'rain',RA:'rain',SHRA:'rain',TSRA:'rain',
+    SN:'snow',SG:'snow',SHSN:'snow',TSSN:'snow',
+    RASN:'mixed',SHRASN:'mixed',
+    FZDZ:'freezing',FZRA:'freezing',
+    PL:'pellets',SHGS:'hail',SHGR:'hail',TSGR:'hail',
+    TS:'unknown',PCP:'unknown'
+  });
+  const SHOWERS=new Set(['SHRA','SHSN','SHRASN','SHGS','SHGR']);
+  const THUNDER=new Set(['TS','TSRA','TSSN','TSGR']);
+  function familyOf(wx){return PHASE_FAMILY[wx?.code]||'unknown';}
   function aggregate(models){
     const votes=(Array.isArray(models)?models:[]).map(m=>{
       const w=num(m?.w);
@@ -70,22 +81,66 @@ const api=(function createPrecipApi(){
     const wetVotes=votes.filter(m=>m.wx);
     const wetWeight=wetVotes.reduce((s,m)=>s+m.w,0);
     if(!wetWeight||!total)return null;
-    const shares=new Map();
-    for(const m of wetVotes)shares.set(m.wx.code,(shares.get(m.wx.code)||0)+m.w);
-    const ordered=[...shares].sort((a,b)=>b[1]-a[1]);
-    const [code,winningWeight]=ordered[0];
-    const winning=wetVotes.find(m=>m.wx.code===code).wx;
-    const fraction=winningWeight/wetWeight;
-    const rainWeight=wetVotes.filter(m=>['RA','DZ','SHRA'].includes(m.wx.code)).reduce((s,m)=>s+m.w,0);
-    const snowWeight=wetVotes.filter(m=>['SN','SG','SHSN'].includes(m.wx.code)).reduce((s,m)=>s+m.w,0);
-    const mixedDisagreement=rainWeight/wetWeight>=0.30&&snowWeight/wetWeight>=0.30;
-    const unresolved=mixedDisagreement||fraction<0.5;
-    const result=unresolved?make('VAR','konsensus modeli'):{...winning,source:'konsensus modeli'};
+    const byCode=new Map(),byPhase=new Map();
+    for(const m of wetVotes){
+      byCode.set(m.wx.code,(byCode.get(m.wx.code)||0)+m.w);
+      const phase=familyOf(m.wx);
+      byPhase.set(phase,(byPhase.get(phase)||0)+m.w);
+    }
+    const codes=[...byCode].sort((a,b)=>b[1]-a[1]);
+    const phases=[...byPhase].sort((a,b)=>b[1]-a[1]);
+    const [phase,phaseWeight]=phases[0];
+    const [code,winningWeight]=codes[0];
+    const phaseShare=phaseWeight/wetWeight, runnerShare=(phases[1]?.[1]||0)/wetWeight;
+    const rainShare=(byPhase.get('rain')||0)/wetWeight,snowShare=(byPhase.get('snow')||0)/wetWeight;
+    const mixedDisagreement=rainShare>=.33&&snowShare>=.33;
+    // First settle precipitation phase, not the exact WMO code. RA and SHRA
+    // both support liquid precipitation but disagree about its character.
+    // Different members forecasting RA and SN must NEVER create RASN.
+    const phaseUnresolved=phase==='unknown'||mixedDisagreement||
+      phaseShare<.65||phaseShare-runnerShare<.25;
+    const withinPhase=codes.filter(([c])=>PHASE_FAMILY[c]===phase);
+    const [phaseCode,phaseCodeWeight]=withinPhase[0]||[code,winningWeight];
+    const subtypeShare=phaseCodeWeight/Math.max(1e-9,phaseWeight);
+    // Rare hail/freezing/pellet events need at least two independent models
+    // unless this is explicitly a single-model display outside aggregate().
+    const rare=new Set(['hail','freezing','pellets']);
+    const phaseModels=wetVotes.filter(m=>familyOf(m.wx)===phase).length;
+    const cautiousRare=rare.has(phase)&&(phaseShare<.75||phaseModels<2);
+    let result=phase==='unknown'&&phases.length===1?
+      {...TYPES[phaseCode],source:'konsensus modeli — rodzaj nieznany'}:
+      (phaseUnresolved||cautiousRare)?make('VAR','konsensus modeli'):
+      {...TYPES[phaseCode],source:'konsensus modeli'};
     if(mixedDisagreement)result.label='Deszcz lub śnieg — modele niezgodne (nie RASN)';
-    const alt=ordered.filter(([c,w])=>c!==code&&w/wetWeight>=0.12).slice(0,2)
+    else if(cautiousRare)result.label='Możliwy opad '+(phase==='hail'?'gradu/krup':phase==='freezing'?'marznący':'lodowy')+' — niewystarczające potwierdzenie';
+    else if(phaseUnresolved&&!(phase==='unknown'&&phases.length===1))
+      result.label='Rodzaj opadu — niejednoznaczna faza w modelach';
+    const kinds=new Map();
+    for(const m of wetVotes){
+      if(familyOf(m.wx)!==phase)continue;
+      const c=m.wx.code;
+      const kind=THUNDER.has(c)?'burzowy':SHOWERS.has(c)?'przelotny':
+        c==='PCP'||c==='TS'?'nieznany':'nieprzelotny';
+      kinds.set(kind,(kinds.get(kind)||0)+m.w);
+    }
+    const kindRanks=[...kinds].sort((a,b)=>b[1]-a[1]);
+    const character=kindRanks[0]?.[0]||'nieznany';
+    const characterPct=Math.round((kindRanks[0]?.[1]||0)/Math.max(1e-9,phaseWeight)*100);
+    if(!phaseUnresolved&&!cautiousRare&&characterPct<65){
+      // Keep the hydrometeor phase but do not assert unverified shower/TS character.
+      result.label=(phase==='rain'?'Deszcz':phase==='snow'?'Śnieg':
+        phase==='mixed'?'Deszcz ze śniegiem':result.label)+' — charakter niepewny';
+      if(phase==='rain')result={...result,code:'RA',color:TYPES.RA.color,kind:TYPES.RA.kind};
+      if(phase==='snow')result={...result,code:'SN',color:TYPES.SN.color,kind:TYPES.SN.kind};
+      if(phase==='mixed')result={...result,code:'RASN',color:TYPES.RASN.color,kind:TYPES.RASN.kind};
+    }
+    const alt=codes.filter(([c,w])=>c!==phaseCode&&w/wetWeight>=.12).slice(0,3)
       .map(([c,w])=>c+' '+Math.round(w/wetWeight*100)+'%');
-    return{...result,agreementPct:Math.round(fraction*100),supportPct:Math.round(wetWeight/total*100),
-      modelCount:votes.length,wetModelCount:wetVotes.length,alternatives:alt.join(', '),
+    return {...result,agreementPct:Math.round(phaseCodeWeight/wetWeight*100),
+      phaseAgreementPct:Math.round(phaseShare*100),characterAgreementPct:characterPct,
+      phaseFamily:phase,character:characterPct>=65?character:'niepewny',
+      supportPct:Math.round(wetWeight/total*100),modelCount:votes.length,
+      wetModelCount:wetVotes.length,alternatives:alt.join(', '),
       hailSupportPct:Math.round(wetVotes.filter(v=>v.wx.kind==='hail').reduce((s,m)=>s+m.w,0)/total*100)};
   }
   function colorFor(row){return row?.precipType?.color||TYPES.PCP.color;}
@@ -93,8 +148,11 @@ const api=(function createPrecipApi(){
     const wx=row?.precipType;
     if(!wx)return [['Rodzaj opadu','Nie stwierdzono / brak danych o rodzaju']];
     const vals=[['Rodzaj',wx.label],['Kod orientacyjny',wx.code]];
-    if(wx.modelCount)vals.push(['Zgodność rodzaju',wx.agreementPct+'% modeli wskazujących opad'],
-      ['Udział modeli ze zjawiskiem',wx.supportPct+'% ('+wx.wetModelCount+'/'+wx.modelCount+' modeli)']);
+    if(wx.modelCount)vals.push(
+      ['Zgodność fazy opadu',wx.phaseAgreementPct+'% wag modeli wskazujących opad'],
+      ['Zgodność charakteru',wx.characterAgreementPct+'% ('+wx.character+')'],
+      ['Zgodność kodu szczegółowego',wx.agreementPct+'%'],
+      ['Modele z opadem',wx.supportPct+'% wag ('+wx.wetModelCount+'/'+wx.modelCount+')']);
     if(wx.alternatives)vals.push(['Inne warianty',wx.alternatives]);
     if(wx.hailSupportPct>0&&wx.kind!=='hail')vals.push(['Sygnał gradu w modelach',wx.hailSupportPct+'%']);
     vals.push(['Podstawa klasyfikacji',wx.source]);
@@ -133,6 +191,13 @@ if(root)(function installPrecipApi(root,api){
         for(const v of votes){
           const f=Number(adaptive?.relativeFactor?.(v.model.id,z.t,'precipitation',context));
           if(Number.isFinite(f)&&f>0)v.w*=f;
+          // Independent phase/character factors are applied only after a
+          // separate, explicitly approved production activation. Shadow
+          // candidates must NEVER change operational forecasts.
+          const phaseVote=api.classify(v);
+          const learned=Number(root.PrognozaEPIRPrecipitationLearning?.factor?.(
+            v.model.id,z.t,phaseVote));
+          if(Number.isFinite(learned)&&learned>0)v.w*=Math.max(.8,Math.min(1.2,learned));
         }
         z.precipType=api.aggregate(votes);
       }else{

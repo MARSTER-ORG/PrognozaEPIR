@@ -53,6 +53,35 @@ assert.equal(winner.code,'SHRA');
 assert.equal(winner.agreementPct,78);
 assert.equal(winner.supportPct,90);
 assert.equal(wx.aggregate([{weather_code:0,precipitation:0,w:1}]),null);
+const samePhase=wx.aggregate([
+  {weather_code:61,precipitation:1,w:.40},
+  {weather_code:80,precipitation:1,w:.35},
+  {weather_code:71,precipitation:1,w:.25}
+]);
+assert.equal(samePhase.code,'RA','rain and rain showers share liquid phase');
+assert.equal(samePhase.phaseAgreementPct,75);
+assert.match(samePhase.label,/charakter niepewny/,'shower character must remain uncertain');
+assert.equal(samePhase.character,'niepewny');
+const strongerSnow=wx.aggregate([
+  {weather_code:61,precipitation:1,w:.25},
+  {weather_code:71,precipitation:1,w:.75}
+]);
+assert.equal(strongerSnow.code,'SN','stronger model phase votes snow');
+assert.equal(strongerSnow.phaseAgreementPct,75);
+const genuineMixed=wx.aggregate([
+  {weather_code:68,precipitation:1,w:.6},
+  {weather_code:69,precipitation:1,w:.2},
+  {weather_code:61,precipitation:1,w:.2}
+]);
+assert.equal(genuineMixed.code,'RASN','explicit mixed weather is distinct from model disagreement');
+assert.equal(genuineMixed.phaseAgreementPct,80);
+const rareUncorroborated=wx.aggregate([
+  {weather_code:96,precipitation:1,w:.8},
+  {weather_code:61,precipitation:1,w:.2}
+]);
+assert.equal(rareUncorroborated.code,'VAR','single hail model must not create decisive hail claim');
+assert.equal(wx.aggregate([{weather_code:0,precipitation:.3,w:1}]).code,'PCP');
+
 assert.equal(wx.colorFor({precipType:wx.classify({weather_code:86})}),wx.TYPES.SHSN.color);
 assert.equal(wx.tooltipRows({precipType:winner})[0][1],winner.label);
 
