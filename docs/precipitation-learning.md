@@ -45,3 +45,21 @@ The meteogram's precipitation classifier now votes by **hydrometeor phase first*
 
 ### Production promotion criteria
 Any future phase or occurrence correction requires enough positive and negative events, strictly historical issue times, temporal holdout improvement, accepted reliability metrics, no worsening of rare-event false alarms, and an explicit reviewed activation. The runtime consumes class-specific factors only if report mode is production, the overall report and lead bucket are active and shadow-qualified, and the specific class is individually active and shadow-qualified. Generated reports never set those flags.
+
+
+## Correction of the historical ranking objective (2026-11-22)
+
+The original balanced-accuracy ordering gave a very wet model (ECMWF AIFS)
+an exaggerated advantage despite its high false-alarm ratio. Model
+**candidate weights and phenomenon rankings** now use a CSI-dominant,
+false-alarm-penalized skill:
+
+`0.65 × CSI + 0.15 × POD + 0.20 × (1 − FAR)`.
+
+Balanced accuracy remains available as a diagnostic, not the weighting
+objective. A model which issues no wet forecasts is assigned zero skill,
+not perfect false-alarm performance. Insufficient positive/negative cases
+continue to be excluded. Factors are conservatively shrunk toward 1,
+bounded at 0.75–1.25 for occurrence and 0.80–1.20 for phase/character.
+The time-split holdout still vetoes every candidate that does not improve
+event CSI, POD, FAR and Brier simultaneously. Reports remain SHADOW.
