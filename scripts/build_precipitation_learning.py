@@ -350,7 +350,7 @@ def gauge_learning(forecasts, gauge_rows, now):
         good=bool(len({t.date() for t,_,_,_ in tr})>=30 and len({t.date() for t,_,_,_ in va})>=14
                   and sum(amounts[t]>=.1 for t,_,_,_ in tr)>=60
                   and sum(amounts[t]>=.1 for t,_,_,_ in va)>=30
-                  and baseline["mae"] is not None and baseline["wet_mae"] is not None
+                  and baseline["mae"] is not None and baseline["mae"]>0 and baseline["wet_mae"] is not None
                   and candidate["mae"]<=.97*baseline["mae"] and candidate["rmse"]<=baseline["rmse"]
                   and candidate["wet_mae"]<=baseline["wet_mae"] and abs(candidate["bias"])<=abs(baseline["bias"]))
         buckets[bucket]={"active":False,"shadow_qualified":good,"factor":factor,"training_cases":len(tr),
