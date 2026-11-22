@@ -305,6 +305,58 @@ def train(rows):
             "candidate_factors":weights,"train_model_metrics":stats,"baseline_amount":base,"baseline_vote":vote,"candidate":candidate,
             "holdout_types":phase_audit(va),"phase_learning":type_learning(tr,va,0),"character_learning":type_learning(tr,va,1)}
 
+def gauge_learning(forecasts, gauge_rows, now):
+    """Learn mm/h only from explicitly measured, quality-checked one-hour totals."""
+    amounts={}
+    conflicts=set()
+    for r in gauge_rows:
+        t=mv.parse_dt(r.get("valid_time"))
+        mm=r.get("precipitation_mm")
+        if (r.get("schema")!="prognozaepir-hourly-gauge-v1" or r.get("station")!="EPIR"
+            or r.get("measurement")!="gauge" or r.get("quality")!="verified"
+            or r.get("unit")!="mm" or r.get("duration_minutes")!=60
+            or not isinstance(r.get("source"),str) or not r["source"].strip()
+            or not t or t>now or t.minute or t.second or not number(mm) or mm<0):
+            continue
+        if t in amounts and amounts[t]!=mm:conflicts.add(t)
+        amounts[t]=mm
+    for t in conflicts:amounts.pop(t,None)
+    if not amounts:
+        return {"active":False,"reason":"no_verified_hourly_gauge_series","n":0,
+                "note":"METAR/SYNOP weather occurrence is not a measured hourly accumulation"}
+    labels={t:(mm>=.1,None,None,"EPIR_GAUGE") for t,mm in amounts.items()}
+    rows=cases(forecasts,labels,now)
+    buckets={}
+    def errors(sample,factor):
+        e=[(baseline_amount(m)*factor,amounts[t]) for t,_,_,m in sample]
+        if not e:return {"n":0,"mae":None,"rmse":None,"bias":None,"wet_mae":None}
+        wet=[abs(p-y) for p,y in e if y>=.1]
+        return {"n":len(e),"mae":round(sum(abs(p-y) for p,y in e)/len(e),5),
+                "rmse":round(math.sqrt(sum((p-y)**2 for p,y in e)/len(e)),5),
+                "bias":round(sum(p-y for p,y in e)/len(e),5),
+                "wet_mae":round(sum(wet)/len(wet),5) if wet else None}
+    for _,_,bucket,_ in mv.LEAD_BUCKETS:
+        r=[x for x in rows if x[1]==bucket]
+        times=sorted({x[0] for x in r})
+        if len(times)<2:
+            buckets[bucket]={"active":False,"reason":"insufficient_cases","n":len(r)}
+            continue
+        cut=times[max(1,min(len(times)-1,int(.8*len(times))))]
+        tr=[x for x in r if x[0]<cut-timedelta(days=1)]
+        va=[x for x in r if x[0]>=cut]
+        ratios=[k/100 for k in range(60,141,5)]
+        factor=min(ratios,key=lambda k:((errors(tr,k)["mae"] if tr else math.inf),abs(k-1)))
+        baseline=errors(va,1);candidate=errors(va,factor)
+        good=bool(len({t.date() for t,_,_,_ in tr})>=30 and len({t.date() for t,_,_,_ in va})>=14
+                  and sum(amounts[t]>=.1 for t,_,_,_ in tr)>=60
+                  and sum(amounts[t]>=.1 for t,_,_,_ in va)>=30
+                  and baseline["mae"] is not None and baseline["wet_mae"] is not None
+                  and candidate["mae"]<=.97*baseline["mae"] and candidate["rmse"]<=baseline["rmse"]
+                  and candidate["wet_mae"]<=baseline["wet_mae"] and abs(candidate["bias"])<=abs(baseline["bias"]))
+        buckets[bucket]={"active":False,"shadow_qualified":good,"factor":factor,"training_cases":len(tr),
+                         "baseline":baseline,"candidate":candidate,"cutoff":mv.iso(cut)}
+    return {"active":False,"reason":"manual_review_required","n":len(amounts),"conflicts_excluded":len(conflicts),"buckets":buckets}
+
 def main():
     now=mv.utcnow()
     labels,secondary=hour_labels(mv.all_jsonl(mv.METAR_DIR)+mv.all_jsonl(mv.SPECI_DIR),mv.all_jsonl(mv.SYNOP_DIR),now)
@@ -314,7 +366,7 @@ def main():
     output={"schema":"prognozaepir-precipitation-learning-v1","station":"EPIR","generated_at":mv.iso(now),
             "mode":"shadow_only","active":False,
             "observations":{"wet_metar_hours":sum(v[0] for v in labels.values()),"dry_metar_hours":sum(not v[0] for v in labels.values()),"synop_positive_hours":len(secondary)},
-            "amount":{"active":False,"reason":"no_verified_hourly_gauge_series","note":"METAR/SYNOP weather occurrence is not a measured hourly accumulation"},
+            "amount":gauge_learning(forecasts,mv.load_jsonl(mv.LEARNING / "precipitation-gauge-hours.jsonl"),now),
             "learned_buckets":{b:train([r for r in rows if r[1]==b]) for _,_,b,_ in mv.LEAD_BUCKETS},
             "synop_positive_only":{"cases":len(sec),"type_audit":phase_audit(sec),
                 "note":"Separate station, positive-only audit; never populates local dry labels or training."}}
