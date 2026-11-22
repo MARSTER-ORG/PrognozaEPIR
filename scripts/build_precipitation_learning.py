@@ -275,8 +275,28 @@ def type_learning(train_rows, holdout_rows, axis):
                 and None not in (base["csi"],candidate["csi"],base["pod"],candidate["pod"],base["far"],candidate["far"])
                 and candidate["csi"]>=base["csi"]+.02 and candidate["pod"]>=base["pod"]-.03
                 and candidate["far"]<=base["far"])
+        # Rank from training period only. Holdout metrics are read-only audit,
+        # not a basis for choosing the winner or modifying its weight.
+        ranking=[]
+        for model,record in model_results.items():
+            a,b=record["training"],record["holdout"]
+            pos=a["hits"]+a["misses"]
+            neg=a["false_alarms"]+a["correct_negatives"]
+            if pos<10 or neg<15 or a["balanced_accuracy"] is None:
+                continue
+            ranking.append({"model":model,"name":mv.MODEL_META[model][0],
+                "train_positive":pos,"train_negative":neg,
+                "train_balanced_accuracy":a["balanced_accuracy"],
+                "holdout_positive":b["hits"]+b["misses"],
+                "holdout_negative":b["false_alarms"]+b["correct_negatives"],
+                "holdout_csi":b["csi"],"holdout_pod":b["pod"],"holdout_far":b["far"],
+                "candidate_weight_factor":weights.get(model,1.0)})
+        ranking.sort(key=lambda x:(-x["train_balanced_accuracy"],-x["train_positive"],x["model"]))
         out[label]={"active":False,"shadow_qualified":ok,"candidate_factors":weights,
-                    "baseline":base,"candidate":candidate,"model_metrics":model_results}
+                    "baseline":base,"candidate":candidate,"model_metrics":model_results,
+                    "ranking":ranking,"minimum_evidence":{"training_positive":10,"training_negative":15,
+                        "candidate_factor_training_positive":30,"candidate_factor_training_negative":30},
+                    "ranking_note":"Training-only ordering, holdout audit; none are certified as the best without sample coverage and gate."}
     return out
 
 def train(rows):
@@ -300,9 +320,21 @@ def train(rows):
     qualifies=bool(enough and None not in (csi,pod,far,base["csi"],vote["csi"],base["pod"],base["far"],candidate["brier"],vote["brier"])
         and csi>=max(base["csi"],vote["csi"])+.02 and pod>=base["pod"]-.03
         and far<=base["far"] and candidate["brier"]<=vote["brier"])
+    occurrence_ranking=[]
+    for model,record in stats.items():
+        if record["hits"]+record["misses"]<20 or record["false_alarms"]+record["correct_negatives"]<20:
+            continue
+        occurrence_ranking.append({"model":model,"name":mv.MODEL_META[model][0],
+            "train_balanced_accuracy":record["balanced_accuracy"],
+            "train_csi":record["csi"],"train_pod":record["pod"],"train_far":record["far"],
+            "positive_cases":record["hits"]+record["misses"],
+            "negative_cases":record["false_alarms"]+record["correct_negatives"],
+            "candidate_weight_factor":weights.get(model,1.0)})
+    occurrence_ranking.sort(key=lambda x:(-(x["train_balanced_accuracy"] or 0),-x["positive_cases"],x["model"]))
     return {"active":False,"shadow_qualified":qualifies,"reason":"manual_review_required" if qualifies else "holdout_gate_not_met",
             "cutoff":mv.iso(cut),"train_cases":len(tr),"holdout_cases":len(va),"candidate_threshold":threshold,
-            "candidate_factors":weights,"train_model_metrics":stats,"baseline_amount":base,"baseline_vote":vote,"candidate":candidate,
+            "candidate_factors":weights,"occurrence_ranking":occurrence_ranking,
+            "train_model_metrics":stats,"baseline_amount":base,"baseline_vote":vote,"candidate":candidate,
             "holdout_types":phase_audit(va),"phase_learning":type_learning(tr,va,0),"character_learning":type_learning(tr,va,1)}
 
 def gauge_learning(forecasts, gauge_rows, now):
@@ -373,6 +405,17 @@ def main():
     OUT.parent.mkdir(parents=True,exist_ok=True)
     tmp=OUT.with_suffix(".tmp");tmp.write_text(json.dumps(output,ensure_ascii=False,indent=2,allow_nan=False)+"\n",encoding="utf-8");tmp.replace(OUT)
     print("Precipitation shadow learning:",json.dumps({"observations":output["observations"],"buckets":{k:{i:v.get(i) for i in ("train_cases","holdout_cases","shadow_qualified")} for k,v in output["learned_buckets"].items()}},ensure_ascii=False))
+    for bucket,v in output["learned_buckets"].items():
+        print("OCCURRENCE RANK",bucket,json.dumps(v.get("occurrence_ranking",[])[:5],ensure_ascii=False))
+        for axis in ("phase_learning","character_learning"):
+            for label,skill in v.get(axis,{}).items():
+                rank=skill.get("ranking") or []
+                sample=rank[0]["train_positive"] if rank else 0
+                print("PHENOMENON RANK",bucket,axis,label,
+                      json.dumps({"top":rank[:3],"eligible_models":len(rank),
+                        "candidate_qualified":skill.get("shadow_qualified",False),
+                        "baseline":skill.get("baseline"),"candidate":skill.get("candidate")},
+                      ensure_ascii=False))
 
 if __name__=="__main__":
     main()
