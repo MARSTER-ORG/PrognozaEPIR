@@ -54,6 +54,9 @@ def metar_label(row):
             characters.add("non_showery")
     if phases:
         return True, next(iter(phases)) if len(phases)==1 else "unknown", next(iter(characters)) if len(characters)==1 else "unknown"
+    # Recent precipitation is not proof of dry conditions over the previous hour.
+    if any(t.startswith('RE') and TOKEN.fullmatch(t[2:]) for t in tokens):
+        return None
     # Automatic stations may omit present weather; no negative label without
     # an independently proven observing capability. RE/VC are not local current precipitation.
     if "AUTO" in tokens or any("/" in t and (t.startswith("//") or t=="////") for t in tokens):
@@ -193,7 +196,7 @@ def fit_factors(rows):
     for model in mv.MODEL_META:
         pairs=[(m[model]["precipitation_mm"]>=.1,lab[0]) for _,_,lab,m in rows if model in m]
         stats[model]=counts(pairs)
-    eligible={k:s["balanced_accuracy"] for k,s in stats.items() if s["hits"]+s["misses"]>=20 and s["false_alarms"]+s["correct_negatives"]>=20}
+    eligible={k:s["balanced_accuracy"] for k,s in stats.items() if s["balanced_accuracy"] is not None and s["hits"]+s["misses"]>=20 and s["false_alarms"]+s["correct_negatives"]>=20}
     center=median(eligible.values()) if len(eligible)>=3 else None
     factors={}
     if center is not None:
@@ -227,7 +230,7 @@ def phase_audit(rows):
 def train(rows):
     all_hours=sorted({t for t,_,_,_ in rows})
     if len(all_hours)<2:return {"active":False,"reason":"insufficient_cases","cases":len(rows)}
-    cut=all_hours[max(1,int(len(all_hours)*.8))]
+    cut=all_hours[max(1,min(len(all_hours)-1,int(len(all_hours)*.8)))]
     # Embargo 24 h: no same-day near-boundary cases in both sets.
     tr=[r for r in rows if r[0]<cut-timedelta(days=1)]
     va=[r for r in rows if r[0]>=cut]
