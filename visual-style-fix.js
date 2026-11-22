@@ -77,7 +77,7 @@
       };
       if (id === 'prec') return {
         title:'Opad / wilgotność',
-        rows:[['Opad',n(z.RR,2)+' mm/h'],...(window.PrognozaEPIRPrecipitation?.tooltipRows(z)||[]),...(window.PrognozaEPIRPrecipEvidence?.tooltipRows(z)||[]),['RH',n(z.RH,0)+'%']]
+        rows:[['Opad',n(z.RR,2)+' mm/h'],...(window.PrognozaEPIRPrecipitation?.tooltipRows(z)||[]),...(window.PrognozaEPIRPrecipEvidence?.tooltipRows(z)||[]),...(window.PrognozaEPIRPrecipContinuity?.tooltipRows(z)||[]),['RH',n(z.RH,0)+'%']]
       };
       if (id === 'probstorm' || id === 'prob' || id === 'storm') return {
         title:'Prawdopodobieństwo',
