@@ -55,6 +55,12 @@ class TestPrecip(unittest.TestCase):
         self.assertFalse(fit["active"])
         self.assertFalse(fit["shadow_qualified"])
         self.assertEqual(p.phase_audit(rows)["phase_confusion"][next(iter(models))]["rain->rain"],10)
+    def test_gauge_guard(self):
+        self.assertEqual(p.gauge_learning([],[],T)["reason"],"no_verified_hourly_gauge_series")
+        row={"schema":"prognozaepir-hourly-gauge-v1","station":"EPIR","measurement":"gauge","quality":"verified","unit":"mm","duration_minutes":60,"source":"test gauge","valid_time":mv.iso(T),"precipitation_mm":1.0}
+        self.assertEqual(p.gauge_learning([],[row],T)["n"],1)
+        self.assertEqual(p.gauge_learning([],[{**row,"duration_minutes":360}],T)["n"],0)
+        self.assertEqual(p.gauge_learning([],[row,{**row,"precipitation_mm":2}],T)["n"],0)
     def test_no_phase_guess(self):
         self.assertEqual(p.forecast_phase({"weather_code":95}),(None,"thunder"))
         self.assertEqual(p.forecast_phase({"weather_code":96}),("hail","thunder"))
