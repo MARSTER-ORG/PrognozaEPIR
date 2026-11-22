@@ -409,6 +409,8 @@
     sample('RA* / SN* — filtr 3 h','#64748b');
     dot('Radar + konwekcja','#0891b2');
     dot('Konwekcja modelowa','#ea580c');
+    dot('TCu / Cb NWP ≥30%','#d97706');
+    dot('SH z Cu? / rozbieżność','#64748b');
     sample('Wilgotność RH (%)','#bd4723');
     y+=6;
     title('Udział modeli (%)');

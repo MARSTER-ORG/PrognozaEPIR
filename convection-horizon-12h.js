@@ -4,7 +4,7 @@
   window.__EPIR_CONVECTION_12H__ = true;
 
   const HOUR = 3600000;
-  const VERSION = '20260920-conv12h5';
+  const VERSION = '20261122-conv12h6-shower-source';
   const STORAGE_KEY = 'prognozaepir.convection12h.v1';
   const NOWCAST_KEY = 'prognozaepir.convection-nowcast.shared.v1';
   const NOWCAST_MAX_AGE = 20 * 60 * 1000;
@@ -31,7 +31,7 @@
   function samePoint(a,b) { return a && b && Math.hypot(Number(a.lat)-Number(b.lat),Number(a.lon)-Number(b.lon)) < 0.01; }
   function parseUtc(s) { return Date.parse(String(s).endsWith('Z') ? String(s) : String(s)+'Z'); }
   function isTsCode(v) { return [95,96,99].includes(Math.round(Number(v))); }
-  function isShowery(v) { const c=Math.round(Number(v)); return c>=80 || isTsCode(c); }
+  function isShowery(v) { const c=Math.round(Number(v)); return c>=80&&c<=99; }
 
   async function fetchJson(url, timeout=9000) {
     const ctl = new AbortController();
@@ -70,9 +70,13 @@
   }
 
   function modelProbability(g,a,i,ms) {
-    const cape=Math.max(0,num(valueAt(g,'cape',ms),0));
+    const capeInput=valueAt(g,'cape',ms);
+    const cape=Math.max(0,num(capeInput,0));
     const li=valueAt(g,'lifted_index',ms);
     const cin=valueAt(g,'convective_inhibition',ms);
+    // Missing thermodynamic inputs are not evidence of a stable atmosphere.
+    // Showery weather codes are a separate, independent model signal.
+    const thermodynamicInputs=[capeInput,li,cin].filter(finite).length;
     const tp=clamp(num(valueAt(g,'thunderstorm_probability',ms),0),0,100);
     const rr=Math.max(0,num(valueAt(g,'precipitation',ms),0));
     const gust=Math.max(0,num(valueAt(g,'wind_gusts_10m',ms),0));
@@ -103,7 +107,10 @@
     return {
       tcuProbability:Math.round(tcu), cbProbability:Math.round(cb), tsProbability:Math.round(ts),
       cape:Math.round(cape), liftedIndex:li, cin, thunderstormProbability:Math.round(tp),
-      precipitation:rr, gust, modelStormSupport:stormSupport, modelCount:codes.length,
+      precipitation:rr, gust, modelStormSupport:stormSupport,
+      modelShowerSupport:Math.round(showerSupport*100),
+      modelShowerCount:codes.filter(isShowery).length,
+      modelCount:codes.length,thermodynamicInputs,
       modelAgreement:Math.round(agreement*100)
     };
   }
