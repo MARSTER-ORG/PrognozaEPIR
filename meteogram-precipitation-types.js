@@ -151,7 +151,7 @@ const api=(function createPrecipApi(){
     if(wx.modelCount)vals.push(
       ['Zgodność fazy opadu',wx.phaseAgreementPct+'% wag modeli wskazujących opad'],
       ['Zgodność charakteru',wx.characterAgreementPct+'% ('+wx.character+')'],
-      ['Zgodność kodu szczegółowego',wx.agreementPct+'%'],
+      [wx.temporalAdjusted?'Zgodność kodu przed filtrem':'Zgodność kodu szczegółowego',wx.agreementPct+'%'],
       ['Modele z opadem',wx.supportPct+'% wag ('+wx.wetModelCount+'/'+wx.modelCount+')']);
     if(wx.alternatives)vals.push(['Inne warianty',wx.alternatives]);
     if(wx.hailSupportPct>0&&wx.kind!=='hail')vals.push(['Sygnał gradu w modelach',wx.hailSupportPct+'%']);
@@ -240,7 +240,7 @@ if(root)(function installPrecipApi(root,api){
       const w=Math.max(3,Math.min(12,spacing*.76));
       ctx.fillRect(x-w/2,p.y+3,w,5);
       if(spacing<20)continue;
-      const label=wx.code;
+      const label=wx.code+(wx.temporalAdjusted?'*':'');
       ctx.font='bold 9px Arial';
       const width=ctx.measureText(label).width+8;
       if(x-width/2<=lastLabelRight+3||x+width/2>=m.x1)continue;

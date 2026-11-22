@@ -406,6 +406,7 @@
     sample('TS / GR — konwekcja','#ef4444');
     sample('FZ — marznący','#9333ea');
     sample('Nieznany / rozbieżny','#64748b');
+    sample('RA* / SN* — filtr 3 h','#64748b');
     dot('Radar + konwekcja','#0891b2');
     dot('Konwekcja modelowa','#ea580c');
     sample('Wilgotność RH (%)','#bd4723');
