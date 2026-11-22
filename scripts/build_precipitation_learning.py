@@ -12,7 +12,7 @@ import model_verification as mv
 OUT = mv.LEARNING / "precipitation-learning.json"
 H = timedelta(hours=1)
 THRESHOLDS = (.10, .20, .30, .40, .50, .60, .70)
-PHASES = ("rain", "drizzle", "snow", "mixed", "freezing", "ice", "hail")
+PHASES = ("rain", "drizzle", "snow", "mixed", "freezing", "ice", "hail", "hail_or_pellets")
 TOKEN = re.compile(r"^[+-]?(?P<desc>SH|TS|FZ)?(?P<phase>(?:DZ|RA|SN|SG|PL|GR|GS|UP)+)$")
 
 def number(x):
@@ -32,8 +32,10 @@ def metar_label(row):
         codes = re.findall(r"DZ|RA|SN|SG|PL|GR|GS|UP", p)
         if "UP" in codes:
             phases.add("unknown")
-        elif any(x in codes for x in ("GR","GS")):
+        elif "GR" in codes:
             phases.add("hail")
+        elif "GS" in codes:
+            phases.add("hail_or_pellets")
         elif d == "FZ":
             phases.add("freezing")
         elif "RA" in codes and "SN" in codes:
@@ -82,14 +84,15 @@ def synop_label(row):
     ww=row.get("present_weather_code")
     if not isinstance(ww,int):
         return None
-    if 50<=ww<=59:return True,"freezing" if ww in (56,57) else "drizzle","non_showery"
+    if 50<=ww<=59:return True,"freezing" if ww in (56,57) else "unknown" if ww in (58,59) else "drizzle","non_showery"
     if 60<=ww<=69:return True,"freezing" if ww in (66,67) else "mixed" if ww in (68,69) else "rain","non_showery"
     if 70<=ww<=75 or ww==77:return True,"snow","non_showery"
     if ww==79:return True,"ice","non_showery"
     if 80<=ww<=82:return True,"rain","showery"
     if ww in (83,84):return True,"mixed","showery"
     if ww in (85,86):return True,"snow","showery"
-    if 87<=ww<=90:return True,"hail","showery"
+    if ww in (87,88):return True,"hail_or_pellets","showery"
+    if ww in (89,90):return True,"hail","showery"
     if ww in (91,92):return True,"rain","unknown"
     if ww in (93,94):return True,"unknown","unknown"
     if ww in (95,97):return True,"unknown","thunder"
@@ -108,6 +111,11 @@ def forecast_phase(f):
     if w in (71,73,75,77):return "snow","non_showery"
     if w in (80,81,82):return "rain","showery"
     if w in (85,86):return "snow","showery"
+    if w in (68,69):return "mixed","non_showery"
+    if w in (83,84):return "mixed","showery"
+    if w in (87,88):return "hail_or_pellets","showery"
+    if w in (89,90):return "hail","showery"
+    if w==79:return "ice","non_showery"
     if w==95:return None,"thunder"
     if w in (96,99):return "hail","thunder"
     return None,None
@@ -132,7 +140,10 @@ def hour_labels(metars,synops,now):
     for end,items in groups.items():
         positives=[v for _,v in items if v and v[0]]
         if positives:
-            phase={v[1] for v in positives}; char={v[2] for v in positives}
+            # Instantaneous weather codes are compared only with near-end observations;
+            # an earlier shower can prove hourly occurrence, not the phase at T.
+            endpoint=[v for t,v in items if v and v[0] and end-t<=timedelta(minutes=5)]
+            phase={v[1] for v in endpoint}; char={v[2] for v in endpoint}
             labels[end]=(True,next(iter(phase)) if len(phase)==1 else "unknown",next(iter(char)) if len(char)==1 else "unknown","EPIR_METAR")
         else:
             dry=[t for t,v in items if v and not v[0]]
