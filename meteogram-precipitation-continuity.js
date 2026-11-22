@@ -41,7 +41,8 @@
   function protectedEvidence(z){
     const e=z?.precipEvidence||{};
     return e.convectiveNwp===true||e.radarForecastEcho===true||
-      e.marker==='radar'||e.marker==='convection';
+      e.marker==='radar'||e.marker==='convection'||e.marker==='tcu'||
+      e.marker==='cu'||e.marker==='mismatch';
   }
   function aligned(p,c,n){
     return [p,c,n].every(z=>num(z?.t)!==null)&&
