@@ -202,19 +202,37 @@ def baseline_amount(models):
     sw=sum(mv.MODEL_META[k][1] for k in models)
     return sum(mv.MODEL_META[k][1]*f["precipitation_mm"] for k,f in models.items())/sw
 
+def precision_skill(stats):
+    """Rank observed events with CSI dominant and explicit FAR penalty.
+
+    Balanced accuracy alone can over-reward very wet models with excellent
+    recall but too many false alarms. Never treat no positive forecasts as
+    perfect precision. Metric is conditional on both positive and negative
+    reference samples being available, and it is NOT a calibrated probability.
+    """
+    if stats["hits"]+stats["misses"]<1 or stats["false_alarms"]+stats["correct_negatives"]<1:
+        return None
+    csi,pod,far=(stats.get(k) for k in ("csi","pod","far"))
+    if csi is None or pod is None: return 0.0
+    if far is None:return 0.0
+    return round(.65*csi+.15*pod+.20*(1-far),6)
+
+
 def fit_factors(rows):
     stats={}
     for model in mv.MODEL_META:
         pairs=[(m[model]["precipitation_mm"]>=.1,lab[0]) for _,_,lab,m in rows if model in m]
         stats[model]=counts(pairs)
-    eligible={k:s["balanced_accuracy"] for k,s in stats.items() if s["balanced_accuracy"] is not None and s["hits"]+s["misses"]>=20 and s["false_alarms"]+s["correct_negatives"]>=20}
+    eligible={k:precision_skill(v) for k,v in stats.items()
+              if precision_skill(v) is not None and v["hits"]+v["misses"]>=20
+              and v["false_alarms"]+v["correct_negatives"]>=20}
     center=median(eligible.values()) if len(eligible)>=3 else None
     factors={}
     if center is not None:
         for k,v in eligible.items():
             n=stats[k]["hits"]+stats[k]["misses"]
             shrink=min(1,n/100)
-            factors[k]=round(max(.75,min(1.25,1+(v-center)*shrink)),4)
+            factors[k]=round(max(.75,min(1.25,1+1.5*(v-center)*shrink)),4)
     return factors,stats
 
 def metrics(rows,factors,threshold,amount=False):
@@ -250,14 +268,16 @@ def type_learning(train_rows, holdout_rows, axis):
                         for _,_,lab,models in rows if lab[0] and lab[axis+1] in labels and model in models]
             a,b=counts(pairs(train_rows)),counts(pairs(holdout_rows))
             model_results[model]={"training":a,"holdout":b}
-        eligible={k:v["training"]["balanced_accuracy"] for k,v in model_results.items()
-                  if v["training"]["hits"]+v["training"]["misses"]>=30 and v["training"]["false_alarms"]+v["training"]["correct_negatives"]>=30}
+        eligible={k:precision_skill(v["training"]) for k,v in model_results.items()
+                  if precision_skill(v["training"]) is not None and
+                  v["training"]["hits"]+v["training"]["misses"]>=30 and
+                  v["training"]["false_alarms"]+v["training"]["correct_negatives"]>=30}
         mid=median(eligible.values()) if len(eligible)>=3 else None
         weights={}
         if mid is not None:
             for model,skill in eligible.items():
                 n=model_results[model]["training"]["hits"]+model_results[model]["training"]["misses"]
-                weights[model]=round(max(.8,min(1.2,1+(skill-mid)*min(1,n/100))),4)
+                weights[model]=round(max(.8,min(1.2,1+1.5*(skill-mid)*min(1,n/100))),4)
         def votes(rows,factors):
             result=[]
             for _,_,lab,models in rows:
@@ -287,11 +307,12 @@ def type_learning(train_rows, holdout_rows, axis):
             ranking.append({"model":model,"name":mv.MODEL_META[model][0],
                 "train_positive":pos,"train_negative":neg,
                 "train_balanced_accuracy":a["balanced_accuracy"],
+                "train_precision_skill":precision_skill(a),
                 "holdout_positive":b["hits"]+b["misses"],
                 "holdout_negative":b["false_alarms"]+b["correct_negatives"],
                 "holdout_csi":b["csi"],"holdout_pod":b["pod"],"holdout_far":b["far"],
                 "candidate_weight_factor":weights.get(model,1.0)})
-        ranking.sort(key=lambda x:(-x["train_balanced_accuracy"],-x["train_positive"],x["model"]))
+        ranking.sort(key=lambda x:(-(x["train_precision_skill"] or 0),-x["train_positive"],x["model"]))
         out[label]={"active":False,"shadow_qualified":ok,"candidate_factors":weights,
                     "baseline":base,"candidate":candidate,"model_metrics":model_results,
                     "ranking":ranking,"minimum_evidence":{"training_positive":10,"training_negative":15,
@@ -326,11 +347,12 @@ def train(rows):
             continue
         occurrence_ranking.append({"model":model,"name":mv.MODEL_META[model][0],
             "train_balanced_accuracy":record["balanced_accuracy"],
+            "train_precision_skill":precision_skill(record),
             "train_csi":record["csi"],"train_pod":record["pod"],"train_far":record["far"],
             "positive_cases":record["hits"]+record["misses"],
             "negative_cases":record["false_alarms"]+record["correct_negatives"],
             "candidate_weight_factor":weights.get(model,1.0)})
-    occurrence_ranking.sort(key=lambda x:(-(x["train_balanced_accuracy"] or 0),-x["positive_cases"],x["model"]))
+    occurrence_ranking.sort(key=lambda x:(-(x["train_precision_skill"] or 0),-x["positive_cases"],x["model"]))
     return {"active":False,"shadow_qualified":qualifies,"reason":"manual_review_required" if qualifies else "holdout_gate_not_met",
             "cutoff":mv.iso(cut),"train_cases":len(tr),"holdout_cases":len(va),"candidate_threshold":threshold,
             "candidate_factors":weights,"occurrence_ranking":occurrence_ranking,

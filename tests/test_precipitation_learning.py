@@ -61,6 +61,16 @@ class TestPrecip(unittest.TestCase):
         self.assertEqual(p.gauge_learning([],[row],T)["n"],1)
         self.assertEqual(p.gauge_learning([],[{**row,"duration_minutes":360}],T)["n"],0)
         self.assertEqual(p.gauge_learning([],[row,{**row,"precipitation_mm":2}],T)["n"],0)
+    def test_false_alarms_penalized_above_raw_detection(self):
+        # Very wet model has 90% POD but a large number of false alarms.
+        overforecast = p.counts([(True, True)]*18 + [(False, True)]*2 +
+                                [(True, False)]*65 + [(False, False)]*15)
+        conservative = p.counts([(True, True)]*13 + [(False, True)]*7 +
+                                [(True, False)]*8 + [(False, False)]*72)
+        self.assertGreater(overforecast["pod"], conservative["pod"])
+        self.assertLess(p.precision_skill(overforecast), p.precision_skill(conservative))
+        self.assertEqual(p.precision_skill(p.counts([(False,True)]*5 + [(False,False)]*95)),0.0)
+
     def test_no_phase_guess(self):
         self.assertEqual(p.forecast_phase({"weather_code":95}),(None,"thunder"))
         self.assertEqual(p.forecast_phase({"weather_code":96}),("hail","thunder"))
