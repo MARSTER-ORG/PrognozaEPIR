@@ -1,0 +1,87 @@
+name: Precipitation learning (shadow)
+on:
+  schedule:
+    - cron: '43 4 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'scripts/build_precipitation_learning.py'
+      - 'tests/test_precipitation_learning.py'
+      - '.github/workflows/precipitation-learning.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/build_precipitation_learning.py'
+      - 'tests/test_precipitation_learning.py'
+      - '.github/workflows/precipitation-learning.yml'
+permissions:
+  contents: read
+concurrency:
+  group: precipitation-learning-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: false
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests and independent historical verification
+        run: |
+          python3 -m py_compile scripts/build_precipitation_learning.py
+          python3 tests/test_precipitation_learning.py
+          python3 scripts/build_precipitation_learning.py
+          python3 -m json.tool data/learning/precipitation-learning.json >/dev/null
+      - name: Confirm no production activation
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('data/learning/precipitation-learning.json').read_text())
+          assert x['schema']=='prognozaepir-precipitation-learning-v1'
+          assert x['mode']=='shadow_only'
+          def check(o):
+              if isinstance(o,dict):
+                  assert o.get('active',False) is False
+                  for v in o.values(): check(v)
+              elif isinstance(o,list):
+                  for v in o: check(v)
+          check(x)
+          print(json.dumps(x['observations'],ensure_ascii=False))
+          for key,value in x['learned_buckets'].items():
+              print(key, {k:value.get(k) for k in ('reason','train_cases','holdout_cases','shadow_qualified','baseline_amount','candidate')})
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: precipitation-shadow-audit
+          path: data/learning/precipitation-learning.json
+          retention-days: 30
+  publish:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/download-artifact@v4
+        with:
+          name: precipitation-shadow-audit
+          path: data/learning
+      - name: Publish shadow report only
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for attempt in 1 2 3; do
+            git add data/learning/precipitation-learning.json
+            if git diff --cached --quiet; then exit 0; fi
+            git commit -m "weather: refresh precipitation shadow validation"
+            if git pull --rebase origin main && git push origin HEAD:main; then exit 0; fi
+            git rebase --abort || true
+            git fetch origin main
+            git reset --hard origin/main
+            python3 scripts/build_precipitation_learning.py
+          done
+          exit 1
