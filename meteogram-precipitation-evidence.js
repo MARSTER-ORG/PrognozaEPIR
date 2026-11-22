@@ -46,6 +46,10 @@
       ctx.strokeStyle=typeof activeTheme==='function'&&activeTheme()==='dark'?'#0b1320':'#fff';
       ctx.lineWidth=1.2;ctx.beginPath();
       ctx.moveTo(0,-4);ctx.lineTo(4,0);ctx.lineTo(0,4);ctx.lineTo(-4,0);ctx.closePath();ctx.fill();ctx.stroke();
+      if(type==='cu'&&typeof ctx.fillText==='function'&&
+         (m.x1-m.x0)/Math.max(1,m.data.length-1)>25){
+        ctx.font='bold 8px Arial';ctx.textAlign='center';ctx.fillText('Cu?',0,14);
+      }
       ctx.restore();
     }
     ctx.restore();
