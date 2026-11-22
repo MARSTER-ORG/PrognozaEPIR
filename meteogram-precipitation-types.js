@@ -107,11 +107,14 @@ const api=(function createPrecipApi(){
     const rare=new Set(['hail','freezing','pellets']);
     const phaseModels=wetVotes.filter(m=>familyOf(m.wx)===phase).length;
     const cautiousRare=rare.has(phase)&&(phaseShare<.75||phaseModels<2);
-    let result=(phaseUnresolved||cautiousRare)?make('VAR','konsensus modeli'):
+    let result=phase==='unknown'&&phases.length===1?
+      {...TYPES[phaseCode],source:'konsensus modeli — rodzaj nieznany'}:
+      (phaseUnresolved||cautiousRare)?make('VAR','konsensus modeli'):
       {...TYPES[phaseCode],source:'konsensus modeli'};
     if(mixedDisagreement)result.label='Deszcz lub śnieg — modele niezgodne (nie RASN)';
     else if(cautiousRare)result.label='Możliwy opad '+(phase==='hail'?'gradu/krup':phase==='freezing'?'marznący':'lodowy')+' — niewystarczające potwierdzenie';
-    else if(phaseUnresolved)result.label='Rodzaj opadu — niejednoznaczna faza w modelach';
+    else if(phaseUnresolved&&!(phase==='unknown'&&phases.length===1))
+      result.label='Rodzaj opadu — niejednoznaczna faza w modelach';
     const kinds=new Map();
     for(const m of wetVotes){
       if(familyOf(m.wx)!==phase)continue;
