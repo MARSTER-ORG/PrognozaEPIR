@@ -153,7 +153,7 @@ const api=(function createPrecipApi(){
     const wx=row?.precipType;
     if(!wx)return [['Rodzaj opadu','Nie stwierdzono / brak danych o rodzaju']];
     const vals=[['Rodzaj',wx.label],['Kod orientacyjny',wx.code]];
-    if(wx.intelligenceAdjusted)vals.push(['Kod źródłowy modeli',wx.intelligenceOriginalCode+' (sugestia DZ)']);
+    if(wx.intelligenceAdjusted)vals.push(['Kod źródłowy modeli',wx.intelligenceOriginalCode+' (sugerowano '+wx.code+')']);
     if(wx.modelCount)vals.push(
       ['Zgodność fazy opadu',wx.phaseAgreementPct+'% wag modeli wskazujących opad'],
       ['Zgodność charakteru',wx.characterAgreementPct+'% ('+wx.character+')'],
