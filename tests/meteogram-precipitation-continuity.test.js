@@ -85,7 +85,7 @@ for(const page of [html,pages]){
   assert.ok(page.indexOf('meteogram-precipitation-continuity.js')>page.indexOf('meteogram-precipitation-evidence.js'),
     'temporal filter must run AFTER independent radar and convection evidence');
 }
-assert.match(hover,/PrognozaEPIRPrecipContinuity\?\.tooltipRows\(z\)/,'hover must expose original WMO code');
+assert.match(hover,/PrognozaEPIRPrecipCompactInfo\?\.rows\(z\)/,'hover shares compact selection with mobile while adjusted marker remains');
 assert.match(legend,/RA\* \/ SN\* — filtr 3 h/);
 assert.match(typ,/wx\.temporalAdjusted\|\|wx\.intelligenceAdjusted/,'type marker covers both temporal smoothing and physical cloud subtype');
 const src=fs.readFileSync(path.join(root,'meteogram-precipitation-continuity.js'),'utf8');
