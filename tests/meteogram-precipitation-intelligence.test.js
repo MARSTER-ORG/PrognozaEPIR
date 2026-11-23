@@ -48,6 +48,10 @@ const cases=[
   ['no cloud base', {lowH:null}],
   ['no mid-level cloud cover', {mid:null}],
   ['missing vertical profile', {profile:[]}],
+  ['duplicate profile levels', {profile:[profile[0],profile[0],profile[0]]}],
+  ['no middle level coverage', {profile:profile.slice(0,3)}],
+  ['negative cloud base', {lowH:-50}],
+  ['wet freezing minority', {precipType:wx('RA',{codeSharesPct:{DZ:43,RA:44,FZRA:1}})}],
   ['weak low cloud cover', {low:55}],
   ['high mid level cover', {mid:80}],
   ['incomplete humidity', {RH:null}],
@@ -70,6 +74,8 @@ for(const [name,change] of cases){
   api.refine(r,types,T-2*H);
   assert.equal(r[1].precipType.code,before,name);
 }
+const cleared=trio();api.refine(cleared,types,T-2*H);cleared[1].precipType=null;api.refine(cleared,types,T-2*H);
+assert.equal(cleared[1].precipCloudContext,null,'missing type clears stale diagnostic');
 const empty=trio();empty[0].t-=2*H;
 assert.equal(api.canRefine(...empty,T-2*H),null,'hourly gap');
 const neighbour=trio();neighbour[0].precipType=wx('RA',{codeSharesPct:{DZ:0,RA:93},codeModelCounts:{DZ:0}});neighbour[2].precipType=wx('RA',{codeSharesPct:{DZ:0,RA:92},codeModelCounts:{DZ:0}});
@@ -81,12 +87,13 @@ const changed=trio();api.refine(changed,types,T-2*H);changed[1].precipEvidence={
 api.refine(changed,types,T-2*H);
 assert.equal(changed[1].precipType.code,'RA','new convection evidence must restore original code');
 assert.equal(changed[1].precipIntelligence,null);
-const deep=row(1,'RA',{RR:1.1,low:95,mid:82,RH:94});
-const deepTrio=[row(0,'RA',{RR:.9,low:94,mid:82,RH:94}),
-  row(1,'DZ',{RR:.95,low:94,mid:82,RH:94,
+const deepProfile=profile.map(p=>({...p,cc:p.agl>=2000?82:p.cc}));
+const deep=row(1,'RA',{RR:1.1,low:95,mid:82,RH:94,profile:deepProfile});
+const deepTrio=[row(0,'RA',{RR:.9,low:94,mid:82,RH:94,profile:deepProfile}),
+  row(1,'DZ',{RR:.95,low:94,mid:82,RH:94,profile:deepProfile,
     precipType:wx('DZ',{codeSharesPct:{DZ:43,RA:38,SHRA:5},
       codeModelCounts:{DZ:3,RA:3}})}),
-  row(2,'RA',{RR:.85,low:94,mid:82,RH:94})];
+  row(2,'RA',{RR:.85,low:94,mid:82,RH:94,profile:deepProfile})];
 assert.equal(api.canRefine(...deepTrio,T-2*H)?.to,'RA','deep cloud layer supports steady rain');
 api.refine(deepTrio,types,T-2*H);
 assert.equal(deepTrio[1].precipType.code,'RA');
@@ -95,7 +102,7 @@ assert.equal(deepTrio[1].precipIntelligence.supportingType,'RA');
 assert.equal(deepTrio[1].precipIntelligence.supportPct,38);
 assert.match(deepTrio[1].precipType.label,/Deszcz/);
 const deepWeak=[...deepTrio];
-deepWeak[1]={...row(1,'DZ',{RR:.9,low:94,mid:82,RH:94}),
+deepWeak[1]={...row(1,'DZ',{RR:.9,low:94,mid:82,RH:94,profile:deepProfile}),
   precipType:wx('DZ',{codeSharesPct:{DZ:70,RA:18},
     codeModelCounts:{DZ:5,RA:1}})};
 assert.equal(api.canRefine(...deepWeak,T-2*H),null,
@@ -120,7 +127,7 @@ for(const s of [html,pages]){
   assert.ok(pos<s.indexOf('meteogram-precipitation-continuity.js'),
     'character continuity runs after subtype inference');
 }
-assert.match(legend,/DZ\* — sugestia St\/Sc/);
+assert.match(legend,/DZ\* \/ RA\* — profil chmur/);
 assert.match(typ,/wx.intelligenceAdjusted/);
 assert.match(hover,/PrognozaEPIRPrecipIntelligence\?\.tooltipRows/);
 const src=fs.readFileSync(path.join(root,'meteogram-precipitation-intelligence.js'),'utf8');

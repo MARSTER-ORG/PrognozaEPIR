@@ -28,7 +28,7 @@ const api=(function createPrecipApi(){
   function classify(row){
     if(!row||typeof row!=='object')return null;
     const c=num(row.weather_code??row.code);
-    const code=c===null?null:Math.round(c);
+    const code=c!==null&&Number.isInteger(c)?c:null;
     const rain=num(row.rain),snow=num(row.snowfall),showers=num(row.showers),total=num(row.precipitation??row.RR);
     const liquid=rain!==null&&rain>=0.02,solid=snow!==null&&snow>=0.02;
     const both=liquid&&solid;
@@ -45,6 +45,7 @@ const api=(function createPrecipApi(){
     if(code===66||code===67)return make('FZRA','WMO '+code);
     if(code===79)return make('PL','WMO 79');
     if(code===68||code===69)return make('RASN','WMO '+code);
+    if(code===83||code===84)return make('SHRASN','WMO '+code);
     if(code===77)return make('SG','WMO 77');
     if(both&&([80,81,82,85,86].includes(code)||convective))
       return make('SHRASN','rain + snowfall + showers');
@@ -157,8 +158,8 @@ const api=(function createPrecipApi(){
     if(wx.modelCount)vals.push(
       ['Zgodność fazy opadu',wx.phaseAgreementPct+'% wag modeli wskazujących opad'],
       ['Zgodność charakteru',wx.characterAgreementPct+'% ('+wx.character+')'],
-      [wx.temporalAdjusted?'Zgodność kodu przed filtrem':'Zgodność kodu szczegółowego',wx.agreementPct+'%'],
-      ['Modele z opadem',wx.supportPct+'% wag ('+wx.wetModelCount+'/'+wx.modelCount+')']);
+      [(wx.temporalAdjusted||wx.intelligenceAdjusted)?'Zgodność kodu przed korektą':'Zgodność kodu szczegółowego',wx.agreementPct+'%'],
+      ['Modele wskazujące rodzaj opadu',wx.supportPct+'% wag ('+wx.wetModelCount+'/'+wx.modelCount+')']);
     if(wx.alternatives)vals.push(['Inne warianty',wx.alternatives]);
     if(wx.hailSupportPct>0&&wx.kind!=='hail')vals.push(['Sygnał gradu w modelach',wx.hailSupportPct+'%']);
     vals.push(['Podstawa klasyfikacji',wx.source]);

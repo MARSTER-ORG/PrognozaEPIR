@@ -153,7 +153,8 @@
 
   function precipitationPhase(wx) {
     const code = wx?.code;
-    if (['RA','DZ','SHRA','TSRA'].includes(code)) return 'rain';
+    if (code==='DZ') return 'drizzle';
+    if (['RA','SHRA','TSRA'].includes(code)) return 'rain';
     if (['SN','SG','SHSN','TSSN'].includes(code)) return 'snow';
     if (['RASN','SHRASN'].includes(code)) return 'mixed';
     if (['FZDZ','FZRA'].includes(code)) return 'freezing';

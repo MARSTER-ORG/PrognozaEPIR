@@ -59,9 +59,13 @@ function hash(value) {
     assert.equal(projected.rows[0].station_code, station, `${station} snapshot must satisfy the ingest contract`);
   }
 
+  // Legacy producer IDs are normalized, retaining the original for audit.
+  const legacy = await normalizeBatch({ messages: [{ ...message, message_id: '0'.repeat(64) }] });
+  assert.equal(legacy.rows[0].payload.message_id, message.message_id);
+  assert.equal(legacy.rows[0].payload.legacy_message_id, '0'.repeat(64));
   await assert.rejects(
-    normalizeBatch({ messages: [{ ...message, message_id: '0'.repeat(64) }] }),
-    (error) => error instanceof ContractError && error.status === 409,
+    normalizeBatch({ messages: [{ ...message, message_id: 'invalid' }] }),
+    (error) => error instanceof ContractError && error.status === 400,
   );
 
   const migration = fs.readFileSync(MIGRATION, 'utf8');
@@ -101,7 +105,7 @@ function hash(value) {
   assert.match(migration, /candidate\.wmo = incoming\.station_code/);
   assert.match(migration, /candidate\.icao = incoming\.station_code/);
   assert.match(ingest, /database\.rpc\('ingest_message_batch'/);
-  assert.match(mirror, /json\.dumps\(\{"messages": messages\}/);
+  assert.match(mirror, /json\.dumps\(\{"messages": outbound\}/);
   assert.match(mirror, /functions\/v1\/message-ingest/);
   console.log('Message ingest contract tests passed.');
 })().catch((error) => {

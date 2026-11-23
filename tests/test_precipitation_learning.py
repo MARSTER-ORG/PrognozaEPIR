@@ -45,6 +45,9 @@ class TestPrecip(unittest.TestCase):
         self.assertEqual(len(p.cases([fc(m,2) for m in models],labels,T)),1)
     def test_metrics_and_guard(self):
         m=p.counts([(True,True),(False,True),(True,False),(False,False)])
+        self.assertEqual(m["precision"],.5)
+        self.assertEqual(m["recall"],.5)
+        self.assertEqual(m["f1"],.5)
         self.assertEqual(m["csi"],.33333)
         self.assertEqual(m["pod"],.5)
         self.assertEqual(m["far"],.5)

@@ -88,6 +88,10 @@ def patch_index() -> None:
             raise RuntimeError("index inline marker missing")
         s = s.replace(inline, loader + "\n" + inline, 1)
 
+    # Pin the early model/learning bridge to the same build as the classifiers.
+    s = re.sub(r'<script src="cloud-learning-client\.js(?:\?[^"]*)?"></script>',
+               f'<script src="cloud-learning-client.js?v={ASSET_V}"></script>', s)
+
     old_cloud = "const pr=profile(items,terr),ceil=ceiling(pr)"
     new_cloud = "const cloudItems=items.map(i=>({...i,w:i.w*(window.PrognozaEPIRCloudLearning?.factor?.(i.model.id,t)||1)})),cloudSw=cloudItems.reduce((a,b)=>a+b.w,0);if(cloudSw)cloudItems.forEach(i=>i.w/=cloudSw);const pr=profile(cloudItems,terr),ceil=ceiling(pr)"
     if new_cloud not in s:

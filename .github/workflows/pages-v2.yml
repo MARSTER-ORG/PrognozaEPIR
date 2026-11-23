@@ -76,7 +76,22 @@ jobs:
           node tests/meteogram-shower-cloud-consistency.test.js
           node tests/meteogram-precipitation-continuity.test.js
           node tests/meteogram-precipitation-intelligence.test.js
+          node tests/precipitation-qualification.test.js
+          python3 tests/test_precipitation_learning.py
+          python3 tests/test_precipitation_qualification.py
+          python3 scripts/verify_precipitation_artifact.py _site
           node tests/runtime-integration-contract.test.js
+
+      - name: Browser QA of precipitation on desktop and mobile
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          export CHROME_BIN="$(command -v google-chrome || command -v chromium || command -v chromium-browser)"
+          npm install --prefix "$RUNNER_TEMP/precip-smoke" --no-audit --no-fund playwright@1.62.1
+          python3 -m http.server 8765 --directory _site >"$RUNNER_TEMP/precip-http.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          PAGE_URL=http://127.0.0.1:8765/ NODE_PATH="$RUNNER_TEMP/precip-smoke/node_modules" node scripts/precipitation_browser_smoke.cjs
 
       - name: Validate canonical artifact
         run: |
@@ -272,6 +287,11 @@ jobs:
             echo "Waiting for Pages/CDN propagation (${attempt}/18)..."
             sleep 10
           done
+
+      - name: Verify published precipitation module bytes and script order
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: python3 scripts/verify_precipitation_artifact.py "$PAGE_URL" --expected-commit "$GITHUB_SHA" --compare-source
 
       - name: Browser smoke test TAF cycles and hourly data
         timeout-minutes: 6
