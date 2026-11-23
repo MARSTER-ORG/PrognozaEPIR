@@ -81,9 +81,10 @@ const api=(function createPrecipApi(){
     const wetVotes=votes.filter(m=>m.wx);
     const wetWeight=wetVotes.reduce((s,m)=>s+m.w,0);
     if(!wetWeight||!total)return null;
-    const byCode=new Map(),byPhase=new Map();
+    const byCode=new Map(),byPhase=new Map(),byCodeModels=new Map();
     for(const m of wetVotes){
       byCode.set(m.wx.code,(byCode.get(m.wx.code)||0)+m.w);
+      byCodeModels.set(m.wx.code,(byCodeModels.get(m.wx.code)||0)+1);
       const phase=familyOf(m.wx);
       byPhase.set(phase,(byPhase.get(phase)||0)+m.w);
     }
@@ -141,6 +142,10 @@ const api=(function createPrecipApi(){
       phaseFamily:phase,character:characterPct>=65?character:'niepewny',
       supportPct:Math.round(wetWeight/total*100),modelCount:votes.length,
       wetModelCount:wetVotes.length,alternatives:alt.join(', '),
+      // Diagnostic-only consensus detail. Shares sum to 100 over *wet model
+      // weights*. They do not claim independent calibrated probabilities.
+      codeSharesPct:Object.fromEntries([...byCode].map(([k,w])=>[k,Math.round(w/wetWeight*1000)/10])),
+      codeModelCounts:Object.fromEntries(byCodeModels),
       hailSupportPct:Math.round(wetVotes.filter(v=>v.wx.kind==='hail').reduce((s,m)=>s+m.w,0)/total*100)};
   }
   function colorFor(row){return row?.precipType?.color||TYPES.PCP.color;}
