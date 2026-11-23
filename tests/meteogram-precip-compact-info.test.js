@@ -53,8 +53,10 @@ for(const page of [html,build]){
     'compact UI must be the final precip-specific wrapper');
 }
 assert.match(hover,/PrognozaEPIRPrecipCompactInfo\?\.rows\(z\)/);
-assert.doesNotMatch(hover,/PrognozaEPIRPrecipitation\?\.tooltipRows\(z\)/,
-  'desktop hover must not leak verbose precipitation rows');
+const precipHover=hover.slice(hover.indexOf("if (id === 'prec')"),
+  hover.indexOf("if (id === 'probstorm')"));
+assert.doesNotMatch(precipHover,/PrognozaEPIRPrecipitation\?\.tooltipRows\(z\)/,
+  'precipitation hover must not leak verbose rows; the separate storm section stays unchanged');
 
 class Node{
   constructor(){this.children=[];this.textContent='';this.className='';this.removed=false;}
