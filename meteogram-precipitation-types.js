@@ -81,9 +81,10 @@ const api=(function createPrecipApi(){
     const wetVotes=votes.filter(m=>m.wx);
     const wetWeight=wetVotes.reduce((s,m)=>s+m.w,0);
     if(!wetWeight||!total)return null;
-    const byCode=new Map(),byPhase=new Map();
+    const byCode=new Map(),byPhase=new Map(),byCodeModels=new Map();
     for(const m of wetVotes){
       byCode.set(m.wx.code,(byCode.get(m.wx.code)||0)+m.w);
+      byCodeModels.set(m.wx.code,(byCodeModels.get(m.wx.code)||0)+1);
       const phase=familyOf(m.wx);
       byPhase.set(phase,(byPhase.get(phase)||0)+m.w);
     }
@@ -141,6 +142,10 @@ const api=(function createPrecipApi(){
       phaseFamily:phase,character:characterPct>=65?character:'niepewny',
       supportPct:Math.round(wetWeight/total*100),modelCount:votes.length,
       wetModelCount:wetVotes.length,alternatives:alt.join(', '),
+      // Diagnostic-only consensus detail. Shares sum to 100 over *wet model
+      // weights*. They do not claim independent calibrated probabilities.
+      codeSharesPct:Object.fromEntries([...byCode].map(([k,w])=>[k,Math.round(w/wetWeight*1000)/10])),
+      codeModelCounts:Object.fromEntries(byCodeModels),
       hailSupportPct:Math.round(wetVotes.filter(v=>v.wx.kind==='hail').reduce((s,m)=>s+m.w,0)/total*100)};
   }
   function colorFor(row){return row?.precipType?.color||TYPES.PCP.color;}
@@ -148,6 +153,7 @@ const api=(function createPrecipApi(){
     const wx=row?.precipType;
     if(!wx)return [['Rodzaj opadu','Nie stwierdzono / brak danych o rodzaju']];
     const vals=[['Rodzaj',wx.label],['Kod orientacyjny',wx.code]];
+    if(wx.intelligenceAdjusted)vals.push(['Kod źródłowy modeli',wx.intelligenceOriginalCode+' (sugerowano '+wx.code+')']);
     if(wx.modelCount)vals.push(
       ['Zgodność fazy opadu',wx.phaseAgreementPct+'% wag modeli wskazujących opad'],
       ['Zgodność charakteru',wx.characterAgreementPct+'% ('+wx.character+')'],
@@ -240,7 +246,7 @@ if(root)(function installPrecipApi(root,api){
       const w=Math.max(3,Math.min(12,spacing*.76));
       ctx.fillRect(x-w/2,p.y+3,w,5);
       if(spacing<20)continue;
-      const label=wx.code+(wx.temporalAdjusted?'*':'');
+      const label=wx.code+((wx.temporalAdjusted||wx.intelligenceAdjusted)?'*':'');
       ctx.font='bold 9px Arial';
       const width=ctx.measureText(label).width+8;
       if(x-width/2<=lastLabelRight+3||x+width/2>=m.x1)continue;

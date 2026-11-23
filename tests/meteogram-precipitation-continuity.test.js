@@ -83,7 +83,7 @@ for(const page of [html,pages]){
 }
 assert.match(hover,/PrognozaEPIRPrecipContinuity\?\.tooltipRows\(z\)/,'hover must expose original WMO code');
 assert.match(legend,/RA\* \/ SN\* — filtr 3 h/);
-assert.match(typ,/wx\.temporalAdjusted\?'\*'/);
+assert.match(typ,/wx\.temporalAdjusted\|\|wx\.intelligenceAdjusted/,'type marker covers both temporal smoothing and physical cloud subtype');
 const src=fs.readFileSync(path.join(root,'meteogram-precipitation-continuity.js'),'utf8');
 const browser={document:{querySelector(){return null}},selected:'consensus',
   rows:trio(),PrognozaEPIRPrecipitation:types};

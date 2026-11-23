@@ -113,6 +113,7 @@ def patch_index() -> None:
         "meteogram-tap-details.js",
         "meteogram-precipitation-types.js",
         "meteogram-precipitation-evidence.js",
+        "meteogram-precipitation-intelligence.js",
         "meteogram-precipitation-continuity.js",
         "convection-horizon-12h.js",
     ]
@@ -136,6 +137,7 @@ def patch_index() -> None:
         f'<script src="meteogram-tap-details.js?v={ASSET_V}"></script>',
         f'<script src="meteogram-precipitation-types.js?v={ASSET_V}"></script>',
         f'<script src="meteogram-precipitation-evidence.js?v={ASSET_V}"></script>',
+        f'<script src="meteogram-precipitation-intelligence.js?v={ASSET_V}"></script>',
         f'<script src="meteogram-precipitation-continuity.js?v={ASSET_V}"></script>',
         f'<script src="convection-horizon-12h.js?v={ASSET_V}"></script>',
     ]
