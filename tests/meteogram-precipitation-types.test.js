@@ -101,7 +101,7 @@ assert.ok(pages.indexOf('f\'<script src="meteogram-precipitation-types.js?v=')
   >pages.indexOf('f\'<script src="meteogram-tap-details.js?v='),'install after latest tooltip overlays');
 for(const [source,name] of [[html,'inline'],[layout,'layout'],[split,'production split']])
   assert.match(source,/PrognozaEPIRPrecipitation\?\.colorFor\?\.\(z\)/,name+' must color precipitation bars');
-assert.match(hover,/PrognozaEPIRPrecipitation\?\.tooltipRows\(z\)/,'mouse hover includes type');
+assert.match(hover,/PrognozaEPIRPrecipCompactInfo\?\.rows\(z\)/,'mouse hover uses user-selected precipitation fields');
 assert.match(legend,/TS \/ GR — konwekcja/,'rain, snow, convection symbols in legend');
 
 // Runtime smoke test in a small Canvas environment: no network, no browser dependencies.
