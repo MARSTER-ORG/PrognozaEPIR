@@ -129,7 +129,7 @@ for(const s of [html,pages]){
 }
 assert.match(legend,/DZ\* \/ RA\* — profil chmur/);
 assert.match(typ,/wx.intelligenceAdjusted/);
-assert.match(hover,/PrognozaEPIRPrecipIntelligence\?\.tooltipRows/);
+assert.match(hover,/PrognozaEPIRPrecipCompactInfo\?\.rows\(z\)/,'user-selected compact hover replaces verbose diagnostics');
 const src=fs.readFileSync(path.join(root,'meteogram-precipitation-intelligence.js'),'utf8');
 const browser={document:{querySelector(){return null}},rows:trio(),
   PrognozaEPIRPrecipitation:types,selected:'consensus'};

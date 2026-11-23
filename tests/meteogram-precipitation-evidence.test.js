@@ -56,7 +56,7 @@ for(const file of ['meteogram-precipitation-evidence.js','convection-horizon-12h
 const indexOrder=pages.indexOf('meteogram-precipitation-evidence.js?v=');
 assert.ok(indexOrder>pages.indexOf('meteogram-precipitation-types.js?v='));
 assert.ok(pages.indexOf('convection-horizon-12h.js?v=')>indexOrder);
-assert.match(hover,/PrognozaEPIRPrecipEvidence\?\.tooltipRows\(z\)/);
+assert.match(hover,/PrognozaEPIRPrecipCompactInfo\?\.rows\(z\)/,'hover gets precipitation and TCu/Cb from compact view');
 assert.match(legend,/Radar \+ konwekcja/);
 assert.match(chart,/radarSource/);
 assert.match(chart,/45\*MINUTE/);
