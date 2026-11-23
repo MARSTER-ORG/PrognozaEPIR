@@ -9,7 +9,8 @@ from urllib.parse import urljoin,urlsplit
 
 MODULES=['cloud-learning-client.js','meteogram-precipitation-types.js',
  'meteogram-precipitation-evidence.js','meteogram-precipitation-intelligence.js',
- 'meteogram-precipitation-continuity.js','convection-horizon-12h.js']
+ 'meteogram-precipitation-continuity.js','convection-horizon-12h.js',
+ 'meteogram-precip-compact-info.js']
 class Assets(HTMLParser):
  def __init__(self):super().__init__();self.scripts=[];self.assets=[]
  def handle_starttag(self,tag,attrs):
@@ -40,7 +41,9 @@ def verify(target,expected_commit=None,compare_source=False):
   hashes[m]=hashlib.sha256(body).hexdigest()
   if compare_source:assert body==(source/m).read_bytes(),('deployed JS differs from tested source',m)
  assert b'DZ* / RA*' in contents['meteogram-visfog-cleanup.js']
- assert b'PrognozaEPIRPrecipIntelligence' in contents['visual-style-fix.js']
+ assert b'PrognozaEPIRPrecipCompactInfo' in contents['visual-style-fix.js']
+ assert b'PrognozaEPIRPrecipCompactInfo' in contents['meteogram-precip-compact-info.js']
+ assert b'PrognozaEPIRPrecipIntelligence' in contents['meteogram-precipitation-intelligence.js']
  commit=None
  if expected_commit:
   commit=json.loads(get('pages-build.json'))['commit'];assert commit==expected_commit,(commit,expected_commit)
