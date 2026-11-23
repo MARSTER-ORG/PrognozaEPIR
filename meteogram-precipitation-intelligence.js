@@ -39,7 +39,6 @@
   const pct=(v)=>n(v)!==null&&v>=0&&v<=100?v:null;
   const HAZARD=new Set(['FZRA','FZDZ','PL','RASN','SHRASN','SHGR','SHGS',
     'TS','TSRA','TSSN','TSGR','VAR']);
-  const PHASES=new Set(['RA','DZ','SHRA','SN','SG','SHSN']);
   function deepConvection(z){
     const e=z?.precipEvidence;
     return e?.deepConvectiveNwp===true||e?.convectiveNwp===true||
@@ -91,30 +90,46 @@
   }
   function canRefine(p,c,q,now){
     const wx=c?.precipType;
-    if(!wx||wx.code!=='RA'||HAZARD.has(wx.code))return null;
+    if(!wx||!['RA','DZ'].includes(wx.code)||HAZARD.has(wx.code))return null;
     // Beyond 48 hours stratiform cloud profiles are less dependable as subtype cues.
     if(n(now)!==null&&c.t>now+48*H)return null;
     if(!aligned(p,c)||!aligned(c,q))return null;
     if(![p,c,q].every(z=>z?.precipType&&
-       ['RA','DZ'].includes(z.precipType.code)&&
-       cloudRegime(z).id==='shallow_stratiform'))return null;
-    if(!drizzleEvidence(c))return null;
+       ['RA','DZ'].includes(z.precipType.code)))return null;
     if(n(c.T)===null||c.T<=2.5)return null; // no fake freezing drizzle/snow grains
     if([p,c,q].some(deepConvection))return null;
-    // Keep a genuine shower or locally intensified rain at the middle hour.
-    if(n(c.RR)===null||c.RR>.32||[p,q].some(z=>n(z.RR)===null))return null;
-    const peak=Math.max(.1,p.RR,q.RR);
-    if(c.RR>1.7*peak)return null;
-    // At least one neighbour must already have DZ or independently support it.
-    const neigh=[p,q].filter(z=>z.precipType.code==='DZ'||
-      (share(z,'DZ')>=24&&modelCount(z,'DZ')>=2)).length;
-    if(neigh<1)return null;
-    const rawDz=share(c,'DZ'),rawRa=share(c,'RA');
-    // Do not override a clear rain majority merely because St-like clouds exist.
-    if(rawDz<.7*rawRa)return null;
-    return {from:'RA',to:'DZ',regime:'shallow_stratiform',
-      drizzleSupport:rawDz,originalRainSupport:rawRa,
-      explanation:'Przewaga płytkiej, wilgotnej warstwy niskich chmur przez 3 h, słaby opad i mżawka w co najmniej dwóch modelach. Wskazanie DZ jest hipotezą wspartą kodami modeli, nie obserwacją Stratus.'};
+    if(n(c.RR)===null||[p,q].some(z=>n(z.RR)===null))return null;
+    const wet=wx.wetModelCount>=4&&pct(wx.phaseAgreementPct)!==null&&
+      wx.phaseAgreementPct>=76;
+    if(!wet)return null;
+    if(wx.code==='RA'){
+      if(![p,c,q].every(z=>cloudRegime(z).id==='shallow_stratiform'))return null;
+      if(!drizzleEvidence(c)||c.RR>.32)return null;
+      const peak=Math.max(.1,p.RR,q.RR);
+      if(c.RR>1.7*peak)return null;
+      // At least one neighbour must already have DZ or independently support it.
+      const neigh=[p,q].filter(z=>z.precipType.code==='DZ'||
+        (share(z,'DZ')>=24&&modelCount(z,'DZ')>=2)).length;
+      if(neigh<1)return null;
+      const rawDz=share(c,'DZ'),rawRa=share(c,'RA');
+      // Do not override a clear rain majority merely because St-like clouds exist.
+      if(rawDz<.7*rawRa)return null;
+      return {from:'RA',to:'DZ',regime:'shallow_stratiform',
+        supportingType:'DZ',supportPct:rawDz,
+        explanation:'Przewaga płytkiej, wilgotnej warstwy niskich chmur przez 3 h, słaby opad i mżawka w co najmniej dwóch modelach. Wskazanie DZ jest hipotezą wspartą kodami modeli, nie obserwacją Stratus.'};
+    }
+    // Opposite oscillation: a single DZ amid a coherent broad, deep
+    // As/Ns-like wet cloud deck, moderate rain rates and independently
+    // corroborated RA codes should not dominate the whole three-hour spell.
+    if(![p,c,q].every(z=>cloudRegime(z).id==='deep_stratiform'))return null;
+    if(p.precipType.code!=='RA'||q.precipType.code!=='RA')return null;
+    if(c.RR<.6||p.RR<.4||q.RR<.4)return null;
+    const rawRa=share(c,'RA'),rawDz=share(c,'DZ');
+    if(modelCount(c,'RA')<2||rawRa<27||rawDz>56||
+       rawRa<.65*rawDz||share(c,'SHRA')>=18||share(c,'TSRA')>=10)return null;
+    return {from:'DZ',to:'RA',regime:'deep_stratiform',
+      supportingType:'RA',supportPct:rawRa,
+      explanation:'Trzygodzinny, głębszy pokład chmur podobny do As/Ns i umiarkowany opad, wraz z kodem RA co najmniej dwóch modeli. Korekta charakteru na deszcz ciągły jest sugestią, nie rozpoznaniem Nimbostratus.'};
   }
   function refine(rows,types,now){
     if(!Array.isArray(rows)||!types?.TYPES)return rows;
@@ -138,7 +153,8 @@
       if(!next)continue;
       row.precipIntelligence={...hint,corrected:true};
       row.precipType={...old,...next,
-        label:'Mżawka (sugerowana z profilu chmur i modeli)',
+        label:hint.to==='DZ'?'Mżawka (sugerowana z profilu chmur i modeli)':
+          'Deszcz (sugerowany z profilu chmur i modeli)',
         source:'korekta kontekstowa; pierwotnie '+hint.from,
         intelligenceAdjusted:true,intelligenceOriginalType:old,
         intelligenceOriginalCode:hint.from};
@@ -167,8 +183,8 @@
     if(info.changed){
       const h=z.precipIntelligence;
       rows.push(['Korekta rodzaju opadu',h.from+' → '+h.to+'* (sugestia modelowo-fizyczna)'],
-        ['Poparcie DZ wśród modeli z opadem',
-          h.drizzleSupport.toFixed(1)+'% wag, co najmniej 2 modele'],
+        ['Poparcie '+h.supportingType+' wśród modeli z opadem',
+          h.supportPct.toFixed(1)+'% wag, co najmniej 2 modele'],
         ['Dlaczego',h.explanation]);
     }
     rows.push(['Zasada bezpieczeństwa','Nie zmieniono sumy opadu, fazy, surowych kodów WMO ani prognozy TAF']);
