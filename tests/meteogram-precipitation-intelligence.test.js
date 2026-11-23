@@ -30,7 +30,7 @@ assert.strictEqual(api.refine(wet,types,T-2*H),wet);
 assert.equal(wet[1].precipType.code,'DZ');
 assert.equal(wet[1].precipType.intelligenceAdjusted,true);
 assert.equal(wet[1].precipType.intelligenceOriginalCode,'RA');
-assert.equal(wet[1].precipIntelligence.drizzleSupport,43);
+assert.equal(wet[1].precipIntelligence.supportPct,43);
 assert.equal(wet[1].precipCloudContext.regime,'shallow_stratiform');
 assert.equal(wet[1].precipCloudContext.changed,true);
 assert.ok(api.tooltipRows(wet[1]).some(k=>k[1].includes('RA → DZ*')));
@@ -82,6 +82,24 @@ api.refine(changed,types,T-2*H);
 assert.equal(changed[1].precipType.code,'RA','new convection evidence must restore original code');
 assert.equal(changed[1].precipIntelligence,null);
 const deep=row(1,'RA',{RR:1.1,low:95,mid:82,RH:94});
+const deepTrio=[row(0,'RA',{RR:.9,low:94,mid:82,RH:94}),
+  row(1,'DZ',{RR:.95,low:94,mid:82,RH:94,
+    precipType:wx('DZ',{codeSharesPct:{DZ:43,RA:38,SHRA:5},
+      codeModelCounts:{DZ:3,RA:3}})}),
+  row(2,'RA',{RR:.85,low:94,mid:82,RH:94})];
+assert.equal(api.canRefine(...deepTrio,T-2*H)?.to,'RA','deep cloud layer supports steady rain');
+api.refine(deepTrio,types,T-2*H);
+assert.equal(deepTrio[1].precipType.code,'RA');
+assert.equal(deepTrio[1].precipType.intelligenceOriginalCode,'DZ');
+assert.equal(deepTrio[1].precipIntelligence.supportingType,'RA');
+assert.equal(deepTrio[1].precipIntelligence.supportPct,38);
+assert.match(deepTrio[1].precipType.label,/Deszcz/);
+const deepWeak=[...deepTrio];
+deepWeak[1]={...row(1,'DZ',{RR:.9,low:94,mid:82,RH:94}),
+  precipType:wx('DZ',{codeSharesPct:{DZ:70,RA:18},
+    codeModelCounts:{DZ:5,RA:1}})};
+assert.equal(api.canRefine(...deepWeak,T-2*H),null,
+  'strong independent model DZ majority is not overruled by cloud proxy');
 assert.equal(api.cloudRegime(deep).id,'deep_stratiform');
 assert.equal(api.cloudRegime(deep).label.includes('As/Ns'),true);
 assert.equal(api.cloudRegime(row(1,'RA',{profile:[]})).id,'insufficient');
