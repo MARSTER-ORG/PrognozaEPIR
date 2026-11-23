@@ -407,6 +407,7 @@
     sample('FZ — marznący','#9333ea');
     sample('Nieznany / rozbieżny','#64748b');
     sample('RA* / SN* — filtr 3 h','#64748b');
+    sample('DZ* — sugestia St/Sc','#52b69a');
     dot('Radar + konwekcja','#0891b2');
     dot('Konwekcja modelowa','#ea580c');
     dot('TCu / Cb NWP ≥30%','#d97706');
