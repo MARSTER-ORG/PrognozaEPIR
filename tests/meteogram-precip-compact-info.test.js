@@ -54,7 +54,7 @@ for(const page of [html,build]){
 }
 assert.match(hover,/PrognozaEPIRPrecipCompactInfo\?\.rows\(z\)/);
 const precipHover=hover.slice(hover.indexOf("if (id === 'prec')"),
-  hover.indexOf("if (id === 'probstorm')"));
+  hover.indexOf("if (id === 'probstorm' ||"));
 assert.doesNotMatch(precipHover,/PrognozaEPIRPrecipitation\?\.tooltipRows\(z\)/,
   'precipitation hover must not leak verbose rows; the separate storm section stays unchanged');
 
