@@ -4,7 +4,7 @@
   window.__EPIR_CONVECTION_12H__ = true;
 
   const HOUR = 3600000;
-  const VERSION = '20261122-conv12h6-shower-source';
+  const VERSION = '20261123-conv12h7-cache-age';
   const STORAGE_KEY = 'prognozaepir.convection12h.v1';
   const NOWCAST_KEY = 'prognozaepir.convection-nowcast.shared.v1';
   const NOWCAST_MAX_AGE = 20 * 60 * 1000;
@@ -14,6 +14,8 @@
   const num = (v,fallback=0) => finite(v) ? Number(v) : fallback;
   const page = document.documentElement.dataset.epirPage || (location.pathname.split('/').pop()||'index.html').replace(/\.html?$/i,'') || 'index';
   let baseRows = [];
+  let baseIssuedAt = null;
+  let basePoint = null;
   let lastPointKey = '';
   let lastFetchAt = 0;
   let refreshTimer = 0;
@@ -188,7 +190,11 @@
   }
 
   function publish(point, rows, source='live') {
-    const result={version:VERSION,updatedAt:new Date().toISOString(),point,source,horizonHours:12,rows:blendWithNowcast(rows)};
+    const age=Date.now()-Date.parse(baseIssuedAt||'');
+    if(!samePoint(basePoint,point)||!(age>=0&&age<2*HOUR))return null;
+    // Repainting/reblending must never turn an old NWP fetch into fresh evidence.
+    // Keep unblended inputs so cache recovery cannot compound radar blending.
+    const result={version:VERSION,updatedAt:baseIssuedAt,renderedAt:new Date().toISOString(),point,source,horizonHours:12,baseRows:rows,rows:blendWithNowcast(rows)};
     window.PrognozaEPIRConvection12h=result;
     try { localStorage.setItem(STORAGE_KEY,JSON.stringify(result)); } catch (_) {}
     try { window.dispatchEvent(new CustomEvent('prognozaepir:convection-12h-updated',{detail:result})); } catch (_) {}
@@ -202,7 +208,10 @@
       const j=JSON.parse(localStorage.getItem(STORAGE_KEY)||'null');
       const age=Date.now()-Date.parse(j?.updatedAt||0);
       if (j?.rows?.length && samePoint(j.point,point) && age>=0 && age<2*HOUR) {
-        baseRows=j.rows.map(r=>({...r}));
+        if(!Array.isArray(j.baseRows)&&j.rows.some(r=>r.nowcastApplied))return null;
+        baseRows=(j.baseRows||j.rows).map(r=>({...r}));
+        baseIssuedAt=j.updatedAt;
+        basePoint={...point};
         return publish(point,baseRows,'cache');
       }
     } catch (_) {}
@@ -236,6 +245,8 @@
     }
     if (!rows.length) return fallback(point);
     baseRows=rows;
+    baseIssuedAt=new Date(now).toISOString();
+    basePoint={...point};
     return publish(point,rows,'GFS+AIFS+ICON-D2');
   }
 

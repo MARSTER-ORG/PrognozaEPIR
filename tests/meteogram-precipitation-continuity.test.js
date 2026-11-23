@@ -9,7 +9,7 @@ const api=require('../meteogram-precipitation-continuity.js');
 const H=3600000,START=1700000000000;
 function row(i,code,other={}){
   const phase=['SN','SHSN'].includes(code)?'snow':'rain';
-  return {t:START+i*H,RR:.3,T:8,storm:5,
+  return {t:START+i*H,RR:.3,T:8,storm:5,precipEvidence:{cloudReliable:true},
     precipType:{...types.TYPES[code],phaseFamily:phase,
       phaseAgreementPct:85,characterAgreementPct:73,supportPct:81,
       wetModelCount:5,modelCount:8},
@@ -33,6 +33,10 @@ api.stabilize(initial,types);
 assert.equal(initial[1].precipType.code,'RA','repeated calls must not accumulate smoothing');
 assert.equal(initial[1].precipType.temporalOriginalCode,'SHRA');
 const negative=[
+ ['no convection coverage',trio('RA','SHRA','RA',{b:{precipEvidence:null}})],
+ ['unreliable convection',trio('RA','SHRA','RA',{b:{precipEvidence:{cloudReliable:false}}})],
+ ['dry neighbour',trio('RA','SHRA','RA',{a:{RR:0}})],
+ ['negative accumulation',trio('RA','SHRA','RA',{a:{RR:-.1}})],
  ['radar corroboration',trio('RA','SHRA','RA',{b:{precipEvidence:{radarForecastEcho:true}}})],
  ['convective NWP',trio('RA','SHRA','RA',{b:{precipEvidence:{convectiveNwp:true}}})],
  ['radar at adjacent hour',trio('RA','SHRA','RA',{a:{precipEvidence:{marker:'radar'}}})],

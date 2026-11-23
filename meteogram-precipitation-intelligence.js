@@ -55,19 +55,23 @@
     const low=pct(z.low),mid=pct(z.mid),rh=pct(z.RH),base=n(z.lowH);
     const temp=n(z.T),dew=n(z.Td);
     const profile=Array.isArray(z.profile)?z.profile:[];
-    const coverage=profile.filter(p=>n(p?.agl)!==null&&pct(p?.cc)!==null).length;
+    const levels=profile.filter(p=>n(p?.agl)!==null&&p.agl>=0&&p.agl<=13000&&pct(p?.cc)!==null);
+    const coverage=new Set(levels.map(p=>p.agl)).size;
+    const lowLevels=levels.filter(p=>p.agl<2000),midLevels=levels.filter(p=>p.agl>=2000&&p.agl<6000);
     // A model-derived cloud-vertical-structure proxy cannot identify genus St/Ns.
     // Fail closed if low/mid profile, humidity or base are not available.
-    if(coverage<3||low===null||mid===null||rh===null||base===null||
+    if(coverage<3||!lowLevels.length||!midLevels.length||low===null||mid===null||rh===null||base===null||base<0||
        temp===null||dew===null)
       return {id:'insufficient',label:'Profil chmur niepełny — brak identyfikacji rodzaju'};
     const nearSaturated=temp-dew>=-0.5&&temp-dew<=2.5;
     if(low>=80&&mid<=48&&base<=1050&&rh>=89&&nearSaturated&&
+       lowLevels.some(p=>p.cc>=80)&&midLevels.every(p=>p.cc<=48)&&
        z.RR<=.45&&n(z.storm)!==null&&z.storm<22)
       return {id:'shallow_stratiform',
         label:'Płytki, wilgotny układ warstwowy — warunki sprzyjające St/Sc',
         note:'Przy dodatniej temperaturze słabe opady mogą mieć charakter mżawki; brak bezpośredniej diagnozy Stratus'};
     if(low>=77&&mid>=70&&rh>=86&&nearSaturated&&z.RR>=.45&&
+       lowLevels.some(p=>p.cc>=77)&&midLevels.some(p=>p.cc>=70)&&
        n(z.storm)!==null&&z.storm<25)
       return {id:'deep_stratiform',
         label:'Rozległa, głębsza warstwa — układ zbliżony do As/Ns',
@@ -96,6 +100,7 @@
     if(!aligned(p,c)||!aligned(c,q))return null;
     if(![p,c,q].every(z=>z?.precipType&&
        ['RA','DZ'].includes(z.precipType.code)))return null;
+    if([p,c,q].some(z=>[...HAZARD].some(code=>share(z,code)>0)))return null;
     if(n(c.T)===null||c.T<=2.5)return null; // no fake freezing drizzle/snow grains
     if([p,c,q].some(deepConvection))return null;
     if(n(c.RR)===null||[p,q].some(z=>n(z.RR)===null))return null;
@@ -140,6 +145,7 @@
       if(z.precipType?.intelligenceOriginalType)
         z.precipType=z.precipType.intelligenceOriginalType;
       z.precipIntelligence=null;
+      z.precipCloudContext=null;
     }
     const seq=rows.filter(z=>n(z?.t)!==null).slice().sort((a,b)=>a.t-b.t);
     const proposals=[];

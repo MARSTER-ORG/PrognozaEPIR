@@ -68,12 +68,16 @@
     if(num(w.supportPct)<60||num(prev.supportPct)<65||num(next.supportPct)<65)return null;
     if([p,c,n].some(z=>num(z.precipType?.wetModelCount)<3))return null;
     if([p,c,n].some(protectedEvidence))return null;
+    // Missing or expired independent convection diagnostics cannot prove that
+    // an isolated model shower is spurious (especially beyond the 12 h engine).
+    if([p,c,n].some(z=>z.precipEvidence?.cloudReliable!==true))return null;
     // No change near the phase boundary, or during an abrupt hour-scale change.
     if([p,c,n].some(z=>num(z.T)===null||Math.abs(z.T)<=1.5))return null;
     if([p,c,n].some(z=>num(z.storm)!==null&&z.storm>=35))return null;
     const amounts=[p,c,n].map(z=>num(z.RR));
     if(amounts.every(x=>x!==null)){
       const [a,b,d]=amounts;
+      if(amounts.some(x=>x<=0))return null;
       if(b>=.5&&b>1.8*Math.max(.1,a,d))return null;
       if(b===0)return null;
     }else return null; // Absent amounts are not evidence of temporal continuity.

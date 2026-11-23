@@ -168,6 +168,7 @@ def counts(pairs):
         else:c+=1
     def ratio(a,b):return round(a/b,5) if b else None
     return dict(n=h+m+f+c,hits=h,misses=m,false_alarms=f,correct_negatives=c,
+                precision=ratio(h,h+f),recall=ratio(h,h+m),f1=ratio(2*h,2*h+f+m),
                 pod=ratio(h,h+m),far=ratio(f,h+f),csi=ratio(h,h+m+f),bias=ratio(h+f,h+m),
                 balanced_accuracy=round((h/(h+m)+c/(f+c))/2,5) if h+m and f+c else None)
 

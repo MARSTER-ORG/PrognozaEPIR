@@ -15,6 +15,8 @@ const cases=[
   [{weather_code:77,precipitation:.2},'SG'],
   [{weather_code:79,precipitation:.2},'PL'],
   [{weather_code:80,precipitation:.3},'SHRA'],
+  [{weather_code:83,precipitation:.3},'SHRASN'],
+  [{weather_code:84,precipitation:.3},'SHRASN'],
   [{weather_code:86,precipitation:.3},'SHSN'],
   [{weather_code:87,precipitation:.3},'SHGS'],
   [{weather_code:90,precipitation:.3},'SHGR'],
@@ -33,7 +35,7 @@ const cases=[
 for(const [row,code] of cases){
   assert.equal(wx.classify(row)?.code,code,JSON.stringify(row));
 }
-for(const row of [null,{}, {weather_code:0,precipitation:0}, {weather_code:3,precipitation:null}, {weather_code:NaN,precipitation:NaN}]){
+for(const row of [null,{}, {weather_code:0,precipitation:0}, {weather_code:3,precipitation:null}, {weather_code:NaN,precipitation:NaN}, {weather_code:79.6}]){
   assert.equal(wx.classify(row),null,'no invented precipitation');
 }
 const disagreement=wx.aggregate([
