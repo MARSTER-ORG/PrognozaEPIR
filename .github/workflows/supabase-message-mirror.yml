@@ -12,7 +12,7 @@ on:
       days:
         description: 'Incremental UTC days when year is empty'
         required: false
-        default: '3'
+        default: '5'
         type: string
   push:
     branches:
@@ -89,7 +89,7 @@ jobs:
           elif [[ '${{ github.event_name }}' == 'workflow_dispatch' ]]; then
             run_mirror --days '${{ inputs.days }}'
           else
-            run_mirror --days 3
+            run_mirror --days 5
           fi
 
       - name: Validate canonical archive
@@ -149,3 +149,5 @@ jobs:
           gh workflow run adaptive-runtime-rollout.yml --ref main
           # Fog vNext shadow evaluation is deliberately separate from production weights.
           gh workflow run fog-vnext-archive.yml --ref main
+          # Re-evaluate precipitation weights against the newly restored observations (shadow only).
+          gh workflow run precipitation-learning.yml --ref main
