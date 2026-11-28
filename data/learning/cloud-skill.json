@@ -3480,5 +3480,89 @@
         }
       }
     }
+  },
+  "convection": {
+    "schema": "prognozaepir-convection-skill-v1",
+    "generated_at": "2026-11-28T12:56:44Z",
+    "station": "EPIR",
+    "method": "Nearest METAR within 45 min paired with deduplicated archived model forecasts; TCU/CB are explicit METAR cloud labels, TS is used only as a weaker deep-convection proxy. Historical model archive has no radar reflectivity, so dBZ thresholds remain operational priors.",
+    "training": {
+      "metar_samples": 18383,
+      "explicit_tcu": 74,
+      "explicit_cb": 88,
+      "ts": 32,
+      "forecast_rows_deduplicated": 50128,
+      "matched_samples": 34282,
+      "effective_weight": 3235.18,
+      "from": "2025-01-01T00:00:00Z",
+      "to": "2026-11-26T08:00:00Z",
+      "label_quality": "explicit_metar"
+    },
+    "reflectivity_priors_dbz": {
+      "cu_signal": 20,
+      "tcu_watch": 30,
+      "tcu_likely": 35,
+      "cb_likely": 40,
+      "cb_strong": 50
+    },
+    "calibration": {
+      "environment_score_bins": [
+        {
+          "min": 0.0,
+          "max": 0.2,
+          "n": 10629,
+          "effective_weight": 989.11,
+          "tcu_or_cb_rate": 0.00363,
+          "cb_rate": 0.0017,
+          "deep_rate": 0.0017
+        },
+        {
+          "min": 0.2,
+          "max": 0.4,
+          "n": 20516,
+          "effective_weight": 1934.84,
+          "tcu_or_cb_rate": 0.00491,
+          "cb_rate": 0.00179,
+          "deep_rate": 0.00179
+        },
+        {
+          "min": 0.4,
+          "max": 0.6,
+          "n": 2974,
+          "effective_weight": 293.86,
+          "tcu_or_cb_rate": 0.02137,
+          "cb_rate": 0.01119,
+          "deep_rate": 0.01119
+        },
+        {
+          "min": 0.6,
+          "max": 0.8,
+          "n": 132,
+          "effective_weight": 14.09,
+          "tcu_or_cb_rate": 0.04338,
+          "cb_rate": 0.03487,
+          "deep_rate": 0.03487
+        },
+        {
+          "min": 0.8,
+          "max": 1.0,
+          "n": 31,
+          "effective_weight": 3.28,
+          "tcu_or_cb_rate": 0.04857,
+          "cb_rate": 0.03314,
+          "deep_rate": 0.03314
+        }
+      ],
+      "global_tcu_or_cb_rate": 0.0065,
+      "global_cb_rate": 0.003004,
+      "global_deep_rate": 0.003004,
+      "minimum_explicit_labels_for_direct_use": 10
+    },
+    "limitations": [
+      "TCU can exist before a strong radar echo appears.",
+      "CMAX reflectivity does not identify cloud type by itself.",
+      "TS without an explicit CB cloud group is retained as a weak deep-convection label, not silently relabelled as CB.",
+      "Radar/satellite/lightning verification should supersede this environment calibration as those archives grow."
+    ]
   }
 }
